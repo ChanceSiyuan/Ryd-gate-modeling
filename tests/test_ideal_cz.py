@@ -631,14 +631,13 @@ class TestIndependentErrorFlags:
         ryd_idx = 5 * 7 + 0  # |r,0⟩
         assert np.imag(diag[ryd_idx]) == 0
 
-    def test_polarization_leakage_disabled(self):
-        """With leakage disabled, state 6 should be far-detuned (large Zeeman shift)."""
+    def test_ryd_zeeman_shift_always_realistic(self):
+        """Rydberg Zeeman shift should always be realistic (~56 MHz for 'our')."""
         from ryd_gate.ideal_cz import CZGateSimulator
 
-        sim = CZGateSimulator(param_set="our", enable_polarization_leakage=False)
-        # Zeeman shift should be very large to push |r'⟩ off-resonance
-        assert sim.ryd_zeeman_shift > 2 * np.pi * 1e9
-        # Hamiltonian should be Hermitian (no decay)
+        sim = CZGateSimulator(param_set="our")
+        assert sim.ryd_zeeman_shift == pytest.approx(2 * np.pi * 56e6, rel=1e-6)
+        # Hamiltonian should be Hermitian (no decay by default)
         assert np.allclose(sim.tq_ham_const, sim.tq_ham_const.conj().T)
 
     def test_polarization_leakage_enabled(self):
@@ -690,17 +689,18 @@ class TestIndependentErrorFlags:
         assert np.allclose(sim.tq_ham_const, sim.tq_ham_const.conj().T)
 
     def test_all_flags_off_perfect_gate(self):
-        """All flags off should give near-perfect gate (includes always-on light shift)."""
+        """All flags off should give near-perfect gate (always-realistic Zeeman shift)."""
         from ryd_gate.ideal_cz import CZGateSimulator
 
         sim = CZGateSimulator(
             param_set="our", strategy="TO", blackmanflag=True,
+            detuning_sign=1,
         )
-        # Optimized TO params (re-optimized with always-on |0⟩ light shift)
-        x = [-0.9509172186259588, 1.105272315809505, 0.383911389220584,
-             1.2848721417313045, 1.3035218398648376, 1.246566016566724]
+        # Optimized TO params (re-optimized with always-realistic Zeeman shift)
+        x = [-0.7014733991997126, 1.0278277968832694, 0.380937130044225,
+             1.5726850867984092, 1.4595010478827175, 1.3414183123651169]
         infidelity = sim.gate_fidelity(x)
-        assert infidelity < 1e-6, f"Infidelity {infidelity} too large for all-flags-off gate"
+        assert infidelity < 1e-4, f"Infidelity {infidelity} too large for all-flags-off gate"
 
     def test_all_flags_off_norm_preserved(self):
         """All flags off should preserve state normalization (unitary evolution)."""
@@ -880,23 +880,22 @@ class TestBranchingRatios:
         component_sum = pol["XYZ"] + pol["AL"] + pol["LG"]
         assert component_sum == pytest.approx(pol["total"], rel=1e-4)
 
-    def test_error_budget_polarization_leakage_zero_when_disabled(self):
-        """Polarization leakage channel should be ~0 when flag is off."""
+    def test_error_budget_polarization_leakage_always_present(self):
+        """Polarization leakage is always present with realistic Zeeman shift."""
         from ryd_gate.ideal_cz import CZGateSimulator
 
         sim = CZGateSimulator(
             param_set="our", strategy="TO", blackmanflag=True,
+            detuning_sign=1,
             enable_rydberg_decay=True, enable_intermediate_decay=True,
-            enable_polarization_leakage=False,
         )
-        x = [-0.9509172186259588, 1.105272315809505, 0.383911389220584,
-             1.2848721417313045, 1.3035218398648376, 1.246566016566724]
+        x = [-0.7014733991997126, 1.0278277968832694, 0.380937130044225,
+             1.5726850867984092, 1.4595010478827175, 1.3414183123651169]
         budget = sim.error_budget(x)
 
-        for etype in ["XYZ", "AL", "LG", "total"]:
-            assert budget["polarization_leakage"][etype] == pytest.approx(
-                0.0, abs=1e-12,
-            ), f"polarization_leakage/{etype} should be ~0 when disabled"
+        # With realistic Zeeman shift, polarization leakage is always nonzero
+        total = budget["polarization_leakage"]["total"]
+        assert total > 0, "polarization_leakage total should be > 0 with realistic Zeeman shift"
 
 
 # ==================================================================
@@ -905,8 +904,8 @@ class TestBranchingRatios:
 
 
 X_TO_OUR = [
-    -0.9509172186259588, 1.105272315809505, 0.383911389220584,
-    1.2848721417313045, 1.3035218398648376, 1.246566016566724,
+    -0.7014733991997126, 1.0278277968832694, 0.380937130044225,
+    1.5726850867984092, 1.4595010478827175, 1.3414183123651169,
 ]
 
 
