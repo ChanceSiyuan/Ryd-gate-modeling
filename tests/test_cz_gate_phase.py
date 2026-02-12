@@ -10,16 +10,19 @@ import pytest
 from ryd_gate.ideal_cz import CZGateSimulator
 
 
-# Optimized TO pulse parameters
-X_TO = [-0.64168872, 1.14372811, 0.35715965, 1.51843443, 2.96448688, 1.21214853]
+# Optimized TO pulse parameters (dark detuning, always-realistic Zeeman shift)
+X_TO = [
+    -0.7014733991997126, 1.0278277968832694, 0.380937130044225,
+    1.5726850867984092, 1.4595010478827175, 1.3414183123651169,
+]
 
 
 @pytest.fixture
 def simulator():
     """Create a CZGateSimulator instance."""
     return CZGateSimulator(
-        param_set='our', strategy='TO', blackmanflag=False,
-        enable_polarization_leakage=True,
+        param_set='our', strategy='TO', blackmanflag=True,
+        detuning_sign=1,
     )
 
 
@@ -56,8 +59,8 @@ def test_cz_phase_relation(simulator, computational_basis):
     # CZ phase = φ₁₁ - φ₀₁ - φ₁₀ + φ₀₀ should be ±π
     cz_phase = phases['11'] - phases['01'] - phases['10'] + phases['00']
 
-    # Account for 2π periodicity
-    deviation = min(np.abs(cz_phase - np.pi), np.abs(cz_phase + np.pi))
+    # Account for 2π periodicity: angular distance from π
+    deviation = np.abs(np.angle(np.exp(1j * (cz_phase - np.pi))))
 
     # Allow 2 degrees of deviation
     assert deviation < np.radians(2), (

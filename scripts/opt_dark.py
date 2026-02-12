@@ -13,15 +13,13 @@ from ryd_gate.ideal_cz import CZGateSimulator
 # - θ: Single-qubit Z rotation angle
 # - T: Gate time
 
-X_TO_OUR_DARK = [-0.6990251940088914, 1.0294930712188455, 0.37642793463018853, 1.5710847832834478, 1.4454415553284314, 1.340639491094446
+X_TO_OUR_DARK = [-0.7014733991997126, 1.0278277968832694, 0.380937130044225, 1.5726850867984092, 1.4595010478827175, 1.3414183123651169
 ]
 # -0.6989301339711643, 1.0296229082590798, 0.3759232324550267, 1.5710180991068543, 1.4454279613697887, 1.3406239758422793
 
 sim_dark = CZGateSimulator(
         param_set="our", strategy="TO",
         blackmanflag=True, detuning_sign=1,
-        enable_rydberg_decay=False, enable_intermediate_decay=False,
-        enable_polarization_leakage=False,
     ) 
 
 res = sim_dark.gate_fidelity(X_TO_OUR_DARK)

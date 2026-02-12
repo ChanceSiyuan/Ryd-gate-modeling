@@ -305,9 +305,6 @@ class CZGateSimulator:
         Gate position fluctuation noise in Monte Carlo simulations. When
         False, ``temperature``/``sigma_pos`` parameters in MC methods are
         ignored.
-    enable_polarization_leakage : bool, default=False
-        Include coupling to the unwanted Rydberg state |r'⟩ (state 6)
-        via off-polarization Clebsch-Gordan coefficients.
     Attributes
     ----------
     rabi_eff : float
@@ -331,7 +328,6 @@ class CZGateSimulator:
     >>> sim = CZGateSimulator(
     ...     enable_rydberg_decay=True,
     ...     enable_intermediate_decay=True,
-    ...     enable_polarization_leakage=True,
     ... )
 
     Population diagnostics:
@@ -375,7 +371,6 @@ class CZGateSimulator:
         use_jax_mc: bool = False,
         enable_rydberg_dephasing: bool = False,
         enable_position_error: bool = False,
-        enable_polarization_leakage: bool = False,
         sigma_detuning: float | None = None,
         sigma_pos_xyz: tuple[float, float, float] | None = None,
         n_mc_shots: int = 100,
@@ -408,8 +403,6 @@ class CZGateSimulator:
         enable_position_error : bool
             Enable position fluctuation noise. When True, ``gate_fidelity()``
             automatically runs Monte Carlo and returns ``(mean, std)``.
-        enable_polarization_leakage : bool
-            Include coupling to the unwanted Rydberg state |r'⟩.
         sigma_detuning : float or None
             Detuning noise standard deviation in Hz (e.g. 130e3 for 130 kHz).
             Required when ``enable_rydberg_dephasing=True``.
@@ -432,7 +425,6 @@ class CZGateSimulator:
         self.enable_0_scattering = enable_0_scattering
         self.enable_rydberg_dephasing = enable_rydberg_dephasing
         self.enable_position_error = enable_position_error
-        self.enable_polarization_leakage = enable_polarization_leakage
         self.sigma_detuning = sigma_detuning
         self.sigma_pos_xyz = sigma_pos_xyz
         self.n_mc_shots = n_mc_shots
@@ -498,7 +490,7 @@ class CZGateSimulator:
         # Here we use(2 pi)*874GHz*um^6 
         self.v_ryd = 2 * np.pi * 874e9 / 3**6  # Van der Waals at ~3 μm
         self.v_ryd_garb = 2 * np.pi * 874e9 /3**6 # Suppose the garbage state has the identical van der Waals interaction
-        self.ryd_zeeman_shift = 2 * np.pi * 56e6 if self.enable_polarization_leakage else  2 * np.pi * 56e9
+        self.ryd_zeeman_shift = 2 * np.pi * 56e6  # always realistic (garbage Rydberg always coupled)
 
         # Decay rate parameters
         # 6P3/2 lifetime 120.7 ± 1.2 ns, refer from https://arxiv.org/abs/physics/0409077
@@ -556,7 +548,7 @@ class CZGateSimulator:
         # Rydberg interaction and Zeeman shift
         self.v_ryd = 2 * np.pi * 450e6
         self.v_ryd_garb = 2 * np.pi * 450e6
-        self.ryd_zeeman_shift = 2 * np.pi * 2.4e9 if self.enable_polarization_leakage else 2 * np.pi * 2.4e12
+        self.ryd_zeeman_shift = 2 * np.pi * 2.4e9  # always realistic (garbage Rydberg always coupled)
 
         # Decay rate parameters
         self.mid_state_decay_rate = 1 / (110e-9)
