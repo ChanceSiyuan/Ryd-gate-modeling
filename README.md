@@ -1,7 +1,7 @@
 # ryd-gate
 
 [![CI](https://github.com/ChanceSiyuan/Ryd-gate-modeling/actions/workflows/ci.yml/badge.svg)](https://github.com/ChanceSiyuan/Ryd-gate-modeling/actions/workflows/ci.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Simulation and optimization of Rydberg-atom entangling gates for neutral-atom quantum computing.
@@ -55,7 +55,7 @@ The solver models two ⁸⁷Rb atoms with:
 |-----------|-------|-------------|
 | n | 70 | Rydberg principal quantum number |
 | Ω_eff | 2π × 7 MHz | Effective two-photon Rabi frequency |
-| Δ | 2π × 6.1 GHz | Intermediate state detuning |
+| Δ | 2π × 9.1 GHz | Intermediate state detuning |
 | d | 3 μm | Interatomic distance |
 | C₆ | 2π × 874 GHz·μm⁶ | van der Waals coefficient |
 
@@ -94,7 +94,7 @@ uv run pytest tests/ --cov=ryd_gate --cov-report=html
 
 | Script | Description |
 |--------|-------------|
-| `scripts/draft.py` | Main analysis / prototyping script |
+| `scripts/calibration_sensitivity.py` | Calibration sensitivity analysis |
 | `scripts/error_deterministic.py` | Deterministic error budget calculation |
 | `scripts/error_monte_carlo.py` | Monte Carlo error analysis |
 | `scripts/generate_mc_data.py` | Generate Monte Carlo datasets |
@@ -109,7 +109,6 @@ uv run pytest tests/ --cov=ryd_gate --cov-report=html
 
 * Evered *et al.*, "High-fidelity parallel entangling gates on a neutral-atom quantum computer", Nature **622**, 268 (2023).
 * Ma *et al.*, "Benchmarking and fidelity response theory of high-fidelity Rydberg entangling gates", PRX Quantum **6**, 010331 (2025).
-* See `paper/en_v2.tex` for detailed theoretical derivations.
 
 ## License
 
