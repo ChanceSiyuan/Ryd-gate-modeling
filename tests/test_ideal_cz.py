@@ -424,6 +424,7 @@ class TestMonteCarloSimulation:
 # ==================================================================
 
 
+@pytest.mark.slow
 class TestMonteCarloJax:
     """Tests for GPU-accelerated JAX Monte Carlo simulation."""
 
