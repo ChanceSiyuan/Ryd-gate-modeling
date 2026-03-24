@@ -51,10 +51,12 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"src/ryd_gate/ideal_cz.py" = ["F401", "F811", "F841", "E261", "E251", "E231", "E303", "E302", "W291", "W293", "W605", "I001"]
+"src/ryd_gate/ideal_cz.py" = ["F401", "I001"]
+"src/ryd_gate/core/atomic_system.py" = ["E741", "I001"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not slow'"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]

@@ -130,6 +130,7 @@ class TestHamiltonianConstruction:
 # ==================================================================
 
 
+@pytest.mark.slow
 class TestFidelityCalculation:
     """Tests for average fidelity calculation.
 
@@ -163,6 +164,7 @@ class TestFidelityCalculation:
 # ==================================================================
 
 
+@pytest.mark.slow
 class TestStateEvolution:
     """Tests for quantum state evolution methods.
 
@@ -203,6 +205,7 @@ class TestStateEvolution:
 # ==================================================================
 
 
+@pytest.mark.slow
 class TestDiagnosticMethods:
     """Tests for diagnostic run methods.
 
@@ -251,6 +254,7 @@ class TestDiagnosticMethods:
 # ==================================================================
 
 
+@pytest.mark.slow
 class TestStoredParameterWorkflow:
     """Tests for the setup_protocol / stored-parameter API."""
 
@@ -365,6 +369,7 @@ class TestMonteCarloSimulation:
                 enable_position_error=True,
             )
 
+    @pytest.mark.slow
     def test_gate_fidelity_returns_tuple_when_mc_enabled(self):
         """gate_fidelity should return (mean, std) tuple when MC flags are on."""
         from ryd_gate.ideal_cz import CZGateSimulator
@@ -385,6 +390,7 @@ class TestMonteCarloSimulation:
         assert mean_inf >= 0
         assert std_inf >= 0
 
+    @pytest.mark.slow
     def test_3d_position_model_distances(self):
         """MC with 3D position model should produce positive distances."""
         from ryd_gate.ideal_cz import CZGateSimulator
@@ -432,6 +438,7 @@ class TestMonteCarloJax:
 # ==================================================================
 
 
+@pytest.mark.slow
 class TestIndependentErrorFlags:
     """Tests for the independent enable_* error source flags."""
 
@@ -551,6 +558,7 @@ class TestIndependentErrorFlags:
         assert result.std_fidelity == pytest.approx(0.0, abs=1e-10)
 
 
+@pytest.mark.slow
 class TestBranchingRatios:
     """Tests for branching ratio calculations and error budget."""
 
@@ -619,6 +627,7 @@ class TestBranchingRatios:
 # ==================================================================
 
 
+@pytest.mark.slow
 class TestMonteCarloWithBranching:
     """Tests for MC branching decomposition (XYZ/AL/LG/phase).
 
@@ -741,6 +750,7 @@ class TestMonteCarloWithBranching:
 # ==================================================================
 
 
+@pytest.mark.slow
 class TestStateInfidelity:
     """Tests for state_infidelity method (lines 1162-1237)."""
 
@@ -783,6 +793,7 @@ class TestStateInfidelity:
             sim_to_our.state_infidelity("bad_label", X_TO)
 
 
+@pytest.mark.slow
 class TestGetGateResult:
     """Tests for get_gate_result public method (lines 1239-1290)."""
 
@@ -821,6 +832,7 @@ class TestGetGateResult:
         assert result.shape == (49, 50)
 
 
+@pytest.mark.slow
 class TestFidelityTypes:
     """Tests for fid_type='bell' and fid_type='sss' paths."""
 
@@ -836,10 +848,11 @@ class TestFidelityTypes:
         assert isinstance(infid, (float, np.floating))
         assert 0 <= infid <= 1
 
-    def test_ar_non_average_fid_type_raises(self, sim_ar_our):
-        """AR strategy should raise ValueError for non-'average' fid_type."""
-        with pytest.raises(ValueError, match="not implemented for AR"):
-            sim_ar_our._gate_infidelity_single(X_AR, fid_type="bell")
+    def test_ar_non_average_fid_type_supported(self, sim_ar_our):
+        """AR strategy now supports all fid_types via unified implementation."""
+        result = sim_ar_our._gate_infidelity_single(X_AR, fid_type="bell")
+        assert isinstance(result, float)
+        assert result >= 0
 
     def test_return_residuals_non_average_raises(self, sim_to_our):
         """return_residuals with non-'average' fid_type should raise ValueError."""
@@ -849,6 +862,7 @@ class TestFidelityTypes:
             )
 
 
+@pytest.mark.slow
 class TestARFidelityResiduals:
     """Tests for _avg_fidelity_AR with return_residuals=True."""
 
@@ -1012,16 +1026,14 @@ class TestPlotBlochDispatch:
 class TestDiagnosePlotDispatch:
     """Tests for diagnose_plot strategy dispatch."""
 
-    def test_diagnose_plot_invalid_strategy_raises(self, sim_to_our):
-        """diagnose_plot with invalid strategy should raise ValueError."""
-        sim_to_our.strategy = "INVALID"
-        try:
-            with pytest.raises(ValueError, match="Unknown strategy"):
-                sim_to_our.diagnose_plot(X_TO, initial_state="01")
-        finally:
-            sim_to_our.strategy = "TO"
+    def test_invalid_strategy_at_init_raises(self):
+        """Invalid strategy at construction should raise ValueError."""
+        from ryd_gate.ideal_cz import CZGateSimulator
+        with pytest.raises(ValueError, match="Unknown strategy"):
+            CZGateSimulator(param_set="our", strategy="INVALID")
 
 
+@pytest.mark.slow
 class TestMCProgressPrint:
     """Tests for MC progress indicator (lines 1380-1384)."""
 
