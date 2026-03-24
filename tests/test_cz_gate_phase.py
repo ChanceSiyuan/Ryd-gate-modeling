@@ -8,6 +8,8 @@ so that tests remain robust across fidelity-formula updates.
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.slow
+
 from ryd_gate.ideal_cz import CZGateSimulator
 
 
