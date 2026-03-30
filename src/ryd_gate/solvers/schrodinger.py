@@ -55,6 +55,9 @@ def solve_gate(
     ndarray
         Shape (49, len(t_eval)) or (49,) if t_eval is None.
     """
+    from ryd_gate.core.atomic_system import check_protocol_compatibility
+    check_protocol_compatibility(system, protocol)
+
     params = protocol.unpack_params(x, system)
     t_gate = params["t_gate"]
 

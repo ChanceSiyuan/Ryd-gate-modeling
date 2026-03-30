@@ -1,8 +1,7 @@
 """Monte Carlo noise simulation engine.
 
 Provides MonteCarloResult dataclass, MonteCarloEngine for scipy-based MC,
-run_monte_carlo_jax for JAX-accelerated MC, and AddressingMCEngine for
-local addressing simulations.
+and run_monte_carlo_jax for JAX-accelerated MC.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ryd_gate.analysis.gate_metrics import average_gate_infidelity, residuals_to_branching
-from ryd_gate.core.atomic_system import build_atom_a_projector, build_vdw_unit_operator, get_nominal_distance
+from ryd_gate.core.atomic_system import build_atom_a_projector, build_occ_operator, build_vdw_unit_operator, get_nominal_distance
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -196,66 +195,227 @@ class MonteCarloResult:
 
 
 class MonteCarloEngine:
-    """Quasi-static Monte Carlo noise sampler.
+    """Unified quasi-static Monte Carlo noise sampler.
 
-    Unlike the old design which mutated self.tq_ham_const per-shot,
-    this computes a perturbed ham_const and passes it via ham_const_override.
+    Noise sources are configured independently via ``setup_*`` methods,
+    each corresponding to a distinct physical mechanism.  Only enabled
+    noise sources participate in the per-shot perturbation.
+
+    Parameters
+    ----------
+    system : AtomicSystem
+        Atomic system with precomputed Hamiltonians.
+    protocol : Protocol
+        Pulse protocol providing ``phase_420``.
+    x : list of float
+        Parameter vector for the protocol.
     """
 
     def __init__(
         self,
         system: AtomicSystem,
         protocol: Protocol,
-        *,
-        enable_rydberg_dephasing: bool = False,
-        enable_position_error: bool = False,
-        sigma_detuning: float | None = None,
-        sigma_pos_xyz: tuple[float, float, float] | None = None,
-    ):
+        x: list[float],
+    ) -> None:
         self.system = system
         self.protocol = protocol
-        self.enable_rydberg_dephasing = enable_rydberg_dephasing
-        self.enable_position_error = enable_position_error
-        self.sigma_detuning = sigma_detuning
-        self.sigma_pos_xyz = sigma_pos_xyz
+        self.x = x
 
-    def run(
+        self._ham_const_base: NDArray[np.complexfloating] = system.tq_ham_const.copy()
+        ham_additions = protocol.get_ham_const_additions()
+        if ham_additions is not None:
+            self._ham_const_base = self._ham_const_base + ham_additions
+
+        # Noise sources (None until setup_* is called)
+        self._sigma_delta_rad: float | None = None
+        self._detuning_op: NDArray[np.complexfloating] | None = None
+
+        self._sigma_pos_um: tuple[float, float, float] | None = None
+        self._vdw_unit: NDArray[np.complexfloating] | None = None
+        self._d_nominal: float | None = None
+        self._C_6: float | None = None
+        self._v_ryd_nominal: float | None = None
+
+        self._sigma_local_rin: float | None = None
+        self._local_detuning_mag: float = 0.0
+        self._rin_op: NDArray[np.complexfloating] | None = None
+
+        self._sigma_amplitude: float | None = None
+        self._amp_op_1013: NDArray[np.complexfloating] | None = None
+
+    # ── Noise source setup ───────────────────────────────────────────
+
+    def setup_detuning_noise(self, sigma_detuning: float) -> None:
+        """Enable quasi-static Rydberg detuning noise.
+
+        Models laser-phase noise that shifts the Rydberg state energy
+        of **both** atoms by a random amount each shot.
+
+        Parameters
+        ----------
+        sigma_detuning : float
+            Standard deviation in **Hz**.
+        """
+        self._sigma_delta_rad = 2 * np.pi * sigma_detuning
+        n = self.system.n_levels
+        self._detuning_op = sum(
+            build_occ_operator(i, n) for i in self.system.rydberg_indices
+        )
+
+    def setup_position_noise(
+        self, sigma_pos_xyz: tuple[float, float, float],
+    ) -> None:
+        """Enable interatomic-distance fluctuation noise.
+
+        Each atom is displaced independently in 3-D; the resulting
+        change in distance modifies the van-der-Waals interaction.
+
+        Parameters
+        ----------
+        sigma_pos_xyz : tuple of 3 floats
+            Position standard deviations ``(σ_x, σ_y, σ_z)`` in **metres**.
+        """
+        self._sigma_pos_um = tuple(s * 1e6 for s in sigma_pos_xyz)
+        self._vdw_unit = build_vdw_unit_operator(
+            self.system.rydberg_indices, self.system.n_levels,
+        )
+        self._d_nominal = get_nominal_distance(self.system.param_set)
+        self._v_ryd_nominal = self.system.v_ryd
+        self._C_6 = self._v_ryd_nominal * self._d_nominal ** 6
+
+    def setup_rin_noise(self, sigma_local_rin: float) -> None:
+        """Enable 784-nm laser relative-intensity noise on Atom A.
+
+        RIN changes the AC Stark shift on Atom A's Rydberg states,
+        proportional to the local detuning magnitude.
+
+        Parameters
+        ----------
+        sigma_local_rin : float
+            Fractional RIN (e.g. 0.01 = 1 %).
+        """
+        from ryd_gate.protocols.local_sweep import SweepAddressingProtocol
+
+        self._sigma_local_rin = sigma_local_rin
+        n = self.system.n_levels
+        self._rin_op = sum(
+            build_atom_a_projector(i, n) for i in self.system.rydberg_indices
+        )
+        self._local_detuning_mag = (
+            abs(self.protocol.local_detuning_A)
+            if isinstance(self.protocol, SweepAddressingProtocol)
+            else 0.0
+        )
+
+    def setup_amplitude_noise(self, sigma_amplitude: float) -> None:
+        """Enable global Rabi-frequency (amplitude) fluctuation.
+
+        The 1013-nm coupling is perturbed via ``ham_const``;
+        the 420-nm coupling is scaled via ``amplitude_scale`` in
+        :func:`solve_gate`.
+
+        Parameters
+        ----------
+        sigma_amplitude : float
+            Fractional amplitude noise (e.g. 0.01 = 1 %).
+        """
+        self._sigma_amplitude = sigma_amplitude
+        self._amp_op_1013 = (
+            self.system.tq_ham_1013 + self.system.tq_ham_1013_conj
+        )
+
+    # ── Per-shot sampling ────────────────────────────────────────────
+
+    def _sample_perturbation(
+        self, rng: np.random.Generator,
+    ) -> "tuple[NDArray[np.complexfloating], float, dict]":
+        """Sample all enabled noise sources for one MC shot.
+
+        Returns
+        -------
+        ham_perturbed : ndarray
+            Perturbed constant Hamiltonian.
+        amplitude_scale : float
+            Multiplicative scale for the 420-nm laser amplitude.
+        samples : dict
+            Recorded noise samples (keys depend on enabled sources).
+        """
+        ham = self._ham_const_base.copy()
+        amplitude_scale = 1.0
+        samples: dict = {}
+
+        if self._sigma_delta_rad is not None:
+            delta_err = rng.normal(0, self._sigma_delta_rad)
+            ham += delta_err * self._detuning_op
+            samples["detuning"] = delta_err
+
+        if self._sigma_pos_um is not None:
+            sigmas = np.array(self._sigma_pos_um * 2)  # (sx,sy,sz,sx,sy,sz)
+            displacements = rng.normal(0, sigmas)
+            dx1, dy1, dz1, dx2, dy2, dz2 = displacements
+            d_new = np.sqrt(
+                (self._d_nominal + dx1 - dx2) ** 2
+                + (dy1 - dy2) ** 2
+                + (dz1 - dz2) ** 2
+            )
+            d_new = max(d_new, 0.1)
+            delta_v = self._C_6 / d_new ** 6 - self._v_ryd_nominal
+            ham += delta_v * self._vdw_unit
+            samples["distance"] = d_new
+
+        if (
+            self._sigma_local_rin is not None
+            and self._local_detuning_mag > 0
+        ):
+            rin_err = rng.normal(
+                0, self._sigma_local_rin * self._local_detuning_mag,
+            )
+            ham += rin_err * self._rin_op
+            samples["rin"] = rin_err
+
+        if self._sigma_amplitude is not None:
+            amp_err = rng.normal(0, self._sigma_amplitude)
+            ham += amp_err * self._amp_op_1013
+            amplitude_scale = 1.0 + amp_err
+            samples["amplitude"] = amp_err
+
+        return ham, amplitude_scale, samples
+
+    # ── Run modes ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _print_progress(label: str, shot: int, n_shots: int) -> None:
+        if n_shots < 5:
+            return
+        pct = (shot + 1) * 100 // n_shots
+        prev_pct = shot * 100 // n_shots
+        if shot == 0 or pct != prev_pct:
+            print(
+                f"\r  {label} {shot + 1}/{n_shots} ({pct}%)",
+                end="", flush=True,
+            )
+
+    def run_gate_fidelity(
         self,
-        x: list[float],
         n_shots: int = 1000,
-        sigma_detuning: float | None = None,
-        sigma_pos_xyz: tuple[float, float, float] | None = None,
         seed: int | None = None,
         compute_branching: bool = False,
     ) -> MonteCarloResult:
-        """Run MC simulation with per-shot Hamiltonian perturbations."""
-        # Use passed-in values or fall back to constructor values
-        sigma_det = sigma_detuning if sigma_detuning is not None else self.sigma_detuning
-        sigma_pos = sigma_pos_xyz if sigma_pos_xyz is not None else self.sigma_pos_xyz
+        """CZ gate mode: compute average gate infidelity per shot.
 
+        Returns
+        -------
+        MonteCarloResult
+        """
         rng = np.random.default_rng(seed)
 
-        sigma_delta_rad = (
-            2 * np.pi * sigma_det
-            if self.enable_rydberg_dephasing and sigma_det is not None
-            else None
-        )
-        use_position = (
-            self.enable_position_error and sigma_pos is not None
-        )
-
-        ham_vdw_unit = build_vdw_unit_operator()
-        original_ham_const = self.system.tq_ham_const
-        original_v_ryd = self.system.v_ryd
-        d_nominal = get_nominal_distance(self.system.param_set)
-        C_6 = original_v_ryd * d_nominal**6
-
-        if use_position:
-            sx_um, sy_um, sz_um = [s * 1e6 for s in sigma_pos]
-
         fidelities = np.zeros(n_shots)
-        detuning_samples = np.zeros(n_shots) if sigma_delta_rad else None
-        distance_samples = np.zeros(n_shots) if use_position else None
+        detuning_samples = (
+            np.zeros(n_shots) if self._sigma_delta_rad is not None else None
+        )
+        distance_samples = (
+            np.zeros(n_shots) if self._sigma_pos_um is not None else None
+        )
 
         if compute_branching:
             branch_xyz_arr = np.zeros(n_shots)
@@ -264,53 +424,21 @@ class MonteCarloEngine:
             branch_phase_arr = np.zeros(n_shots)
 
         for shot in range(n_shots):
-            if n_shots >= 5:
-                pct = (shot + 1) * 100 // n_shots
-                prev_pct = shot * 100 // n_shots
-                if shot == 0 or pct != prev_pct:
-                    print(
-                        f"\r  MC shot {shot + 1}/{n_shots} ({pct}%)",
-                        end="", flush=True,
-                    )
+            self._print_progress("MC shot", shot, n_shots)
 
-            # Build perturbed Hamiltonian without mutating system
-            ham_perturbed = original_ham_const.copy()
+            ham_perturbed, amplitude_scale, samples = self._sample_perturbation(rng)
 
-            if sigma_delta_rad is not None:
-                delta_err = rng.normal(0, sigma_delta_rad)
-                detuning_samples[shot] = delta_err
-                perturbation_sq = np.zeros((7, 7), dtype=np.complex128)
-                perturbation_sq[5, 5] = delta_err
-                perturbation_sq[6, 6] = delta_err
-                perturbation_tq = np.kron(np.eye(7), perturbation_sq) + np.kron(
-                    perturbation_sq, np.eye(7)
-                )
-                ham_perturbed = ham_perturbed + perturbation_tq
-
-            if use_position:
-                dx1 = rng.normal(0, sx_um)
-                dy1 = rng.normal(0, sy_um)
-                dz1 = rng.normal(0, sz_um)
-                dx2 = rng.normal(0, sx_um)
-                dy2 = rng.normal(0, sy_um)
-                dz2 = rng.normal(0, sz_um)
-                R0 = d_nominal
-                d_new = np.sqrt(
-                    (R0 + dx1 - dx2) ** 2
-                    + (dy1 - dy2) ** 2
-                    + (dz1 - dz2) ** 2
-                )
-                d_new = max(d_new, 0.1)
-                distance_samples[shot] = d_new
-                v_ryd_new = C_6 / d_new**6
-                delta_v = v_ryd_new - original_v_ryd
-                ham_perturbed = ham_perturbed + delta_v * ham_vdw_unit
+            if detuning_samples is not None and "detuning" in samples:
+                detuning_samples[shot] = samples["detuning"]
+            if distance_samples is not None and "distance" in samples:
+                distance_samples[shot] = samples["distance"]
 
             if compute_branching:
                 infidelity, residuals = average_gate_infidelity(
-                    self.system, self.protocol, x,
+                    self.system, self.protocol, self.x,
                     return_residuals=True,
                     ham_const_override=ham_perturbed,
+                    amplitude_scale=amplitude_scale,
                 )
                 fidelities[shot] = 1.0 - infidelity
                 branching = residuals_to_branching(self.system, residuals)
@@ -318,13 +446,15 @@ class MonteCarloEngine:
                 branch_al_arr[shot] = branching["AL"]
                 branch_lg_arr[shot] = branching["LG"]
                 branch_phase_arr[shot] = max(
-                    infidelity - (branching["XYZ"] + branching["AL"] + branching["LG"]),
+                    infidelity
+                    - (branching["XYZ"] + branching["AL"] + branching["LG"]),
                     0.0,
                 )
             else:
                 infidelity = average_gate_infidelity(
-                    self.system, self.protocol, x,
+                    self.system, self.protocol, self.x,
                     ham_const_override=ham_perturbed,
+                    amplitude_scale=amplitude_scale,
                 )
                 fidelities[shot] = 1.0 - infidelity
 
@@ -335,7 +465,7 @@ class MonteCarloEngine:
         std_fid = float(np.std(fidelities))
         infidelities = 1.0 - fidelities
 
-        kwargs = dict(
+        kwargs: dict = dict(
             mean_fidelity=mean_fid,
             std_fidelity=std_fid,
             mean_infidelity=float(np.mean(infidelities)),
@@ -363,6 +493,53 @@ class MonteCarloEngine:
             )
 
         return MonteCarloResult(**kwargs)
+
+    def run_states(
+        self,
+        initial_state: "NDArray[np.complexfloating]",
+        n_shots: int = 50,
+        seed: int | None = None,
+    ) -> "list[NDArray[np.complexfloating]]":
+        """State evolution mode: evolve a single initial state per shot.
+
+        Parameters
+        ----------
+        initial_state : ndarray
+            Two-atom initial state vector.
+        n_shots : int
+            Number of Monte Carlo shots.
+        seed : int or None
+            Random seed for reproducibility.
+
+        Returns
+        -------
+        list of ndarray
+            Final state vectors (one per shot).
+        """
+        from ryd_gate.solvers.schrodinger import solve_gate
+
+        rng = np.random.default_rng(seed)
+        final_states = []
+
+        for shot in range(n_shots):
+            self._print_progress("MC shot", shot, n_shots)
+
+            ham_perturbed, amplitude_scale, _ = self._sample_perturbation(rng)
+
+            psi_final = solve_gate(
+                self.system,
+                self.protocol,
+                self.x,
+                initial_state,
+                ham_const_override=ham_perturbed,
+                amplitude_scale=amplitude_scale,
+            )
+            final_states.append(psi_final)
+
+        if n_shots >= 5:
+            print(f"\r  MC done: {n_shots}/{n_shots} (100%)    ")
+
+        return final_states
 
 
 def run_monte_carlo_jax(
@@ -535,144 +712,3 @@ def run_monte_carlo_jax(
     )
 
 
-class AddressingMCEngine:
-    """Monte Carlo engine for local addressing experiments.
-
-    Applies quasi-static noise per-shot via :func:`solve_gate`:
-    - Global detuning error on Rydberg states of both atoms
-    - Local RIN error on Atom A's Rydberg states only
-    - Global amplitude noise on the two-photon drive (Omega fluctuations)
-
-    Parameters
-    ----------
-    system : AtomicSystem
-        Atomic system with precomputed Hamiltonians.
-    protocol : Protocol
-        Pulse protocol (e.g. :class:`SweepAddressingProtocol`).
-    x : list of float
-        Parameter vector for the protocol.
-    sigma_detuning : float
-        Standard deviation of global detuning noise (Hz).
-    sigma_local_rin : float
-        Relative intensity noise (fractional, e.g. 0.01 = 1%).
-    sigma_amplitude : float
-        Fractional amplitude noise on the global drive (e.g. 0.01 = 1%).
-        Models shot-to-shot Rabi frequency fluctuations.
-    """
-
-    def __init__(
-        self,
-        system: AtomicSystem,
-        protocol: Protocol,
-        x: list[float],
-        *,
-        sigma_detuning: float = 0.0,
-        sigma_local_rin: float = 0.0,
-        sigma_amplitude: float = 0.0,
-    ) -> None:
-        self.system = system
-        self.protocol = protocol
-        self.x = x
-        self.sigma_detuning = sigma_detuning
-        self.sigma_local_rin = sigma_local_rin
-        self.sigma_amplitude = sigma_amplitude
-
-        # Precompute noise operators
-        # Global detuning: shift Rydberg states of both atoms
-        detuning_sq = np.zeros((7, 7), dtype=np.complex128)
-        detuning_sq[5, 5] = 1.0
-        detuning_sq[6, 6] = 1.0
-        self._detuning_op = (
-            np.kron(np.eye(7), detuning_sq) + np.kron(detuning_sq, np.eye(7))
-        )
-
-        # Local RIN: shift Atom A's Rydberg states only
-        self._rin_op = build_atom_a_projector(5) + build_atom_a_projector(6)
-
-        # 1013nm amplitude noise operator (constant; the 420nm part is
-        # handled via amplitude_scale in solve_gate)
-        self._amp_op_1013 = system.tq_ham_1013 + system.tq_ham_1013_conj
-
-        # Base ham_const including any protocol-specific static additions
-        # (e.g. 784nm pinning + scattering for SweepAddressingProtocol)
-        self._ham_const_base = system.tq_ham_const.copy()
-        if hasattr(protocol, "get_ham_const_additions"):
-            self._ham_const_base = (
-                self._ham_const_base + protocol.get_ham_const_additions()
-            )
-
-    def run(
-        self,
-        initial_state: "NDArray[np.complexfloating]",
-        n_shots: int = 50,
-        seed: int | None = None,
-    ) -> "list[NDArray[np.complexfloating]]":
-        """Run MC simulation, returning list of final state vectors.
-
-        Parameters
-        ----------
-        initial_state : ndarray, shape (49,)
-            Two-atom initial state vector.
-        n_shots : int
-            Number of Monte Carlo shots.
-        seed : int or None
-            Random seed for reproducibility.
-
-        Returns
-        -------
-        list of ndarray
-            Final state vectors (one per shot).
-        """
-        from ryd_gate.protocols.local_sweep import SweepAddressingProtocol
-        from ryd_gate.solvers.schrodinger import solve_gate
-
-        rng = np.random.default_rng(seed)
-        sigma_delta_rad = 2 * np.pi * self.sigma_detuning
-        local_detuning_mag = abs(self.protocol.local_detuning_A) if isinstance(
-            self.protocol, SweepAddressingProtocol
-        ) else 0.0
-
-        final_states = []
-
-        for shot in range(n_shots):
-            if n_shots >= 5:
-                pct = (shot + 1) * 100 // n_shots
-                prev_pct = shot * 100 // n_shots
-                if shot == 0 or pct != prev_pct:
-                    print(
-                        f"\r  Addressing MC {shot + 1}/{n_shots} ({pct}%)",
-                        end="", flush=True,
-                    )
-
-            # Sample noise
-            delta_err = rng.normal(0, sigma_delta_rad) if self.sigma_detuning > 0 else 0.0
-            rin_err = (
-                rng.normal(0, self.sigma_local_rin * local_detuning_mag)
-                if self.sigma_local_rin > 0
-                else 0.0
-            )
-            amp_err = rng.normal(0, self.sigma_amplitude) if self.sigma_amplitude > 0 else 0.0
-
-            # Per-shot perturbed ham_const: detuning + RIN + 1013nm amplitude noise
-            ham_perturbed = (
-                self._ham_const_base
-                + delta_err * self._detuning_op
-                + rin_err * self._rin_op
-                + amp_err * self._amp_op_1013
-            )
-
-            # 420nm amplitude noise applied via amplitude_scale in solve_gate
-            psi_final = solve_gate(
-                self.system,
-                self.protocol,
-                self.x,
-                initial_state,
-                ham_const_override=ham_perturbed,
-                amplitude_scale=1.0 + amp_err,
-            )
-            final_states.append(psi_final)
-
-        if n_shots >= 5:
-            print(f"\r  Addressing MC done: {n_shots}/{n_shots} (100%)    ")
-
-        return final_states

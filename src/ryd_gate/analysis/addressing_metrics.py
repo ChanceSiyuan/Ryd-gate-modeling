@@ -22,21 +22,22 @@ class AddressingEvaluator:
     Parameters
     ----------
     final_states : list of ndarray
-        List of 49-D final state vectors (one per MC shot).
+        List of 9-D final state vectors (one per MC shot).
     """
 
     def __init__(self, final_states: list["NDArray[np.complexfloating]"]) -> None:
         self.final_states = final_states
         self._n_shots = len(final_states)
 
-        # Precompute projection operators
-        self._P_A1 = build_atom_a_projector(1)  # |1⟩⟨1| ⊗ I (Atom A in |1⟩)
-        self._P_Br = build_atom_b_projector(5)  # I ⊗ |r⟩⟨r| (Atom B in |r⟩)
+        # 3-level analog system: |g⟩=0, |e⟩=1, |r⟩=2
+        N = 3
+        self._P_A1 = build_atom_a_projector(0, n_levels=N)  # Atom A in |g⟩
+        self._P_Br = build_atom_b_projector(2, n_levels=N)   # Atom B in |r⟩
 
     def pinning_error(self) -> float:
-        """Probability Atom A failed to stay in the ground state |1⟩.
+        """Probability Atom A failed to stay in the ground state |g⟩.
 
-        Returns 1 - ⟨P_{A,1}⟩ averaged over MC shots.
+        Returns 1 - ⟨P_{A,g}⟩ averaged over MC shots.
         """
         total = 0.0
         for psi in self.final_states:

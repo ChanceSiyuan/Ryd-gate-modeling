@@ -2,7 +2,7 @@
 
 All new development should import from submodules directly::
 
-    from ryd_gate.core.atomic_system import create_atomic_system, AtomicSystem
+    from ryd_gate.core.atomic_system import create_our_system, AtomicSystem
     from ryd_gate.protocols.gate_cz_to import TOProtocol
     from ryd_gate.solvers.schrodinger import solve_gate
     from ryd_gate.analysis.gate_metrics import average_gate_infidelity
@@ -22,7 +22,8 @@ from ryd_gate.core.atomic_system import (
     build_occ_operator,
     build_sss_state_map,
     build_vdw_unit_operator,
-    create_atomic_system,
+    create_lukin_system,
+    create_our_system,
     get_nominal_distance,
 )
 from ryd_gate.protocols.base import Protocol
@@ -101,8 +102,7 @@ class CZGateSimulator:
             )
 
         # Create immutable atomic system
-        self._system: AtomicSystem = create_atomic_system(
-            param_set=param_set,
+        _factory_kwargs = dict(
             detuning_sign=detuning_sign,
             blackmanflag=blackmanflag,
             enable_rydberg_decay=enable_rydberg_decay,
@@ -110,6 +110,15 @@ class CZGateSimulator:
             enable_0_scattering=enable_0_scattering,
             enable_polarization_leakage=enable_polarization_leakage,
         )
+        if param_set == "our":
+            self._system: AtomicSystem = create_our_system(**_factory_kwargs)
+        elif param_set == "lukin":
+            self._system = create_lukin_system(**_factory_kwargs)
+        else:
+            raise ValueError(
+                f"CZGateSimulator only supports 'our' or 'lukin' systems, "
+                f"got '{param_set}'."
+            )
 
         # Create protocol object
         if strategy == "TO":
@@ -481,17 +490,17 @@ class CZGateSimulator:
         compute_branching: bool = False,
     ) -> MonteCarloResult:
         """Run quasi-static Monte Carlo simulation."""
-        engine = MonteCarloEngine(
-            self._system, self._protocol,
-            enable_rydberg_dephasing=self.enable_rydberg_dephasing,
-            enable_position_error=self.enable_position_error,
-            sigma_detuning=self.sigma_detuning,
-            sigma_pos_xyz=self.sigma_pos_xyz,
-        )
-        return engine.run(
-            x, n_shots=n_shots,
-            sigma_detuning=sigma_detuning,
-            sigma_pos_xyz=sigma_pos_xyz,
+        engine = MonteCarloEngine(self._system, self._protocol, x)
+        if self.enable_rydberg_dephasing:
+            sigma_det = sigma_detuning if sigma_detuning is not None else self.sigma_detuning
+            if sigma_det is not None:
+                engine.setup_detuning_noise(sigma_det)
+        if self.enable_position_error:
+            sigma_pos = sigma_pos_xyz if sigma_pos_xyz is not None else self.sigma_pos_xyz
+            if sigma_pos is not None:
+                engine.setup_position_noise(sigma_pos)
+        return engine.run_gate_fidelity(
+            n_shots=n_shots,
             seed=seed,
             compute_branching=compute_branching,
         )

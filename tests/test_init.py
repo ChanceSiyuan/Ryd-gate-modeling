@@ -38,6 +38,9 @@ class TestPackageImports:
 
         expected = {"CZGateSimulator", "MonteCarloResult",
                     "AtomicSystem", "Protocol",
+                    "create_our_system", "create_lukin_system",
+                    "create_analog_system", "compatible_protocols",
+                    "PROTOCOL_REGISTRY", "compute_shift_scatter",
                     "TOProtocol", "ARProtocol",
                     "SweepAddressingProtocol", "AddressingEvaluator",
                     "blackman_pulse", "blackman_pulse_sqrt", "blackman_window"}

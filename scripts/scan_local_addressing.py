@@ -21,11 +21,23 @@ import matplotlib.pyplot as plt
 from scipy.constants import pi
 
 from ryd_gate.analysis.local_addressing import (
-    LAMBDA_D2, LAMBDA_PAPER, BASELINE_DETUNING_HZ, BASELINE_RIN,
-    BASELINE_AMP, COMBINED_SCALE_MAX,
-    compute_shift_scatter, setup_system, make_protocol, default_sweep_x,
+    BASELINE_AMP,
+    BASELINE_DETUNING_HZ,
+    BASELINE_RIN,
+    COMBINED_SCALE_MAX,
+    DEFAULT_LOCAL_DETUNING,
+    DEFAULT_LOCAL_SCATTER,
+    default_sweep_x,
     evaluate_addressing,
 )
+from ryd_gate.core.atomic_system import (
+    LAMBDA_D2,
+    LAMBDA_PAPER,
+    build_sss_state_map,
+    compute_shift_scatter,
+    create_analog_system,
+)
+from ryd_gate.protocols.local_sweep import SweepAddressingProtocol
 
 FIGDIR = "docs/figures"
 
@@ -92,14 +104,18 @@ def cmd_wavelength(args):
         print("  Addressing Simulation at Sampled Wavelengths")
         print("=" * 60)
 
-        system, initial_state = setup_system()
+        system = create_analog_system(detuning_sign=1)
+        initial_state = build_sss_state_map(n_levels=3)["00"]
         x = default_sweep_x(system)
         sample_lams = np.arange(781.0, 786.5, 0.5)
         sample_shifts, sample_scatters = compute_shift_scatter(sample_lams)
 
         pin_errs, xtalk_errs, leak_errs = [], [], []
         for i, lam in enumerate(sample_lams):
-            protocol = make_protocol(2 * pi * sample_shifts[i], sample_scatters[i])
+            protocol = SweepAddressingProtocol(
+                local_detuning_A=2 * pi * sample_shifts[i],
+                local_scattering_rate=sample_scatters[i],
+            )
             pin, xtalk, leak = evaluate_addressing(
                 system, initial_state, protocol, x,
                 {"sigma_detuning": BASELINE_DETUNING_HZ}, args.n_mc, seed=42)
@@ -137,8 +153,12 @@ def cmd_noise(args):
     print("  Addressing Noise Sensitivity Scan")
     print("=" * 60)
 
-    system, initial_state = setup_system()
-    protocol = make_protocol()
+    system = create_analog_system(detuning_sign=1)
+    initial_state = build_sss_state_map(n_levels=3)["00"]
+    protocol = SweepAddressingProtocol(
+        local_detuning_A=DEFAULT_LOCAL_DETUNING,
+        local_scattering_rate=DEFAULT_LOCAL_SCATTER,
+    )
     x = default_sweep_x(system)
 
     scans = {

@@ -12,17 +12,129 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 from arc import Rubidium87
 from arc.wigner import CG
+from scipy.constants import c
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+# ======================================================================
+# ARC-DERIVED ATOMIC CONSTANTS (AC Stark shift physics)
+# ======================================================================
+
+_atom = Rubidium87()
+FREQ_D2: float = _atom.getTransitionFrequency(5, 0, 0.5, 5, 1, 1.5)
+FREQ_D1: float = _atom.getTransitionFrequency(5, 0, 0.5, 5, 1, 0.5)
+LAMBDA_D2: float = c / FREQ_D2 * 1e9   # nm
+LAMBDA_D1: float = c / FREQ_D1 * 1e9   # nm
+GAMMA_D2: float = 2 * np.pi * 6.065e6  # rad/s
+GAMMA_D1: float = 2 * np.pi * 5.746e6  # rad/s
+
+# Calibration reference (Manovitz et al.)
+LAMBDA_PAPER: float = 784.0                    # nm
+CALIBRATION_SHIFT_HZ: float = -12.2e6          # Hz at 160 uW
+CALIBRATION_SCATTER_HZ: float = 35.0           # Hz at 160 uW
+POWER_REF_UW: float = 160.0                    # uW reference power
+
+
+def _raw_shift_and_scatter(wavelengths_nm):
+    """Grimm formula for D1+D2 contributions (unnormalized, vectorized).
+
+    Parameters
+    ----------
+    wavelengths_nm : float or ndarray
+        Laser wavelength(s) in nm.
+
+    Returns
+    -------
+    shift, scatter : same shape as input, in consistent arbitrary units.
+    """
+    wavelengths_nm = np.asarray(wavelengths_nm, dtype=float)
+    omega = 2 * np.pi * c / (wavelengths_nm * 1e-9)
+
+    shift = np.zeros_like(omega)
+    scatter = np.zeros_like(omega)
+
+    for omega_line, Gamma_line, line_strength in [
+        (2 * np.pi * FREQ_D2, GAMMA_D2, 2.0 / 3.0),
+        (2 * np.pi * FREQ_D1, GAMMA_D1, 1.0 / 3.0),
+    ]:
+        Dr = omega_line - omega
+        Dc = omega_line + omega
+        shift += line_strength * Gamma_line / omega_line**3 * (1.0 / Dr + 1.0 / Dc)
+        scatter += (line_strength * Gamma_line**2 / omega_line**3
+                    * (omega / omega_line)**3 * (1.0 / Dr + 1.0 / Dc)**2)
+
+    return shift, scatter
+
+
+_s784, _sc784 = _raw_shift_and_scatter(LAMBDA_PAPER)
+_SHIFT_CAL: float = float(CALIBRATION_SHIFT_HZ / _s784)
+_SCATTER_CAL: float = float(CALIBRATION_SCATTER_HZ / _sc784)
+
+
+def compute_shift_scatter(wavelengths_nm):
+    """Calibrated AC Stark shift (Hz) and scattering rate (Hz).
+
+    Calibrated to the paper's measured values at 784 nm (160 uW, 1 um waist).
+    Accepts scalar or array input.
+
+    Returns
+    -------
+    shift_Hz, scatter_Hz : same shape as input.
+    """
+    s, sc = _raw_shift_and_scatter(wavelengths_nm)
+    return s * _SHIFT_CAL, sc * _SCATTER_CAL
+
+
+# ======================================================================
+# PROTOCOL-SYSTEM COMPATIBILITY REGISTRY
+# ======================================================================
+
+# Maps param_set names to the Protocol subclass names they support.
+# Uses strings (not class references) to avoid circular imports.
+PROTOCOL_REGISTRY: dict[str, list[str]] = {
+    "our":    ["TOProtocol", "ARProtocol"],
+    "lukin":  ["TOProtocol", "ARProtocol"],
+    "analog": ["SweepAddressingProtocol"],
+}
+
+
+def compatible_protocols(param_set: str) -> list[str]:
+    """Return protocol names compatible with the given system.
+
+    >>> compatible_protocols("our")
+    ['TOProtocol', 'ARProtocol']
+    >>> compatible_protocols("analog")
+    ['SweepAddressingProtocol']
+    """
+    if param_set not in PROTOCOL_REGISTRY:
+        raise ValueError(
+            f"Unknown system '{param_set}'. "
+            f"Available: {list(PROTOCOL_REGISTRY.keys())}"
+        )
+    return PROTOCOL_REGISTRY[param_set]
+
+
+def check_protocol_compatibility(
+    system: "AtomicSystem", protocol: object,
+) -> None:
+    """Raise ValueError if *protocol* is incompatible with *system*."""
+    allowed = PROTOCOL_REGISTRY.get(system.param_set, [])
+    proto_name = type(protocol).__name__
+    if proto_name not in allowed:
+        raise ValueError(
+            f"Protocol '{proto_name}' is not compatible with system "
+            f"'{system.param_set}'. Compatible protocols: {allowed}"
+        )
 
 
 @dataclass
 class AtomicSystem:
     """Container for Rb87 atomic parameters and precomputed Hamiltonians.
 
-    Created via :func:`create_atomic_system`. Holds all physical constants,
-    precomputed 49x49 Hamiltonians, decay rates, and branching ratios.
+    Created via :func:`create_our_system`, :func:`create_lukin_system`, or
+    :func:`create_analog_system`. Holds all physical constants,
+    precomputed Hamiltonians, decay rates, and branching ratios.
     """
 
     param_set: str
@@ -76,65 +188,30 @@ class AtomicSystem:
     enable_0_scattering: bool
     enable_polarization_leakage: bool
 
+    # Level structure
+    n_levels: int = 7
+    rydberg_indices: tuple[int, ...] = (5, 6)
+
 
 # ======================================================================
 # FACTORY FUNCTIONS
 # ======================================================================
 
 
-def create_atomic_system(
-    param_set: Literal["our", "lukin"] = "our",
-    detuning_sign: Literal[1, -1] = 1,
+
+
+def create_our_system(
+    detuning_sign: int = 1,
     blackmanflag: bool = True,
-    *,
     enable_rydberg_decay: bool = False,
     enable_intermediate_decay: bool = False,
     enable_0_scattering: bool = True,
     enable_polarization_leakage: bool = False,
 ) -> AtomicSystem:
-    """Create an AtomicSystem with precomputed Hamiltonians.
+    """Initialize 'our' lab experimental parameters (n=70 Rydberg).
 
-    Parameters
-    ----------
-    param_set : {'our', 'lukin'}
-        Physical parameter configuration.
-    detuning_sign : {1, -1}
-        Sign of intermediate detuning (+1 bright, -1 dark).
-    blackmanflag : bool
-        Whether to use Blackman pulse envelope.
-    enable_rydberg_decay : bool
-        Include Rydberg state decay as imaginary energy shifts.
-    enable_intermediate_decay : bool
-        Include intermediate state decay as imaginary energy shifts.
-    enable_0_scattering : bool
-        Include |0⟩ state AC Stark shift and scattering.
-    enable_polarization_leakage : bool
-        Include coupling to unwanted Rydberg state |r'⟩.
+    Compatible protocols: TOProtocol, ARProtocol.
     """
-    if param_set == "our":
-        return _create_our_system(
-            detuning_sign, blackmanflag,
-            enable_rydberg_decay, enable_intermediate_decay,
-            enable_0_scattering, enable_polarization_leakage,
-        )
-    elif param_set == "lukin":
-        return _create_lukin_system(
-            detuning_sign, blackmanflag,
-            enable_rydberg_decay, enable_intermediate_decay,
-            enable_0_scattering, enable_polarization_leakage,
-        )
-    else:
-        raise ValueError(
-            f"Unknown parameter set: '{param_set}'. Choose 'our' or 'lukin'."
-        )
-
-
-def _create_our_system(
-    detuning_sign, blackmanflag,
-    enable_rydberg_decay, enable_intermediate_decay,
-    enable_0_scattering, enable_polarization_leakage,
-) -> AtomicSystem:
-    """Initialize 'our' lab experimental parameters (n=70 Rydberg)."""
     atom = Rubidium87()
     ryd_level = 70
     Delta = detuning_sign * 2 * np.pi * 9.1e9
@@ -213,12 +290,18 @@ def _create_our_system(
     )
 
 
-def _create_lukin_system(
-    detuning_sign, blackmanflag,
-    enable_rydberg_decay, enable_intermediate_decay,
-    enable_0_scattering, enable_polarization_leakage,
+def create_lukin_system(
+    detuning_sign: int = 1,
+    blackmanflag: bool = True,
+    enable_rydberg_decay: bool = False,
+    enable_intermediate_decay: bool = False,
+    enable_0_scattering: bool = True,
+    enable_polarization_leakage: bool = False,
 ) -> AtomicSystem:
-    """Initialize 'lukin' (Harvard) experimental parameters (n=53 Rydberg)."""
+    """Initialize 'lukin' (Harvard) experimental parameters (n=53 Rydberg).
+
+    Compatible protocols: TOProtocol, ARProtocol.
+    """
     atom = Rubidium87()
     ryd_level = 53
     Delta = detuning_sign * 2 * np.pi * 7.8e9
@@ -292,6 +375,93 @@ def _create_lukin_system(
         enable_intermediate_decay=enable_intermediate_decay,
         enable_0_scattering=enable_0_scattering,
         enable_polarization_leakage=enable_polarization_leakage,
+    )
+
+
+def create_analog_system(
+    detuning_sign: int = 1,
+    blackmanflag: bool = True,
+    enable_rydberg_decay: bool = False,
+    enable_intermediate_decay: bool = False,
+) -> AtomicSystem:
+    """Initialize 3-level analog system for stretched-state quantum simulation.
+
+    Compatible protocols: SweepAddressingProtocol.
+
+    Level structure (single chain, unit CG prefactors):
+        |g⟩ = |5S₁/₂, F=2, m=-2⟩  (index 0)
+        |e⟩ = |6P₃/₂, F=3, m=-3⟩  (index 1)
+        |r⟩ = |70S₁/₂, m_J=-1/2⟩  (index 2)
+
+    Uses same physical constants as 'our' parameter set.
+    """
+    atom = Rubidium87()
+    ryd_level = 70
+    n = 3
+    Delta = detuning_sign * 2 * np.pi * 9.1e9
+    rabi_420 = 2 * np.pi * 491e6
+    rabi_1013 = 2 * np.pi * 491e6
+    rabi_eff = rabi_420 * rabi_1013 / (2 * abs(Delta))
+    time_scale = 2 * np.pi / rabi_eff
+
+    v_ryd = 2 * np.pi * 874e9 / 3**6
+    mid_state_decay_rate = 1 / 110.7e-9
+    ryd_state_decay_rate = 1 / 151.55e-6
+    ryd_RD_rate = 1 / 410.41e-6
+    ryd_BBR_rate = ryd_state_decay_rate - ryd_RD_rate
+
+    mid_decay = mid_state_decay_rate if enable_intermediate_decay else 0.0
+    ryd_decay = ryd_state_decay_rate if enable_rydberg_decay else 0.0
+
+    # H_const: 3x3 single-atom → 9x9 two-atom
+    ham_sq = np.zeros((n, n), dtype=np.complex128)
+    ham_sq[1, 1] = Delta - 1j * mid_decay / 2     # |e⟩
+    ham_sq[2, 2] = 0 - 1j * ryd_decay / 2         # |r⟩
+    ham_tq = np.kron(np.eye(n), ham_sq) + np.kron(ham_sq, np.eye(n))
+    # VdW: |r,r⟩ ↔ |r,r⟩
+    ryd_sq = np.zeros((n, n), dtype=np.complex128)
+    ryd_sq[2, 2] = 1.0
+    ham_tq += v_ryd * np.kron(ryd_sq, ryd_sq)
+    tq_ham_const = ham_tq
+
+    # H_1013: |r⟩⟨e| + h.c. (constant, RWA applied)
+    ham_sq = np.zeros((n, n), dtype=np.complex128)
+    ham_sq[2, 1] = rabi_1013 / 2   # CG = 1
+    tq_ham_1013 = np.kron(np.eye(n), ham_sq) + np.kron(ham_sq, np.eye(n))
+
+    # H_420: |e⟩⟨g| (phase-modulated by solve_gate)
+    ham_sq = np.zeros((n, n), dtype=np.complex128)
+    ham_sq[1, 0] = rabi_420 / 2    # CG = 1
+    tq_ham_420 = np.kron(np.eye(n), ham_sq) + np.kron(ham_sq, np.eye(n))
+
+    # No dark-state lightshift in 3-level system
+    tq_ham_lightshift_zero = np.zeros((n * n, n * n), dtype=np.complex128)
+
+    return AtomicSystem(
+        param_set="analog", ryd_level=ryd_level, atom=atom,
+        Delta=Delta, rabi_420=rabi_420, rabi_1013=rabi_1013,
+        rabi_eff=rabi_eff, time_scale=time_scale,
+        rabi_420_garbage=0.0, rabi_1013_garbage=0.0,
+        d_mid_ratio=0.0, d_ryd_ratio=0.0,
+        v_ryd=v_ryd, v_ryd_garb=0.0,
+        ryd_zeeman_shift=0.0, detuning_sign=detuning_sign,
+        mid_state_decay_rate=mid_state_decay_rate,
+        mid_garb_decay_rate=0.0,
+        ryd_state_decay_rate=ryd_state_decay_rate,
+        ryd_RD_rate=ryd_RD_rate, ryd_BBR_rate=ryd_BBR_rate,
+        ryd_garb_decay_rate=0.0,
+        ryd_branch={}, mid_branch={},
+        tq_ham_const=tq_ham_const, tq_ham_420=tq_ham_420,
+        tq_ham_1013=tq_ham_1013,
+        tq_ham_420_conj=tq_ham_420.conj().T,
+        tq_ham_1013_conj=tq_ham_1013.conj().T,
+        tq_ham_lightshift_zero=tq_ham_lightshift_zero,
+        t_rise=20e-9, blackmanflag=blackmanflag,
+        enable_rydberg_decay=enable_rydberg_decay,
+        enable_intermediate_decay=enable_intermediate_decay,
+        enable_0_scattering=False,
+        enable_polarization_leakage=False,
+        n_levels=3, rydberg_indices=(2,),
     )
 
 
@@ -587,7 +757,7 @@ def _mid_branching_ratios(atom, F, mF):
 # ======================================================================
 
 
-def build_occ_operator(index: int) -> "NDArray[np.complexfloating]":
+def build_occ_operator(index: int, n_levels: int = 7) -> "NDArray[np.complexfloating]":
     """Build occupation number operator for level `index`.
 
     Creates |i⟩⟨i| ⊗ I + I ⊗ |i⟩⟨i| for measuring total population
@@ -596,78 +766,82 @@ def build_occ_operator(index: int) -> "NDArray[np.complexfloating]":
     Parameters
     ----------
     index : int
-        Single-atom level index (0-6).
-
-    Returns
-    -------
-    ndarray
-        Occupation operator of shape (49, 49).
+        Single-atom level index.
+    n_levels : int
+        Number of single-atom levels (default 7).
     """
-    oper_tq = np.zeros((49, 49), dtype=np.complex128)
-    oper_sq = np.zeros((7, 7), dtype=np.complex128)
-    oper_sq[index][index] = 1
-    oper_tq = oper_tq + np.kron(np.eye(7), oper_sq)
-    oper_tq = oper_tq + np.kron(oper_sq, np.eye(7))
+    oper_sq = np.zeros((n_levels, n_levels), dtype=np.complex128)
+    oper_sq[index, index] = 1
+    oper_tq = np.kron(np.eye(n_levels), oper_sq) + np.kron(oper_sq, np.eye(n_levels))
     return oper_tq
 
 
-def build_sss_state_map() -> "dict[str, NDArray[np.complexfloating]]":
-    """Build mapping from state labels to 49-dimensional state vectors."""
-    s0 = np.array([1, 0, 0, 0, 0, 0, 0], dtype=complex)
-    s1 = np.array([0, 1, 0, 0, 0, 0, 0], dtype=complex)
+def build_sss_state_map(n_levels: int = 7) -> "dict[str, NDArray[np.complexfloating]]":
+    """Build mapping from state labels to two-atom state vectors.
+
+    Parameters
+    ----------
+    n_levels : int
+        Number of single-atom levels (default 7).
+        For n_levels=3, only product states "00","01","10","11" are returned
+        (indices 0 and 1 of the 3-level basis).
+    """
+    s0 = np.zeros(n_levels, dtype=complex)
+    s0[0] = 1.0
+    s1 = np.zeros(n_levels, dtype=complex)
+    s1[1] = 1.0
     state_00 = np.kron(s0, s0)
     state_01 = np.kron(s0, s1)
     state_10 = np.kron(s1, s0)
     state_11 = np.kron(s1, s1)
-    return {
+    states: dict[str, NDArray[np.complexfloating]] = {
         "00": state_00,
         "01": state_01,
         "10": state_10,
         "11": state_11,
-        "SSS-0": 0.5 * state_00 + 0.5 * state_01 + 0.5 * state_10 + 0.5 * state_11,
-        "SSS-1": 0.5 * state_00 - 0.5 * state_01 - 0.5 * state_10 + 0.5 * state_11,
-        "SSS-2": 0.5 * state_00 + 0.5j * state_01 + 0.5j * state_10 - 0.5 * state_11,
-        "SSS-3": 0.5 * state_00 - 0.5j * state_01 - 0.5j * state_10 - 0.5 * state_11,
-        "SSS-4": state_00,
-        "SSS-5": state_11,
-        "SSS-6": 0.5 * state_00 + 0.5 * state_01 + 0.5 * state_10 - 0.5 * state_11,
-        "SSS-7": 0.5 * state_00 - 0.5 * state_01 - 0.5 * state_10 - 0.5 * state_11,
-        "SSS-8": 0.5 * state_00 + 0.5j * state_01 + 0.5j * state_10 + 0.5 * state_11,
-        "SSS-9": 0.5 * state_00 - 0.5j * state_01 - 0.5j * state_10 + 0.5 * state_11,
-        "SSS-10": state_00 / np.sqrt(2) + 1j * state_11 / np.sqrt(2),
-        "SSS-11": state_00 / np.sqrt(2) - 1j * state_11 / np.sqrt(2),
     }
+    if n_levels >= 7:
+        states.update({
+            "SSS-0": 0.5 * state_00 + 0.5 * state_01 + 0.5 * state_10 + 0.5 * state_11,
+            "SSS-1": 0.5 * state_00 - 0.5 * state_01 - 0.5 * state_10 + 0.5 * state_11,
+            "SSS-2": 0.5 * state_00 + 0.5j * state_01 + 0.5j * state_10 - 0.5 * state_11,
+            "SSS-3": 0.5 * state_00 - 0.5j * state_01 - 0.5j * state_10 - 0.5 * state_11,
+            "SSS-4": state_00,
+            "SSS-5": state_11,
+            "SSS-6": 0.5 * state_00 + 0.5 * state_01 + 0.5 * state_10 - 0.5 * state_11,
+            "SSS-7": 0.5 * state_00 - 0.5 * state_01 - 0.5 * state_10 - 0.5 * state_11,
+            "SSS-8": 0.5 * state_00 + 0.5j * state_01 + 0.5j * state_10 + 0.5 * state_11,
+            "SSS-9": 0.5 * state_00 - 0.5j * state_01 - 0.5j * state_10 + 0.5 * state_11,
+            "SSS-10": state_00 / np.sqrt(2) + 1j * state_11 / np.sqrt(2),
+            "SSS-11": state_00 / np.sqrt(2) - 1j * state_11 / np.sqrt(2),
+        })
+    return states
 
 
-def build_vdw_unit_operator() -> "NDArray[np.complexfloating]":
+def build_vdw_unit_operator(
+    rydberg_indices: tuple[int, ...] = (5, 6), n_levels: int = 7,
+) -> "NDArray[np.complexfloating]":
     """Build the unit van der Waals interaction operator."""
-    ham_vdw_mat = np.zeros((7, 7))
-    ham_vdw_mat[5][5] = 1
-    ham_vdw_mat_garb = np.zeros((7, 7))
-    ham_vdw_mat_garb[6][6] = 1
-    return np.kron(
-        ham_vdw_mat + ham_vdw_mat_garb, ham_vdw_mat + ham_vdw_mat_garb
-    )
+    ryd_proj = np.zeros((n_levels, n_levels), dtype=np.complex128)
+    for i in rydberg_indices:
+        ryd_proj[i, i] = 1.0
+    return np.kron(ryd_proj, ryd_proj)
 
 
-def build_atom_a_projector(index: int) -> "NDArray[np.complexfloating]":
-    """Build |i⟩⟨i| ⊗ I₇ — projects Atom A (left) onto level index."""
-    sq = np.zeros((7, 7), dtype=np.complex128)
+def build_atom_a_projector(index: int, n_levels: int = 7) -> "NDArray[np.complexfloating]":
+    """Build |i⟩⟨i| ⊗ I — projects Atom A (left) onto level index."""
+    sq = np.zeros((n_levels, n_levels), dtype=np.complex128)
     sq[index, index] = 1
-    return np.kron(sq, np.eye(7, dtype=np.complex128))
+    return np.kron(sq, np.eye(n_levels, dtype=np.complex128))
 
 
-def build_atom_b_projector(index: int) -> "NDArray[np.complexfloating]":
-    """Build I₇ ⊗ |i⟩⟨i| — projects Atom B (right) onto level index."""
-    sq = np.zeros((7, 7), dtype=np.complex128)
+def build_atom_b_projector(index: int, n_levels: int = 7) -> "NDArray[np.complexfloating]":
+    """Build I ⊗ |i⟩⟨i| — projects Atom B (right) onto level index."""
+    sq = np.zeros((n_levels, n_levels), dtype=np.complex128)
     sq[index, index] = 1
-    return np.kron(np.eye(7, dtype=np.complex128), sq)
+    return np.kron(np.eye(n_levels, dtype=np.complex128), sq)
 
 
 def get_nominal_distance(param_set: str) -> float:
     """Get the nominal interatomic distance in μm."""
-    if param_set == "our":
-        return 3.0
-    elif param_set == "lukin":
-        return 3.0
     return 3.0
