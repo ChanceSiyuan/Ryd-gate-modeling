@@ -64,7 +64,7 @@ class TestCZGateSimulatorInit:
         """CZGateSimulator should raise ValueError for invalid param_set."""
         from ryd_gate.ideal_cz import CZGateSimulator
 
-        with pytest.raises(ValueError, match="Unknown parameter set"):
+        with pytest.raises(ValueError, match="only supports 'our' or 'lukin'"):
             CZGateSimulator(param_set="invalid")
 
     def test_invalid_strategy_in_optimize(self, sim_to_our):

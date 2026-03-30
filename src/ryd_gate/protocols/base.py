@@ -6,6 +6,9 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
+
     from ryd_gate.core.atomic_system import AtomicSystem
 
 
@@ -63,4 +66,8 @@ class Protocol(ABC):
 
     def get_optimization_bounds(self) -> tuple | None:
         """Return bounds for optimisation, or None if not applicable."""
+        return None
+
+    def get_ham_const_additions(self) -> "NDArray[np.complexfloating] | None":
+        """Extra time-independent Hamiltonian terms, or None."""
         return None

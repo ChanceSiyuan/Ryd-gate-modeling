@@ -33,11 +33,11 @@ print(f"  Peak Rydberg population:      {ryd_pop.max():.4f}")
 
 print("\n--- Direct module imports ---")
 
-from ryd_gate.core.atomic_system import create_atomic_system
+from ryd_gate.core.atomic_system import create_our_system
 from ryd_gate.protocols.gate_cz_to import TOProtocol
 from ryd_gate.analysis.gate_metrics import average_gate_infidelity
 
-system = create_atomic_system(param_set="our")
+system = create_our_system()
 protocol = TOProtocol()
 infidelity_direct = average_gate_infidelity(system, protocol, X_TO)
 print(f"TO gate infidelity (direct): {infidelity_direct:.2e}")

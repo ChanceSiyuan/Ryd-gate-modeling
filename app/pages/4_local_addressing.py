@@ -13,11 +13,25 @@ import streamlit as st
 from scipy.constants import pi
 
 from ryd_gate.analysis.local_addressing import (
-    LAMBDA_D2, LAMBDA_D1, LAMBDA_PAPER, POWER_REF_UW,
-    BASELINE_DETUNING_HZ, BASELINE_RIN, BASELINE_AMP, COMBINED_SCALE_MAX,
-    compute_shift_scatter, setup_system, make_protocol, default_sweep_x,
+    BASELINE_AMP,
+    BASELINE_DETUNING_HZ,
+    BASELINE_RIN,
+    COMBINED_SCALE_MAX,
+    DEFAULT_LOCAL_DETUNING,
+    DEFAULT_LOCAL_SCATTER,
+    default_sweep_x,
     evaluate_addressing,
 )
+from ryd_gate.core.atomic_system import (
+    LAMBDA_D1,
+    LAMBDA_D2,
+    LAMBDA_PAPER,
+    POWER_REF_UW,
+    build_sss_state_map,
+    compute_shift_scatter,
+    create_analog_system,
+)
+from ryd_gate.protocols.local_sweep import SweepAddressingProtocol
 
 st.set_page_config(page_title="Local Addressing", layout="wide", page_icon="\u269b")
 st.title("Local Addressing Analysis")
@@ -32,7 +46,11 @@ shift and ~35 Hz scattering.
 
 # ── Cached helpers ──────────────────────────────────────────────────────
 
-_setup_system_cached = st.cache_resource(setup_system)
+@st.cache_resource
+def _setup_system_cached():
+    system = create_analog_system(detuning_sign=1)
+    initial_state = build_sss_state_map(n_levels=3)["00"]
+    return system, initial_state
 
 
 @st.cache_data
@@ -159,7 +177,10 @@ with tab_mc:
         for k, lam in enumerate(sample_lams):
             progress.progress((k + 1) / len(sample_lams),
                                text=f"Simulating {lam:.1f} nm...")
-            protocol = make_protocol(2 * pi * sample_shifts[k], sample_scatters[k])
+            protocol = SweepAddressingProtocol(
+                local_detuning_A=2 * pi * sample_shifts[k],
+                local_scattering_rate=sample_scatters[k],
+            )
             pin, xtalk, leak = evaluate_addressing(
                 system, initial_state, protocol, x,
                 {"sigma_detuning": mc_sigma_det * 1e3},
@@ -239,7 +260,10 @@ with tab_noise:
 
     if run_noise:
         system, initial_state = _setup_system_cached()
-        protocol = make_protocol()
+        protocol = SweepAddressingProtocol(
+            local_detuning_A=DEFAULT_LOCAL_DETUNING,
+            local_scattering_rate=DEFAULT_LOCAL_SCATTER,
+        )
         x = default_sweep_x(system)
 
         scans = {

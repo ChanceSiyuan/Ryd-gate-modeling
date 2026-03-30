@@ -52,13 +52,13 @@ class SweepAddressingProtocol(Protocol):
         self.local_detuning_A = local_detuning_A
         self.local_scattering_rate = local_scattering_rate
 
-        # Precompute local addressing operators (time-independent)
+        # 3-level analog system: |g⟩=0, |e⟩=1, |r⟩=2
+        N = 3
         self._H_local_pinning: NDArray[np.complexfloating] = (
-            -self.local_detuning_A * build_atom_a_projector(5)
-            + (-self.local_detuning_A) * build_atom_a_projector(6)
+            -self.local_detuning_A * build_atom_a_projector(2, n_levels=N)
         )
         self._H_local_scatter: NDArray[np.complexfloating] = (
-            -1j * self.local_scattering_rate / 2 * build_atom_a_projector(1)
+            -1j * self.local_scattering_rate / 2 * build_atom_a_projector(0, n_levels=N)
         )
 
     # -- Protocol interface ------------------------------------------------

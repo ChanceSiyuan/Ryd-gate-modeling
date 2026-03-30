@@ -27,6 +27,7 @@ def average_gate_infidelity(
     x: list[float],
     return_residuals: bool = False,
     ham_const_override: "NDArray[np.complexfloating] | None" = None,
+    amplitude_scale: float = 1.0,
 ) -> "float | tuple[float, dict[str, float]]":
     """Compute average gate infidelity using the Nielsen formula.
 
@@ -45,6 +46,8 @@ def average_gate_infidelity(
         If True, return (infidelity, residuals_dict).
     ham_const_override : ndarray or None
         Perturbed Hamiltonian for MC shots.
+    amplitude_scale : float
+        Multiplicative scale on 420nm laser amplitude (default 1.0).
 
     Returns
     -------
@@ -53,6 +56,8 @@ def average_gate_infidelity(
     """
     params = protocol.unpack_params(x, system)
     theta = params["theta"]
+
+    solve_kw = dict(ham_const_override=ham_const_override, amplitude_scale=amplitude_scale)
 
     if return_residuals:
         occ_ops = {
@@ -68,7 +73,7 @@ def average_gate_infidelity(
     ini_state_00 = np.kron(
         [1 + 0j, 0, 0, 0, 0, 0, 0], [1 + 0j, 0, 0, 0, 0, 0, 0]
     )
-    res = solve_gate(system, protocol, x, ini_state_00, ham_const_override=ham_const_override)
+    res = solve_gate(system, protocol, x, ini_state_00, **solve_kw)
     a00 = ini_state_00.conj().dot(res.T)
 
     if return_residuals:
@@ -79,7 +84,7 @@ def average_gate_infidelity(
     ini_state = np.kron(
         [1 + 0j, 0, 0, 0, 0, 0, 0], [0, 1 + 0j, 0, 0, 0, 0, 0]
     )
-    res = solve_gate(system, protocol, x, ini_state, ham_const_override=ham_const_override)
+    res = solve_gate(system, protocol, x, ini_state, **solve_kw)
     a01 = np.exp(-1.0j * theta) * ini_state.conj().dot(res.T)
 
     if return_residuals:
@@ -90,7 +95,7 @@ def average_gate_infidelity(
     ini_state = np.kron(
         [0, 1 + 0j, 0, 0, 0, 0, 0], [0, 1 + 0j, 0, 0, 0, 0, 0]
     )
-    res = solve_gate(system, protocol, x, ini_state, ham_const_override=ham_const_override)
+    res = solve_gate(system, protocol, x, ini_state, **solve_kw)
     a11 = np.exp(-2.0j * theta - 1.0j * np.pi) * ini_state.conj().dot(res.T)
 
     if return_residuals:
