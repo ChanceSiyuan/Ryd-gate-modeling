@@ -29,6 +29,10 @@ dev = [
     "sphinx-rtd-theme",
     "myst-parser",
 ]
+app = [
+    "streamlit>=1.30",
+    "plotly>=5.18",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

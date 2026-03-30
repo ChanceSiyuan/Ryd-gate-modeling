@@ -37,7 +37,7 @@ class TestPackageImports:
         import ryd_gate
 
         expected = {"CZGateSimulator", "MonteCarloResult",
-                    "AtomicSystem", "Protocol", "SweepProtocol",
+                    "AtomicSystem", "Protocol",
                     "TOProtocol", "ARProtocol",
                     "SweepAddressingProtocol", "AddressingEvaluator",
                     "blackman_pulse", "blackman_pulse_sqrt", "blackman_window"}

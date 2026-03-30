@@ -1,14 +1,12 @@
 """Generate PDF error budget tables combining deterministic and MC results.
 
-Loads pre-computed data from data/ directory. Produces one PDF per
-detuning sign.
+Loads pre-computed data from data/ directory, or generates it inline.
+Produces one PDF per detuning sign.
 
 Usage:
-    uv run python scripts/generate_si_tables.py [--recompute]
-
-Prerequisites:
-    Run generate_mc_data.py and generate_det_data.py first,
-    or pass --recompute to compute deterministic data on the fly.
+    uv run python scripts/generate_si_tables.py
+    uv run python scripts/generate_si_tables.py --recompute
+    uv run python scripts/generate_si_tables.py --generate-mc --n-mc-shots 100
 """
 import argparse
 import datetime
@@ -135,14 +133,56 @@ def compute_deterministic_errors(sign, x):
     return errors
 
 
+SIGMA_POS = (70e-9, 70e-9, 130e-9)  # meters
+SIGMA_DETUNING = 130e3  # Hz
+
+
 def load_mc_results(label):
     """Load MC results from data/ directory."""
     results = {}
     for key in ("dephasing", "position", "all"):
         path = f"data/mc_{label}_{key}.txt"
         if not Path(path).exists():
-            raise FileNotFoundError(f"{path} not found. Run generate_mc_data.py first.")
+            raise FileNotFoundError(
+                f"{path} not found. Use --generate-mc to compute inline.")
         results[key] = MonteCarloResult.load_from_file(path)
+    return results
+
+
+def generate_mc_results(sign, label, x, n_shots=1000, seed=42):
+    """Run MC simulations for dephasing, position, and all-combined."""
+    Path("data").mkdir(exist_ok=True)
+
+    scenarios = [
+        ("dephasing", f"Dephasing ({SIGMA_DETUNING/1e3:.0f} kHz)", {
+            "enable_rydberg_dephasing": True,
+        }, {"sigma_detuning": SIGMA_DETUNING}),
+        ("position", "Position error (70,70,130 nm)", {
+            "enable_position_error": True,
+        }, {"sigma_pos_xyz": SIGMA_POS}),
+        ("all", "All errors combined", {
+            "enable_rydberg_decay": True,
+            "enable_intermediate_decay": True,
+            "enable_polarization_leakage": True,
+            "enable_rydberg_dephasing": True,
+            "enable_position_error": True,
+        }, {"sigma_detuning": SIGMA_DETUNING, "sigma_pos_xyz": SIGMA_POS}),
+    ]
+
+    results = {}
+    for i, (key, desc, sim_kw, mc_kw) in enumerate(scenarios, 1):
+        print(f"  [{i}/{len(scenarios)}] {desc}...")
+        sim = CZGateSimulator(
+            param_set="our", strategy="TO",
+            blackmanflag=True, detuning_sign=sign, **sim_kw,
+        )
+        results[key] = sim.run_monte_carlo_simulation(
+            x, n_shots=n_shots, seed=seed + i - 1,
+            compute_branching=True, **mc_kw,
+        )
+        results[key].save_to_file(f"data/mc_{label}_{key}.txt")
+
+    print(f"  Saved to data/mc_{label}_*.txt")
     return results
 
 
@@ -269,7 +309,13 @@ def render_pdf(rows, title, output_path, footnotes=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--recompute", action="store_true",
-                        help="Recompute deterministic errors (slow) instead of loading cached data")
+                        help="Recompute deterministic errors instead of loading cached data")
+    parser.add_argument("--generate-mc", action="store_true",
+                        help="Generate MC data inline instead of loading from data/")
+    parser.add_argument("--n-mc-shots", type=int, default=1000,
+                        help="Number of MC shots when using --generate-mc (default: 1000)")
+    parser.add_argument("--mc-seed", type=int, default=42,
+                        help="RNG seed for MC generation (default: 42)")
     args = parser.parse_args()
 
     for sign, label, x in [
@@ -289,8 +335,13 @@ def main():
             print(f"\nLoading deterministic errors from {det_path}")
             det = load_deterministic_errors(det_path)
 
-        print("\nLoading MC results:")
-        mc = load_mc_results(label)
+        if args.generate_mc:
+            print("\nGenerating MC results:")
+            mc = generate_mc_results(sign, label, x,
+                                     n_shots=args.n_mc_shots, seed=args.mc_seed)
+        else:
+            print("\nLoading MC results:")
+            mc = load_mc_results(label)
 
         rows, footnotes = build_table_rows(det, mc)
         render_pdf(rows, f"Error Budget: {label.capitalize()} Detuning", f"scripts/SI_Tables_{label}.pdf", footnotes=footnotes)
