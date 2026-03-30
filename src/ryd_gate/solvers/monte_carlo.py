@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from ryd_gate.core.atomic_system import AtomicSystem
-    from ryd_gate.protocols.base import Protocol, SweepProtocol
+    from ryd_gate.protocols.base import Protocol
 
 
 @dataclass
@@ -538,34 +538,44 @@ def run_monte_carlo_jax(
 class AddressingMCEngine:
     """Monte Carlo engine for local addressing experiments.
 
-    Applies quasi-static noise per-shot:
+    Applies quasi-static noise per-shot via :func:`solve_gate`:
     - Global detuning error on Rydberg states of both atoms
     - Local RIN error on Atom A's Rydberg states only
+    - Global amplitude noise on the two-photon drive (Omega fluctuations)
 
     Parameters
     ----------
     system : AtomicSystem
         Atomic system with precomputed Hamiltonians.
-    protocol : SweepProtocol
-        Sweep addressing protocol.
+    protocol : Protocol
+        Pulse protocol (e.g. :class:`SweepAddressingProtocol`).
+    x : list of float
+        Parameter vector for the protocol.
     sigma_detuning : float
         Standard deviation of global detuning noise (Hz).
     sigma_local_rin : float
         Relative intensity noise (fractional, e.g. 0.01 = 1%).
+    sigma_amplitude : float
+        Fractional amplitude noise on the global drive (e.g. 0.01 = 1%).
+        Models shot-to-shot Rabi frequency fluctuations.
     """
 
     def __init__(
         self,
         system: AtomicSystem,
-        protocol: SweepProtocol,
+        protocol: Protocol,
+        x: list[float],
         *,
         sigma_detuning: float = 0.0,
         sigma_local_rin: float = 0.0,
+        sigma_amplitude: float = 0.0,
     ) -> None:
         self.system = system
         self.protocol = protocol
+        self.x = x
         self.sigma_detuning = sigma_detuning
         self.sigma_local_rin = sigma_local_rin
+        self.sigma_amplitude = sigma_amplitude
 
         # Precompute noise operators
         # Global detuning: shift Rydberg states of both atoms
@@ -578,6 +588,18 @@ class AddressingMCEngine:
 
         # Local RIN: shift Atom A's Rydberg states only
         self._rin_op = build_atom_a_projector(5) + build_atom_a_projector(6)
+
+        # 1013nm amplitude noise operator (constant; the 420nm part is
+        # handled via amplitude_scale in solve_gate)
+        self._amp_op_1013 = system.tq_ham_1013 + system.tq_ham_1013_conj
+
+        # Base ham_const including any protocol-specific static additions
+        # (e.g. 784nm pinning + scattering for SweepAddressingProtocol)
+        self._ham_const_base = system.tq_ham_const.copy()
+        if hasattr(protocol, "get_ham_const_additions"):
+            self._ham_const_base = (
+                self._ham_const_base + protocol.get_ham_const_additions()
+            )
 
     def run(
         self,
@@ -602,7 +624,7 @@ class AddressingMCEngine:
             Final state vectors (one per shot).
         """
         from ryd_gate.protocols.local_sweep import SweepAddressingProtocol
-        from ryd_gate.solvers.schrodinger import evolve
+        from ryd_gate.solvers.schrodinger import solve_gate
 
         rng = np.random.default_rng(seed)
         sigma_delta_rad = 2 * np.pi * self.sigma_detuning
@@ -629,17 +651,24 @@ class AddressingMCEngine:
                 if self.sigma_local_rin > 0
                 else 0.0
             )
+            amp_err = rng.normal(0, self.sigma_amplitude) if self.sigma_amplitude > 0 else 0.0
 
-            # Build per-shot noise Hamiltonian (added to protocol's H(t))
-            H_noise = delta_err * self._detuning_op + rin_err * self._rin_op
+            # Per-shot perturbed ham_const: detuning + RIN + 1013nm amplitude noise
+            ham_perturbed = (
+                self._ham_const_base
+                + delta_err * self._detuning_op
+                + rin_err * self._rin_op
+                + amp_err * self._amp_op_1013
+            )
 
-            def hamiltonian_fn(t, _H_noise=H_noise):
-                return self.protocol.get_hamiltonian(t, self.system) + _H_noise
-
-            psi_final = evolve(
-                hamiltonian_fn,
-                self.protocol.t_gate,
+            # 420nm amplitude noise applied via amplitude_scale in solve_gate
+            psi_final = solve_gate(
+                self.system,
+                self.protocol,
+                self.x,
                 initial_state,
+                ham_const_override=ham_perturbed,
+                amplitude_scale=1.0 + amp_err,
             )
             final_states.append(psi_final)
 

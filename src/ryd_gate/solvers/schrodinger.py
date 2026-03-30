@@ -28,6 +28,7 @@ def solve_gate(
     state_mat: "NDArray[np.complexfloating]",
     t_eval: "NDArray[np.floating] | None" = None,
     ham_const_override: "NDArray[np.complexfloating] | None" = None,
+    amplitude_scale: float = 1.0,
 ) -> "NDArray[np.complexfloating]":
     """Evolve a quantum state under the Schrödinger equation.
 
@@ -45,6 +46,9 @@ def solve_gate(
         Times to store solution. None returns only final state.
     ham_const_override : ndarray or None
         If provided, use instead of system.tq_ham_const (for MC perturbations).
+    amplitude_scale : float
+        Multiplicative scale factor on the 420nm laser amplitude.
+        Models quasi-static Rabi frequency fluctuations (default 1.0).
 
     Returns
     -------
@@ -61,6 +65,7 @@ def solve_gate(
         phase = protocol.phase_420(t, params)
         phase_conj = np.conjugate(phase)
         amplitude = blackman_pulse(t, system.t_rise, t_gate) if system.blackmanflag else 1
+        amplitude *= amplitude_scale
 
         H = (
             ham_static
