@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from run_local_sweep import _evolve, _joint_populations, _rydberg_pops  # noqa: E402
 
 from ryd_gate.core.atomic_system import build_sss_state_map, create_analog_system
-from ryd_gate.protocols.local_sweep import SweepAddressingProtocol
+from ryd_gate.protocols.sweep import SweepProtocol
 from ryd_gate.solvers.schrodinger import solve_gate
 
 N = 3
@@ -75,10 +75,9 @@ class TestRabiBlockade:
         t_rabi = n_cycles * system.time_scale
         x_rabi = [0.0, 0.0, t_rabi / system.time_scale]
 
-        proto_free = SweepAddressingProtocol(local_detuning_A=0.0,
-                                               local_scattering_rate=0.0)
-        proto_addr = SweepAddressingProtocol(local_detuning_A=LOCAL_DETUNING,
-                                              local_scattering_rate=LOCAL_SCATTER)
+        proto_free = SweepProtocol()
+        proto_addr = SweepProtocol(addressing={0: LOCAL_DETUNING},
+                                    scatter_rate=LOCAL_SCATTER)
 
         t1, psi1 = _evolve(system, proto_free, x_rabi, initial_state)
         prA1, prB1 = _rydberg_pops(psi1)
@@ -142,10 +141,9 @@ class TestAdiabaticSweep:
             DELTA_END / system.rabi_eff,
             T_GATE / system.time_scale,
         ]
-        proto_free = SweepAddressingProtocol(local_detuning_A=0.0,
-                                               local_scattering_rate=0.0)
-        proto_addr = SweepAddressingProtocol(local_detuning_A=LOCAL_DETUNING,
-                                              local_scattering_rate=LOCAL_SCATTER)
+        proto_free = SweepProtocol()
+        proto_addr = SweepProtocol(addressing={0: LOCAL_DETUNING},
+                                    scatter_rate=LOCAL_SCATTER)
 
         psi_free = _solve_final(system, proto_free, x_sweep, initial_state)
         pops_free = _joint_populations(psi_free)

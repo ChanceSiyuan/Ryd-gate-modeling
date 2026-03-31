@@ -37,7 +37,7 @@ from ryd_gate.core.atomic_system import (
     compute_shift_scatter,
     create_analog_system,
 )
-from ryd_gate.protocols.local_sweep import SweepAddressingProtocol
+from ryd_gate.protocols.sweep import SweepProtocol
 
 FIGDIR = "docs/figures"
 
@@ -112,9 +112,9 @@ def cmd_wavelength(args):
 
         pin_errs, xtalk_errs, leak_errs = [], [], []
         for i, lam in enumerate(sample_lams):
-            protocol = SweepAddressingProtocol(
-                local_detuning_A=2 * pi * sample_shifts[i],
-                local_scattering_rate=sample_scatters[i],
+            protocol = SweepProtocol(
+                addressing={0: 2 * pi * sample_shifts[i]},
+                scatter_rate=sample_scatters[i],
             )
             pin, xtalk, leak = evaluate_addressing(
                 system, initial_state, protocol, x,
@@ -155,9 +155,9 @@ def cmd_noise(args):
 
     system = create_analog_system(detuning_sign=1)
     initial_state = build_sss_state_map(n_levels=3)["00"]
-    protocol = SweepAddressingProtocol(
-        local_detuning_A=DEFAULT_LOCAL_DETUNING,
-        local_scattering_rate=DEFAULT_LOCAL_SCATTER,
+    protocol = SweepProtocol(
+        addressing={0: DEFAULT_LOCAL_DETUNING},
+        scatter_rate=DEFAULT_LOCAL_SCATTER,
     )
     x = default_sweep_x(system)
 

@@ -46,7 +46,7 @@ def evaluate_addressing(system, initial_state, protocol, x, engine_kwargs,
         The 3-level analog system.
     initial_state : ndarray
         Two-atom initial state vector (e.g. |g,g⟩).
-    protocol : SweepAddressingProtocol
+    protocol : SweepProtocol
         Protocol instance with pinning parameters.
     x : list of float
         Parameter vector for the protocol.

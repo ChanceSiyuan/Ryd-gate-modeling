@@ -31,7 +31,7 @@ from ryd_gate.core.atomic_system import (
     compute_shift_scatter,
     create_analog_system,
 )
-from ryd_gate.protocols.local_sweep import SweepAddressingProtocol
+from ryd_gate.protocols.sweep import SweepProtocol
 
 st.set_page_config(page_title="Local Addressing", layout="wide", page_icon="\u269b")
 st.title("Local Addressing Analysis")
@@ -177,9 +177,9 @@ with tab_mc:
         for k, lam in enumerate(sample_lams):
             progress.progress((k + 1) / len(sample_lams),
                                text=f"Simulating {lam:.1f} nm...")
-            protocol = SweepAddressingProtocol(
-                local_detuning_A=2 * pi * sample_shifts[k],
-                local_scattering_rate=sample_scatters[k],
+            protocol = SweepProtocol(
+                addressing={0: 2 * pi * sample_shifts[k]},
+                scatter_rate=sample_scatters[k],
             )
             pin, xtalk, leak = evaluate_addressing(
                 system, initial_state, protocol, x,
@@ -260,9 +260,9 @@ with tab_noise:
 
     if run_noise:
         system, initial_state = _setup_system_cached()
-        protocol = SweepAddressingProtocol(
-            local_detuning_A=DEFAULT_LOCAL_DETUNING,
-            local_scattering_rate=DEFAULT_LOCAL_SCATTER,
+        protocol = SweepProtocol(
+            addressing={0: DEFAULT_LOCAL_DETUNING},
+            scatter_rate=DEFAULT_LOCAL_SCATTER,
         )
         x = default_sweep_x(system)
 

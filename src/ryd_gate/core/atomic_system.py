@@ -93,9 +93,10 @@ def compute_shift_scatter(wavelengths_nm):
 # Maps param_set names to the Protocol subclass names they support.
 # Uses strings (not class references) to avoid circular imports.
 PROTOCOL_REGISTRY: dict[str, list[str]] = {
-    "our":    ["TOProtocol", "ARProtocol"],
-    "lukin":  ["TOProtocol", "ARProtocol"],
-    "analog": ["SweepAddressingProtocol"],
+    "our":     ["TOProtocol", "ARProtocol"],
+    "lukin":   ["TOProtocol", "ARProtocol"],
+    "analog":  ["SweepProtocol"],
+    "lattice": ["SweepProtocol"],
 }
 
 
@@ -105,7 +106,7 @@ def compatible_protocols(param_set: str) -> list[str]:
     >>> compatible_protocols("our")
     ['TOProtocol', 'ARProtocol']
     >>> compatible_protocols("analog")
-    ['SweepAddressingProtocol']
+    ['SweepProtocol']
     """
     if param_set not in PROTOCOL_REGISTRY:
         raise ValueError(
@@ -386,7 +387,7 @@ def create_analog_system(
 ) -> AtomicSystem:
     """Initialize 3-level analog system for stretched-state quantum simulation.
 
-    Compatible protocols: SweepAddressingProtocol.
+    Compatible protocols: SweepProtocol.
 
     Level structure (single chain, unit CG prefactors):
         |g⟩ = |5S₁/₂, F=2, m=-2⟩  (index 0)
@@ -462,6 +463,77 @@ def create_analog_system(
         enable_0_scattering=False,
         enable_polarization_leakage=False,
         n_levels=3, rydberg_indices=(2,),
+    )
+
+
+# ======================================================================
+# LATTICE SYSTEM (N-atom, 2-level)
+# ======================================================================
+
+
+@dataclass(frozen=True)
+class LatticeSystem:
+    """N-atom 2-level lattice system with precomputed sparse operators.
+
+    Created via :func:`create_lattice_system`. Holds geometry, interaction
+    parameters, and precomputed sparse Hamiltonian components.
+
+    Compatible protocols: SweepProtocol.
+    """
+
+    param_set: str
+    Lx: int
+    Ly: int
+    N: int
+    coords: np.ndarray             # (N, 2) grid coordinates
+    sublattice: np.ndarray         # (N,) checkerboard signs ±1
+    vdw_pairs: tuple               # ((i, j, V_rel), ...)
+    V_nn: float                    # NN interaction strength
+    Omega: float                   # global Rabi frequency
+
+    # Precomputed sparse operators (dim = 2^N)
+    sum_X: object                  # csc_matrix: Σ_i σ^x_i
+    sum_n: object                  # csc_matrix: Σ_i n_i
+    n_list: list                   # [csc_matrix, ...] per-site occupation
+    H_vdw: object                  # csc_matrix: VdW interaction (diagonal)
+
+
+def create_lattice_system(
+    Lx: int = 3,
+    Ly: int = 3,
+    V_nn: float = 24.0,
+    Omega: float = 1.0,
+) -> LatticeSystem:
+    """Build a 2-level square lattice system with precomputed operators.
+
+    Compatible protocols: SweepProtocol.
+
+    Parameters
+    ----------
+    Lx, Ly : int
+        Lattice dimensions.
+    V_nn : float
+        Nearest-neighbor VdW interaction strength.
+    Omega : float
+        Global Rabi frequency.
+    """
+    from ryd_gate.lattice.geometry import make_square_lattice
+    from ryd_gate.lattice.operators import build_operators
+
+    sq = make_square_lattice(Lx, Ly)
+    ops = build_operators(sq.N, sq.vdw_pairs, V_nn)
+
+    return LatticeSystem(
+        param_set="lattice",
+        Lx=Lx, Ly=Ly, N=sq.N,
+        coords=sq.coords,
+        sublattice=sq.sublattice,
+        vdw_pairs=sq.vdw_pairs,
+        V_nn=V_nn, Omega=Omega,
+        sum_X=ops["sum_X"],
+        sum_n=ops["sum_n"],
+        n_list=ops["n_list"],
+        H_vdw=ops["H_vdw"],
     )
 
 
