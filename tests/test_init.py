@@ -42,7 +42,9 @@ class TestPackageImports:
                     "create_analog_system", "compatible_protocols",
                     "PROTOCOL_REGISTRY", "compute_shift_scatter",
                     "TOProtocol", "ARProtocol",
-                    "SweepAddressingProtocol", "AddressingEvaluator",
+                    "SweepProtocol",
+                    "LatticeSystem", "create_lattice_system",
+                    "AddressingEvaluator",
                     "blackman_pulse", "blackman_pulse_sqrt", "blackman_window"}
         assert set(ryd_gate.__all__) == expected
 

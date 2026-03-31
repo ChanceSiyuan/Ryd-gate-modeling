@@ -294,18 +294,13 @@ class MonteCarloEngine:
         sigma_local_rin : float
             Fractional RIN (e.g. 0.01 = 1 %).
         """
-        from ryd_gate.protocols.local_sweep import SweepAddressingProtocol
-
         self._sigma_local_rin = sigma_local_rin
         n = self.system.n_levels
         self._rin_op = sum(
             build_atom_a_projector(i, n) for i in self.system.rydberg_indices
         )
-        self._local_detuning_mag = (
-            abs(self.protocol.local_detuning_A)
-            if isinstance(self.protocol, SweepAddressingProtocol)
-            else 0.0
-        )
+        addr = getattr(self.protocol, "addressing", {})
+        self._local_detuning_mag = abs(addr.get(0, 0.0))
 
     def setup_amplitude_noise(self, sigma_amplitude: float) -> None:
         """Enable global Rabi-frequency (amplitude) fluctuation.

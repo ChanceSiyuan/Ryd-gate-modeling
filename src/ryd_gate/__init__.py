@@ -7,9 +7,11 @@ from .blackman import blackman_pulse, blackman_pulse_sqrt, blackman_window
 from .core.atomic_system import (
     PROTOCOL_REGISTRY,
     AtomicSystem,
+    LatticeSystem,
     compatible_protocols,
     compute_shift_scatter,
     create_analog_system,
+    create_lattice_system,
     create_lukin_system,
     create_our_system,
 )
@@ -17,15 +19,17 @@ from .ideal_cz import CZGateSimulator, MonteCarloResult
 from .protocols.base import Protocol
 from .protocols.gate_cz_ar import ARProtocol
 from .protocols.gate_cz_to import TOProtocol
-from .protocols.local_sweep import SweepAddressingProtocol
+from .protocols.sweep import SweepProtocol
 
 __all__ = [
     "CZGateSimulator",
     "MonteCarloResult",
     "AtomicSystem",
+    "LatticeSystem",
     "create_our_system",
     "create_lukin_system",
     "create_analog_system",
+    "create_lattice_system",
     "compatible_protocols",
     "PROTOCOL_REGISTRY",
     "compute_shift_scatter",
@@ -33,7 +37,7 @@ __all__ = [
 
     "TOProtocol",
     "ARProtocol",
-    "SweepAddressingProtocol",
+    "SweepProtocol",
     "AddressingEvaluator",
     "blackman_pulse",
     "blackman_pulse_sqrt",

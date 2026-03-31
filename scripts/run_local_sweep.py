@@ -25,7 +25,7 @@ from ryd_gate.core.atomic_system import (
     build_sss_state_map,
     create_analog_system,
 )
-from ryd_gate.protocols.local_sweep import SweepAddressingProtocol
+from ryd_gate.protocols.sweep import SweepProtocol
 from ryd_gate.solvers.schrodinger import solve_gate
 
 N = 3  # 3-level system: |g⟩=0, |e⟩=1, |r⟩=2
@@ -103,10 +103,9 @@ def figure_rabi_dynamics(system, initial_state):
     t_rabi = n_cycles * system.time_scale
     x_rabi = [0.0, 0.0, t_rabi / system.time_scale]  # resonant, no chirp
 
-    protocol_free = SweepAddressingProtocol(local_detuning_A=0.0,
-                                              local_scattering_rate=0.0)
-    protocol_addr = SweepAddressingProtocol(local_detuning_A=LOCAL_DETUNING,
-                                             local_scattering_rate=LOCAL_SCATTER)
+    protocol_free = SweepProtocol()
+    protocol_addr = SweepProtocol(addressing={0: LOCAL_DETUNING},
+                                   scatter_rate=LOCAL_SCATTER)
 
     # (a) No pinning — blockade active
     t1, psi1 = _evolve(system, protocol_free, x_rabi, initial_state)
@@ -159,10 +158,9 @@ def figure_rabi_dynamics(system, initial_state):
 
 def figure_final_populations(system, initial_state):
     """Two side-by-side bar charts of final {|gg⟩,|gr⟩,|rg⟩,|rr⟩}."""
-    protocol_free = SweepAddressingProtocol(local_detuning_A=0.0,
-                                              local_scattering_rate=0.0)
-    protocol_addr = SweepAddressingProtocol(local_detuning_A=LOCAL_DETUNING,
-                                             local_scattering_rate=LOCAL_SCATTER)
+    protocol_free = SweepProtocol()
+    protocol_addr = SweepProtocol(addressing={0: LOCAL_DETUNING},
+                                   scatter_rate=LOCAL_SCATTER)
     x_sweep = [
         DELTA_START / system.rabi_eff,
         DELTA_END / system.rabi_eff,

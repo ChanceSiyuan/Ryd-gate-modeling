@@ -48,3 +48,41 @@ def domain_config(coords, sublattice, domain_center, domain_radius):
         if is_in_domain(ix, iy, cx, cy, domain_radius):
             config[i] = 1 if sublattice[i] < 0 else 0
     return config
+
+
+# ── 3-level state preparation ────────────────────────────────────────
+
+
+def product_state_3level(config, N):
+    """Create a 3-level computational basis product state.
+
+    Parameters
+    ----------
+    config : array-like of {0, 1, 2}
+        Per-site level: 0=|g⟩, 1=|e⟩, 2=|r⟩.
+    N : int
+        Number of atoms.
+    """
+    config = np.asarray(config, dtype=int)
+    dim = 3**N
+    idx = 0
+    for i in range(N):
+        idx = idx * 3 + config[i]
+    psi = np.zeros(dim, dtype=complex)
+    psi[idx] = 1.0
+    return psi
+
+
+def ground_state(N):
+    """All atoms in |g⟩ (3-level)."""
+    return product_state_3level([0] * N, N)
+
+
+def checkerboard_rydberg(sublattice, which=1):
+    """Checkerboard with |r⟩ on one sublattice, |g⟩ on the other (3-level)."""
+    N = len(sublattice)
+    if which == 1:
+        config = np.where(sublattice > 0, 2, 0)
+    else:
+        config = np.where(sublattice < 0, 2, 0)
+    return product_state_3level(config, N)
