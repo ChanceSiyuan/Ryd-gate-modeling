@@ -33,7 +33,7 @@ from ryd_gate.analysis.local_addressing import (
 from ryd_gate.core.atomic_system import (
     LAMBDA_D2,
     LAMBDA_PAPER,
-    build_sss_state_map,
+    build_product_state_map,
     compute_shift_scatter,
     create_analog_system,
 )
@@ -105,7 +105,7 @@ def cmd_wavelength(args):
         print("=" * 60)
 
         system = create_analog_system(detuning_sign=1)
-        initial_state = build_sss_state_map(n_levels=3)["00"]
+        initial_state = build_product_state_map(n_levels=3)["gg"]
         x = default_sweep_x(system)
         sample_lams = np.arange(781.0, 786.5, 0.5)
         sample_shifts, sample_scatters = compute_shift_scatter(sample_lams)
@@ -154,7 +154,7 @@ def cmd_noise(args):
     print("=" * 60)
 
     system = create_analog_system(detuning_sign=1)
-    initial_state = build_sss_state_map(n_levels=3)["00"]
+    initial_state = build_product_state_map(n_levels=3)["gg"]
     protocol = SweepProtocol(
         addressing={0: DEFAULT_LOCAL_DETUNING},
         scatter_rate=DEFAULT_LOCAL_SCATTER,

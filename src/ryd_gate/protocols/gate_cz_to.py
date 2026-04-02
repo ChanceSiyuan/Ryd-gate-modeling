@@ -45,6 +45,8 @@ class TOProtocol(Protocol):
             "delta": x[3] * system.rabi_eff,
             "theta": x[4],
             "t_gate": x[5] * system.time_scale,
+            "t_rise": system.t_rise,
+            "blackmanflag": system.blackmanflag,
         }
 
     def phase_420(self, t: float, params: dict) -> complex:
@@ -52,6 +54,22 @@ class TOProtocol(Protocol):
             -1j * (params["phase_amp"] * np.cos(params["omega"] * t + params["phase_init"])
                    + params["delta"] * t)
         )
+
+    def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
+        """Return drive coefficients including Blackman amplitude envelope."""
+        from ryd_gate.blackman import blackman_pulse
+
+        phase = self.phase_420(t, params)
+        amplitude = (
+            blackman_pulse(t, params["t_rise"], params["t_gate"])
+            if params.get("blackmanflag", True)
+            else 1.0
+        )
+        return {
+            "drive_420": amplitude * phase,
+            "drive_420_dag": amplitude * np.conjugate(phase),
+            "lightshift_zero": amplitude * amplitude,
+        }
 
     def get_optimization_bounds(self) -> tuple:
         return (

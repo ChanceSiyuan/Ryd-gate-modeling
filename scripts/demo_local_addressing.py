@@ -25,14 +25,17 @@ import time as _time
 import numpy as np
 import matplotlib.pyplot as plt
 
+from ryd_gate import create_lattice_system, SweepProtocol, simulate
+from ryd_gate.analysis.coarsening import (
+    build_neighbor_lists,
+    coarsegrained_boundary_mask,
+    correct_single_spin_flips,
+    identify_domains,
+    local_staggered_magnetization,
+)
 from ryd_gate.lattice import (
-    build_hamiltonian,
-    build_operators,
     domain_config,
-    evolve_constant_H,
-    evolve_sweep,
     is_in_domain,
-    make_square_lattice,
     measure_from_states,
     precompute_bit_masks,
     product_state,
@@ -53,11 +56,12 @@ OMEGA_RAMP_FRAC = 0.1 # fraction of sweep for Omega ramp-up
 # ---------------------------------------------------------------------------
 
 def _setup_experiment(Lx, Ly):
-    """Build lattice, operators, and bit masks (shared by both experiments)."""
-    lattice = make_square_lattice(Lx, Ly)
-    ops = build_operators(lattice.N, lattice.vdw_pairs, V_NN, verbose=True)
-    bit_masks = precompute_bit_masks(lattice.N)
-    return lattice, ops, bit_masks
+    """Build lattice system and bit masks (shared by both experiments)."""
+    system = create_lattice_system(Lx=Lx, Ly=Ly, V_nn=V_NN, Omega=1.0)
+    bit_masks = precompute_bit_masks(system.N)
+    print(f"  Built {Lx}x{Ly} lattice system ({system.N} atoms, "
+          f"dim = {2**system.N})")
+    return system, bit_masks
 
 
 # ---------------------------------------------------------------------------
@@ -70,8 +74,10 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
     print("Experiment 1: Domain Shrinking (curvature-driven coarsening)")
     print("=" * 60)
 
-    lattice, ops, bit_masks = setup or _setup_experiment(Lx, Ly)
-    N, coords, sublattice = lattice.N, lattice.coords, lattice.sublattice
+    system, bit_masks = setup or _setup_experiment(Lx, Ly)
+    N = system.N
+    coords = system.coords
+    sublattice = system.sublattice
 
     Delta_f = 2.5
     cx, cy = (Lx - 1) / 2.0, (Ly - 1) / 2.0
@@ -81,12 +87,21 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
     print("\n  Phase 1: Adiabatic sweep with local pinning...")
     psi0 = product_state([0] * N, N)
     target = domain_config(coords, sublattice, (cx, cy), domain_radius)
-    pin_deltas = np.where(target == 0, DELTA_PIN, 0.0)
+    addressing = {i: DELTA_PIN for i in range(N) if target[i] == 0}
+
+    sweep_proto = SweepProtocol(
+        addressing=addressing,
+        omega_ramp_frac=OMEGA_RAMP_FRAC,
+        n_steps=min(n_steps, 40),
+    )
 
     t0 = _time.time()
-    psi_after_sweep = evolve_sweep(
-        psi0, DELTA_START, Delta_f, T_SWEEP,
-        min(n_steps, 40), pin_deltas, ops, OMEGA_RAMP_FRAC)
+    sweep_result = simulate(
+        system, sweep_proto,
+        [DELTA_START, Delta_f, T_SWEEP],
+        psi0,
+    )
+    psi_after_sweep = sweep_result.psi_final
     print(f"    Sweep done in {_time.time() - t0:.1f}s")
 
     ms_sw, n_sw, _ = measure_from_states(psi_after_sweep, bit_masks, sublattice)
@@ -96,11 +111,17 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
     # --- Phase 2: Free evolution (hold) ---
     print("  Phase 2: Free evolution (pinning off)...")
     t_hold = 6.0
-    H_hold = build_hamiltonian(1.0, Delta_f, np.zeros(N), ops)
 
+    hold_proto = SweepProtocol(n_steps=n_steps)
     t0 = _time.time()
-    hold_times, hold_states = evolve_constant_H(
-        psi_after_sweep, H_hold, t_hold, n_steps)
+    hold_result = simulate(
+        system, hold_proto,
+        [Delta_f, Delta_f, t_hold],
+        psi_after_sweep,
+        t_eval=np.linspace(0, t_hold, n_steps),
+    )
+    hold_times = hold_result.times
+    hold_states = hold_result.states
     print(f"    Hold evolution done in {_time.time() - t0:.1f}s")
 
     print("  Computing observables...")
@@ -113,45 +134,134 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
             domain_weight[i] = 1.0 if sublattice[i] < 0 else -1.0
     domain_areas = occ_all @ domain_weight + np.sum(domain_weight < 0)
 
-    # --- Plotting ---
-    os.makedirs(figdir, exist_ok=True)
-    fig, axes = plt.subplots(2, 3, figsize=(14, 8))
+    # --- Post-processing: both methods ---
+    print("  Post-processing (coarsening analysis)...")
+    nn_lists, nnn_lists = build_neighbor_lists(coords)
 
-    snap_indices = [0, len(hold_times) // 4, len(hold_times) - 1]
-    for col, idx in enumerate(snap_indices):
-        ax = axes[0, col]
-        local_ms = sublattice * (2 * occ_all[idx] - 1)
-        im = ax.imshow(local_ms.reshape(Lx, Ly), cmap='RdBu', vmin=-1, vmax=1,
-                       origin='lower', interpolation='nearest')
-        ax.set_title(f't = {hold_times[idx]:.1f} / $\\Omega$')
+    # Pick the final snapshot for the comparison figure
+    snap_idx = len(hold_times) - 1
+    occ_raw = occ_all[snap_idx]            # continuous expectation values
+    occ_bin = (occ_raw > 0.5).astype(float)  # binary threshold
+
+    # ms.tex pipeline: continuous m_i on raw data
+    m_local = local_staggered_magnetization(occ_bin, sublattice, nn_lists)
+
+    # coarsen.tex pipeline: spin-flip correction then convolution
+    occ_corr = correct_single_spin_flips(occ_bin, sublattice, nn_lists, nnn_lists)
+    flipped_mask = (occ_corr != occ_bin)
+    C_vals, is_boundary = coarsegrained_boundary_mask(occ_corr, Lx, Ly)
+    labels = identify_domains(occ_corr, sublattice, nn_lists)
+    n_domains = len(np.unique(labels))
+    print(f"    Flipped sites: {int(flipped_mask.sum())}, "
+          f"Boundary sites: {int(is_boundary.sum())}, Domains: {n_domains}")
+
+    # ------------------------------------------------------------------ #
+    #  Figure 1: ms.tex vs coarsen.tex comparison (2 rows x 2 cols)      #
+    # ------------------------------------------------------------------ #
+    os.makedirs(figdir, exist_ok=True)
+
+    def _draw_lattice(ax, coords, values, cmap, vmin, vmax, labels_arr=None,
+                      fmt='.1f', title='', highlight=None):
+        """Draw lattice sites as circles, colored by values, annotated."""
+        xs = coords[:, 1]  # y-coord -> horizontal
+        ys = coords[:, 0]  # x-coord -> vertical
+        sc = ax.scatter(xs, ys, c=values, cmap=cmap, vmin=vmin, vmax=vmax,
+                        s=700, edgecolors='k', linewidths=1.0, zorder=2)
+        if highlight is not None:
+            idx_h = np.where(highlight)[0]
+            ax.scatter(xs[idx_h], ys[idx_h], s=700, facecolors='none',
+                       edgecolors='magenta', linewidths=3, zorder=3)
+        if labels_arr is not None:
+            for i in range(len(coords)):
+                val = labels_arr[i]
+                txt = f'{val:{fmt}}' if isinstance(val, float) else str(val)
+                ax.annotate(txt, (xs[i], ys[i]), ha='center', va='center',
+                            fontsize=7, fontweight='bold', zorder=4)
+        ax.set_xlim(-0.6, max(xs) + 0.6)
+        ax.set_ylim(-0.6, max(ys) + 0.6)
+        ax.set_aspect('equal')
+        ax.set_title(title, fontsize=10)
         ax.set_xlabel('y')
         ax.set_ylabel('x')
-    fig.colorbar(im, ax=axes[0, :], label='Local staggered mag.',
-                 shrink=0.6, pad=0.02)
+        return sc
 
-    axes[1, 0].plot(hold_times, ms, 'b-', lw=1.5)
-    axes[1, 0].set_xlabel('Hold time ($1/\\Omega$)')
-    axes[1, 0].set_ylabel('$m_s$')
-    axes[1, 0].set_title('Staggered magnetization')
-    axes[1, 0].axhline(0, color='gray', ls='--', lw=0.5)
+    fig, axes = plt.subplots(2, 2, figsize=(12, 11))
 
-    axes[1, 1].plot(hold_times, domain_areas, 'r-', lw=1.5)
-    axes[1, 1].set_xlabel('Hold time ($1/\\Omega$)')
-    axes[1, 1].set_ylabel('Domain area (sites)')
-    axes[1, 1].set_title('Central domain area')
+    # (0,0): ms.tex -- raw occupation n_i
+    _draw_lattice(axes[0, 0], coords, occ_bin, 'coolwarm', 0, 1,
+                  labels_arr=occ_bin.astype(float), fmt='.0f',
+                  title=r'(a) Raw $n_i$ [ms.tex input]')
 
-    axes[1, 2].plot(hold_times, n_mean, 'g-', lw=1.5)
-    axes[1, 2].set_xlabel('Hold time ($1/\\Omega$)')
-    axes[1, 2].set_ylabel('$\\langle n \\rangle$')
-    axes[1, 2].set_title('Mean Rydberg fraction')
+    # (1,0): ms.tex -- continuous m_i
+    sc = _draw_lattice(axes[1, 0], coords, m_local, 'RdBu', -1, 1,
+                       labels_arr=m_local, fmt='.2f',
+                       title=r'(b) $m_i = (-1)^{x+y}(n_i - C_i/N_i)$ [ms.tex]')
+    fig.colorbar(sc, ax=axes[1, 0], label=r'$m_i$', shrink=0.85)
 
-    fig.suptitle(f'Domain Shrinking Demo ({Lx}x{Ly} lattice, '
-                 f'$\\Delta/\\Omega$ = {Delta_f:.1f})', fontsize=14)
-    fig.subplots_adjust(top=0.88, hspace=0.35, wspace=0.3)
-    path = os.path.join(figdir, 'demo_domain_shrinking.png')
+    # (0,1): coarsen.tex -- corrected occupation (flipped sites highlighted)
+    _draw_lattice(axes[0, 1], coords, occ_corr, 'coolwarm', 0, 1,
+                  labels_arr=occ_corr.astype(float), fmt='.0f',
+                  highlight=flipped_mask,
+                  title=r'(c) After spin-flip correction [coarsen.tex]'
+                  '\n(magenta = flipped)')
+
+    # (1,1): coarsen.tex -- bulk vs boundary classification
+    # Encode: 0 = AF1 bulk, 1 = AF2 bulk, 2 = boundary
+    af_type = sublattice * (2 * occ_corr - 1)  # +1 = AF1, -1 = AF2
+    class_map = np.where(is_boundary, 2, np.where(af_type > 0, 0, 1)).astype(float)
+    import matplotlib.colors as mcolors
+    cmap_class = mcolors.ListedColormap(['#2196F3', '#FF9800', '#E53935'])
+    bounds = [-0.5, 0.5, 1.5, 2.5]
+    norm_class = mcolors.BoundaryNorm(bounds, cmap_class.N)
+    _draw_lattice(axes[1, 1], coords, class_map, cmap_class, -0.5, 2.5,
+                  labels_arr=None,
+                  title='(d) Bulk/boundary classification [coarsen.tex]')
+    # Legend for classification
+    from matplotlib.patches import Patch
+    legend_elems = [Patch(facecolor='#2196F3', label='AF1 bulk'),
+                    Patch(facecolor='#FF9800', label='AF2 bulk'),
+                    Patch(facecolor='#E53935', label='Boundary')]
+    axes[1, 1].legend(handles=legend_elems, loc='upper right', fontsize=7,
+                      framealpha=0.9)
+
+    fig.suptitle(f'Post-processing comparison  ({Lx}x{Ly},  '
+                 f't = {hold_times[snap_idx]:.1f}/$\\Omega$,  '
+                 f'$\\Delta/\\Omega$ = {Delta_f:.1f})',
+                 fontsize=13)
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    path = os.path.join(figdir, 'demo_postprocessing_comparison.png')
     fig.savefig(path, dpi=150)
-    print(f"\n  Figure saved to {path}")
+    print(f"\n  Comparison figure saved to {path}")
     plt.close(fig)
+
+    # ------------------------------------------------------------------ #
+    #  Figure 2: Time-series observables                                  #
+    # ------------------------------------------------------------------ #
+    fig2, axes2 = plt.subplots(1, 3, figsize=(15, 4))
+
+    axes2[0].plot(hold_times, ms, 'b-', lw=1.5)
+    axes2[0].set_xlabel('Hold time ($1/\\Omega$)')
+    axes2[0].set_ylabel('$m_s$')
+    axes2[0].set_title('Staggered magnetization')
+    axes2[0].axhline(0, color='gray', ls='--', lw=0.5)
+
+    axes2[1].plot(hold_times, domain_areas, 'r-', lw=1.5)
+    axes2[1].set_xlabel('Hold time ($1/\\Omega$)')
+    axes2[1].set_ylabel('Domain area (sites)')
+    axes2[1].set_title('Central domain area')
+
+    axes2[2].plot(hold_times, n_mean, 'g-', lw=1.5)
+    axes2[2].set_xlabel('Hold time ($1/\\Omega$)')
+    axes2[2].set_ylabel('$\\langle n \\rangle$')
+    axes2[2].set_title('Mean Rydberg fraction')
+
+    fig2.suptitle(f'Domain Shrinking ({Lx}x{Ly}, '
+                  f'$\\Delta/\\Omega$ = {Delta_f:.1f})', fontsize=13)
+    fig2.tight_layout()
+    path2 = os.path.join(figdir, 'demo_domain_shrinking.png')
+    fig2.savefig(path2, dpi=150)
+    print(f"  Time-series figure saved to {path2}")
+    plt.close(fig2)
 
 
 # ---------------------------------------------------------------------------
@@ -164,32 +274,50 @@ def run_higgs_mode(Lx, Ly, n_steps, figdir, setup=None):
     print("Experiment 2: Higgs Mode Oscillations")
     print("=" * 60)
 
-    lattice, ops, bit_masks = setup or _setup_experiment(Lx, Ly)
-    N, sublattice = lattice.N, lattice.sublattice
+    system, bit_masks = setup or _setup_experiment(Lx, Ly)
+    N = system.N
+    sublattice = system.sublattice
 
     Delta_values = [0.0, 1.1, 2.5]
     colors = plt.cm.viridis(np.linspace(0.1, 0.9, len(Delta_values)))
-    pin_deltas = np.where(sublattice > 0, DELTA_PIN, 0.0)
+    addressing = {i: DELTA_PIN for i, s in enumerate(sublattice) if s > 0}
 
     all_results = {}
     for Delta_f in Delta_values:
         print(f"\n  --- Delta/Omega = {Delta_f:.1f} ---")
         psi0 = product_state([0] * N, N)
 
+        # Sweep phase with sublattice pinning
+        sweep_proto = SweepProtocol(
+            addressing=addressing,
+            omega_ramp_frac=OMEGA_RAMP_FRAC,
+            n_steps=min(n_steps // 2, 40),
+        )
         t0 = _time.time()
-        psi = evolve_sweep(
-            psi0, DELTA_START, Delta_f, T_SWEEP,
-            min(n_steps // 2, 40), pin_deltas, ops, OMEGA_RAMP_FRAC)
+        sweep_result = simulate(
+            system, sweep_proto,
+            [DELTA_START, Delta_f, T_SWEEP],
+            psi0,
+        )
+        psi = sweep_result.psi_final
         ms_sw, _, _ = measure_from_states(psi, bit_masks, sublattice)
         print(f"    Sweep: {_time.time() - t0:.1f}s, m_s = {ms_sw:.4f}")
 
-        H_hold = build_hamiltonian(1.0, Delta_f, np.zeros(N), ops)
+        # Hold phase (pinning off)
+        hold_proto = SweepProtocol(n_steps=n_steps)
         t0 = _time.time()
-        hold_times, hold_states = evolve_constant_H(psi, H_hold, 10.0, n_steps)
+        hold_result = simulate(
+            system, hold_proto,
+            [Delta_f, Delta_f, 10.0],
+            psi,
+            t_eval=np.linspace(0, 10.0, n_steps),
+        )
         print(f"    Hold: {_time.time() - t0:.1f}s")
 
-        ms, n_mean, _ = measure_from_states(hold_states, bit_masks, sublattice)
-        all_results[Delta_f] = {'times': hold_times, 'ms': ms, 'n_mean': n_mean}
+        ms, n_mean, _ = measure_from_states(
+            hold_result.states, bit_masks, sublattice)
+        all_results[Delta_f] = {
+            'times': hold_result.times, 'ms': ms, 'n_mean': n_mean}
 
     # --- Plotting ---
     os.makedirs(figdir, exist_ok=True)

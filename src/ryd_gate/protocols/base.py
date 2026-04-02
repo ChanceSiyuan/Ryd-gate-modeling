@@ -5,21 +5,22 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 if TYPE_CHECKING:
-    import numpy as np
     from numpy.typing import NDArray
 
     from ryd_gate.core.atomic_system import AtomicSystem
 
 
 class Protocol(ABC):
-    """Abstract base class for all 420nm laser pulse protocols.
+    """Abstract base class for pulse protocols.
 
-    A protocol defines how pulse parameters map to physical quantities
-    and provides the phase modulation function for the 420nm laser.
+    A protocol defines how pulse parameters map to time-dependent
+    drive coefficients on named channels.
 
     Subclasses must implement:
-    - ``n_params``, ``validate_params``, ``unpack_params``, ``phase_420``
+    - ``n_params``, ``validate_params``, ``unpack_params``, ``get_drive_coefficients``
 
     CZ gate protocols additionally override:
     - ``theta_index``, ``t_gate_index``, ``get_optimization_bounds``
@@ -37,7 +38,7 @@ class Protocol(ABC):
         ...
 
     @abstractmethod
-    def unpack_params(self, x: list[float], system: AtomicSystem) -> dict:
+    def unpack_params(self, x: list[float], system: "AtomicSystem") -> dict:
         """Unpack x into physical quantities for the solver.
 
         Returns
@@ -47,9 +48,32 @@ class Protocol(ABC):
         """
         ...
 
-    @abstractmethod
     def phase_420(self, t: float, params: dict) -> complex:
-        """Compute exp(-i * phi(t)) for 420nm laser phase modulation."""
+        """Compute exp(-i * phi(t)) for 420nm laser phase modulation.
+
+        .. deprecated::
+            Override ``get_drive_coefficients()`` instead.
+            This default implementation extracts the phase from
+            ``get_drive_coefficients()`` for backward compatibility
+            with the legacy ``solve_gate()`` code path.
+        """
+        coeffs = self.get_drive_coefficients(t, params)
+        return coeffs.get("drive_420", 1.0 + 0j)
+
+    # -- New generalized interface -----------------------------------------
+
+    @property
+    def required_channels(self) -> frozenset[str]:
+        """Channel names this protocol drives.
+
+        Used by the compiler to validate system-protocol compatibility.
+        Default assumes two-photon Raman (420nm + lightshift).
+        """
+        return frozenset({"drive_420", "drive_420_dag", "lightshift_zero"})
+
+    @abstractmethod
+    def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
+        """Return {channel_name: coefficient(t)} for each drive term."""
         ...
 
     # -- Optional hooks (CZ gate protocols override these) ----------------

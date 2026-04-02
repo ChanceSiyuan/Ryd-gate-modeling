@@ -1,9 +1,8 @@
-"""Local Addressing Analysis -- wavelength optimization and noise sensitivity.
+"""Local Addressing Analysis -- wavelength optimization and protocol explorer.
 
-Three tabs:
+Two tabs:
   1. Wavelength Physics  -- instant AC Stark shift / scattering / FOM vs wavelength
-  2. Wavelength MC Sim   -- MC addressing quality (pinning/crosstalk/leakage) vs wavelength
-  3. Noise Sensitivity   -- individual + combined noise sweeps
+  2. Protocol Explorer   -- Rabi dynamics, adiabatic sweep, and AC Stark compensation
 """
 
 import numpy as np
@@ -12,26 +11,24 @@ from plotly.subplots import make_subplots
 import streamlit as st
 from scipy.constants import pi
 
-from ryd_gate.analysis.local_addressing import (
-    BASELINE_AMP,
-    BASELINE_DETUNING_HZ,
-    BASELINE_RIN,
-    COMBINED_SCALE_MAX,
-    DEFAULT_LOCAL_DETUNING,
-    DEFAULT_LOCAL_SCATTER,
-    default_sweep_x,
-    evaluate_addressing,
-)
 from ryd_gate.core.atomic_system import (
     LAMBDA_D1,
     LAMBDA_D2,
     LAMBDA_PAPER,
     POWER_REF_UW,
-    build_sss_state_map,
+    build_product_state_map,
     compute_shift_scatter,
-    create_analog_system,
 )
+from ryd_gate import simulate
+from ryd_gate.analysis.observable_metrics import measure_trajectory, norm_squared
+from ryd_gate.core.models.analog_3level import Analog3LevelModel
 from ryd_gate.protocols.sweep import SweepProtocol
+
+# Sweep constants (matching scripts/run_local_sweep.py)
+DELTA_START = -2 * pi * 40e6   # rad/s
+DELTA_END = 2 * pi * 40e6      # rad/s
+T_GATE = 1.5e-6                # s
+RYDBERG_KEYS = ["gg", "gr", "rg", "rr"]
 
 st.set_page_config(page_title="Local Addressing", layout="wide", page_icon="\u269b")
 st.title("Local Addressing Analysis")
@@ -47,10 +44,10 @@ shift and ~35 Hz scattering.
 # ── Cached helpers ──────────────────────────────────────────────────────
 
 @st.cache_resource
-def _setup_system_cached():
-    system = create_analog_system(detuning_sign=1)
-    initial_state = build_sss_state_map(n_levels=3)["00"]
-    return system, initial_state
+def _setup_model_cached(distance_um: float = 3.0):
+    model = Analog3LevelModel.from_defaults(detuning_sign=1, distance_um=distance_um)
+    initial_state = build_product_state_map(n_levels=3)["gg"]
+    return model, initial_state
 
 
 @st.cache_data
@@ -63,8 +60,7 @@ def _wavelength_scan(wl_min, wl_max, n_wl, power_scale):
 
 # ── Tabs ────────────────────────────────────────────────────────────────
 
-tab_phys, tab_mc, tab_noise = st.tabs([
-    "Wavelength Physics", "Wavelength MC Sim", "Noise Sensitivity"])
+tab_phys, tab_proto = st.tabs(["Wavelength Physics", "Protocol Explorer"])
 
 
 # =====================================================================
@@ -138,252 +134,257 @@ with tab_phys:
 
 
 # =====================================================================
-# Tab 2: Wavelength MC Sim
+# Tab 2: Protocol Explorer
 # =====================================================================
 
-with tab_mc:
-    st.subheader("Addressing Quality vs Wavelength (MC Simulation)")
+with tab_proto:
+    st.subheader("Protocol Response at Chosen Wavelength")
 
     st.markdown("""
-    At each wavelength, the AC Stark shift and scattering rate are fed into
-    the full two-atom addressing MC simulation to measure **pinning error**,
-    **crosstalk**, and **leakage**.
+    Pick a wavelength and power to compute the AC Stark shift and scattering
+    rate, then run deterministic simulations showing Rabi dynamics, adiabatic
+    sweep populations, and AC Stark feed-forward compensation.
     """)
 
-    col_mc_cfg, col_mc_res = st.columns([1, 3])
+    col_pcfg, col_pres = st.columns([1, 3])
 
-    with col_mc_cfg:
-        mc_wl_start = st.number_input("Start wavelength (nm)", value=781.0, step=0.5,
-                                       key="mc_wl_start")
-        mc_wl_end = st.number_input("End wavelength (nm)", value=786.0, step=0.5,
-                                     key="mc_wl_end")
-        mc_wl_step = st.number_input("Step (nm)", value=1.0, step=0.5, min_value=0.5,
-                                      key="mc_wl_step")
-        mc_n_shots = st.slider("MC shots per wavelength", 5, 100, 20, step=5,
-                                key="mc_n_shots")
-        mc_sigma_det = st.number_input("Detuning noise \u03c3 (kHz)", value=130,
-                                        step=10, key="mc_sigma_det")
-        run_mc_wl = st.button("Run Wavelength MC", type="primary",
-                               use_container_width=True, key="btn_mc_wl")
+    with col_pcfg:
+        proto_wl = st.slider("Wavelength (nm)", 780.5, 786.0, 784.0, step=0.1,
+                              key="proto_wl")
+        proto_power = st.number_input("Power per spot (\u03bcW)", value=POWER_REF_UW,
+                                       step=10.0, key="proto_power")
+        proto_dist = st.slider("Atom distance (\u03bcm)", 1.0, 10.0, 3.0, step=0.1,
+                                key="proto_dist")
+        power_scale_p = proto_power / POWER_REF_UW
 
-    if run_mc_wl:
-        system, initial_state = _setup_system_cached()
-        x = default_sweep_x(system)
-        sample_lams = np.arange(mc_wl_start, mc_wl_end + 0.01, mc_wl_step)
-        sample_shifts, sample_scatters = compute_shift_scatter(sample_lams)
+        shift_Hz_arr, scatter_Hz_arr = compute_shift_scatter(np.array([proto_wl]))
+        shift_Hz_p = float(shift_Hz_arr[0]) * power_scale_p
+        scatter_Hz_p = float(scatter_Hz_arr[0]) * power_scale_p
+        local_detuning_p = 2 * pi * shift_Hz_p   # rad/s (negative for red-detuned)
+        local_scatter_p = scatter_Hz_p            # Hz
 
-        pin_errs, xtalk_errs, leak_errs = [], [], []
-        progress = st.progress(0.0)
-        for k, lam in enumerate(sample_lams):
-            progress.progress((k + 1) / len(sample_lams),
-                               text=f"Simulating {lam:.1f} nm...")
-            protocol = SweepProtocol(
-                addressing={0: 2 * pi * sample_shifts[k]},
-                scatter_rate=sample_scatters[k],
-            )
-            pin, xtalk, leak = evaluate_addressing(
-                system, initial_state, protocol, x,
-                {"sigma_detuning": mc_sigma_det * 1e3},
-                mc_n_shots, seed=42)
-            pin_errs.append(pin)
-            xtalk_errs.append(xtalk)
-            leak_errs.append(leak)
-        progress.progress(1.0, text="Done!")
+        # V_ryd at chosen distance
+        v_ryd_p = 2 * pi * 874e9 / proto_dist**6
+        st.metric("AC Stark shift", f"{shift_Hz_p / 1e6:.2f} MHz")
+        st.metric("Scattering rate", f"{scatter_Hz_p:.1f} Hz")
+        st.metric("V_ryd", f"{v_ryd_p / (2 * pi) / 1e6:.1f} MHz")
+        st.markdown("---")
+        run_proto = st.button("Run Simulation", type="primary",
+                               use_container_width=True, key="btn_proto")
 
-        st.session_state["mc_wl_results"] = {
-            "lams": sample_lams, "shifts": sample_shifts,
-            "pin": pin_errs, "xtalk": xtalk_errs, "leak": leak_errs,
+    if run_proto:
+        model, initial_state_m = _setup_model_cached(distance_um=proto_dist)
+        system = model.system
+
+        protocol_free = SweepProtocol()
+        protocol_addr = SweepProtocol(
+            addressing={0: local_detuning_p},
+            scatter_rate=local_scatter_p)
+
+        # --- A. Rabi dynamics (resonant driving) ---
+        n_cycles = 5
+        t_rabi = n_cycles * system.time_scale
+        x_rabi = [0.0, 0.0, t_rabi / system.time_scale]
+        n_pts = 500
+        t_eval_rabi = np.linspace(0, t_rabi, n_pts)
+
+        result_free_rabi = simulate(system, protocol_free, x_rabi,
+                                    initial_state_m, t_eval=t_eval_rabi)
+        result_addr_rabi = simulate(system, protocol_addr, x_rabi,
+                                    initial_state_m, t_eval=t_eval_rabi)
+
+        obs_names_rabi = ["pop_A_r", "pop_B_r"]
+        obs_free_rabi = measure_trajectory(model, result_free_rabi.states, obs_names_rabi)
+        obs_addr_rabi = measure_trajectory(model, result_addr_rabi.states, obs_names_rabi)
+
+        # Norm for addressed case (column-major: dim x n_t)
+        if result_addr_rabi.states.shape[0] == model.basis.total_dim:
+            norm_addr = np.array([norm_squared(result_addr_rabi.states[:, k])
+                                  for k in range(result_addr_rabi.states.shape[1])])
+        else:
+            norm_addr = np.array([norm_squared(result_addr_rabi.states[k])
+                                  for k in range(result_addr_rabi.states.shape[0])])
+
+        # --- B. Final populations (adiabatic sweep) ---
+        x_sweep = [
+            DELTA_START / system.rabi_eff,
+            DELTA_END / system.rabi_eff,
+            T_GATE / system.time_scale,
+        ]
+        res_sweep_free = simulate(system, protocol_free, x_sweep, initial_state_m)
+        res_sweep_addr = simulate(system, protocol_addr, x_sweep, initial_state_m)
+
+        pops_free = {k: model.observables.measure(f"pop_{k}", res_sweep_free.psi_final)
+                     for k in RYDBERG_KEYS}
+        pops_addr = {k: model.observables.measure(f"pop_{k}", res_sweep_addr.psi_final)
+                     for k in RYDBERG_KEYS}
+
+        # --- C. AC Stark feed-forward compensation ---
+        ac_stark_peak = system.rabi_420 ** 2 / (4 * abs(system.Delta))
+        t_gate_phys = x_sweep[2] * system.time_scale
+        t_eval_sweep = np.linspace(0, t_gate_phys, n_pts)
+
+        protocol_raw = SweepProtocol(ac_stark_shift=0.0)
+        protocol_comp = SweepProtocol(ac_stark_shift=ac_stark_peak)
+
+        result_raw = simulate(system, protocol_raw, x_sweep, initial_state_m,
+                              t_eval=t_eval_sweep)
+        result_comp = simulate(system, protocol_comp, x_sweep, initial_state_m,
+                               t_eval=t_eval_sweep)
+
+        obs_names_stark = ["pop_A_r", "pop_B_r", "pop_r"]
+        obs_raw = measure_trajectory(model, result_raw.states, obs_names_stark)
+        obs_comp = measure_trajectory(model, result_comp.states, obs_names_stark)
+
+        pops_raw = {k: model.observables.measure(f"pop_{k}", result_raw.psi_final)
+                    for k in RYDBERG_KEYS}
+        pops_comp = {k: model.observables.measure(f"pop_{k}", result_comp.psi_final)
+                     for k in RYDBERG_KEYS}
+
+        st.session_state["proto_results"] = {
+            "t_us_free": result_free_rabi.times * 1e6,
+            "t_us_addr": result_addr_rabi.times * 1e6,
+            "obs_free": obs_free_rabi,
+            "obs_addr": obs_addr_rabi,
+            "norm_addr": norm_addr,
+            "pops_free": pops_free,
+            "pops_addr": pops_addr,
+            "t_us_stark": result_raw.times * 1e6,
+            "obs_raw": obs_raw,
+            "obs_comp": obs_comp,
+            "pops_raw": pops_raw,
+            "pops_comp": pops_comp,
+            "ac_stark_peak_MHz": ac_stark_peak / (2 * pi) / 1e6,
+            "omega_eff_MHz": system.rabi_eff / (2 * pi) / 1e6,
+            "shift_MHz": shift_Hz_p / 1e6,
+            "scatter_Hz": scatter_Hz_p,
+            "wavelength": proto_wl,
         }
 
-    with col_mc_res:
-        if "mc_wl_results" in st.session_state:
-            r = st.session_state["mc_wl_results"]
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=r["lams"], y=r["pin"], name="Pinning",
-                                      mode="lines+markers", line=dict(color="red"),
-                                      marker=dict(size=7)))
-            fig.add_trace(go.Scatter(x=r["lams"], y=r["xtalk"], name="Crosstalk",
-                                      mode="lines+markers", line=dict(color="blue"),
-                                      marker=dict(size=7)))
-            fig.add_trace(go.Scatter(x=r["lams"], y=r["leak"], name="Leakage",
-                                      mode="lines+markers", line=dict(color="orange"),
-                                      marker=dict(size=7)))
-            fig.add_vline(x=LAMBDA_PAPER, line_dash="dot", line_color="green",
-                          opacity=0.6, annotation_text=f"{LAMBDA_PAPER:.0f} nm")
-            fig.update_layout(
-                xaxis_title="Wavelength (nm)", yaxis_title="Error",
-                yaxis_type="log", height=450,
-                margin=dict(l=60, r=20, t=30, b=40))
-            st.plotly_chart(fig, use_container_width=True)
+    with col_pres:
+        if "proto_results" in st.session_state:
+            r = st.session_state["proto_results"]
 
-            tbl = [{"Wavelength (nm)": f"{lam:.1f}",
-                    "Shift (MHz)": f"{s/1e6:.2f}",
-                    "Pinning": f"{p:.4f}", "Crosstalk": f"{x:.4f}",
-                    "Leakage": f"{l:.4f}"}
-                   for lam, s, p, x, l in zip(
-                       r["lams"], r["shifts"], r["pin"], r["xtalk"], r["leak"])]
-            st.dataframe(tbl, use_container_width=True, hide_index=True)
+            # --- Figure 1: Rabi dynamics ---
+            st.markdown("#### Rabi Dynamics (resonant driving)")
+            fig_rabi = make_subplots(
+                rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
+                subplot_titles=[
+                    "(a) Global excitation \u2014 blockade active",
+                    "(b) Atom A addressed \u2014 free oscillation"])
+
+            fig_rabi.add_trace(go.Scatter(
+                x=r["t_us_free"], y=r["obs_free"]["pop_A_r"],
+                name="P_r(A)", line=dict(color="#2ca02c")), row=1, col=1)
+            fig_rabi.add_trace(go.Scatter(
+                x=r["t_us_free"], y=r["obs_free"]["pop_B_r"],
+                name="P_r(B)", line=dict(color="#1f77b4", dash="dash")),
+                row=1, col=1)
+
+            fig_rabi.add_trace(go.Scatter(
+                x=r["t_us_addr"], y=r["obs_addr"]["pop_A_r"],
+                name="P_r(A)", line=dict(color="#2ca02c"),
+                showlegend=False), row=2, col=1)
+            fig_rabi.add_trace(go.Scatter(
+                x=r["t_us_addr"], y=r["obs_addr"]["pop_B_r"],
+                name="P_r(B)", line=dict(color="#1f77b4", dash="dash"),
+                showlegend=False), row=2, col=1)
+            fig_rabi.add_trace(go.Scatter(
+                x=r["t_us_addr"], y=r["norm_addr"],
+                name="Norm", line=dict(color="gray", dash="dot")),
+                row=2, col=1)
+
+            fig_rabi.update_yaxes(title_text="Population", range=[-0.05, 1.05], row=1)
+            fig_rabi.update_yaxes(title_text="Population", range=[-0.05, 1.05], row=2)
+            fig_rabi.update_xaxes(title_text="Time (\u03bcs)", row=2)
+            fig_rabi.update_layout(height=550, margin=dict(l=60, r=20, t=40, b=40))
+            st.plotly_chart(fig_rabi, use_container_width=True)
+
+            # --- Figure 2: Final populations ---
+            st.markdown("#### Final State Populations (adiabatic sweep)")
+            bar_colors = ["#1f77b4", "#2ca02c", "#ff7f0e", "#d62728"]
+            tick_labels = [f"|{k}\u27e9" for k in RYDBERG_KEYS]
+
+            fig_pops = make_subplots(
+                rows=1, cols=2, subplot_titles=[
+                    "(a) Global sweep \u2014 no pinning",
+                    "(b) Atom A addressed \u2014 pinned to |g\u27e9"])
+
+            vals_free = [r["pops_free"][k] for k in RYDBERG_KEYS]
+            vals_addr = [r["pops_addr"][k] for k in RYDBERG_KEYS]
+
+            fig_pops.add_trace(go.Bar(
+                x=tick_labels, y=vals_free, marker_color=bar_colors,
+                name="Global", text=[f"{v:.3f}" for v in vals_free],
+                textposition="outside"), row=1, col=1)
+            fig_pops.add_trace(go.Bar(
+                x=tick_labels, y=vals_addr, marker_color=bar_colors,
+                name="Addressed", text=[f"{v:.3f}" for v in vals_addr],
+                textposition="outside"), row=1, col=2)
+
+            fig_pops.update_yaxes(title_text="Population", range=[0, 1.15], row=1, col=1)
+            fig_pops.update_yaxes(range=[0, 1.15], row=1, col=2)
+            fig_pops.update_layout(height=400, showlegend=False,
+                                    margin=dict(l=60, r=20, t=40, b=40))
+            st.plotly_chart(fig_pops, use_container_width=True)
+
+            # --- Figure 3: AC Stark compensation ---
+            st.markdown(
+                f"#### AC Stark Feed-Forward Compensation "
+                f"(\u0394_AC^peak = {r['ac_stark_peak_MHz']:.1f} MHz, "
+                f"\u03a9_eff = {r['omega_eff_MHz']:.1f} MHz)")
+
+            fig_stark = make_subplots(
+                rows=2, cols=2, vertical_spacing=0.12, horizontal_spacing=0.1,
+                subplot_titles=[
+                    "(a) Without compensation",
+                    "(b) With feed-forward compensation",
+                    "(c) Final pops \u2014 no compensation",
+                    "(d) Final pops \u2014 compensated"])
+
+            for col_idx, (obs_key, pops_key) in enumerate([
+                ("obs_raw", "pops_raw"), ("obs_comp", "pops_comp")
+            ], start=1):
+                obs = r[obs_key]
+                show_leg = col_idx == 1
+                fig_stark.add_trace(go.Scatter(
+                    x=r["t_us_stark"], y=obs["pop_A_r"],
+                    name="P_r(A)", line=dict(color="#2ca02c"),
+                    showlegend=show_leg, legendgroup="prA"),
+                    row=1, col=col_idx)
+                fig_stark.add_trace(go.Scatter(
+                    x=r["t_us_stark"], y=obs["pop_B_r"],
+                    name="P_r(B)", line=dict(color="#1f77b4", dash="dash"),
+                    showlegend=show_leg, legendgroup="prB"),
+                    row=1, col=col_idx)
+                fig_stark.add_trace(go.Scatter(
+                    x=r["t_us_stark"], y=np.array(obs["pop_r"]) / 2,
+                    name="\u27e8n_r\u27e9/2", line=dict(color="gray", dash="dot"),
+                    showlegend=show_leg, legendgroup="nr"),
+                    row=1, col=col_idx)
+
+                pops = r[pops_key]
+                vals = [pops[k] for k in RYDBERG_KEYS]
+                fig_stark.add_trace(go.Bar(
+                    x=tick_labels, y=vals, marker_color=bar_colors,
+                    text=[f"{v:.3f}" for v in vals], textposition="outside",
+                    showlegend=False), row=2, col=col_idx)
+
+            for col_idx in [1, 2]:
+                fig_stark.update_yaxes(title_text="Population",
+                                        range=[-0.05, 1.05], row=1, col=col_idx)
+                fig_stark.update_xaxes(title_text="Time (\u03bcs)", row=1, col=col_idx)
+                fig_stark.update_yaxes(title_text="Population",
+                                        range=[0, 1.15], row=2, col=col_idx)
+
+            fig_stark.update_layout(height=700, margin=dict(l=60, r=20, t=40, b=40))
+            st.plotly_chart(fig_stark, use_container_width=True)
+
+            st.info(
+                f"Wavelength: {r['wavelength']:.1f} nm | "
+                f"Shift: {r['shift_MHz']:.2f} MHz | "
+                f"Scatter: {r['scatter_Hz']:.1f} Hz")
         else:
-            st.info("Configure wavelength range and MC shots, then click "
-                    "**Run Wavelength MC**. Each shot takes ~2 min.")
-
-
-# =====================================================================
-# Tab 3: Noise Sensitivity
-# =====================================================================
-
-with tab_noise:
-    st.subheader("Noise Impact on Addressing Quality")
-
-    st.markdown("""
-    Sweep each noise source independently (detuning, local RIN, amplitude)
-    and optionally run a combined sweep with all sources scaled together.
-    """)
-
-    col_ncfg, col_nres = st.columns([1, 3])
-
-    with col_ncfg:
-        ns_n_mc = st.slider("MC shots per point", 5, 100, 20, step=5, key="ns_n_mc")
-        ns_n_pts = st.slider("Scan points", 3, 12, 6, key="ns_n_pts")
-        st.markdown("---")
-        st.markdown("**Individual scan ranges**")
-        ns_det_max = st.number_input("Max detuning noise (kHz)", value=500, step=50,
-                                      key="ns_det_max")
-        ns_rin_max = st.number_input("Max local RIN (%)", value=5.0, step=0.5,
-                                      key="ns_rin_max")
-        ns_amp_max = st.number_input("Max amplitude noise (%)", value=5.0, step=0.5,
-                                      key="ns_amp_max")
-        st.markdown("---")
-        ns_combined = st.checkbox("Include combined sweep", value=True, key="ns_combined")
-        run_noise = st.button("Run Noise Scan", type="primary",
-                               use_container_width=True, key="btn_noise")
-
-    if run_noise:
-        system, initial_state = _setup_system_cached()
-        protocol = SweepProtocol(
-            addressing={0: DEFAULT_LOCAL_DETUNING},
-            scatter_rate=DEFAULT_LOCAL_SCATTER,
-        )
-        x = default_sweep_x(system)
-
-        scans = {
-            "Global Detuning": {
-                "param": "sigma_detuning",
-                "values": np.linspace(0, ns_det_max * 1e3, ns_n_pts),
-                "xlabel": "\u03c3_\u0394 (kHz)", "xscale": 1e-3,
-            },
-            "Local RIN": {
-                "param": "sigma_local_rin",
-                "values": np.linspace(0, ns_rin_max / 100, ns_n_pts),
-                "xlabel": "\u03c3_RIN (%)", "xscale": 100,
-            },
-            "Amplitude Noise": {
-                "param": "sigma_amplitude",
-                "values": np.linspace(0, ns_amp_max / 100, ns_n_pts),
-                "xlabel": "\u03c3_\u03a9 (%)", "xscale": 100,
-            },
-        }
-
-        total_evals = sum(len(c["values"]) for c in scans.values())
-        if ns_combined:
-            total_evals += ns_n_pts
-        progress = st.progress(0.0)
-        done = 0
-
-        noise_results = {}
-        for name, cfg in scans.items():
-            pin_errs, xtalk_errs, leak_errs = [], [], []
-            for val in cfg["values"]:
-                kwargs = {"sigma_detuning": 0.0, "sigma_local_rin": 0.0,
-                          "sigma_amplitude": 0.0}
-                kwargs[cfg["param"]] = val
-                pin, xtalk, leak = evaluate_addressing(
-                    system, initial_state, protocol, x, kwargs, ns_n_mc)
-                pin_errs.append(pin)
-                xtalk_errs.append(xtalk)
-                leak_errs.append(leak)
-                done += 1
-                progress.progress(done / total_evals, text=f"{name}: {done}/{total_evals}")
-            noise_results[name] = {
-                "values": cfg["values"], "xlabel": cfg["xlabel"],
-                "xscale": cfg["xscale"],
-                "pin": pin_errs, "xtalk": xtalk_errs, "leak": leak_errs,
-            }
-
-        combined_result = None
-        if ns_combined:
-            scale_factors = np.linspace(0, COMBINED_SCALE_MAX, ns_n_pts)
-            pin_c, xtalk_c, leak_c = [], [], []
-            for scale in scale_factors:
-                pin, xtalk, leak = evaluate_addressing(
-                    system, initial_state, protocol, x,
-                    {"sigma_detuning": BASELINE_DETUNING_HZ * scale,
-                     "sigma_local_rin": BASELINE_RIN * scale,
-                     "sigma_amplitude": BASELINE_AMP * scale},
-                    ns_n_mc)
-                pin_c.append(pin)
-                xtalk_c.append(xtalk)
-                leak_c.append(leak)
-                done += 1
-                progress.progress(done / total_evals, text=f"Combined: {done}/{total_evals}")
-            combined_result = {"scales": scale_factors,
-                               "pin": pin_c, "xtalk": xtalk_c, "leak": leak_c}
-
-        progress.progress(1.0, text="Done!")
-        st.session_state["noise_results"] = noise_results
-        st.session_state["noise_combined"] = combined_result
-
-    with col_nres:
-        if "noise_results" in st.session_state:
-            noise_results = st.session_state["noise_results"]
-            combined_result = st.session_state.get("noise_combined")
-
-            n_panels = 4 if combined_result else 3
-            titles = list(noise_results.keys())
-            if combined_result:
-                titles.append("Combined (all sources)")
-            fig = make_subplots(rows=2, cols=2, subplot_titles=titles,
-                                 horizontal_spacing=0.1, vertical_spacing=0.15)
-
-            for idx, (name, r) in enumerate(noise_results.items()):
-                row, col = idx // 2 + 1, idx % 2 + 1
-                show_leg = idx == 0
-                xvals = np.array(r["values"]) * r["xscale"]
-                for metric, color, lg in [("pin", "red", "pin"),
-                                           ("xtalk", "blue", "xtalk"),
-                                           ("leak", "orange", "leak")]:
-                    fig.add_trace(go.Scatter(
-                        x=xvals, y=r[metric],
-                        name={"pin": "Pinning", "xtalk": "Crosstalk", "leak": "Leakage"}[metric],
-                        mode="lines+markers", line=dict(color=color),
-                        marker=dict(size=5), showlegend=show_leg, legendgroup=lg,
-                    ), row=row, col=col)
-                fig.update_xaxes(title_text=r["xlabel"], row=row, col=col)
-                fig.update_yaxes(title_text="Error", row=row, col=col)
-
-            if combined_result:
-                for metric, color, lg in [("pin", "red", "pin"),
-                                           ("xtalk", "blue", "xtalk"),
-                                           ("leak", "orange", "leak")]:
-                    fig.add_trace(go.Scatter(
-                        x=combined_result["scales"], y=combined_result[metric],
-                        name={"pin": "Pinning", "xtalk": "Crosstalk", "leak": "Leakage"}[metric],
-                        mode="lines+markers", line=dict(color=color),
-                        marker=dict(size=5), showlegend=False, legendgroup=lg,
-                    ), row=2, col=2)
-                fig.add_vline(x=1.0, line_dash="dot", line_color="green",
-                              opacity=0.6, row=2, col=2, annotation_text="baseline")
-                fig.update_xaxes(title_text="Noise scale factor", row=2, col=2)
-                fig.update_yaxes(title_text="Error", row=2, col=2)
-            else:
-                # Hide empty 4th panel
-                fig.update_xaxes(visible=False, row=2, col=2)
-                fig.update_yaxes(visible=False, row=2, col=2)
-
-            fig.update_layout(height=700, margin=dict(l=60, r=20, t=40, b=40))
-            st.plotly_chart(fig, use_container_width=True)
-
-            st.info(f"Each point averaged over {ns_n_mc} MC shots.")
-        else:
-            st.info("Configure noise ranges and click **Run Noise Scan**. "
-                    "Each MC shot takes ~2 min \u2014 start with few shots and points.")
+            st.info("Select a wavelength and power, then click "
+                    "**Run Simulation** to see Rabi dynamics, adiabatic "
+                    "sweep populations, and AC Stark compensation.")

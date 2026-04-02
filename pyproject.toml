@@ -33,6 +33,9 @@ app = [
     "streamlit>=1.30",
     "plotly>=5.18",
 ]
+tn = [
+    "physics-tenpy>=1.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

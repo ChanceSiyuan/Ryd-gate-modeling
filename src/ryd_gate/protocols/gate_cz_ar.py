@@ -47,6 +47,8 @@ class ARProtocol(Protocol):
             "delta": x[5] * system.rabi_eff,
             "t_gate": x[6] * system.time_scale,
             "theta": x[7],
+            "t_rise": system.t_rise,
+            "blackmanflag": system.blackmanflag,
         }
 
     def phase_420(self, t: float, params: dict) -> complex:
@@ -57,6 +59,22 @@ class ARProtocol(Protocol):
                 + params["delta"] * t
             )
         )
+
+    def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
+        """Return drive coefficients including Blackman amplitude envelope."""
+        from ryd_gate.blackman import blackman_pulse
+
+        phase = self.phase_420(t, params)
+        amplitude = (
+            blackman_pulse(t, params["t_rise"], params["t_gate"])
+            if params.get("blackmanflag", True)
+            else 1.0
+        )
+        return {
+            "drive_420": amplitude * phase,
+            "drive_420_dag": amplitude * np.conjugate(phase),
+            "lightshift_zero": amplitude * amplitude,
+        }
 
     def get_optimization_bounds(self) -> tuple:
         return (
