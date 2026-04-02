@@ -3,6 +3,7 @@
 Provides:
 - ``solve_gate``: CZ gate solver parameterized by Protocol (phase modulation).
 - ``evolve``: Generic solver for arbitrary time-dependent Hamiltonians.
+- ``evolve_ir``: Solver that accepts a compiled HamiltonianIR.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from ryd_gate.blackman import blackman_pulse
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
+    from ryd_gate.compilers.ir import HamiltonianIR
     from ryd_gate.core.atomic_system import AtomicSystem
     from ryd_gate.protocols.base import Protocol
 
@@ -128,6 +130,70 @@ def evolve(
     """
     def rhs(t, y):
         H = hamiltonian_fn(t)
+        return -1j * H @ y
+
+    t_span = [0, t_gate]
+    solve_kwargs = dict(
+        method="DOP853",
+        rtol=1e-8,
+        atol=1e-12,
+    )
+    if t_eval is not None:
+        solve_kwargs["t_eval"] = t_eval
+
+    result = integrate.solve_ivp(
+        rhs,
+        t_span,
+        initial_state,
+        **solve_kwargs,
+    )
+
+    if t_eval is not None:
+        return np.array(result.y)
+    return np.array(result.y[:, -1])
+
+
+def evolve_ir(
+    ir: "HamiltonianIR",
+    initial_state: "NDArray[np.complexfloating]",
+    t_gate: float,
+    t_eval: "NDArray[np.floating] | None" = None,
+) -> "NDArray[np.complexfloating]":
+    """Evolve using a compiled HamiltonianIR.
+
+    This is the new backend-agnostic entry point. The IR describes the
+    Hamiltonian as static terms + time-dependent drive terms, with no
+    knowledge of the underlying physics (420nm, 1013nm, etc.).
+
+    Parameters
+    ----------
+    ir : HamiltonianIR
+        Compiled Hamiltonian from a Compiler.
+    initial_state : ndarray
+        Initial state vector.
+    t_gate : float
+        Total evolution time.
+    t_eval : ndarray or None
+        Times to store solution. None returns only final state.
+
+    Returns
+    -------
+    ndarray
+        Shape (dim, len(t_eval)) or (dim,) if t_eval is None.
+    """
+    # Precompute static Hamiltonian (sum of all constant-coefficient terms)
+    H_static = np.zeros((ir.dim, ir.dim), dtype=np.complex128)
+    for term in ir.static_terms:
+        coeff = term.coefficient(0) if callable(term.coefficient) else term.coefficient
+        H_static = H_static + coeff * np.asarray(term.operator)
+
+    def rhs(t, y):
+        H = H_static.copy()
+        for term in ir.drive_terms:
+            coeff = term.coefficient(t) if callable(term.coefficient) else term.coefficient
+            H = H + coeff * term.operator
+            if term.add_hermitian_conjugate:
+                H = H + np.conj(coeff) * term.operator.conj().T
         return -1j * H @ y
 
     t_span = [0, t_gate]
