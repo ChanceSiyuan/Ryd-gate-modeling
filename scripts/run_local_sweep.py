@@ -18,6 +18,10 @@ Produces three figures:
         ramp distorts the adiabatic sweep.
     (b) With compensation: feed-forward correction cancels the AC Stark
         shift, restoring clean adiabatic passage.
+  Figure 4 — Decay channels comparison:
+
+  Figure 5 — Landau-Zener transitions:
+
 """
 
 import matplotlib.pyplot as plt

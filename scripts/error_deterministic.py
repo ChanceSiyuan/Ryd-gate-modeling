@@ -12,7 +12,9 @@ error sources and XYZ/AL/LG branching decomposition:
 import os
 os.environ["JAX_PLATFORMS"] = "cpu"
 
-from ryd_gate.ideal_cz import CZGateSimulator
+from ryd_gate.core.atomic_system import create_our_system
+from ryd_gate.protocols.gate_cz_to import TOProtocol
+from ryd_gate.analysis.gate_metrics import sss_infidelity, error_budget
 
 SSS_12_STATES = [f"SSS-{i}" for i in range(12)]
 
@@ -36,27 +38,27 @@ X_TO_OUR_BRIGHT = [
 ]
 
 
-def run_error_source(label, detuning_sign, x, **sim_kwargs):
+def run_error_source(label, detuning_sign, x, **system_kwargs):
     """Run a single error source: compute SSS infidelity and error_budget.
 
     Returns (sss_infidelity, budget_dict_or_None).
     """
-    sim = CZGateSimulator(
-        param_set="our", strategy="TO",
+    system = create_our_system(
         blackmanflag=True, detuning_sign=detuning_sign,
-        **sim_kwargs,
+        **system_kwargs,
     )
+    protocol = TOProtocol()
     print(f"  Running {label}...")
-    infid = sim.gate_fidelity(x, fid_type="sss")
+    infid = sss_infidelity(system, protocol, x)
     print(f"    Infidelity: {infid:.6e}")
 
     # error_budget meaningful when any decay/leakage is enabled
-    has_decay = sim_kwargs.get("enable_rydberg_decay", False) or \
-                sim_kwargs.get("enable_intermediate_decay", False) or \
-                sim_kwargs.get("enable_polarization_leakage", False)
+    has_decay = system_kwargs.get("enable_rydberg_decay", False) or \
+                system_kwargs.get("enable_intermediate_decay", False) or \
+                system_kwargs.get("enable_polarization_leakage", False)
     budget = None
     if has_decay:
-        budget = sim.error_budget(x, initial_states=SSS_12_STATES)
+        budget = error_budget(system, protocol, x, initial_states=SSS_12_STATES)
         for source, vals in budget.items():
             print(f"    {source}: total={vals['total']:.6e}  "
                   f"XYZ={vals['XYZ']:.6e}  AL={vals['AL']:.6e}  LG={vals['LG']:.6e}")

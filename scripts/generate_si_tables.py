@@ -19,7 +19,11 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from pathlib import Path
-from ryd_gate.ideal_cz import CZGateSimulator, MonteCarloResult
+
+from ryd_gate.core.atomic_system import create_our_system
+from ryd_gate.protocols.gate_cz_to import TOProtocol
+from ryd_gate.solvers.monte_carlo import MonteCarloEngine, MonteCarloResult
+from ryd_gate.analysis.gate_metrics import sss_infidelity, error_budget
 
 SSS_12_STATES = [f"SSS-{i}" for i in range(12)]
 
@@ -51,17 +55,17 @@ def load_deterministic_errors(filepath):
 
 def compute_deterministic_errors(sign, x):
     """Compute deterministic error sources with 2-state average."""
+    protocol = TOProtocol()
     errors = {}
 
     # Rydberg decay
     print("  Rydberg decay...")
-    sim_ryd = CZGateSimulator(
-        param_set="our", strategy="TO",
+    system_ryd = create_our_system(
         blackmanflag=True, detuning_sign=sign,
         enable_rydberg_decay=True,
     )
-    infid_ryd = sim_ryd.gate_fidelity(x,fid_type="sss")
-    budget_ryd = sim_ryd.error_budget(x,initial_states=SSS_12_STATES)
+    infid_ryd = sss_infidelity(system_ryd, protocol, x)
+    budget_ryd = error_budget(system_ryd, protocol, x, initial_states=SSS_12_STATES)
     errors["rydberg_decay"] = {
         "infidelity": infid_ryd,
         **budget_ryd["rydberg_decay"],
@@ -69,13 +73,12 @@ def compute_deterministic_errors(sign, x):
 
     # Intermediate decay (full 0+1 scattering)
     print("  Intermediate decay (full)...")
-    sim_mid = CZGateSimulator(
-        param_set="our", strategy="TO",
+    system_mid = create_our_system(
         blackmanflag=True, detuning_sign=sign,
         enable_intermediate_decay=True,
     )
-    infid_mid = sim_mid.gate_fidelity(x,fid_type="sss")
-    budget_mid = sim_mid.error_budget(x,initial_states=SSS_12_STATES)
+    infid_mid = sss_infidelity(system_mid, protocol, x)
+    budget_mid = error_budget(system_mid, protocol, x, initial_states=SSS_12_STATES)
     bm = budget_mid["intermediate_decay"]
     errors["intermediate_decay"] = {
         "infidelity": infid_mid,
@@ -89,24 +92,22 @@ def compute_deterministic_errors(sign, x):
     # not intermediate-state population routing, so only the total infidelity
     # difference is meaningful (no XYZ/AL/LG decomposition).
     print("  Intermediate decay (no |0> scattering)...")
-    sim_mid_no0 = CZGateSimulator(
-        param_set="our", strategy="TO",
+    system_mid_no0 = create_our_system(
         blackmanflag=True, detuning_sign=sign,
         enable_intermediate_decay=True,
         enable_0_scattering=False,
     )
-    infid_mid_no0 = sim_mid_no0.gate_fidelity(x,fid_type="sss")
+    infid_mid_no0 = sss_infidelity(system_mid_no0, protocol, x)
     errors["scattering_0_extra_infidelity"] = max(0.0, infid_mid - infid_mid_no0)
 
     # Polarization leakage
     print("  Polarization leakage...")
-    sim_pol = CZGateSimulator(
-        param_set="our", strategy="TO",
+    system_pol = create_our_system(
         blackmanflag=True, detuning_sign=sign,
         enable_polarization_leakage=True,
     )
-    infid_pol = sim_pol.gate_fidelity(x,fid_type="sss")
-    budget_pol = sim_pol.error_budget(x,initial_states=SSS_12_STATES)
+    infid_pol = sss_infidelity(system_pol, protocol, x)
+    budget_pol = error_budget(system_pol, protocol, x, initial_states=SSS_12_STATES)
     errors["polarization_leakage"] = {
         "infidelity": infid_pol,
         **budget_pol["polarization_leakage"],
@@ -114,15 +115,14 @@ def compute_deterministic_errors(sign, x):
 
     # All deterministic combined
     print("  All deterministic...")
-    sim_all = CZGateSimulator(
-        param_set="our", strategy="TO",
+    system_all = create_our_system(
         blackmanflag=True, detuning_sign=sign,
         enable_rydberg_decay=True,
         enable_intermediate_decay=True,
         enable_polarization_leakage=True,
     )
-    infid_all = sim_all.gate_fidelity(x,fid_type="sss")
-    ba = sim_all.error_budget(x,initial_states=SSS_12_STATES)
+    infid_all = sss_infidelity(system_all, protocol, x)
+    ba = error_budget(system_all, protocol, x, initial_states=SSS_12_STATES)
     errors["all_deterministic"] = {
         "infidelity": infid_all,
         "XYZ": ba["rydberg_decay"]["XYZ"] + ba["intermediate_decay"]["XYZ"] + ba["polarization_leakage"]["XYZ"],
@@ -152,33 +152,31 @@ def load_mc_results(label):
 def generate_mc_results(sign, label, x, n_shots=1000, seed=42):
     """Run MC simulations for dephasing, position, and all-combined."""
     Path("data").mkdir(exist_ok=True)
+    protocol = TOProtocol()
 
     scenarios = [
-        ("dephasing", f"Dephasing ({SIGMA_DETUNING/1e3:.0f} kHz)", {
-            "enable_rydberg_dephasing": True,
-        }, {"sigma_detuning": SIGMA_DETUNING}),
-        ("position", "Position error (70,70,130 nm)", {
-            "enable_position_error": True,
-        }, {"sigma_pos_xyz": SIGMA_POS}),
-        ("all", "All errors combined", {
-            "enable_rydberg_decay": True,
-            "enable_intermediate_decay": True,
-            "enable_polarization_leakage": True,
-            "enable_rydberg_dephasing": True,
-            "enable_position_error": True,
-        }, {"sigma_detuning": SIGMA_DETUNING, "sigma_pos_xyz": SIGMA_POS}),
+        ("dephasing", f"Dephasing ({SIGMA_DETUNING/1e3:.0f} kHz)",
+         dict(blackmanflag=True, detuning_sign=sign),
+         lambda eng: eng.setup_detuning_noise(SIGMA_DETUNING)),
+        ("position", "Position error (70,70,130 nm)",
+         dict(blackmanflag=True, detuning_sign=sign),
+         lambda eng: eng.setup_position_noise(SIGMA_POS)),
+        ("all", "All errors combined",
+         dict(blackmanflag=True, detuning_sign=sign,
+              enable_rydberg_decay=True, enable_intermediate_decay=True,
+              enable_polarization_leakage=True),
+         lambda eng: (eng.setup_detuning_noise(SIGMA_DETUNING),
+                      eng.setup_position_noise(SIGMA_POS))),
     ]
 
     results = {}
-    for i, (key, desc, sim_kw, mc_kw) in enumerate(scenarios, 1):
+    for i, (key, desc, system_kw, setup_fn) in enumerate(scenarios, 1):
         print(f"  [{i}/{len(scenarios)}] {desc}...")
-        sim = CZGateSimulator(
-            param_set="our", strategy="TO",
-            blackmanflag=True, detuning_sign=sign, **sim_kw,
-        )
-        results[key] = sim.run_monte_carlo_simulation(
-            x, n_shots=n_shots, seed=seed + i - 1,
-            compute_branching=True, **mc_kw,
+        system = create_our_system(**system_kw)
+        engine = MonteCarloEngine(system, protocol, x)
+        setup_fn(engine)
+        results[key] = engine.run_gate_fidelity(
+            n_shots=n_shots, seed=seed + i - 1, compute_branching=True,
         )
         results[key].save_to_file(f"data/mc_{label}_{key}.txt")
 

@@ -27,7 +27,9 @@ from __future__ import annotations
 import numpy as np
 from scipy.optimize import curve_fit
 
-from ryd_gate.ideal_cz import CZGateSimulator
+from ryd_gate.core.atomic_system import create_our_system
+from ryd_gate.protocols.gate_cz_to import TOProtocol
+from ryd_gate.analysis.gate_metrics import average_gate_infidelity, residuals_to_branching
 
 # ---------------------------------------------------------------------------
 # Optimised dark CZ gate parameters (from opt_dark.py)
@@ -67,14 +69,10 @@ MAX_ALPHA_SCALE = 20.0
 DIRECTION_SEED = 42
 
 # ---------------------------------------------------------------------------
-# Simulator
+# System and protocol
 # ---------------------------------------------------------------------------
-sim = CZGateSimulator(
-    param_set="our",
-    strategy="TO",
-    blackmanflag=True,
-    detuning_sign=+1,
-)
+system = create_our_system(blackmanflag=True, detuning_sign=+1)
+protocol = TOProtocol()
 
 
 # ===================================================================
@@ -83,7 +81,7 @@ sim = CZGateSimulator(
 
 def _infidelity_at(x: list[float]) -> float:
     """Deterministic average infidelity for parameter vector *x*."""
-    return sim._gate_infidelity_single(x, fid_type="average")
+    return average_gate_infidelity(system, protocol, x)
 
 
 def _infidelity_shifted(idx: int, dp: float) -> float:
@@ -364,10 +362,10 @@ def _find_iso_surface_point(
 
 def _decompose_at_point(x: list[float]) -> dict[str, float]:
     """Error decomposition at parameter point *x*."""
-    infidelity, residuals = sim._gate_infidelity_single(
-        x, fid_type="average", return_residuals=True,
+    infidelity, residuals = average_gate_infidelity(
+        system, protocol, x, return_residuals=True,
     )
-    branching = sim._residuals_to_branching(residuals)
+    branching = residuals_to_branching(system, residuals)
     xyz = branching["XYZ"]
     al = branching["AL"]
     lg = branching["LG"]
