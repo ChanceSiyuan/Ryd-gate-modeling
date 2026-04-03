@@ -9,16 +9,19 @@ import os
 os.environ["JAX_PLATFORMS"] = "cpu"
 
 import numpy as np
-from ryd_gate.ideal_cz import CZGateSimulator
+
+from ryd_gate.core.atomic_system import create_our_system
+from ryd_gate.protocols.gate_cz_to import TOProtocol
+from ryd_gate.solvers.schrodinger import solve_gate
+from ryd_gate.analysis.gate_metrics import average_gate_infidelity, sss_infidelity, bell_infidelity
 
 X_TO_OUR_DARK = [
     -0.6989301339711643, 1.0296229082590798, 0.3759232324550267,
     1.5710180991068543, 1.4454279613697887, 1.3406239758422793,
 ]
 
-sim = CZGateSimulator(
-    param_set="our", strategy="TO", blackmanflag=True, detuning_sign=1,
-)
+system = create_our_system(blackmanflag=True, detuning_sign=1)
+protocol = TOProtocol()
 
 theta = X_TO_OUR_DARK[4]
 
@@ -26,8 +29,9 @@ theta = X_TO_OUR_DARK[4]
 print("=" * 60)
 print("  1. Gate fidelity (all metrics)")
 print("=" * 60)
-for ft in ["average", "sss", "bell"]:
-    val = sim.gate_fidelity(X_TO_OUR_DARK, fid_type=ft)
+_fid_funcs = {"average": average_gate_infidelity, "sss": sss_infidelity, "bell": bell_infidelity}
+for ft, fn in _fid_funcs.items():
+    val = fn(system, protocol, X_TO_OUR_DARK)
     print(f"  {ft:>8s} infidelity = {val:.4e}")
 
 # --- 2. Phase structure ---
@@ -43,16 +47,13 @@ basis = {
     "|11⟩": np.kron([0,1+0j,0,0,0,0,0], [0,1+0j,0,0,0,0,0]),
 }
 
+# Use theta=0 placeholder to inspect raw CZ phase structure before single-qubit Z rotation
+x_no_theta = [X_TO_OUR_DARK[0], X_TO_OUR_DARK[1], X_TO_OUR_DARK[2],
+              X_TO_OUR_DARK[3], 0.0, X_TO_OUR_DARK[5]]
+
 overlaps = {}
 for label, ini in basis.items():
-    res = sim._get_gate_result_TO(
-        phase_amp=X_TO_OUR_DARK[0],
-        omega=X_TO_OUR_DARK[1] * sim.rabi_eff,
-        phase_init=X_TO_OUR_DARK[2],
-        delta=X_TO_OUR_DARK[3] * sim.rabi_eff,
-        t_gate=X_TO_OUR_DARK[5] * sim.time_scale,
-        state_mat=ini,
-    )
+    res = solve_gate(system, protocol, x_no_theta, ini)
     overlap = ini.conj().dot(res.T)
     overlaps[label] = overlap
     phase = np.angle(overlap)
@@ -84,14 +85,7 @@ print(f"\n{'=' * 60}")
 print("  3. Leakage out of computational subspace")
 print("=" * 60)
 for label, ini in basis.items():
-    res = sim._get_gate_result_TO(
-        phase_amp=X_TO_OUR_DARK[0],
-        omega=X_TO_OUR_DARK[1] * sim.rabi_eff,
-        phase_init=X_TO_OUR_DARK[2],
-        delta=X_TO_OUR_DARK[3] * sim.rabi_eff,
-        t_gate=X_TO_OUR_DARK[5] * sim.time_scale,
-        state_mat=ini,
-    )
+    res = solve_gate(system, protocol, x_no_theta, ini)
     # Population in computational subspace
     comp_pop = 0.0
     for other_ini in basis.values():
@@ -107,20 +101,19 @@ X_TO_OUR_BRIGHT = [
     -1.7370398295694707, 0.7988774460188806, 2.3116588890406224,
     0.5186261498956248, 0.900066116155231, 1.2415235064066774,
 ]
-sim_bright = CZGateSimulator(
-    param_set="our", strategy="TO", blackmanflag=True, detuning_sign=-1,
-)
+system_bright = create_our_system(blackmanflag=True, detuning_sign=-1)
 print(f"  {'metric':<12s} {'dark':>12s} {'bright':>12s}")
 print(f"  {'-'*12} {'-'*12} {'-'*12}")
-for ft in ["average", "sss", "bell"]:
-    vd = sim.gate_fidelity(X_TO_OUR_DARK, fid_type=ft)
-    vb = sim_bright.gate_fidelity(X_TO_OUR_BRIGHT, fid_type=ft)
+for ft, fn in _fid_funcs.items():
+    vd = fn(system, protocol, X_TO_OUR_DARK)
+    vb = fn(system_bright, protocol, X_TO_OUR_BRIGHT)
     print(f"  {ft:<12s} {vd:>12.4e} {vb:>12.4e}")
 
 print(f"\n  Gate times:")
-print(f"    dark:   {X_TO_OUR_DARK[5] * sim.time_scale * 1e9:.2f} ns")
-print(f"    bright: {X_TO_OUR_BRIGHT[5] * sim_bright.time_scale * 1e9:.2f} ns")
+print(f"    dark:   {X_TO_OUR_DARK[5] * system.time_scale * 1e9:.2f} ns")
+print(f"    bright: {X_TO_OUR_BRIGHT[5] * system_bright.time_scale * 1e9:.2f} ns")
 
 print("\nAll checks passed." if all(
-    sim.gate_fidelity(X_TO_OUR_DARK, fid_type=ft) < 1e-6 for ft in ["average", "sss", "bell"]
+    fn(system, protocol, X_TO_OUR_DARK) < 1e-6
+    for fn in [average_gate_infidelity, sss_infidelity, bell_infidelity]
 ) else "\nWARNING: Some fidelity checks failed!")

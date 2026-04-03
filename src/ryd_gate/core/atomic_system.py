@@ -297,6 +297,9 @@ def create_analog_system(
     enable_rydberg_decay: bool = False,
     enable_intermediate_decay: bool = False,
     distance_um: float = 3.0,
+    Delta_Hz: float | None = None,
+    rabi_420_Hz: float | None = None,
+    rabi_1013_Hz: float | None = None,
 ) -> AtomicSystem:
     """Initialize 3-level analog system for stretched-state quantum simulation.
 
@@ -312,9 +315,9 @@ def create_analog_system(
     atom = Rubidium87()
     ryd_level = 70
     n = 3
-    Delta = detuning_sign * 2 * np.pi * 9.1e9
-    rabi_420 = 2 * np.pi * 491e6
-    rabi_1013 = 2 * np.pi * 491e6
+    Delta = detuning_sign * 2 * np.pi * (Delta_Hz if Delta_Hz is not None else 9.1e9)
+    rabi_420 = 2 * np.pi * (rabi_420_Hz if rabi_420_Hz is not None else 491e6)
+    rabi_1013 = 2 * np.pi * (rabi_1013_Hz if rabi_1013_Hz is not None else 491e6)
     rabi_eff = rabi_420 * rabi_1013 / (2 * abs(Delta))
     time_scale = 2 * np.pi / rabi_eff
 

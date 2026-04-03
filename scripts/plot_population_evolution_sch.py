@@ -12,13 +12,13 @@ Usage:
 """
 
 import os
-import sys
 
 import numpy as np
 import matplotlib.pyplot as plt
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-from ryd_gate.ideal_cz import CZGateSimulator
+from ryd_gate.core.atomic_system import create_our_system
+from ryd_gate.protocols.gate_cz_to import TOProtocol
+from ryd_gate.analysis.gate_metrics import population_evolution, state_infidelity
 
 
 # ── Initial Optimized TO pulse parameters ──────────────────────────────────
@@ -51,11 +51,11 @@ def run_schrodinger():
     infidelities : ndarray, shape (12,)
         Infidelity 1 - F for each SSS initial state.
     """
-    sim = CZGateSimulator(param_set='our', strategy='TO',
-                          blackmanflag=False)
-    sim.setup_protocol(X_TO)
+    system = create_our_system(blackmanflag=False)
+    protocol = TOProtocol()
 
-    t_gate = X_TO[5] * sim.time_scale
+    params = protocol.unpack_params(X_TO, system)
+    t_gate = params["t_gate"]
     time_ns = np.linspace(0, t_gate * 1e9, 1000)
 
     pops = np.zeros((N_SSS, 3, 1000))
@@ -63,14 +63,13 @@ def run_schrodinger():
 
     for i in range(N_SSS):
         label = f"SSS-{i}"
-        # Get population evolution
-        result = sim.diagnose_run(initial_state=label)
-        pops[i, 0, :] = result[0] / 2.0
-        pops[i, 1, :] = result[1] / 2.0
-        pops[i, 2, :] = result[2] / 2.0
+        result = population_evolution(system, protocol, X_TO, label)
+        mid = result["e1"] + result["e2"] + result["e3"]
+        pops[i, 0, :] = mid / 2.0
+        pops[i, 1, :] = result["ryd"] / 2.0
+        pops[i, 2, :] = result["ryd_garb"] / 2.0
 
-        # Calculate infidelity
-        infidelities[i] = sim.state_infidelity(label)
+        infidelities[i] = state_infidelity(system, protocol, X_TO, label)
 
     return pops, time_ns, infidelities
 

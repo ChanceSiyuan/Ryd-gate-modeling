@@ -12,7 +12,9 @@ os.environ["JAX_PLATFORMS"] = "cpu"
 
 import numpy as np
 
-from ryd_gate.ideal_cz import CZGateSimulator, MonteCarloResult
+from ryd_gate.core.atomic_system import create_our_system
+from ryd_gate.protocols.gate_cz_to import TOProtocol
+from ryd_gate.solvers.monte_carlo import MonteCarloEngine, MonteCarloResult
 
 X_TO_OUR_DARK = [
    -0.9509172186259588, 1.105272315809505, 0.383911389220584,
@@ -66,22 +68,17 @@ def main():
         print_branching_table(result, f"Loaded from {args.load}")
         return
 
+    protocol = TOProtocol()
+
     # ==================== Dephasing with branching ====================
 
-    sim_dephasing = CZGateSimulator(
-        param_set="our", strategy="TO",
-        blackmanflag=True, detuning_sign=1,
-        enable_rydberg_dephasing=True,
-        sigma_detuning=130e3,
-        n_mc_shots=args.n_mc,
-        mc_seed=args.seed,
-    )
+    system_dephasing = create_our_system(blackmanflag=True, detuning_sign=1)
+    engine_dephasing = MonteCarloEngine(system_dephasing, protocol, X_TO_OUR_DARK)
+    engine_dephasing.setup_detuning_noise(130e3)
 
     print(f"Running dephasing MC with branching ({args.n_mc} shots)...")
-    result_deph = sim_dephasing.run_monte_carlo_simulation(
-        X_TO_OUR_DARK,
+    result_deph = engine_dephasing.run_gate_fidelity(
         n_shots=args.n_mc,
-        sigma_detuning=130e3,
         seed=args.seed,
         compute_branching=True,
     )
@@ -91,20 +88,13 @@ def main():
 
     sigma_pos = (70e-9, 70e-9, 130e-9)  # meters
 
-    sim_position = CZGateSimulator(
-        param_set="our", strategy="TO",
-        blackmanflag=True, detuning_sign=1,
-        enable_position_error=True,
-        sigma_pos_xyz=sigma_pos,
-        n_mc_shots=args.n_mc,
-        mc_seed=args.seed,
-    )
+    system_position = create_our_system(blackmanflag=True, detuning_sign=1)
+    engine_position = MonteCarloEngine(system_position, protocol, X_TO_OUR_DARK)
+    engine_position.setup_position_noise(sigma_pos)
 
     print(f"\nRunning position MC with branching ({args.n_mc} shots)...")
-    result_pos = sim_position.run_monte_carlo_simulation(
-        X_TO_OUR_DARK,
+    result_pos = engine_position.run_gate_fidelity(
         n_shots=args.n_mc,
-        sigma_pos_xyz=sigma_pos,
         seed=args.seed + 1,
         compute_branching=True,
     )
@@ -112,25 +102,18 @@ def main():
 
     # ==================== All errors with branching ====================
 
-    sim_all = CZGateSimulator(
-        param_set="our", strategy="TO",
+    system_all = create_our_system(
         blackmanflag=True, detuning_sign=1,
         enable_rydberg_decay=True, enable_intermediate_decay=True,
         enable_polarization_leakage=True,
-        enable_rydberg_dephasing=True,
-        enable_position_error=True,
-        sigma_detuning=130e3,
-        sigma_pos_xyz=sigma_pos,
-        n_mc_shots=args.n_mc,
-        mc_seed=args.seed,
     )
+    engine_all = MonteCarloEngine(system_all, protocol, X_TO_OUR_DARK)
+    engine_all.setup_detuning_noise(130e3)
+    engine_all.setup_position_noise(sigma_pos)
 
     print(f"\nRunning ALL errors MC with branching ({args.n_mc} shots)...")
-    result_all = sim_all.run_monte_carlo_simulation(
-        X_TO_OUR_DARK,
+    result_all = engine_all.run_gate_fidelity(
         n_shots=args.n_mc,
-        sigma_detuning=130e3,
-        sigma_pos_xyz=sigma_pos,
         seed=args.seed + 2,
         compute_branching=True,
     )

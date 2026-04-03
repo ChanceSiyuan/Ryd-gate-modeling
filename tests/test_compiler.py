@@ -73,6 +73,40 @@ class TestDenseAtomicCompiler:
         # The compiled H_const should differ from system.tq_ham_const
         assert not np.allclose(H_const_term.operator, system.tq_ham_const)
 
+    def test_compile_with_dual_addressing(self):
+        """Compiler should incorporate A+B pinning and per-atom scatter."""
+        from ryd_gate.core.atomic_system import build_atom_a_projector, build_atom_b_projector
+        system = create_analog_system()
+        delta_A = 2 * np.pi * 12e6
+        delta_B = 2 * np.pi * 1e6
+        proto = SweepProtocol(
+            addressing={0: delta_A, 1: delta_B},
+            scatter_rates={0: 35.0, 1: 5.0},
+        )
+        x = [-5.0, 5.0, 1.5]
+        params = proto.unpack_params(x, system)
+        compiler = DenseAtomicCompiler()
+        ir = compiler.compile(system, proto, params)
+
+        H_compiled = ir.static_terms[0].operator
+        H_base = system.tq_ham_const
+        H_diff = H_compiled - H_base
+
+        # H_diff should have real parts (pinning) on both atoms
+        assert not np.allclose(H_diff.real, 0)
+
+        # Atom A pinning: check |rA,gB> diagonal element (index [6,6] in 3-level)
+        # |r>=2, so |rg> = |2,0> = index 2*3+0 = 6
+        assert H_diff[6, 6].real == pytest.approx(-delta_A, rel=1e-6)
+
+        # Atom B pinning: check |gA,rB> diagonal element
+        # |gr> = |0,2> = index 0*3+2 = 2
+        assert H_diff[2, 2].real == pytest.approx(-delta_B, rel=1e-6)
+
+        # Scatter terms: imaginary parts on ground-state diagonals
+        # |gA,gB> = |0,0> = index 0 should have both scatters
+        assert H_diff[0, 0].imag < 0  # -i*Gamma/2 is negative imaginary
+
     def test_drive_term_coefficients_are_callable(self):
         system = create_our_system()
         proto = TOProtocol()
