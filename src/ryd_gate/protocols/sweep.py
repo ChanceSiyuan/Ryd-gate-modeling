@@ -60,7 +60,7 @@ class SweepProtocol(Protocol):
         self.omega_ramp_frac = omega_ramp_frac
         self.n_steps = n_steps
         self.ac_stark_shift = ac_stark_shift
-        self._H_pin_2atom: NDArray[np.complexfloating] | None = None
+        self._ham_additions_cache: dict[tuple[int, int], NDArray[np.complexfloating] | None] = {}
         self._stark_phase_table: tuple | None = None
 
     # -- Protocol interface ------------------------------------------------
@@ -191,41 +191,46 @@ class SweepProtocol(Protocol):
             return {0: self.scatter_rate}
         return {}
 
-    def get_ham_const_additions(self) -> "NDArray[np.complexfloating] | None":
-        """Return local pinning + scattering operators for 2-atom systems.
+    def get_ham_const_additions(
+        self, n_atoms: int = 2, n_levels: int = 3,
+    ) -> "NDArray[np.complexfloating] | None":
+        """Return local pinning + scattering operators for N-atom systems.
 
-        Supports addressing on atom A (index 0), atom B (index 1), or both.
+        Supports addressing on any atom index present in ``self.addressing``.
         Scatter rates can be set per-atom via ``scatter_rates`` dict or
-        globally via ``scatter_rate`` (applied to atom A only for backward
+        globally via ``scatter_rate`` (applied to atom 0 only for backward
         compatibility).
 
-        Built lazily on first call so that LatticeSystem users don't pay
-        the cost of constructing 2-atom operators they won't use.
+        Parameters
+        ----------
+        n_atoms : int
+            Number of atoms in the system.
+        n_levels : int
+            Number of single-atom levels.
         """
-        if self._H_pin_2atom is not None:
-            return self._H_pin_2atom
+        key = (n_atoms, n_levels)
+        if key in self._ham_additions_cache:
+            return self._ham_additions_cache[key]
 
-        from ryd_gate.core.atomic_system import build_atom_a_projector, build_atom_b_projector
-        N = 3
-        projectors = {0: build_atom_a_projector, 1: build_atom_b_projector}
+        from ryd_gate.core.operators import build_atom_projector
 
         H = None
         # Pinning detunings: -δ_i |r_i><r_i|
-        for idx in (0, 1):
+        for idx in range(n_atoms):
             if idx in self.addressing:
-                proj_r = projectors[idx](2, n_levels=N)
+                proj_r = build_atom_projector(idx, n_levels - 1, n_atoms, n_levels)
                 term = -self.addressing[idx] * proj_r
                 H = term if H is None else H + term
 
         # Scattering: -i Γ_i/2 |g_i><g_i|
         for idx, rate in self._get_scatter_map().items():
-            if rate > 0 and idx in projectors:
-                proj_g = projectors[idx](0, n_levels=N)
+            if rate > 0 and idx < n_atoms:
+                proj_g = build_atom_projector(idx, 0, n_atoms, n_levels)
                 term = -1j * rate / 2 * proj_g
                 H = term if H is None else H + term
 
-        self._H_pin_2atom = H
-        return self._H_pin_2atom
+        self._ham_additions_cache[key] = H
+        return H
 
     def get_pin_deltas(self, N: int) -> np.ndarray:
         """Return per-site detuning array for lattice systems."""

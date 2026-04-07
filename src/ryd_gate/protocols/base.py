@@ -92,6 +92,16 @@ class Protocol(ABC):
         """Return bounds for optimisation, or None if not applicable."""
         return None
 
-    def get_ham_const_additions(self) -> "NDArray[np.complexfloating] | None":
-        """Extra time-independent Hamiltonian terms, or None."""
+    def get_ham_const_additions(
+        self, n_atoms: int = 2, n_levels: int = 3,
+    ) -> "NDArray[np.complexfloating] | None":
+        """Extra time-independent Hamiltonian terms, or None.
+
+        Parameters
+        ----------
+        n_atoms : int
+            Number of atoms in the system.
+        n_levels : int
+            Number of single-atom levels.
+        """
         return None
