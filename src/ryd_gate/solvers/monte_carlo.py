@@ -222,7 +222,9 @@ class MonteCarloEngine:
         self.x = x
 
         self._ham_const_base: NDArray[np.complexfloating] = system.tq_ham_const.copy()
-        ham_additions = protocol.get_ham_const_additions()
+        ham_additions = protocol.get_ham_const_additions(
+            n_atoms=system.n_atoms, n_levels=system.n_levels,
+        )
         if ham_additions is not None:
             self._ham_const_base = self._ham_const_base + ham_additions
 

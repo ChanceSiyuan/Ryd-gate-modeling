@@ -138,6 +138,68 @@ class TestDenseAtomicCompiler:
         # drive_420 scales linearly
         np.testing.assert_allclose(abs(c2_420), 0.5 * abs(c1_420), rtol=1e-10)
 
+    def test_single_atom_compile(self):
+        """N=1 analog system should produce dim=3 IR."""
+        system = create_analog_system(n_atoms=1)
+        assert system.n_atoms == 1
+        assert system.tq_ham_const.shape == (3, 3)
+        assert system.v_ryd == 0.0
+
+        proto = SweepProtocol(addressing={0: 2 * np.pi * 12e6})
+        x = [-5.0, 5.0, 1.5]
+        params = proto.unpack_params(x, system)
+        compiler = DenseAtomicCompiler()
+        ir = compiler.compile(system, proto, params)
+
+        assert ir.dim == 3
+        assert len(ir.static_terms) == 3
+        assert len(ir.drive_terms) == 3
+
+        # H_const should include pinning on atom 0
+        H_compiled = ir.static_terms[0].operator
+        H_diff = H_compiled - system.tq_ham_const
+        # |r> = index 2, pinning = -delta_A
+        assert H_diff[2, 2].real == pytest.approx(-2 * np.pi * 12e6, rel=1e-6)
+
+    def test_single_atom_evolve(self):
+        """Single atom with pinning outside sweep range should stay in |g>.
+
+        For a single atom (no blockade), the sweep is adiabatic at the
+        crossing.  Pinning keeps the atom in |g> only if the resonance
+        is shifted OUTSIDE the sweep range.
+        """
+        from ryd_gate import simulate
+        # Paper parameters: Omega_eff/(2pi) ~ 3.8 MHz
+        system = create_analog_system(
+            n_atoms=1, blackmanflag=True,
+            Delta_Hz=2.4e9, rabi_420_Hz=135e6, rabi_1013_Hz=135e6,
+        )
+        # Sweep: ±40 MHz, T_gate = 4.5 us
+        t_gate = 4.5e-6
+        x = [
+            -2 * np.pi * 40e6 / system.rabi_eff,
+            2 * np.pi * 40e6 / system.rabi_eff,
+            t_gate / system.time_scale,
+        ]
+        # Pinning 60 MHz > sweep half-range 40 MHz → resonance outside sweep
+        proto = SweepProtocol(addressing={0: 2 * np.pi * 60e6})
+        psi0 = np.array([1.0, 0.0, 0.0], dtype=complex)
+        result = simulate(system, proto, x, psi0)
+        P_g = np.abs(result.psi_final[0])**2
+        assert P_g > 0.99, f"P_g = {P_g}, expected > 0.99 with pinning outside sweep"
+
+    def test_two_atom_backward_compat(self):
+        """create_analog_system() without new args should match old behavior."""
+        system = create_analog_system()
+        assert system.n_atoms == 2
+        assert system.tq_ham_const.shape == (9, 9)
+        assert system.v_ryd > 0
+
+        # Verify VdW term: |rr> = |2,2> = index 2*3+2 = 8
+        # Diagonal should include v_ryd
+        v_ryd = system.v_ryd
+        assert system.tq_ham_const[8, 8].real == pytest.approx(v_ryd, rel=1e-6)
+
 
 @pytest.mark.slow
 class TestCompilerSolverConsistency:

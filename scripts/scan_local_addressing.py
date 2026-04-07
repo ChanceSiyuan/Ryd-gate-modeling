@@ -989,7 +989,7 @@ def main():
                         help="Addressing beam waist in um (default: 1.0)")
     p_opt.add_argument("--delta-start-mhz", type=float, default=-40.0)
     p_opt.add_argument("--delta-end-mhz", type=float, default=40.0)
-    p_opt.add_argument("--t-gate-us", type=float, default=4.5)
+    p_opt.add_argument("--t-gate-us", type=float, default=9)
     p_opt.add_argument("--top-k", type=int, default=5)
     p_opt.add_argument("--outdir", type=str, default="results")
 
@@ -998,7 +998,7 @@ def main():
     p_plt.add_argument("--csv", type=str, default="results/addressing_opt_grid.csv",
                         help="Path to grid CSV from optimize run")
     p_plt.add_argument("--distance-um", type=float, default=4.0)
-    p_plt.add_argument("--waist-um", type=float, default=1.0)
+    p_plt.add_argument("--waist-um", type=float, default=2.0)
     p_plt.add_argument("--delta-start-mhz", type=float, default=-40.0)
     p_plt.add_argument("--delta-end-mhz", type=float, default=40.0)
     p_plt.add_argument("--t-gate-us", type=float, default=4.5)

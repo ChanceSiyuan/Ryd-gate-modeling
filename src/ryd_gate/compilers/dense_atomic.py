@@ -36,7 +36,7 @@ class DenseAtomicCompiler(Compiler):
         protocol: Protocol,
         params: dict,
     ) -> HamiltonianIR:
-        dim = system.n_levels ** 2  # 49 for 7-level, 9 for 3-level
+        dim = system.n_levels ** system.n_atoms
 
         # Static terms (time-independent)
         static_terms = [
@@ -46,7 +46,9 @@ class DenseAtomicCompiler(Compiler):
         ]
 
         # Protocol-provided static additions (e.g. 784nm pinning)
-        ham_additions = protocol.get_ham_const_additions()
+        ham_additions = protocol.get_ham_const_additions(
+            n_atoms=system.n_atoms, n_levels=system.n_levels,
+        )
         if ham_additions is not None:
             static_terms[0] = HamiltonianTerm(
                 "H_const",

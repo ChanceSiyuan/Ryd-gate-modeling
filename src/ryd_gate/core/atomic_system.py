@@ -94,6 +94,7 @@ class AtomicSystem:
     # Level structure
     n_levels: int = 7
     rydberg_indices: tuple[int, ...] = (5, 6)
+    n_atoms: int = 2
 
 
 # ======================================================================
@@ -291,6 +292,38 @@ def create_lukin_system(
     )
 
 
+def _kron_sum(op_sq: np.ndarray, n_atoms: int) -> np.ndarray:
+    """Build sum_i I⊗…⊗op_sq_i⊗…⊗I for *n_atoms* sites."""
+    n = op_sq.shape[0]
+    if n_atoms == 1:
+        return op_sq.copy()
+    dim = n ** n_atoms
+    result = np.zeros((dim, dim), dtype=op_sq.dtype)
+    for i in range(n_atoms):
+        term = np.eye(1, dtype=op_sq.dtype)
+        for k in range(n_atoms):
+            term = np.kron(term, op_sq if k == i else np.eye(n, dtype=op_sq.dtype))
+        result += term
+    return result
+
+
+def _kron_pair(
+    op_a: np.ndarray, idx_a: int,
+    op_b: np.ndarray, idx_b: int,
+    n_atoms: int, n_levels: int,
+) -> np.ndarray:
+    """Build I⊗…⊗op_a⊗…⊗op_b⊗…⊗I for a specific pair of sites."""
+    term = np.eye(1, dtype=op_a.dtype)
+    for k in range(n_atoms):
+        if k == idx_a:
+            term = np.kron(term, op_a)
+        elif k == idx_b:
+            term = np.kron(term, op_b)
+        else:
+            term = np.kron(term, np.eye(n_levels, dtype=op_a.dtype))
+    return term
+
+
 def create_analog_system(
     detuning_sign: int = 1,
     blackmanflag: bool = True,
@@ -300,6 +333,8 @@ def create_analog_system(
     Delta_Hz: float | None = None,
     rabi_420_Hz: float | None = None,
     rabi_1013_Hz: float | None = None,
+    n_atoms: int = 2,
+    positions: list[tuple[float, float]] | None = None,
 ) -> AtomicSystem:
     """Initialize 3-level analog system for stretched-state quantum simulation.
 
@@ -309,6 +344,14 @@ def create_analog_system(
         |g> = |5S_{1/2}, F=2, m=-2>  (index 0)
         |e> = |6P_{3/2}, F=3, m=-3>  (index 1)
         |r> = |70S_{1/2}, m_J=-1/2>  (index 2)
+
+    Parameters
+    ----------
+    n_atoms : int
+        Number of atoms (default 2 for backward compatibility).
+    positions : list of (x, y) tuples in µm, or None
+        2D positions of atoms.  If None and n_atoms >= 2, atoms are
+        placed along x-axis separated by ``distance_um``.
 
     Uses same physical constants as 'our' parameter set.
     """
@@ -321,7 +364,7 @@ def create_analog_system(
     rabi_eff = rabi_420 * rabi_1013 / (2 * abs(Delta))
     time_scale = 2 * np.pi / rabi_eff
 
-    v_ryd = 2 * np.pi * 874e9 / distance_um**6
+    C6_Hz_um6 = 874e9  # C6 coefficient in Hz·µm^6
     mid_state_decay_rate = 1 / 110.7e-9
     ryd_state_decay_rate = 1 / 151.55e-6
     ryd_RD_rate = 1 / 410.41e-6
@@ -330,29 +373,48 @@ def create_analog_system(
     mid_decay = mid_state_decay_rate if enable_intermediate_decay else 0.0
     ryd_decay = ryd_state_decay_rate if enable_rydberg_decay else 0.0
 
-    # H_const: 3x3 single-atom -> 9x9 two-atom
+    # Default positions: linear chain along x
+    if positions is None and n_atoms >= 2:
+        positions = [(i * distance_um, 0.0) for i in range(n_atoms)]
+
+    # Nearest-neighbour V_ryd for the dataclass scalar field
+    if n_atoms >= 2:
+        v_ryd = 2 * np.pi * C6_Hz_um6 / distance_um**6
+    else:
+        v_ryd = 0.0
+
+    dim = n ** n_atoms
+
+    # --- H_const ---
     ham_sq = np.zeros((n, n), dtype=np.complex128)
     ham_sq[1, 1] = Delta - 1j * mid_decay / 2     # |e>
     ham_sq[2, 2] = 0 - 1j * ryd_decay / 2         # |r>
-    ham_tq = np.kron(np.eye(n), ham_sq) + np.kron(ham_sq, np.eye(n))
-    # VdW: |r,r> <-> |r,r>
+    tq_ham_const = _kron_sum(ham_sq, n_atoms)
+
+    # Pairwise VdW: V_ij |r_i><r_i| ⊗ |r_j><r_j|
     ryd_sq = np.zeros((n, n), dtype=np.complex128)
     ryd_sq[2, 2] = 1.0
-    ham_tq += v_ryd * np.kron(ryd_sq, ryd_sq)
-    tq_ham_const = ham_tq
+    if n_atoms >= 2:
+        for i in range(n_atoms):
+            for j in range(i + 1, n_atoms):
+                dx = positions[i][0] - positions[j][0]
+                dy = positions[i][1] - positions[j][1]
+                r = np.sqrt(dx * dx + dy * dy)
+                v_ij = 2 * np.pi * C6_Hz_um6 / r**6
+                tq_ham_const += v_ij * _kron_pair(ryd_sq, i, ryd_sq, j, n_atoms, n)
 
-    # H_1013: |r><e| + h.c. (constant, RWA applied)
-    ham_sq = np.zeros((n, n), dtype=np.complex128)
-    ham_sq[2, 1] = rabi_1013 / 2   # CG = 1
-    tq_ham_1013 = np.kron(np.eye(n), ham_sq) + np.kron(ham_sq, np.eye(n))
+    # --- H_1013: |r><e| (constant, RWA applied) ---
+    h1013_sq = np.zeros((n, n), dtype=np.complex128)
+    h1013_sq[2, 1] = rabi_1013 / 2
+    tq_ham_1013 = _kron_sum(h1013_sq, n_atoms)
 
-    # H_420: |e><g| (phase-modulated by solve_gate)
-    ham_sq = np.zeros((n, n), dtype=np.complex128)
-    ham_sq[1, 0] = rabi_420 / 2    # CG = 1
-    tq_ham_420 = np.kron(np.eye(n), ham_sq) + np.kron(ham_sq, np.eye(n))
+    # --- H_420: |e><g| (phase-modulated) ---
+    h420_sq = np.zeros((n, n), dtype=np.complex128)
+    h420_sq[1, 0] = rabi_420 / 2
+    tq_ham_420 = _kron_sum(h420_sq, n_atoms)
 
     # No dark-state lightshift in 3-level system
-    tq_ham_lightshift_zero = np.zeros((n * n, n * n), dtype=np.complex128)
+    tq_ham_lightshift_zero = np.zeros((dim, dim), dtype=np.complex128)
 
     return AtomicSystem(
         param_set="analog", ryd_level=ryd_level, atom=atom,
@@ -379,6 +441,7 @@ def create_analog_system(
         enable_0_scattering=False,
         enable_polarization_leakage=False,
         n_levels=3, rydberg_indices=(2,),
+        n_atoms=n_atoms,
     )
 
 

@@ -145,6 +145,34 @@ def build_vdw_unit_operator(
     return np.kron(ryd_proj, ryd_proj)
 
 
+def build_atom_projector(
+    atom_idx: int, level: int, n_atoms: int, n_levels: int,
+) -> "NDArray[np.complexfloating]":
+    """Build |level><level| projector on atom ``atom_idx`` in an N-atom system.
+
+    Returns an ``n_levels^n_atoms × n_levels^n_atoms`` matrix that is
+    the identity on all atoms except ``atom_idx``, where it projects
+    onto level ``level``.
+
+    Parameters
+    ----------
+    atom_idx : int
+        Which atom (0-indexed) the projector acts on.
+    level : int
+        Single-atom level index to project onto.
+    n_atoms : int
+        Total number of atoms.
+    n_levels : int
+        Number of single-atom levels.
+    """
+    sq = np.zeros((n_levels, n_levels), dtype=np.complex128)
+    sq[level, level] = 1.0
+    op = np.eye(1, dtype=np.complex128)
+    for k in range(n_atoms):
+        op = np.kron(op, sq if k == atom_idx else np.eye(n_levels, dtype=np.complex128))
+    return op
+
+
 def build_atom_a_projector(index: int, n_levels: int = 7) -> "NDArray[np.complexfloating]":
     """Build |i><i| x I -- projects Atom A (left) onto level index."""
     sq = np.zeros((n_levels, n_levels), dtype=np.complex128)
