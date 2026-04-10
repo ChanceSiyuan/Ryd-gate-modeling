@@ -9,13 +9,16 @@ addressing wavelength λ = 783.5 nm, single-beam power P = 320 μW, and a
 are disabled (default) so we look at *coherent* errors only.
 
 Experiment 1 — Adiabatic-fidelity tracking
-    For T ∈ {4.5, 9, 50, 200} μs, capture ψ(t) at every step and compute
-    F_adiab(t) = max_j |⟨e_j(t) | ψ(t)⟩|², the overlap of the wavefunction
-    with the closest *instantaneous* eigenstate of H(t). If F_adiab stays
-    pinned at 1, the evolution is on an eigen-branch (i.e. perfectly
-    adiabatic) and any leftover P_gg / P_rg cannot be a Landau–Zener
-    diabatic excitation — it must be a property of the terminal eigenstate
-    itself or of the post-eigenbasis projection at t = T.
+    For each T, capture ψ(t) at every step and compute *two* metrics:
+        F1(t) = max_j |⟨e_j(t) | ψ(t)⟩|²            (top-1 overlap)
+        F2(t) = sum of the top-2 |⟨e_j(t) | ψ(t)⟩|² (top-2 subspace overlap)
+    Watch out for the eigh near-degeneracy artifact: at avoided crossings
+    where two eigenstates are nearly degenerate, ``np.linalg.eigh`` is free
+    to rotate the basis arbitrarily inside the (near-)degenerate subspace,
+    which makes F1 spuriously drop to ≈0.5 even though the wavefunction is
+    perfectly following the 2D adiabatic manifold. F2 stays at ≈1 in that
+    case. Always read F2, not F1, before concluding the system is non-
+    adiabatic. Issue #44 has the full discussion.
 
 Experiment 2 — Extreme-slow-sweep test
     Sweep T from 1 μs up to 200 μs at the same operating point. If the
@@ -145,16 +148,40 @@ def build_H_at_t(ir, t):
     return H
 
 
-def adiabatic_fidelity_history(ir, times, states):
-    """For each step compute F(t) = max_j |⟨e_j(t)|ψ(t)⟩|²."""
-    F = np.empty(len(times))
+def adiabatic_fidelity_history(ir, times, states, k=2):
+    """For each step compute the top-1 and top-k eigenstate overlaps.
+
+    Returns
+    -------
+    F1 : ndarray, shape (len(times),)
+        ``max_j |⟨e_j(t) | ψ(t)⟩|²`` — the overlap with the *single* closest
+        instantaneous eigenstate of H(t).
+    Fk : ndarray, shape (len(times),)
+        Sum of the top-``k`` eigenstate overlaps. This is the meaningful
+        adiabaticity metric: it measures whether the wavefunction lives in the
+        ``k``-dimensional subspace spanned by the ``k`` closest eigenstates.
+
+    Why two metrics
+    ---------------
+    At a near-degenerate avoided crossing, ``np.linalg.eigh`` is free to
+    rotate the eigenbasis arbitrarily within the (near-)degenerate subspace.
+    A wavefunction that is *cleanly* following a 2D adiabatic manifold will
+    therefore show a spuriously low ``F1`` (often ≈0.5 if two eigenstates
+    are nearly degenerate) while ``Fk`` for ``k≥2`` stays at ≈1. The top-1
+    drop is a basis-rotation artifact, not a real diabatic event. Always
+    check ``Fk`` before concluding the system is non-adiabatic.
+    """
+    F1 = np.empty(len(times))
+    Fk = np.empty(len(times))
     for i, (t, psi) in enumerate(zip(times, states.T)):
         H = build_H_at_t(ir, t)
         H = 0.5 * (H + H.conj().T)  # symmetrize numerically
-        evals, evecs = np.linalg.eigh(H)
+        _, evecs = np.linalg.eigh(H)
         overlaps = np.abs(evecs.conj().T @ psi) ** 2
-        F[i] = float(overlaps.max())
-    return F
+        F1[i] = float(overlaps.max())
+        # Sum of the top-k overlaps without sorting the whole array.
+        Fk[i] = float(np.partition(overlaps, -k)[-k:].sum())
+    return F1, Fk
 
 
 # Top-level worker functions (must be picklable for ProcessPoolExecutor.map).
@@ -163,9 +190,15 @@ _EXP1_N_PTS = 301
 
 
 def _exp1_one_T(T_us, n_pts=None):
+    """Run one (λ, P, T) cell for experiment 1 and return everything needed.
+
+    Returns ``(T_us, times, F1, F2, m, elapsed)`` where ``F1`` is the top-1
+    instantaneous-eigenstate overlap (which suffers from the eigh near-
+    degeneracy artifact) and ``F2`` is the sum of the top-2 overlaps (the
+    physically meaningful metric — see ``adiabatic_fidelity_history``).
+    """
     if n_pts is None:
         n_pts = _EXP1_N_PTS
-    """Run one (λ, P, T) cell for experiment 1 and return everything needed."""
     model = build_model()
     psi0 = np.zeros(9, dtype=complex); psi0[0] = 1.0
     protocol, x, _, _ = make_protocol_and_x(
@@ -176,10 +209,10 @@ def _exp1_one_T(T_us, n_pts=None):
     t0 = _time.time()
     result = simulate(model, protocol, x, psi0, t_eval=t_eval)
     ir = DenseAtomicCompiler().compile(model.system, protocol, params)
-    F = adiabatic_fidelity_history(ir, result.times, result.states)
+    F1, F2 = adiabatic_fidelity_history(ir, result.times, result.states, k=2)
     elapsed = _time.time() - t0
     m = measure_pops(model, result.psi_final)
-    return T_us, result.times, F, m, elapsed
+    return T_us, result.times, F1, F2, m, elapsed
 
 
 def _exp2_one_T(T_us):
@@ -245,31 +278,41 @@ def experiment1():
     results_per_T = _parallel_map(_exp1_one_T, Ts_us)
 
     summary = []
-    for ax, (T_us, times, F, m, elapsed) in zip(axes, results_per_T):
-        max_dropout = float((1.0 - F).max())
-        summary.append((T_us, max_dropout, m))
-        print(f"  T={T_us:6.1f} μs  max(1-F)={max_dropout:.4e}  "
+    for ax, (T_us, times, F1, F2, m, elapsed) in zip(axes, results_per_T):
+        max_drop_F1 = float((1.0 - F1).max())
+        max_drop_F2 = float((1.0 - F2).max())
+        summary.append((T_us, max_drop_F1, max_drop_F2, m))
+        print(f"  T={T_us:6.1f} μs  max(1-F2)={max_drop_F2:.2e}  "
+              f"max(1-F1)={max_drop_F1:.2e}  "
               f"P_gg={m['P_gg']:.4e}  P_gr={m['P_gr']:.6f}  "
               f"P_rg={m['P_rg']:.4e}  ({elapsed:.1f}s)")
 
-        ax.semilogy(times * 1e6, np.maximum(1.0 - F, 1e-16),
-                    color='k', lw=1.4)
+        # Light gray: top-1 overlap (the misleading "non-adiabatic" artifact).
+        ax.semilogy(times * 1e6, np.maximum(1.0 - F1, 1e-16),
+                    color='0.65', lw=1.0, ls='-',
+                    label="1 − top-1 overlap (eigh artifact)")
+        # Black: top-2 overlap (the physically meaningful metric).
+        ax.semilogy(times * 1e6, np.maximum(1.0 - F2, 1e-16),
+                    color='k', lw=1.6,
+                    label="1 − top-2 overlap (true 2D-subspace dropout)")
         ax.set_ylim(1e-14, 1.0)
         ax.set_xlabel("time (μs)")
-        ax.set_ylabel(r"$1 - F_{\rm adiab}(t)$")
+        ax.set_ylabel(r"$1 - F(t)$")
         ax.set_title(
             f"T = {T_us:.1f} μs   "
-            f"max(1−F) = {max_dropout:.2e}   "
+            f"max(1−F2) = {max_drop_F2:.2e}   "
+            f"max(1−F1) = {max_drop_F1:.2e}   "
             f"P_gg = {m['P_gg']:.2e}   "
             f"P_gr = {m['P_gr']:.4f}   "
             f"P_rg = {m['P_rg']:.2e}",
-            fontsize=10)
+            fontsize=9)
         ax.grid(alpha=0.3, which='both')
+        ax.legend(loc='lower center', fontsize=7, framealpha=0.9)
 
     fig.suptitle(
-        "Exp 1 — Adiabatic fidelity tracking "
-        f"(λ={WL_REF_NM} nm, P={P_REF_UW:.0f} μW, ±{abs(DELTA_START_MHZ):.0f} MHz sweep)",
-        y=1.0)
+        "Exp 1 — Adiabatic fidelity tracking (top-1 vs top-2 overlap) "
+        f"\nλ={WL_REF_NM} nm, P={P_REF_UW:.0f} μW, ±{abs(DELTA_START_MHZ):.0f} MHz sweep",
+        y=1.0, fontsize=11)
     fig.tight_layout()
     path = os.path.join(OUTDIR, "diagnose_exp1_adiabatic_fidelity.png")
     fig.savefig(path, dpi=150)
@@ -397,9 +440,10 @@ def main():
     print("=" * 64)
     print("Summary")
     print("=" * 64)
-    print("\nExp 1 max(1−F_adiab) per T:")
-    for T_us, drop, m in s1:
-        print(f"  T={T_us:6.1f} μs  max(1-F)={drop:.4e}  "
+    print("\nExp 1 max dropouts per T (top-2 is the meaningful metric):")
+    for T_us, drop_F1, drop_F2, m in s1:
+        print(f"  T={T_us:6.1f} μs  max(1-F2)={drop_F2:.2e}  "
+              f"max(1-F1)={drop_F1:.2e}  "
               f"P_gg={m['P_gg']:.4e}  P_rg={m['P_rg']:.4e}")
     print(f"\nExp 2 final populations vs T (see CSV).")
     print(f"Exp 3 final populations vs Δ_max (see CSV).")
