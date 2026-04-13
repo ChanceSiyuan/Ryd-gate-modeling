@@ -511,8 +511,7 @@ def _run_optimize_scan(args):
             print(f"    #{rank+1}: P_gr={P_gr_dyn:.4f}, norm={norm:.6f}, "
                   f"norm_loss={1-norm:.4e}")
 
-    # Reconstruct x_sweep at the best cell so the existing plot helpers
-    # (Stückelberg, LZS, spectrum) have a representative x_sweep to read.
+    # Reconstruct x_sweep at the best cell for meta consistency (CSV, replot).
     best_dh = best["delta_half_mhz"]
     best_tg = best["t_gate_us"] * 1e-6
     x_sweep = [
@@ -549,42 +548,28 @@ def _make_adiabatic_boundary(meta):
     return _add
 
 
-def _compute_lzs_params(meta):
-    """Compute LZS transfer-matrix scalars from meta.
-
-    Returns a dict with keys: Omega_eff, alpha, P_LZ, envelope, phi_stokes,
-    lzs_error (callable: delta_A_rad -> error probability).
-    """
-    system = meta["system"]
-    x_sweep = meta["x_sweep"]
-    Omega_eff = system.rabi_eff
-    t_gate_s = float(x_sweep[2]) * system.time_scale
-    delta_start_rad = float(x_sweep[0]) * Omega_eff
-    delta_end_rad = float(x_sweep[1]) * Omega_eff
-    alpha = abs(delta_end_rad - delta_start_rad) / t_gate_s
-    P_LZ = np.exp(-pi * Omega_eff**2 / (2 * alpha))
-    envelope = 4 * P_LZ * (1 - P_LZ)
-    phi_stokes = pi / 4
-
-    def _lzs_error(delta_A_rad):
-        Phi_dyn = delta_A_rad**2 / (2 * alpha)
-        return envelope * np.cos(Phi_dyn / 2 + phi_stokes)**2
-
+def _gaussian_noise_summary(meta, sigma_pts, ref_power_uw):
+    """Map Gaussian smoothing width (grid points) to equivalent power noise."""
+    powers = np.asarray(meta["powers"], dtype=float)
+    if len(powers) < 2:
+        return None
+    power_step_uw = float(np.mean(np.diff(np.sort(powers))))
+    sigma_power_uw = float(sigma_pts) * power_step_uw
+    frac = sigma_power_uw / ref_power_uw if ref_power_uw > 0 else np.nan
     return {
-        "Omega_eff": Omega_eff,
-        "alpha": alpha,
-        "P_LZ": P_LZ,
-        "envelope": envelope,
-        "phi_stokes": phi_stokes,
-        "lzs_error": _lzs_error,
+        "power_step_uw": power_step_uw,
+        "sigma_power_uw": sigma_power_uw,
+        "sigma_frac": frac,
     }
-
 
 # ── individual plot functions ──────────────────────────────────────────
 
 def _plot_components(grid, meta, args):
     """2×2 cost component overview → addressing_opt_components.png"""
     wls = meta["wls"]; powers = meta["powers"]; best = meta["best"]
+    distance_um = getattr(args, "distance_um", None)
+    waist_um = getattr(args, "waist_um", None)
+    t_gate_us = getattr(args, "t_gate_us", None)
     add_boundary = _make_adiabatic_boundary(meta)
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
@@ -602,8 +587,16 @@ def _plot_components(grid, meta, args):
         ax.set_ylabel("Wavelength (nm)")
         ax.set_title(title)
         fig.colorbar(im, ax=ax)
-    fig.suptitle("Cost decomposition", fontsize=13)
-    fig.tight_layout()
+    fig.suptitle(
+        "Cost decomposition\n"
+        rf"selected raw best: $\lambda={best['wl']:.2f}\,$nm, "
+        rf"$P={best['power_uw']:.1f}\,\mu$W, "
+        rf"$\delta_A={best['delta_A_mhz']:.2f}$ MHz"
+        + (rf", $a={distance_um:.2f}\,\mu$m" if distance_um is not None else "")
+        + (rf", $w={waist_um:.2f}\,\mu$m" if waist_um is not None else "")
+        + (rf", $T_{{\rm gate}}={t_gate_us:.2f}\,\mu$s" if t_gate_us is not None else ""),
+        fontsize=13)
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
     path = os.path.join(args.outdir, _prefixed("addressing_opt_components.png", args.prefix))
     fig.savefig(path, dpi=150)
     print(f"  Components saved to {path}")
@@ -615,9 +608,12 @@ def _plot_smoothed(grid, meta, args):
     from scipy.ndimage import gaussian_filter1d
 
     wls = meta["wls"]; powers = meta["powers"]; best = meta["best"]
+    distance_um = getattr(args, "distance_um", None)
+    waist_um = getattr(args, "waist_um", None)
+    t_gate_us = getattr(args, "t_gate_us", None)
     add_boundary = _make_adiabatic_boundary(meta)
 
-    sigma_smooth = 3
+    sigma_smooth = float(getattr(args, "smooth_sigma", OPT_SMOOTH_SIGMA))
     cost_2d_raw = grid["total_cost"].reshape(args.n_wl, args.n_power)
     cost_2d_smooth = gaussian_filter1d(cost_2d_raw, sigma=sigma_smooth, axis=1)
 
@@ -626,192 +622,71 @@ def _plot_smoothed(grid, meta, args):
     best_smooth_wl = wls[smooth_wi]
     best_smooth_pow = powers[smooth_pi]
     best_smooth_cost = cost_2d_smooth[smooth_wi, smooth_pi]
+    noise = _gaussian_noise_summary(meta, sigma_smooth, best_smooth_pow)
 
     fig, ax = plt.subplots(figsize=(10, 7))
     im = ax.pcolormesh(powers, wls, cost_2d_smooth, cmap="viridis_r", shading="auto")
     add_boundary(ax)
     ax.plot(best["power_uw"], best["wl"], "r*", ms=14, mew=2, mfc="none",
-            label=f"Raw best: $E$={best['total_cost']:.4f}")
+            label=(rf"Raw best: $\lambda={best['wl']:.2f}$ nm, "
+                   rf"$P={best['power_uw']:.1f}\,\mu$W"))
     ax.plot(best_smooth_pow, best_smooth_wl, "r*", ms=14, mew=2,
-            label=f"Smoothed best: $E$={best_smooth_cost:.4f}")
+            label=(rf"Smoothed best: $\lambda={best_smooth_wl:.2f}$ nm, "
+                   rf"$P={best_smooth_pow:.1f}\,\mu$W"))
     ax.set_xlabel("Power ($\\mu$W)")
     ax.set_ylabel("Wavelength (nm)")
     ax.set_title(r"Smoothed cost (Gaussian $\sigma$="
-                 f"{sigma_smooth} pts, washes out LZS fringes)")
+                 f"{sigma_smooth:g} pts, washes out LZS fringes)")
+    if distance_um is not None or waist_um is not None or t_gate_us is not None:
+        meta_lines = []
+        if distance_um is not None:
+            meta_lines.append(rf"$a = {distance_um:.2f}\,\mu$m")
+        if waist_um is not None:
+            meta_lines.append(rf"$w = {waist_um:.2f}\,\mu$m")
+        if t_gate_us is not None:
+            meta_lines.append(rf"$T_{{\rm gate}} = {t_gate_us:.2f}\,\mu$s")
+        ax.text(
+            0.98, 0.02,
+            "\n".join(meta_lines),
+            transform=ax.transAxes,
+            fontsize=10,
+            ha="right",
+            va="bottom",
+            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="0.7", alpha=0.92),
+        )
     fig.colorbar(im, ax=ax, label="$E_{total}$ (smoothed)")
     ax.legend(fontsize=9)
+    if noise is not None:
+        noise_text = (
+            rf"$\sigma_{{\rm G}}={sigma_smooth:g}$ pts"
+            "\n"
+            rf"$\Delta P_{{\rm grid}}\approx{noise['power_step_uw']:.2f}\,\mu$W"
+            "\n"
+            rf"$\sigma_P\approx{noise['sigma_power_uw']:.2f}\,\mu$W"
+            "\n"
+            rf"$\sigma_I/I\approx{100*noise['sigma_frac']:.1f}\%$ "
+            rf"@ $P={best_smooth_pow:.1f}\,\mu$W"
+        )
+        ax.text(
+            0.02, 0.02, noise_text,
+            transform=ax.transAxes,
+            fontsize=9,
+            ha="left",
+            va="bottom",
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.7", alpha=0.92),
+        )
     fig.tight_layout()
     path = os.path.join(args.outdir, _prefixed("addressing_opt_smoothed.png", args.prefix))
     fig.savefig(path, dpi=150)
     print(f"  Smoothed heatmap saved to {path}")
     print(f"    Smoothed best: lambda={best_smooth_wl:.2f} nm, "
           f"P={best_smooth_pow:.1f} uW, cost={best_smooth_cost:.5f}")
+    if noise is not None:
+        print(f"    Gaussian sigma={sigma_smooth:g} pts  ->  "
+              f"sigma_P={noise['sigma_power_uw']:.2f} uW  ->  "
+              f"sigma_I/I≈{100*noise['sigma_frac']:.1f}% "
+              f"at P={best_smooth_pow:.1f} uW")
     plt.close(fig)
-
-
-def _plot_stuckelberg(grid, meta, args):
-    """LZS 1D slices per wavelength with theory overlay → addressing_opt_stuckelberg.png
-
-    Transfer-matrix result: P = 4 P_LZ (1-P_LZ) cos^2(Phi_dyn/2 + phi_S)
-    """
-    wls = meta["wls"]
-    lzs = _compute_lzs_params(meta)
-    Omega_eff = lzs["Omega_eff"]
-    P_LZ = lzs["P_LZ"]
-    envelope = lzs["envelope"]
-    alpha = lzs["alpha"]
-    _lzs_error = lzs["lzs_error"]
-
-    n_sel = min(6, args.n_wl)
-    sel_indices = np.linspace(0, args.n_wl - 1, n_sel, dtype=int)
-
-    fig, axes = plt.subplots(2, (n_sel + 1) // 2,
-                              figsize=(5 * ((n_sel + 1) // 2), 8), squeeze=False)
-    axes_flat = axes.flat
-
-    for panel, wi in enumerate(sel_indices):
-        ax = axes_flat[panel]
-        wl = wls[wi]
-        delta_A_arr = np.abs(grid["delta_A_mhz"].reshape(args.n_wl, args.n_power)[wi])
-        delta_A_rad = delta_A_arr * 1e6 * 2 * pi
-        ratio = delta_A_rad / Omega_eff
-
-        sim_error = (grid["pinning_leak"].reshape(args.n_wl, args.n_power)[wi]
-                     + grid["crosstalk"].reshape(args.n_wl, args.n_power)[wi])
-
-        ratio_dense = np.linspace(ratio.min(), ratio.max(), 500)
-        lzs_dense = _lzs_error(ratio_dense * Omega_eff)
-
-        ax.plot(ratio, sim_error * 100, "o", ms=3, color="#1f77b4", label="Simulation")
-        ax.plot(ratio_dense, lzs_dense * 100, "-", lw=1.2, color="#d62728",
-                label="LZS theory", alpha=0.85)
-        ax.axvline(4.0, color="gray", ls=":", lw=1, alpha=0.6)
-        ax.set_title(f"$\\lambda$ = {wl:.1f} nm", fontsize=10)
-        ax.set_xlabel(r"$|\delta_A| / \Omega_{\rm eff}$", fontsize=9)
-        ax.set_ylabel("Error (%)", fontsize=9)
-        ax.tick_params(labelsize=8)
-        if panel == 0:
-            ax.legend(fontsize=7, loc="upper right")
-
-    for j in range(len(sel_indices), len(axes_flat)):
-        axes_flat[j].set_visible(False)
-
-    fig.suptitle(
-        r"LZS interference (transfer-matrix):  "
-        r"$P = 4P_{\rm LZ}(1-P_{\rm LZ})\cos^2(\Phi_{\rm dyn}/2 + \phi_S)$"
-        f"\n$P_{{LZ}}$ = {P_LZ:.2e},  envelope = {envelope*100:.3f}%,  "
-        f"$\\alpha/(2\\pi)$ = {alpha/(2*pi)/1e12:.2f} THz/s",
-        fontsize=11)
-    fig.tight_layout()
-    path = os.path.join(args.outdir, _prefixed("addressing_opt_stuckelberg.png", args.prefix))
-    fig.savefig(path, dpi=150)
-    print(f"  Stückelberg 1D overlay saved to {path}")
-    plt.close(fig)
-
-
-def _plot_lzs_2d(grid, meta, args):
-    """LZS fringe contours on 2D coherent-error heatmap → addressing_opt_lzs_fringes_2d.png"""
-    wls = meta["wls"]; powers = meta["powers"]; best = meta["best"]
-    add_boundary = _make_adiabatic_boundary(meta)
-    lzs = _compute_lzs_params(meta)
-    alpha = lzs["alpha"]
-    phi_stokes = lzs["phi_stokes"]
-
-    delta_A_2d = np.abs(grid["delta_A_mhz"].reshape(args.n_wl, args.n_power))
-    delta_A_2d_rad = delta_A_2d * 1e6 * 2 * pi
-    Phi_St_2d = delta_A_2d_rad**2 / (2 * alpha) / 2 + phi_stokes
-    cos2_2d = np.cos(Phi_St_2d)**2
-
-    leak_xtalk_2d = (grid["pinning_leak"] + grid["crosstalk"]).reshape(
-        args.n_wl, args.n_power)
-
-    fig, ax = plt.subplots(figsize=(10, 7))
-    im = ax.pcolormesh(powers, wls, leak_xtalk_2d, cmap="RdYlGn_r", shading="auto")
-    add_boundary(ax)
-    ax.contour(powers, wls, cos2_2d, levels=[0.05], colors="cyan",
-               linewidths=1.2, linestyles="-", alpha=0.9)
-    ax.contour(powers, wls, cos2_2d, levels=[0.95], colors="magenta",
-               linewidths=1.2, linestyles="--", alpha=0.9)
-    ax.plot(best["power_uw"], best["wl"], "k*", ms=14, mew=2)
-    ax.set_xlabel("Power ($\\mu$W)")
-    ax.set_ylabel("Wavelength (nm)")
-    ax.set_title(
-        "Coherent error (leak + xtalk) with LZS fringe contours\n"
-        r"cyan = destructive ($\cos^2\Phi_{\rm St}=0$),  "
-        r"magenta = constructive ($\cos^2\Phi_{\rm St}=1$)")
-    fig.colorbar(im, ax=ax, label="pinning leak + crosstalk")
-    fig.tight_layout()
-    path = os.path.join(args.outdir, _prefixed("addressing_opt_lzs_fringes_2d.png", args.prefix))
-    fig.savefig(path, dpi=150)
-    print(f"  LZS 2D fringe map saved to {path}")
-    plt.close(fig)
-
-
-def _plot_spectrum(grid, meta, args):
-    """Instantaneous eigenenergy spectrum for best candidate → addressing_opt_spectrum_best.png"""
-    from ryd_gate.compilers.dense_atomic import DenseAtomicCompiler
-
-    best = meta["best"]
-    system = meta["system"]
-    eta = meta["eta"]
-    x_sweep = meta["x_sweep"]
-    ac_stark_peak = meta["ac_stark_peak"]
-
-    print(f"\n  Anti-blockade spectrum for best candidate...")
-    delta_A_best = best["delta_A_mhz"] * 2 * pi * 1e6
-    delta_B_best = eta * delta_A_best
-    n_spec = 200
-    Delta_scan = np.linspace(
-        args.delta_start_mhz * 2 * pi * 1e6,
-        args.delta_end_mhz * 2 * pi * 1e6, n_spec)
-
-    compiler = DenseAtomicCompiler()
-    proto_best = SweepProtocol(addressing={0: delta_A_best, 1: delta_B_best},
-                               ac_stark_shift=ac_stark_peak)
-    params_best = proto_best.unpack_params(x_sweep, system)
-    ir = compiler.compile(system, proto_best, params_best)
-
-    H_static = np.zeros((9, 9), dtype=complex)
-    for term in ir.static_terms:
-        c = term.coefficient(0) if callable(term.coefficient) else term.coefficient
-        H_static += c * np.asarray(term.operator)
-
-    eigvals_all = np.empty((n_spec, 9))
-    for i, Delta in enumerate(Delta_scan):
-        t_at_delta = (Delta - params_best["delta_start"]) / (
-            params_best["delta_end"] - params_best["delta_start"]) * params_best["t_gate"]
-        t_at_delta = np.clip(t_at_delta, 0, params_best["t_gate"])
-        H = H_static.copy()
-        for term in ir.drive_terms:
-            coeff = term.coefficient(t_at_delta) if callable(term.coefficient) else term.coefficient
-            H += coeff * np.asarray(term.operator)
-        eigvals_all[i] = np.sort(np.linalg.eigvalsh(H.real + H.real.T) / 2)
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    Delta_mhz = Delta_scan / (2 * pi * 1e6)
-    for j in range(9):
-        ax.plot(Delta_mhz, eigvals_all[:, j] / (2 * pi * 1e6), lw=0.8)
-    ax.axvline(0, color="gray", ls=":", lw=0.5, label=r"$\Delta=0$")
-    dA_mhz = abs(delta_A_best) / (2 * pi * 1e6)
-    ax.axhline(-dA_mhz, color="red", ls="--", lw=1,
-               label=f"$|\\delta_A|={dA_mhz:.1f}$ MHz")
-    v_mhz = system.v_ryd / (2 * pi * 1e6)
-    ax.axhline(v_mhz, color="purple", ls="--", lw=1,
-               label=f"$V_{{ryd}}={v_mhz:.0f}$ MHz")
-    ax.set_xlabel(r"Two-photon detuning $\Delta/(2\pi)$ (MHz)")
-    ax.set_ylabel("Eigenenergy / $(2\\pi)$ (MHz)")
-    ax.set_title(f"Instantaneous spectrum (best: $\\lambda$={best['wl']:.1f} nm, "
-                 f"$\\delta_A$={best['delta_A_mhz']:.1f} MHz)")
-    ax.legend(fontsize=8)
-    fig.tight_layout()
-    path = os.path.join(args.outdir, _prefixed("addressing_opt_spectrum_best.png", args.prefix))
-    fig.savefig(path, dpi=150)
-    print(f"  Spectrum saved to {path}")
-    plt.close(fig)
-
-    if abs(delta_A_best) > 0.5 * system.v_ryd:
-        print(f"  WARNING: |delta_A| = {dA_mhz:.1f} MHz approaches "
-              f"V_ryd = {v_mhz:.0f} MHz -- check spectrum for resonances!")
 
 
 def _detect_sweep_axes(grid):
@@ -894,38 +769,36 @@ def _plot_components_sweep(grid, meta, args):
 
 
 def _is_legacy_wlp_mode(meta):
-    """True iff the only varying axes are wavelength and power (legacy mode)."""
+    """True iff the only varying axes are wavelength and power (legacy mode).
+
+    When True, :func:`_plot_optimize` can draw the full (λ, P) heatmaps:
+    2×2 component breakdown + smoothed total cost.  Sweep modes fall back to
+    :func:`_plot_components_sweep`.
+    """
     return (len(meta["wls"]) > 1 and len(meta["powers"]) > 1
             and len(meta["delta_halfs"]) == 1
             and len(meta["t_gates_us"]) == 1)
 
 
 def _plot_optimize(grid, meta, args):
-    """Generate all plots from the optimization grid data.
+    """Generate plots from the optimization grid data.
 
-    In legacy (λ, P) mode this runs the full 5-plot suite (components,
-    smoothed, Stückelberg, LZS-2D, spectrum). In sweep modes — where one or
-    both of the (λ, P) axes are collapsed and one or both of the (Δ_max,
-    T_gate) axes are scanned — only the generic 2×2 components heatmap is
-    produced (Stückelberg / LZS / spectrum assume a wavelength axis).
+    Legacy (λ, P) mode (see :func:`_is_legacy_wlp_mode`): two figures —
+    ``addressing_opt_components.png`` (2×2 cost breakdown) and
+    ``addressing_opt_smoothed.png`` (Gaussian-smoothed total cost).
+
+    Sweep modes (collapsed λ and/or P, or extra axes in Δ_max / T_gate): a
+    single ``addressing_opt_components_sweep.png`` on the two active axes.
     """
     os.makedirs(args.outdir, exist_ok=True)
 
     if _is_legacy_wlp_mode(meta):
-        print("\n[1/5] Cost component overview (2×2)...")
+        print("\n[1/2] Cost component overview (2×2)...")
         _plot_components(grid, meta, args)
 
-        print("\n[2/5] Smoothed cost landscape...")
+        print("\n[2/2] Smoothed cost landscape...")
         _plot_smoothed(grid, meta, args)
 
-        print("\n[3/5] Stückelberg 1D slices...")
-        _plot_stuckelberg(grid, meta, args)
-
-        print("\n[4/5] LZS 2D fringe map...")
-        _plot_lzs_2d(grid, meta, args)
-
-        print("\n[5/5] Anti-blockade spectrum...")
-        _plot_spectrum(grid, meta, args)
     else:
         print("\n[sweep] Generic components heatmap on the active axes...")
         _plot_components_sweep(grid, meta, args)
@@ -1050,7 +923,7 @@ def cmd_optimize_plot(args):
     args.n_wl = len(wls)
     args.n_power = len(powers)
 
-    # Rebuild model for spectrum plot and adiabatic boundary
+    # Rebuild model for adiabatic-boundary overlay and meta consistency
     model = Analog3LevelModel.from_defaults(
         detuning_sign=1, blackmanflag=True,
         distance_um=args.distance_um,
@@ -1065,9 +938,7 @@ def cmd_optimize_plot(args):
     best_idx = np.argmin(grid["total_cost"])
     best = grid[best_idx]
 
-    # Reconstruct an x_sweep from the *best* cell's per-row Δ_max / T_gate
-    # so the (legacy) Stückelberg / LZS / spectrum helpers have something
-    # representative to read.
+    # Reconstruct x_sweep from the best cell's Δ_max / T_gate (meta / CSV).
     best_dh = float(best["delta_half_mhz"])
     best_tg = float(best["t_gate_us"]) * 1e-6
     x_sweep = [
@@ -1129,24 +1000,27 @@ OPT_WAIST_UM = 2.0          # 1/e² radius of the addressing Gaussian beam [μm]
                             # the spectator atom B.
 
 # --- Detuning sweep (Landau–Zener ramp on atom A) ------------------------
-OPT_DELTA_START_MHZ = -40.0 # Initial detuning of the addressing ramp [MHz].
-OPT_DELTA_END_MHZ = 40.0    # Final detuning of the addressing ramp [MHz].
+OPT_DELTA_START_MHZ = -80 # Initial detuning of the addressing ramp [MHz].
+OPT_DELTA_END_MHZ = 80    # Final detuning of the addressing ramp [MHz].
                             # Together with T_GATE these define the sweep rate
                             # α = (Δ_end − Δ_start)/T_gate that drives the LZ pin.
-OPT_T_GATE_US = 4.5         # Total gate duration [μs] over which Δ ramps from
+OPT_T_GATE_US = 9         # Total gate duration [μs] over which Δ ramps from
                             # start → end. Larger T → more adiabatic but more
                             # scattering accumulated.
 
 # --- Output / runtime ----------------------------------------------------
 OPT_TOP_K = 5               # Number of best (λ, P) candidates to print + validate.
 OPT_OUTDIR = "results"      # Where to drop CSV + plots.
-OPT_PREFIX = "exp3"             # Filename prefix prepended to every CSV/PNG output
+OPT_PREFIX = "exp5"             # Filename prefix prepended to every CSV/PNG output
                             # (e.g. "exp1" → exp1_addressing_opt_grid.csv,
                             # exp1_addressing_opt_components.png, ...). Lets you
                             # keep multiple runs side by side without overwriting.
                             # Empty string = no prefix (default behavior).
 OPT_N_JOBS = 0              # CPU workers for the parallel grid scan.
                             # 0 = use all cores, 1 = serial (debug-friendly).
+OPT_SMOOTH_SIGMA = 3.0      # Gaussian smoothing width (in power-grid points) used
+                            # when plotting the smoothed landscape. This can be
+                            # reinterpreted as an effective quasi-static power noise.
 OPT_NO_AC_STARK = False     # Diagnostic only: set True to disable the AC-Stark
                             # phase feed-forward in SweepProtocol. Issue #44
                             # showed the existing Ω²/(4Δ) formula is correct
@@ -1165,7 +1039,7 @@ def _prefixed(filename, prefix):
 
 # ═══════════════════════════════════════════════════════════════════════
 # Main
-# ═══════════════════════════════════════════════════════════════════════
+#═══════════════════════════════════════════════════════════════════════
 
 def main():
     parser = argparse.ArgumentParser(
@@ -1215,6 +1089,9 @@ def main():
     p_opt.add_argument("--prefix", type=str, default=OPT_PREFIX,
                        help="Filename prefix for all CSV/PNG outputs "
                             "(e.g. 'exp1' → exp1_addressing_opt_grid.csv, ...)")
+    p_opt.add_argument("--smooth-sigma", type=float, default=OPT_SMOOTH_SIGMA,
+                       help="Gaussian smoothing width in power-grid points for "
+                            "the smoothed landscape")
     p_opt.add_argument("--no-ac-stark", action="store_true",
                        default=OPT_NO_AC_STARK,
                        help="Disable AC-Stark phase feed-forward in "
@@ -1246,6 +1123,9 @@ def main():
     p_plt.add_argument("--prefix", type=str, default=OPT_PREFIX,
                         help="Filename prefix for output figures (and for "
                              "auto-resolving --csv if not given explicitly)")
+    p_plt.add_argument("--smooth-sigma", type=float, default=OPT_SMOOTH_SIGMA,
+                       help="Gaussian smoothing width in power-grid points for "
+                            "the smoothed landscape")
 
     args = parser.parse_args()
 

@@ -1,0 +1,268 @@
+---
+categories:
+- Readings
+date: 2026-03-30
+description: "Simulating the local addressing on Rb87"
+lang: en
+title: "Local Addressing Simulation"
+bibliography: refs.bib
+draft: false
+format: live-html
+pyodide:
+  packages:
+    - numpy
+    - matplotlib
+---
+
+# Summary and Questions
+
+
+
+# The realistic Model of the Local Addressing
+
+#### Scattering Rate and Dipole Potential
+
+For the dipole potential and the scattering rate in the relevant case of large detunings and negligible saturation, we have the following expressions[@grimm1999opticaldipoletrapsneutral]:
+$$
+\begin{align*}
+U_{\rm dip}({\bf r})  
+=  - \frac{3 \pi c^2}{2 \omega_0^3} \,
+\left( \frac{\Gamma}{\omega_0 -\omega} + 
+\frac{\Gamma}{\omega_0 +\omega} \right) \, I({\bf r}) \, , \\
+\Gamma_{\rm sc}({\bf r}) =  \frac{3 \pi c^2}{2 \hbar \omega_0^3} \,
+\left(\frac{\omega}{\omega_0}\right)^3 \,
+\left( \frac{\Gamma}{\omega_0 -\omega} + 
+\frac{\Gamma}{\omega_0 +\omega} \right)^2 \, I({\bf r}) .
+\end{align*}
+$$
+
+![The transition of Rb87](RbProperties.png)
+
+#### Hamiltonian analysis
+We simulate the two-atom gate dynamics using the full Hamiltonian.
+Unlike the CZ gate protocol's simulation, which encodes $\ket{0},\ket{1}$ states as the $\ket{5S_{1/2}, F = 1,2, m = 0}$ state, with a $\sigma^+$ or $sigma^-$ laser, thus induce different types of 7-ennergy level with rubish Rydberg states.
+ However, in the quantum simulation tasks, they always begin from the state:
+$$
+\begin{align*}
+\ket{g} :=\ket{5S_{1/2}, F = 2, m = -2} = \text{CG}(1/2, -1/2, 3/2, -3/2, 2, -2) |5S_{1/2}, m_J = -1/2, m_I = -3/2\rangle 
+\end{align*}
+$$ 
+This state is coupled to the intermediate state $\ket{e}$ via a two-photon transition through the $6P_{3/2}$ orbital, blue-detuned by approximately $2\pi \times 2.4$ GHz with respect to the $5S_{1/2} \rightarrow 6P_{3/2}$ transition.
+For the $\sigma_-$ laser, the selection rule requires $\Delta m_J = -1$ while $m_I = -3/2$ is unchanged. Starting from $\ket{g} = \ket{5S_{1/2},\, m_J = -1/2,\, m_I = -3/2}$, the ground state can only transition to a single intermediate state:
+$$
+\ket{e} = \ket{6P_{3/2},\, m_J = -3/2,\, m_I = -3/2}.
+$$ {#eq-intermediate-state}
+
+![Energy level diagram of $^{87}$Rb showing the two-photon Rydberg excitation pathway via the $6P_{3/2}$ intermediate state. The 420 nm ($\sigma_+$) and 1013 nm ($\sigma_-$) lasers are red-detuned from the intermediate state by $\Delta = 7.8$ GHz.](Real_Rb_Elevel.png){#fig-rb-levels width=55%}
+
+
+To identify $\ket{e}$ in the coupled representation $\ket{F, m_F}$, we compute $m_F = m_J + m_I = -3/2 - 3/2 = -3$. In the $6P_{3/2}$ manifold ($J = 3/2$, $I = 3/2$ for $^{87}$Rb), the only state with $m_F = -3$ is $F = 3$:
+$$
+\begin{aligned}
+\ket{e} &= \mathrm{CG}(3/2, -3/2, 3/2, -3/2, 3, -3)\;\ket{6P_{3/2},\, F = 3,\, m_F = -3} \\
+&= 1 \cdot \ket{6P_{3/2},\, F = 3,\, m_F = -3}.
+\end{aligned}
+$$ {#eq-intermediate-cg}
+We define the Rabi frequency for this channel as $\langle e \rvert\, H\, \lvert g \rangle = \frac{\Omega_{420}}{2}$.
+
+::: {.callout-note icon="false"}
+## Key Simplification vs. the CZ Gate Protocol
+Because the stretched state $\ket{g}$ with $m_F = -2$ maps to a single $m_J$ component, the $\sigma_-$ transition accesses exactly one intermediate level ($F = 3,\, m_F = -3$). This eliminates the multi-path interference through $F = 1, 2, 3$ that arises in the CZ gate protocol, where the clock-state encoding ($m_F = 0$) produces a superposition of $m_J$ components and consequently couples to all three hyperfine levels of $6P_{3/2}$.
+:::
+
+The $\sigma_+$ polarization requires $\Delta m_J = +1$. From the intermediate state $\ket{e}$ with $m_J = -3/2$, the atom transitions to the target Rydberg state:
+$$
+\ket{r} = \ket{70S_{1/2},\, m_J = -1/2,\, m_I = -3/2}.
+$$ {#eq-rydberg-state-local}
+
+Again, this is the unique allowed final state since $70S_{1/2}$ has $J = 1/2$ and the only option for $m_J = -3/2 + 1 = -1/2$ is $m_J = -1/2$. The coupling strength is $\langle r \rvert\, H\, \lvert e \rangle = \frac{\Omega_{1013}}{2}$.
+
+The entire excitation pathway is a **single chain** $\ket{g} \leftrightarrow \ket{e} \leftrightarrow \ket{r}$ with no branching. The Schrodinger equation in the rotating frame (cf. the general RWA Hamiltonian derived in the [CZ gate simulation](/Experiments/posts/CZsim/index.html)) is:
+$$
+\begin{aligned}
+i\hbar\,\partial_t \psi_e &= \frac{\Omega_{420}}{2}\,\psi_g + \frac{\Omega_{1013}}{2}\,\psi_r + \Delta\,\psi_e, \\
+i\hbar\,\partial_t \psi_r &= \frac{\Omega_{1013}}{2}\,\psi_e, \\
+i\hbar\,\partial_t \psi_g &= \frac{\Omega_{420}}{2}\,\psi_e.
+\end{aligned}
+$$ {#eq-schrodinger-3level}
+
+Performing adiabatic elimination ($\partial_t \psi_e = 0$, valid when $\Delta \gg \Omega_{420}, \Omega_{1013}$) gives $\psi_e = -(\Omega_{420}\,\psi_g + \Omega_{1013}\,\psi_r)/(2\Delta)$, and substituting back yields the effective two-level parameters:
+
+$$
+\begin{aligned}
+\Delta_{\mathrm{eff},\,r} &= -\frac{|\langle r \rvert H \lvert e \rangle|^2}{\Delta} = -\frac{\Omega_{1013}^2}{4\Delta}, \\[4pt]
+\Delta_{\mathrm{eff},\,g} &= -\frac{|\langle e \rvert H \lvert g \rangle|^2}{\Delta} = -\frac{\Omega_{420}^2}{4\Delta}, \\[4pt]
+\Omega_{\mathrm{eff}} &= -2\,\frac{\langle g \rvert H \lvert e \rangle\,\langle e \rvert H \lvert r \rangle}{\Delta} = -\frac{\Omega_{1013}\,\Omega_{420}}{2\Delta}.
+\end{aligned}
+$$ 
+Compared to the CZ gate protocol (where the clock-state encoding yields a factor of $4/3$ in $\Delta_{\mathrm{eff},\,g}$ due to summing over three intermediate paths), the stretched-state encoding gives **unit prefactors** on all light shifts. This is a direct consequence of the single-channel structure: with only one intermediate state, there is no CG-coefficient summation and no multi-path interference.
+
+For realistic simulation, we need to include the following terms involving $\ket{g}, \ket{r}, \ket{e}$ with only three levels. For the 784 nm local addressing beam, we directly compute the AC Stark shift $\delta_A^{\rm local}$ and scattering rate $\Gamma_{\rm sc}$ using the Grimm formulas above, rather than simulating the full $5P_{1/2}$ and $5P_{3/2}$ manifolds. 
+
+$$
+H(t) = H_{\rm static} + H_{420}(t) + H_{1013}(t) 
+$$ {#eq-full-ham}
+
+where the static part collects all time-independent contributions:
+
+$$
+H_{\rm static} = H_{\rm const} + H_{1013} + H_{\rm pin} + H_{\rm scat}.
+$$
+
+ $H_{\rm const}$ includes the single-photon detuning $\Delta_1$, the van der Waals interaction $V_{\rm vdW}$, the Zeeman splitting of the garbage Rydberg state, and the non-Hermitian decay terms for the intermediate and Rydberg states:
+
+$$
+\begin{align*}
+H_{\rm const} &= \Delta_1  |e\rangle\langle e| + V_{\rm vdW}\,|r\rangle\langle r| \\
+& - i\frac{\gamma_e}{2}|e\rangle\langle e| - i\frac{\gamma_r}{2}|r\rangle\langle r| 
+\end{align*}
+$$
+
+$H_{1013}$ is the 1013 nm coupling term that is constant and the RWA is applied:
+
+$$
+H_{1013} = \frac{\Omega_{1013}}{2} \big(|r\rangle\langle e| + |e\rangle\langle r|\big)
+$$
+
+$H_{\rm pin}$ is the 784 nm local addressing term that is time-dependent:
+
+$$
+H_{\rm pin} = -\delta_A^{\rm local}\big(|r_A\rangle\langle r_A|.
+$$
+
+Here $\delta_A^{\rm local}$ is typically negative (e.g. $-2\pi\times 12$ MHz), so $-\delta_A^{\rm local} > 0$: the Rydberg states of atom A are shifted *up* and away from resonance, effectively excluding it from the gate operation.
+
+$H_{\rm scat}$ is the scattering loss term that is non-Hermitian:
+
+$$
+H_{\rm scat} = -i\,\frac{\Gamma_{\rm sc}}{2}\,|g\rangle\langle g|.
+$$
+
+$H_{420}$ is the 420 nm coupling term that is time-dependent and no RWA is applied:
+
+$$
+\begin{align*}   
+H_{420} =& A(t)\,\frac{\Omega_{420}}{2} \big(e^{-i\varphi(t)}|e\rangle\langle g| + e^{+i\varphi(t)}|g\rangle\langle e|\big)
+\end{align*}
+$$
+
+
+#### Protocol setting
+We set the 420nm and 1013nm Rabi frequency are both to be $135 \mathrm{MHz}$ and $\Delta = 2.4 \mathrm{GHZ}$.
+This introduce the effective Rabi frequency $\Omega_{\rm eff} = 13.25 \mathrm{MHz}$.
+The 420-Rabi is masked with Blackman pulse, $A(t)$, while its phase $\varphi(t)$ is a quadratic function encoding a linear chirp:
+
+$$
+\varphi(t) = \omega_0\,t + \frac{\alpha}{2}\,t^2,
+$$
+
+with $\omega_0 = \delta_{\rm start}$ the initial detuning and $\alpha = (\delta_{\rm end} - \delta_{\rm start})/T$ the chirp rate. The instantaneous two-photon detuning is therefore
+$$
+\dot{\varphi}(t) = \omega_0 + \alpha\,t = \delta_{\rm start} + (\delta_{\rm end} - \delta_{\rm start})\,\frac{t}{T},
+$$
+sweeping linearly from $\delta_{\rm start}$ to $\delta_{\rm end}$ over the gate time $T$.
+
+We setup $\delta_{\rm start} = -40 \mathrm{MHz}$ and $\delta_{\rm end} = 40 \mathrm{MHz}$, swept within the time $T = 4.5\mu s$.
+Atoms are put at distance $R = 4 \mu m$, which cause the Rydberg interaction intensity $V = C/R^6 = 213.4 \mathrm{MHz}$.
+
+Along with these two sweepping lasers, we also set up a local addressing laser, with wavelength rangeing from 781 nm to 786 nm, and laser power ranging from 140mW to 500 mW.
+This local addressing laser operates on atom A only, while its Gaussian shape introduces a cross-talk to atom B with a reduction $e^{-2(a/w)^2}$ proportionally, which is also included in the simulation.
+ We rescale the proportion that $784 nm$ laser with power $160 \mu W$ can generate the lightshift of $-\times 12.2 \mathrm{MHz}$ and decayrate of $\Gamma = 35 \mathrm{Hz}$ to the corresponding lightshift and decayrate with laser power. 
+
+#### Figure of Merit
+
+ Begining from the initial state $\ket{gg}$, as expected, for sufficiently long sweep time and sufficiently strong local addressing, the final state will be $\ket{gr}$ since only the atom A is addressed. To inlclde the effects of inperfectness of the local addressing laser, we consider the following figure of merit:
+
+ 1. **Pinning Leakage Error**: If the light strength of the local addressing laser is not enough (i.e. the AC Stark shift $\delta_A$ is not large enough), the atom A will still have a probability to be excited to the Rydberg state when the LZ sweep crosses the phase transition point. This figure of merit is given by $P(|rg\rangle) + P(|rr\rangle)$.
+ 2. **Crosstalk-induced Defect**: If we increase the light strength to decrease the leakage rate of atom A, the crosstalk $\delta_B$ will also increase proportionally, causing the atom B also be fixed to the ground state. This figure of meritis given by $P(|gg\rangle)$.
+ 3. **Scattering Loss**: The scattering loss of the local addressing laser will also affect the final state. This figure of merit is evaluated by $1.0 - e^{-\Gamma_{\rm sc} \cdot T}$.
+
+Combined together, the figure of merit is given by:
+$$
+F = P(|rg\rangle) + P(|rr\rangle) + P(|gg\rangle) + (1.0 - e^{-\Gamma_{\rm sc} \cdot T})
+$$
+
+During the simulation, we hope the lightshift $\delta_A$ astisfied $\delta_A > 4 \Omega_{\mathrm{eff}}$ to ensure that the adiabaticity is satisfied, otherwise we would see the Stuckelberg oscillation effect, as reviewed in [Here](theory/Posts/Floquet/KZM.html) along with the Kibble-Zurek mechanism.
+
+
+# Results
+
+#### Best local addressing laser
+
+We plot the 2d-color plot of the figure of merit $F$ with respect to the laser power and wavelength.
+The best local addressing laser is the one with the lowest figure of merit.
+
+![The best local addressing laser](addressing_opt_components3.png)
+
+In the real experiment, the stuckelberg oscillation effect is smoothed out by the fluctuations of the laser powers. 
+Thus we use Guussian function to smooth the power axis and gives:
+
+![The best local addressing laser after smoothing](addressing_opt_smoothed.png)
+
+#### Crosstalk oscillation analysis
+
+An unexpected feature of the simulation is that the crosstalk $P_{gg}$ (the probability that both atoms remain in $|g\rangle$) does **not** increase monotonically with laser power. Instead, it oscillates, particularly at wavelengths around 782–785 nm where the pinning detuning $|\delta_A|$ is comparable to the sweep range. This oscillation is a direct manifestation of **Landau-Zener-Stückelberg (LZS) interference** in the two-atom system.
+
+##### Physical origin
+
+During the adiabatic sweep from $\Delta = -40$ to $+40$ MHz, the system (starting in $|gg\rangle$) encounters **two avoided crossings** within the sweep range:
+
+1. **First crossing at $\Delta \approx 0$**: The $|gg\rangle$ level crosses $|gr\rangle$ (atom B resonance). The coupling gap is $\Omega_{\rm eff}/2$.
+2. **Second crossing at $\Delta \approx \delta_A$**: The $|gg\rangle$ level crosses $|rg\rangle$ (atom A resonance, shifted by pinning). Same coupling gap.
+
+At each crossing, the system has a Landau-Zener probability $P_{\rm LZ}$ of remaining in the diabatic state $|gg\rangle$ rather than transitioning adiabatically:
+$$
+P_{\rm LZ} = \exp\!\left(-\frac{\pi^2 \,\Omega_{\rm eff}^2}{\alpha_f}\right)
+$$ {#eq-plz}
+where $\alpha_f = (\delta_{\rm end} - \delta_{\rm start})/T$ is the sweep rate in frequency units. For our parameters ($\Omega_{\rm eff}/(2\pi) = 3.80$ MHz, $\alpha_f = 80/4.5 = 17.78$ MHz/$\mu$s):
+$$
+P_{\rm LZ} = e^{-8.02} \approx 3.3 \times 10^{-4}.
+$$
+
+Between the two crossings, the amplitude that "leaked" into $|gg\rangle$ at the first crossing accumulates a **dynamical phase** (the Stückelberg phase):
+$$
+\Phi_{\rm dyn} = \int_{t_1}^{t_2} \bigl|E_{gg}(t) - E_{gr}(t)\bigr|\,dt
+= \frac{\pi\,\delta_A^2}{\alpha_f}
+$$ {#eq-phi-dyn}
+where $\delta_A$ is in MHz and $\alpha_f$ in MHz/$\mu$s.
+
+At the second crossing, this leaked amplitude interferes coherently with the direct diabatic path. The resulting crosstalk is given by the **transfer-matrix formula**:
+$$
+\boxed{P_{gg} = 4\,P_{\rm LZ}(1-P_{\rm LZ})\,\cos^2\!\left(\frac{\Phi_{\rm dyn}}{2} + \varphi_S\right)}
+$$ {#eq-pgg-lzs}
+where $\varphi_S \approx \pi/4$ is the Stokes phase.
+
+##### Key predictions
+
+1. **Oscillation envelope**: $4\,P_{\rm LZ}(1-P_{\rm LZ}) \approx 0.13\%$. This sets the maximum possible $P_{gg}$, consistent with the $\sim 0.1$–$0.2\%$ oscillation amplitude in the simulation.
+
+2. **Oscillation frequency**: $P_{gg}$ completes one full oscillation when $\Phi_{\rm dyn}$ changes by $2\pi$, giving a period of $\Delta(\delta_A^2) = 2\alpha_f/\pi \approx 11.3$ MHz$^2$. At $|\delta_A| = 10$ MHz ($\lambda \approx 785$ nm), the half-period in $\delta_A$ is only $\sim 1.6$ MHz — comparable to the grid spacing, producing the dramatic alternating pattern visible in the data.
+
+3. **Wavelength dependence**: At shorter wavelengths (781 nm), $|\delta_A| > 60$ MHz and the oscillation period becomes sub-MHz — faster than the grid can resolve, appearing as noise. At longer wavelengths (785 nm), $|\delta_A| \sim 8$–$28$ MHz and the oscillations are clearly resolved.
+
+![Crosstalk $P_{gg}$ oscillation compared with LZS theory at four representative wavelengths. Blue dots: simulation; red line: @eq-pgg-lzs. The oscillation frequency matches the predicted $\cos^2(\pi\delta_A^2/2\alpha_f + \pi/4)$ dependence.](crosstalk_lzs_oscillation.png){#fig-xtalk-lzs}
+
+##### Implication for experiment
+
+In a real experiment, technical noise (laser intensity fluctuations, beam-pointing jitter) averages over these rapid oscillations, effectively washing out the Stückelberg fringes. The experimentally relevant crosstalk is therefore the **envelope average** $\langle P_{gg}\rangle \approx 2\,P_{\rm LZ}(1-P_{\rm LZ}) \approx 0.07\%$, which is well below the scattering and pinning-leak contributions.
+
+This analysis also explains why the smoothed cost landscape (@fig-smoothed) correctly identifies the optimum: by Gaussian-convolving along the power axis, we replicate the effect of experimental noise and suppress the coherent oscillation.
+
+#### Verification
+To verify the correctness of both the local addressing and the Adabtic chirp evolution, other than the figure of merit, we also plot:
+
+1. The disappear of the Rydberg blockade effect when the local addressing is applied.
+2. Under the case of Adabtic chirp evolution, the final populations of the $\ket{gg}, \ket{gr}, \ket{rg}, \ket{rr}$.
+
+They are all consistent with the theoretical predictions.
+
+![Rabi dynamics](fig1_rabi_dynamics.png)
+
+![Final populations](fig2_final_populations.png)
+
+![The Stark compensation of the local addressing](fig3_stark_compensation.png)
+
+![The decay comparison of the local addressing](fig4_decay_comparison.png)
+
+![The Landau-Zener effect of the local addressing](fig5_landau_zener.png)
+
