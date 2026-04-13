@@ -1,0 +1,501 @@
+%!TEX program = pdflatex
+\documentclass[aps,%
+onecolumn,%
+floatfix,%
+pra,%
+amsfonts,%
+longbibliography,%
+groupedaddress,%
+superscriptaddress]{revtex4-2}%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Packages
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{bm,bbm} % to use the command \mathbbm{1}, \bm{x}
+\usepackage{graphicx}
+\usepackage{indentfirst}
+\usepackage{enumitem}
+% RevTeX provides natbib; do not load biblatex here.
+% \usepackage{algorithmicx}
+% \usepackage{algpseudocode}
+% \usepackage{algorithm}
+% \usepackage{algorithmic}
+% \usepackage{algcompatible}
+\usepackage{algpseudocode}
+\usepackage{tikz}
+\usepackage{quantikz}
+\usetikzlibrary{graphs} 
+\usepackage[titletoc,toc,page,title]{appendix}
+\definecolor{beamer@blendedblue}{rgb}{0.2,0.2,0.7}      % color used in beamer
+\usepackage[bookmarks=false]{hyperref}
+\hypersetup{colorlinks=true,%
+citecolor=beamer@blendedblue,%
+linkcolor=beamer@blendedblue,%
+urlcolor=beamer@blendedblue,%
+pdfstartview=FitH,%
+bookmarksopen=true}
+
+\def\UrlBreaks{\do\/\do-} % url break
+\usepackage[T1]{fontenc}
+\usepackage{times}
+\usepackage{booktabs} % to use the \toprule \midrule command
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% General Commands
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}{Lemma}
+\newtheorem{corollary}{Corollary}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage{pifont}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Quantum Commands
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\DeclareMathOperator{\Tr}{Tr}
+\DeclareMathOperator{\tr}{Tr}
+\DeclareMathOperator{\NOT}{NOT}
+\DeclareMathOperator{\diag}{diag}
+\DeclareMathOperator{\rank}{rank}
+\DeclareMathOperator{\conv}{conv}
+\DeclareMathOperator{\sgn}{sgn}
+\DeclareMathOperator{\Sp}{Span}
+\DeclareMathOperator{\id}{id}
+% \newcommand{\bra}[1]{\langle #1\rvert}
+% \newcommand{\ket}[1]{\lvert #1\rangle}
+% \newcommand{\proj}[1]{\lvert #1\rangle\!\langle #1\rvert}
+\newcommand{\ox}{\otimes}
+\newcommand{\1}{\mathbbm{1}}
+\newcommand{\mean}[1]{\langle #1\rangle}
+\newcommand{\gen}[1]{\langle #1\rangle}
+\newcommand{\ketbra}[2]{\lvert #1\rangle\!\langle #2\rvert}
+% \newcommand{\braket}[2]{\langle #1\vert #2\rangle}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Mathematical symbols
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newcommand*{\cF}{\mathcal{F}}
+\newcommand*{\cH}{\mathcal{H}}
+\newcommand*{\cO}{\mathcal{O}}
+\newcommand*{\cP}{\mathcal{P}}
+\newcommand*{\cS}{\mathcal{S}}
+\newcommand*{\bF}{\mathbb{F}}
+\newcommand*{\bP}{\mathbb{P}}
+
+% Colors
+\definecolor{alizarin}{rgb}{0.82, 0.1, 0.26}
+\definecolor{googleblue}{HTML}{4285F4}
+\definecolor{googlered}{HTML}{DB4437}
+\definecolor{googleyellow}{HTML}{F4B400}
+\definecolor{googlegreen}{HTML}{0F9D58}
+\definecolor{klevinblue}{HTML}{002FA7}
+\definecolor{tiffanyblue}{HTML}{0ABAB5}
+
+\newcommand{\KW}[1]{{\color{googlered}(KW: #1)}}
+\newcommand{\SYC}[1]{\textcolor{blue}{(SYC: #1)}}
+
+\begin{document}
+
+\title{Simulation of Local addressing protocol}
+%%%
+\author{Siyuan Chen}
+\affiliation{Hefei National Research Center for Physical Sciences at the Microscale and School of Physical Sciences, 
+University of Science and Technology of China, Hefei 230026, China}%
+%%%
+
+
+\begin{abstract}
+\noindent 
+In this work, we simulate the local addressing protocol used by Evered \emph{et.al.}~\cite{Evered_2023}, based on $^{87}Rb$ atoms.
+\end{abstract}
+\date{\today}
+\maketitle
+
+\section{Results}
+
+\subsection{ground state shift v.s. Scattering rate}
+Local addressing laser is near-resonant between transitions~\cite{steck2001rubidium}:
+\begin{align*}
+    &5S_{1/2} \leftrightarrow 5P_{3/2}, \quad \lambda = 780 \mathrm{nm}, \quad \Gamma = 2\pi \times 6.065(9) \mathrm{MHz},\\
+    &5S_{1/2} \leftrightarrow 5P_{1/2}, \quad \lambda = 794.8 \mathrm{nm}, \quad \Gamma = 2\pi \times 5.746(8) \mathrm{MHz}.
+\end{align*}
+For each near-resonant transition, the dipole potential and the scattering rate in the relevant case of large detunings and negligible saturation, we have the following expressions~\cite{grimm1999opticaldipoletrapsneutral}:
+\begin{align*}
+    \Delta_{LS}(\omega)
+&=  - \frac{3 \pi c^2I}{2 \omega_0^3} \,
+\left( \frac{\Gamma}{\omega_0 -\omega} + 
+\frac{\Gamma}{\omega_0 +\omega} \right) \propto  - \frac{1}{\omega_0^3} \,
+\left( \frac{\Gamma}{\omega_0 -\omega} + 
+\frac{\Gamma}{\omega_0 +\omega} \right)  , \\
+\Gamma_{\rm sc}(\omega) &=  \frac{3 \pi c^2I }{2 \hbar \omega_0^3} \,
+\left(\frac{\omega}{\omega_0}\right)^3 \,
+\left( \frac{\Gamma}{\omega_0 -\omega} + 
+\frac{\Gamma}{\omega_0 +\omega} \right)^2  \propto  - \frac{1}{\omega_0^3} \left(\frac{\omega}{\omega_0}\right)^3\,
+\left( \frac{\Gamma}{\omega_0 -\omega} + 
+\frac{\Gamma}{\omega_0 +\omega} \right)^2  .
+\end{align*}
+Since $5P_{3/2}$ and $5P_{1/2}$ each contains $4$ and $2$ degenerate states, respectively, we reweighted the lightshift and the scattering rate by fraction $U_{\rm total}(\omega) = \frac{2}{3} U^{\rm 780}(\omega) + \frac{1}{3} U^{\rm 794}(\omega)$ and $\Gamma_{\rm total}(\omega) = \frac{2}{3} \Gamma^{\rm 780}(\omega) + \frac{1}{3} \Gamma^{\rm 794}(\omega)$. To increase the accuracy, instead of calculating the overall constant ${3 \pi c^2I }/{2 \hbar \omega_0^3}$ directly, we rescaled to match the measured differential AC Stark shift in \cite{manovitz2025quantum} with $\Delta_{LS} = 12.2(3) \mathrm{MHz}, \Gamma_{sc} = 35 \mathrm{Hz}$ at laser power $P \approx 160 \mathrm{\mu W}$ and laser wavelength $\lambda = 784 \mathrm{nm}$.
+
+\begin{figure}[h]
+\centering
+\begin{minipage}[t]{0.4\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{Figures/RbProperties.png}
+\end{minipage}
+\begin{minipage}[t]{0.55\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{Figures/ac_stark_profiles.png}
+\end{minipage}
+\caption{Left: Energy level of $^{87}Rb$ that near the laser frequency of 780 nm. Right: Ac Stark landscape of $^{87}Rb$ that near the laser frequency of 780 nm. }
+\end{figure}
+
+\subsection{Behavior under adiabatic evolution}
+
+In the Rydberg experiment~\cite{manovitz2025quantum}, the local addressing protocol is used to address certain atoms to the ground state while the other atoms are adiabatically evolved under Rydberg interaction and driving of $420 \mathrm{nm}$ and $1013 \mathrm{nm}$ lasers. 
+A 2-atom version of the Hamiltonian, each labeled by $i =1,2$, is specified by operators $X_i = \ket{g_i}\bra{r_i} + \ket{r_i}\bra{g_i}$ and $n_i = \ket{r_i}\bra{r_i}$ and $V_{12} = C_6/R^6$ with $R$ the distance between the two atoms:
+\begin{align*}
+    H &= \frac{\Omega_{\rm eff}(t)}{2} \left(X_1 + X_2 \right) - \left( \Delta(t) + \delta_1(\omega) \right) n_1 - \left( \Delta(t) + \delta_2(\omega) \right) n_2 + V_{12} n_1 n_2.
+\end{align*}
+Atoms are put at distance $R = 4 \mu m$, which cause the Rydberg interaction intensity $V_{12} = C/R^6 = 213.4 \mathrm{MHz}$.
+
+\paragraph*{The control of $\Omega_{\rm eff}(t)$.}
+The $\Omega_{\rm eff}$ is the effective Rabi frequency of two-photon transition process driven by the 420nm and 1013nm lasers along:
+\begin{align*}
+    \ket{5S_{1/2}, F = 2, m = -2} \xrightarrow[\sigma_{-}]{\Omega_{\rm 420}(t) e^{i \varphi(t)}} \ket{6P_{3/2},\, m_J = -3/2,\, m_I = -3/2} \xrightarrow[\sigma_{+}]{\Omega_{\rm 1013}} \ket{70S_{1/2},\, m_J = -1/2,\, m_I = -3/2}.
+\end{align*}
+Refer to~\cite{manovitz2025quantum}, we set the 420nm and 1013nm Rabi frequency both to be $135 \mathrm{MHz}$ and blue detuning of the mid-state $6P_{3/2}$ with $\Delta = 2.4 \mathrm{GHZ}$.
+This introduces no effective detuning and the effective Rabi frequency $\Omega_{\text{eff}} = {\Omega_{420} \Omega_{1013}}/{2\Delta} = 3.8 \mathrm{MHz}$ that meets the setting in the reference~\cite{manovitz2025quantum}.
+To control $\Omega_{\rm eff}$ changing with time, we ramp up the Rabi frequency of the 420nm laser.
+In the reference~\cite{manovitz2025quantum}, it ramp-up the Rabi-frequency of the 420nm laser without specifying the specific ramping function.
+In our simulation, we ramp up the 420-Rabi with Blackman pulse, $A(t)$.
+In the case $\Delta(0) = -\infty$, $H \approx n_1 + 20n_2 + 10 V_{12} n_1 n_2 $ and take $\ket{gg}$ as ground state. In the case $\Delta(0) = \infty$, depending on the local addressing laser, the ground state is $\ket{gr}$ or $\ket{rg}$.
+
+
+\paragraph*{The control of $\Delta(t)$.}
+The phase $\varphi(t)$ of the 420nm laser is a quadratic function encoding a linear chirp:
+$$
+\varphi(t) = \omega_0\,t + \frac{\alpha}{2}\,t^2,\quad \dot{\varphi}(t) = \omega_0 + \alpha\,t = \delta_{\rm start} + (\delta_{\rm end} - \delta_{\rm start})\,\frac{t}{T}.
+$$
+We setup $\delta_{\rm start} = -40 \mathrm{MHz}$ and $\delta_{\rm end} = 40 \mathrm{MHz}$, swept within the time $T = 4.5\mu s$.
+With the Blackman pulse $A(t)$, an effective detuning is added to the detuning $\dot{\varphi}(t)$ as $\Delta_{\rm eff}(t) = A^2(t)/4 \Delta(t)$.
+
+\begin{figure}[h]
+    \centering
+    \begin{minipage}[t]{0.6\textwidth}
+      \centering
+      \includegraphics[width=\textwidth]{Figures/addressing_enlevel.png}
+    \end{minipage}
+    \begin{minipage}[t]{0.38\textwidth}
+      \centering
+      \includegraphics[width=\textwidth]{Figures/fig4_420_phase_diagnostics.png}
+    \end{minipage}
+    \caption{Left: adiabatic evolution of the ground state shift and the scattering rate. Right: phase and amplitude diagnostics of the 420nm laser. }
+\end{figure}
+
+\paragraph*{The control of $\delta_i(\omega)$.}
+Along with these two sweepping lasers, we also set up a local addressing laser, with wavelength rangeing from 781 nm to 786 nm, and laser power ranging from 140mW to 500 mW.
+This local addressing laser operates on atom 1 only, while its Gaussian shape introduces a cross-talk to atom 2 with a reduction $e^{-2(R/w)^2}$ proportionally.
+Effectively, we take both $w = 1 \mu m$ and $w = 2 \mu m$ to represent the local addressing laser.
+ 
+
+\section{Results and conclusion}
+
+\begin{figure}[h]
+    \centering
+    \begin{minipage}[t]{0.3\textwidth}
+      \centering
+      \includegraphics[width=\textwidth]{Figures/exp1_addressing_opt_smoothed.png}
+    \end{minipage}
+    \begin{minipage}[t]{0.3\textwidth}
+      \centering
+      \includegraphics[width=\textwidth]{Figures/exp2_addressing_opt_smoothed.png}
+    \end{minipage}
+    \begin{minipage}[t]{0.3\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{Figures/exp3_addressing_opt_smoothed.png}
+      \end{minipage}
+
+      \includegraphics[width=\textwidth]{Figures/exp3_addressing_opt_components.png}
+    \caption{Representative optimization landscapes. Top row: Gaussian-smoothed total-cost maps for exp1--exp3. Bottom: cost decomposition for exp3. The same optimization was also carried out for exp4 and exp5; their optimal operating points are summarized below.}
+\end{figure}
+
+We compare five scans of the local addressing beam by varying the wavelength
+$\lambda \in [781,786]~\mathrm{nm}$ and the power
+$P \in [140,500]~\mu\mathrm{W}$. For each scan, we minimize the cost
+function
+\begin{align*}
+    E_{\rm total} = E_{\rm leak} + E_{\rm xtalk} + E_{\rm sc},
+\end{align*}
+where $E_{\rm leak}=P_{rg}+P_{rr}$ measures imperfect pinning,
+$E_{\rm xtalk}=P_{gg}$ measures residual population on the spectator atom, and
+$E_{\rm sc}=1-e^{-\Gamma_{\rm sc}T}$ estimates the scattering penalty during
+the sweep.
+
+\begin{table}[h]
+    \centering
+    \caption{Best operating point found in each wavelength--power scan.}
+    \label{tab:addressing_summary}
+    \begin{tabular}{lccccccc}
+        \toprule
+        Scan & $R$ ($\mu$m) & $w$ ($\mu$m) & $T$ ($\mu$s) & $\Delta_{\max}$ (MHz) & $\lambda_{\rm opt}$ (nm) & $P_{\rm opt}$ ($\mu$W) & $E_{\rm total}^{\rm min}$ \\
+        \midrule
+        exp1 & 4.0 & 1.0 & 4.5 & 40.0 & 785.58 & 204.6 & $2.55\times10^{-4}$ \\
+        exp2 & 4.0 & 1.0 & 9.0 & 40.0 & 786.00 & 204.6 & $5.90\times10^{-4}$ \\
+        exp3 & 4.5 & 2.0 & 4.5 & 40.0 & 785.58 & 204.6 & $2.77\times10^{-4}$ \\
+        exp4 & 4.5 & 2.0 & 4.5 & 11.4 & 785.58 & 490.8 & $3.62\times10^{-3}$ \\
+        exp5 & 4.5 & 2.0 & 9.0 & 80.0 & 785.24 & 444.6 & $9.79\times10^{-4}$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Comparison of the five scans}
+
+\begin{enumerate}[label=(\roman*)]
+    \item The optimal wavelength is remarkably stable across all five scans.
+    The minimum always appears in a narrow window between $785.24$ and
+    $786.00~\mathrm{nm}$. This is slightly red-detuned from the experimental
+    calibration point at $784~\mathrm{nm}$, where the measured differential AC
+    Stark shift is about $12.2~\mathrm{MHz}$ at
+    $160~\mu\mathrm{W}$ with a scattering rate of about $35~\mathrm{Hz}$.
+    Therefore, the simulation reproduces the experimental calibration at
+    $784~\mathrm{nm}$, but the optimization consistently prefers a slightly
+    larger wavelength.
+
+    \item The optimal power is not universal; it depends strongly on the sweep
+    protocol. In exp1--exp3, where the detuning window is
+    $\pm 40~\mathrm{MHz}$, the optimum is always close to
+    $205~\mu\mathrm{W}$ and gives a local shift
+    $\delta_A \approx -8$ to $-10~\mathrm{MHz}$. By contrast, in exp5, where
+    the sweep window is enlarged to $\pm 80~\mathrm{MHz}$ and the gate time is
+    extended to $9~\mu\mathrm{s}$, the optimum moves to
+    $444.6~\mu\mathrm{W}$ and gives
+    $\delta_A \approx -22.9~\mathrm{MHz}$. Hence the laser power should be
+    optimized together with the chirp window and the gate time, rather than
+    quoted as a stand-alone parameter.
+
+    \item The geometry change from exp1 to exp3 has only a small effect on the
+    optimum. When the atom spacing and beam waist are changed from
+    $(R,w)=(4~\mu\mathrm{m},1~\mu\mathrm{m})$ to
+    $(4.5~\mu\mathrm{m},2~\mu\mathrm{m})$, the optimizer still selects the
+    same point, $\lambda_{\rm opt}=785.58~\mathrm{nm}$ and
+    $P_{\rm opt}=204.6~\mu\mathrm{W}$. The minimum cost only changes from
+    $2.55\times 10^{-4}$ to $2.77\times 10^{-4}$. This suggests that, for the
+    present two-atom geometry, the optimum is mainly determined by the balance
+    between pinning quality and scattering, while the residual Gaussian tail on
+    the spectator atom is already small enough not to move the optimum
+    appreciably.
+
+    \item Exp4 shows that insufficient sweep range cannot be compensated for by
+    simply increasing the power. In this scan, the detuning window is reduced
+    to only $\pm 11.4~\mathrm{MHz}$. The optimizer then pushes the power to
+    $490.8~\mu\mathrm{W}$, but the minimum cost still rises to
+    $3.62\times 10^{-3}$, which is about one order of magnitude worse than in
+    exp1, exp3, or exp5. The main error in this regime is crosstalk, which
+    means that a too narrow chirp window does not provide enough adiabatic
+    separation even when the local light shift is increased.
+
+    \item Among the five scans, exp5 gives the best strong-pinning protocol.
+    Its optimum is located at
+    $(\lambda,P)=(785.24~\mathrm{nm},444.6~\mu\mathrm{W})$, where
+    $P_{gr}=0.9988$, the crosstalk error is reduced to
+    $2\times 10^{-6}$, the leakage error is
+    $4.47\times 10^{-4}$, and the scattering penalty is
+    $5.30\times 10^{-4}$. In other words, once the sweep window is sufficiently
+    wide, crosstalk is nearly eliminated and the remaining compromise is
+    between stronger pinning and larger photon scattering.
+\end{enumerate}
+
+\subsection{Smoothing the cost function}
+
+The raw cost landscape contains narrow oscillatory structures along the power
+axis, which are visible in the unsmoothed optimization maps and are naturally
+interpreted as features that are sensitive to slow laser-power fluctuations or
+power-calibration uncertainty. In the plotting code, this effect is modeled by
+applying a one-dimensional Gaussian convolution to the cost function along the
+power axis only:
+\begin{align*}
+    \widetilde{E}_{\rm total}(\lambda,P_i;\sigma_G)
+    = \sum_j G_{\sigma_G}(i-j)\,E_{\rm total}(\lambda,P_j),
+\end{align*}
+where $G_{\sigma_G}$ is a normalized discrete Gaussian with width
+$\sigma_G$ measured in grid points. Since both the AC Stark shift and the
+scattering rate scale linearly with the local addressing power, this smoothing
+can be reinterpreted as an effective quasi-static power noise.
+
+For the present scans, the power grid step is
+\begin{align*}
+    \Delta P_{\rm grid}
+    = \frac{500-140}{40-1}\,\mu\mathrm{W}
+    = 9.23~\mu\mathrm{W}.
+\end{align*}
+Therefore the Gaussian width in the smoothing routine maps to an equivalent
+power noise through
+\begin{align*}
+    \sigma_P = \sigma_G \Delta P_{\rm grid},
+    \qquad
+    \frac{\sigma_I}{I} \approx \frac{\sigma_P}{P_*},
+\end{align*}
+where $P_*$ is the operating power around the selected optimum. For example,
+$\sigma_G=1$ corresponds to $\sigma_P=9.23~\mu\mathrm{W}$ and
+$\sigma_G=3$ corresponds to $\sigma_P=27.69~\mu\mathrm{W}$. At
+$P_*=200~\mu\mathrm{W}$ these imply fractional power noise of $4.6\%$ and
+$13.8\%$, whereas at $P_*=450~\mu\mathrm{W}$ they imply $2.1\%$ and $6.2\%$,
+respectively.
+
+\begin{table}[h]
+    \centering
+    \caption{Representative smoothed optima for three values of the Gaussian
+    width. Each entry lists $(\lambda_{\rm opt},P_{\rm opt})$ in units of
+    $(\mathrm{nm},\mu\mathrm{W})$.}
+    \label{tab:smoothing_summary}
+    \begin{tabular}{lccc}
+        \toprule
+        Scan & $\sigma_G=0$ & $\sigma_G=1$ & $\sigma_G=3$ \\
+        \midrule
+        exp1 & $(785.58,\ 204.6)$ & $(784.14,\ 140.0)$ & $(784.14,\ 140.0)$ \\
+        exp2 & $(786.00,\ 204.6)$ & $(783.97,\ 140.0)$ & $(784.90,\ 140.0)$ \\
+        exp3 & $(785.58,\ 204.6)$ & $(784.14,\ 140.0)$ & $(784.14,\ 140.0)$ \\
+        exp4 & $(785.58,\ 490.8)$ & $(785.58,\ 490.8)$ & $(785.32,\ 490.8)$ \\
+        exp5 & $(785.24,\ 444.6)$ & $(784.56,\ 306.2)$ & $(783.88,\ 361.5)$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Several trends are clear from Table~\ref{tab:smoothing_summary}. First, in
+exp1 and exp3 the optimum is quite fragile with respect to power smoothing:
+already at $\sigma_G=1$, the optimum moves from the sharp minimum near
+$785.6~\mathrm{nm}$ and $205~\mu\mathrm{W}$ to the broader low-power edge near
+$784.1~\mathrm{nm}$ and $140~\mu\mathrm{W}$. Second, exp4 remains pinned to the
+high-power edge even after smoothing, which confirms that its main limitation
+is the too narrow chirp window rather than fine interference structure in the
+power direction. Third, exp5 retains the most useful broad minimum: as the
+smoothing is increased from $\sigma_G=0$ to $\sigma_G=3$, the optimum moves
+continuously from $(785.24~\mathrm{nm},444.6~\mu\mathrm{W})$ to
+$(783.88~\mathrm{nm},361.5~\mu\mathrm{W})$, while the minimum cost only rises
+from $9.79\times 10^{-4}$ to $1.16\times 10^{-3}$. This means that the
+strong-pinning protocol of exp5 is much more robust against power noise than
+the shorter and weaker protocols of exp1--exp3.
+
+For exp5, which provides the best strong-pinning setting, the detailed
+smoothed optima are particularly informative:
+\begin{align*}
+    \sigma_G = 0.5 &\Rightarrow (\lambda_{\rm opt},P_{\rm opt})
+    = (785.58~\mathrm{nm},500.0~\mu\mathrm{W}),\\
+    \sigma_G = 1.0 &\Rightarrow (\lambda_{\rm opt},P_{\rm opt})
+    = (784.56~\mathrm{nm},306.2~\mu\mathrm{W}),\\
+    \sigma_G = 2.0 &\Rightarrow (\lambda_{\rm opt},P_{\rm opt})
+    = (783.88~\mathrm{nm},361.5~\mu\mathrm{W}),\\
+    \sigma_G = 3.0 &\Rightarrow (\lambda_{\rm opt},P_{\rm opt})
+    = (783.88~\mathrm{nm},361.5~\mu\mathrm{W}).
+\end{align*}
+Thus the smoothing primarily removes narrow power-dependent fringes and
+replaces the raw optimum by a broader valley centered roughly at
+$\lambda \approx 784.0$--$784.6~\mathrm{nm}$ and
+$P \approx 300$--$360~\mu\mathrm{W}$ once the effective power noise reaches the
+few-percent level.
+
+To decide which smoothing level is physically reasonable, we compare these
+numbers with the baseline local-laser noise used elsewhere in the simulation,
+where a relative intensity noise of $1\%$ is taken as the nominal scale. Near
+the strong-pinning exp5 optimum, this corresponds to
+$\sigma_P \sim 4$--$5~\mu\mathrm{W}$, or $\sigma_G \sim 0.5$. Therefore,
+the default plotting choice $\sigma_G=3$ should be interpreted as a
+conservative robustness filter rather than a literal experimental noise model:
+it corresponds to several-percent to ten-percent power fluctuations, depending
+on the operating power.
+
+Our final smoothing-based decision is therefore twofold. If the local
+addressing laser can be stabilized at the $\sim 1\%$ level, the preferred
+strong-pinning working point remains close to the raw exp5 optimum, namely
+$\lambda \approx 785.5~\mathrm{nm}$ and
+$P \approx 450$--$500~\mu\mathrm{W}$. If instead one wants a more conservative
+choice that is robust against a few-percent slow power drift, the smoothed
+minimum around $\lambda \approx 784.6~\mathrm{nm}$ and
+$P \approx 300~\mu\mathrm{W}$ is the better operating point. In this sense,
+the smoothing analysis does not invalidate the preference for the
+$785~\mathrm{nm}$ region, but it does push the robust power choice downward
+once laser noise is taken into account.
+
+\subsection{Recommended wavelength and power}
+
+Based on the five scans above, the wavelength can be recommended more
+confidently than the power.
+
+\begin{enumerate}[label=(\arabic*)]
+    \item The recommended wavelength window is
+    $\lambda \approx 785.3$--$785.8~\mathrm{nm}$, with
+    $\lambda \approx 785.5~\mathrm{nm}$ as the central working point. This
+    range appears repeatedly in all optimized scans and is therefore more
+    robust than the single calibration point at $784~\mathrm{nm}$.
+
+    \item If the goal is to keep the scattering loss low while still obtaining
+    a clear local detuning, a practical low-loss operating point is
+    $P \approx 180$--$220~\mu\mathrm{W}$. This is the regime selected by exp1,
+    exp2, and exp3, and it already yields
+    $E_{\rm total}\sim 10^{-4}$--$10^{-3}$.
+
+    \item If the goal is strong pinning with a wider chirp window and a longer
+    gate time, exp5 remains the most useful reference scan. Without smoothing,
+    its best point is
+    $(\lambda,P)\approx(785.24~\mathrm{nm},444.6~\mu\mathrm{W})$. After
+    including a moderate smoothing that corresponds to a few-percent power
+    fluctuation, the robust optimum moves to about
+    $(784.56~\mathrm{nm},306.2~\mu\mathrm{W})$.
+
+    \item Therefore, the most useful practical strategy is to first choose the
+    wavelength in the $784.5$--$785.5~\mathrm{nm}$ window and then tune the
+    power according to the target protocol and the expected laser stability:
+    around $200~\mu\mathrm{W}$ for a low-scattering baseline, around
+    $450$--$500~\mu\mathrm{W}$ when stronger pinning is required and the local
+    power noise is kept near the $1\%$ level, and around
+    $300$--$360~\mu\mathrm{W}$ when a more conservative smoothed optimum is
+    preferred.
+\end{enumerate}
+
+\subsection{Possible problem}
+
+The present analysis is already sufficient to identify a preferred wavelength
+window, but several limitations should be kept in mind.
+
+\begin{enumerate}[label=(\alph*)]
+    \item The simulation is based on a two-atom model. It captures the basic
+    competition between local pinning, crosstalk, and scattering, but it does
+    not yet include full many-body boundary effects, spatially varying local
+    weights, or the domain-wall geometry used in the experiment.
+
+    \item The power optimum is protocol dependent. The current data only sample
+    a few discrete choices of $(\Delta_{\max},T)$, so they do not yet define a
+    unique ``best power'' independent of the sweep protocol. This is why the
+    preferred power changes from about $200~\mu\mathrm{W}$ in exp1--exp3 to
+    about $450~\mu\mathrm{W}$ in exp5.
+
+    \item In most of the scan, the scattering contribution is added as the
+    penalty $1-e^{-\Gamma_{\rm sc}T}$ rather than being included in the full
+    dissipative dynamics at every grid point. This approximation is useful for
+    fast optimization, but it may underestimate state-dependent decoherence for
+    the best candidates.
+
+    \item The nominal adiabatic guideline
+    $|\delta_A| \gtrsim 4\Omega_{\rm eff}$ should only be regarded as a rough
+    design rule. In the present simulations, the numerical optimum is
+    determined by the full balance of leakage, crosstalk, and scattering, and
+    it does not always coincide with this simple estimate.
+
+    \item The next step is therefore clear: fix the wavelength near
+    $785.5~\mathrm{nm}$, perform a dedicated two-dimensional sweep of
+    $(\Delta_{\max},T)$, and then re-evaluate the best few points with
+    scattering included directly in the Hamiltonian evolution. After that, the
+    same analysis should be extended from the two-atom model to a realistic
+    multi-atom geometry with the boundary-weight pattern used in the
+    coarsening experiment.
+\end{enumerate}
+
+\bibliography{ref}
+
+\appendix
+
+
+\end{document}

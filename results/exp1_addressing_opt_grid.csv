@@ -1,3 +1,14 @@
+# distance_um=4.0
+# waist_um=1.0
+# t_gate_us=4.5
+# delta_start_mhz=-40.0
+# delta_end_mhz=40.0
+# wl_min=781.0
+# wl_max=786.0
+# n_wl=60
+# power_min_uw=140.0
+# power_max_uw=500.0
+# n_power=40
 # wl,power_uw,delta_A_mhz,delta_B_mhz,scatter_A_hz,P_gg,P_gr,P_rg,P_rr,pinning_leak,crosstalk,scatter_penalty,total_cost,P_target,other_residual,delta_A_over_Omega,delta_A_over_V
 7.810000e+02,1.400000e+02,-6.185897e+01,-7.833922e-13,7.104623e+02,1.917922e-03,9.972927e-01,1.679688e-06,5.970175e-09,1.685658e-06,1.917922e-03,3.191975e-03,5.111583e-03,9.972927e-01,7.876889e-04,1.629207e+01,2.899020e-01
 7.810000e+02,1.492308e+02,-6.593758e+01,-8.350444e-13,7.573060e+02,2.025565e-03,9.971829e-01,3.974032e-06,6.988202e-09,3.981020e-06,2.025565e-03,3.402077e-03,5.431623e-03,9.971829e-01,7.875895e-04,1.736628e+01,3.090164e-01

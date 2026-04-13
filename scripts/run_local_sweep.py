@@ -31,6 +31,7 @@ from scipy.constants import pi
 
 from ryd_gate import simulate
 from ryd_gate.analysis.observable_metrics import measure_trajectory, norm_squared
+from ryd_gate.blackman import blackman_pulse
 from ryd_gate.core.models.analog_3level import Analog3LevelModel
 from ryd_gate.core.operators import build_product_state_map
 from ryd_gate.protocols.sweep import SweepProtocol
@@ -44,7 +45,7 @@ LOCAL_SCATTER = 150.0              # Hz     (scales with laser power)
 # Sweep range: |delta| >> Omega_eff for adiabatic passage.
 DELTA_START = -2 * pi * 40e6       # rad/s
 DELTA_END = 2 * pi * 40e6          # rad/s
-T_GATE = 1.5e-6                    # s
+T_GATE = 4.5e-6                    # s
 
 # Product state map: gg, ge, gr, eg, ee, er, rg, re, rr
 PRODUCT_STATES = build_product_state_map(n_levels=N)
@@ -292,113 +293,72 @@ def figure_stark_compensation(model, initial_state):
 
 
 # ======================================================================
-# Figure 4: Decay channels comparison
+# Figure 4: 420nm Blackman envelope and phase diagnostics
 # ======================================================================
 
-def figure_decay_comparison(initial_state):
-    """Compare adiabatic sweep with different decay channel configurations.
+def figure_420_phase_diagnostics(model):
+    """Plot the 420nm Blackman envelope and chirp phases."""
+    system = model.system
+    ac_stark_peak = system.rabi_420 ** 2 / (4 * abs(system.Delta))
 
-    Four scenarios:
-      (a) No decay -- ideal unitary evolution
-      (b) Intermediate-state decay only (Gamma_e ~ 1/110 ns)
-      (c) Rydberg decay only (Gamma_r ~ 1/152 us)
-      (d) Both decays enabled
-
-    Non-Hermitian Hamiltonian: H -> H - i*Gamma/2 * |level><level|
-    Norm loss tracks population leaked out of the 3-level subspace.
-    """
-    configs = [
-        {"label": "(a) No decay (unitary)",
-         "kwargs": {}},
-        {"label": r"(b) Intermediate decay ($\Gamma_e$)",
-         "kwargs": {"enable_intermediate_decay": True}},
-        {"label": r"(c) Rydberg decay ($\Gamma_r$)",
-         "kwargs": {"enable_rydberg_decay": True}},
-        {"label": "(d) Both decays",
-         "kwargs": {"enable_intermediate_decay": True,
-                    "enable_rydberg_decay": True}},
+    x_sweep = [
+        DELTA_START / system.rabi_eff,
+        DELTA_END / system.rabi_eff,
+        T_GATE / system.time_scale,
     ]
+    protocol_raw = SweepProtocol(ac_stark_shift=0.0)
+    protocol_comp = SweepProtocol(ac_stark_shift=ac_stark_peak)
+    params_raw = protocol_raw.unpack_params(x_sweep, system)
+    params_comp = protocol_comp.unpack_params(x_sweep, system)
 
-    n_points = 500
-    fig, axes = plt.subplots(2, 2, figsize=(14, 9))
+    n_points = 1000
+    ts = np.linspace(0, params_raw["t_gate"], n_points)
+    t_us = ts * 1e6
 
-    summary = []
-    for idx, cfg in enumerate(configs):
-        model = Analog3LevelModel.from_defaults(detuning_sign=1, **cfg["kwargs"])
-        system = model.system
+    envelope = blackman_pulse(ts, params_raw["t_rise"], params_raw["t_gate"])
+    omega_420_mhz = envelope * system.rabi_420 / (2 * pi) / 1e6
 
-        x_sweep = [
-            DELTA_START / system.rabi_eff,
-            DELTA_END / system.rabi_eff,
-            T_GATE / system.time_scale,
-        ]
-        t_gate_phys = x_sweep[2] * system.time_scale
-        t_eval = np.linspace(0, t_gate_phys, n_points)
+    phase_raw = -np.unwrap(np.angle(
+        np.array([protocol_raw.phase_420(t, params_raw) for t in ts])
+    ))
+    phase_comp = -np.unwrap(np.angle(
+        np.array([protocol_comp.phase_420(t, params_comp) for t in ts])
+    ))
 
-        result = simulate(system, SweepProtocol(), x_sweep, initial_state,
-                          t_eval=t_eval)
+    fig, axes = plt.subplots(3, 1, figsize=(8, 10), sharex=True)
 
-        obs = measure_trajectory(model, result.states,
-                                 ["pop_A_r", "pop_B_r", "pop_r"])
-        norms = np.array([norm_squared(result.states[:, k])
-                          for k in range(result.states.shape[1])])
+    axes[0].plot(t_us, omega_420_mhz, color="#1f77b4", lw=1.8)
+    axes[0].set_title(r"(a) 420nm Blackman Rabi frequency")
+    axes[0].set_ylabel(r"$\Omega_{420}(t)/(2\pi)$ (MHz)")
 
-        pops = {k: model.observables.measure(f"pop_{k}", result.psi_final)
-                for k in RYDBERG_KEYS}
-        final_norm = norm_squared(result.psi_final)
+    axes[1].plot(t_us, phase_comp, color="#2ca02c", lw=1.8)
+    axes[1].set_title(r"(b) 420nm phase with AC-Stark compensation")
+    axes[1].set_ylabel(r"$\phi_{420}(t)$ (rad)")
 
-        summary.append({
-            "label": cfg["label"],
-            "pops": pops,
-            "norm": final_norm,
-        })
+    axes[2].plot(t_us, phase_raw, color="#d62728", lw=1.8)
+    axes[2].set_title(r"(c) 420nm phase without compensation")
+    axes[2].set_ylabel(r"$\phi_{420}(t)$ (rad)")
+    axes[2].set_xlabel(r"Time ($\mu$s)")
 
-        row, col = divmod(idx, 2)
-        ax = axes[row, col]
-        t_us = result.times * 1e6
-
-        ax.plot(t_us, obs["pop_A_r"], color="#2ca02c", ls="-", lw=1.5,
-                label=r"$P_r^{(A)}$")
-        ax.plot(t_us, obs["pop_B_r"], color="#1f77b4", ls="--", lw=1.5,
-                label=r"$P_r^{(B)}$")
-        ax.plot(t_us, norms, color="gray", ls=":", lw=1.2,
-                label="Norm")
-        ax.set_xlabel(r"Time ($\mu$s)")
-        ax.set_ylabel("Population")
-        ax.set_title(cfg["label"])
-        ax.legend(loc="upper left", fontsize=7)
-        ax.set_ylim(-0.05, 1.05)
-
-        # Annotate final populations
-        txt = (f"|gr>={pops['gr']:.3f}  |rg>={pops['rg']:.3f}\n"
-               f"Norm={final_norm:.4f}")
-        ax.text(0.98, 0.55, txt, transform=ax.transAxes,
-                fontsize=7, ha="right", va="top",
-                bbox=dict(boxstyle="round,pad=0.3", fc="wheat", alpha=0.8))
+    for ax in axes:
+        ax.grid(alpha=0.25)
+    for ax in axes[:-1]:
+        ax.label_outer()
 
     fig.suptitle(
-        "Effect of spontaneous decay on adiabatic preparation\n"
-        r"($\Gamma_e^{-1}=110\,$ns intermediate,  "
-        r"$\Gamma_r^{-1}=152\,\mu$s Rydberg,  "
-        f"$T_{{gate}}$={T_GATE*1e6:.1f} $\\mu$s)",
-        fontsize=12)
+        r"420nm pulse diagnostics for the adiabatic sweep"
+        "\n"
+        f"$\\Delta_{{AC}}^{{peak}}/(2\\pi)$ = {ac_stark_peak/(2*pi)/1e6:.2f} MHz,  "
+        f"$T_{{gate}}$ = {params_raw['t_gate']*1e6:.2f} $\\mu$s",
+        fontsize=12,
+    )
     fig.tight_layout(rect=[0, 0, 1, 0.92])
-    fig.savefig("fig4_decay_comparison.png", dpi=150)
-    print("Saved fig4_decay_comparison.png")
-
-    # Print summary table
-    print("\n  Decay channel comparison (final state):")
-    print(f"  {'Config':<38s} {'P(gr)':>7s} {'P(rg)':>7s} "
-          f"{'P(rr)':>7s} {'Norm':>7s} {'Lost':>7s}")
-    for s in summary:
-        p = s["pops"]
-        lost = 1.0 - s["norm"]
-        print(f"  {s['label']:<38s} {p['gr']:7.4f} {p['rg']:7.4f} "
-              f"{p['rr']:7.4f} {s['norm']:7.4f} {lost:7.4f}")
+    fig.savefig("fig4_420_phase_diagnostics.png", dpi=150)
+    print("Saved fig4_420_phase_diagnostics.png")
 
 
 # ======================================================================
-# Figure 5: Two-atom Landau-Zener / Quantum Kibble-Zurek
+# Figure 6: Two-atom Landau-Zener / Quantum Kibble-Zurek
 # ======================================================================
 
 def _fit_lz_envelope(sweep_rates, p_defect, Omega_eff):
@@ -564,7 +524,7 @@ def main():
     figure_rabi_dynamics(model_no_decay, initial_state)
     figure_final_populations(model_no_decay, initial_state)
     figure_stark_compensation(model_no_decay, initial_state)
-    figure_decay_comparison(initial_state)
+    figure_420_phase_diagnostics(model_no_decay)
 
     model_sq = Analog3LevelModel.from_defaults(detuning_sign=1, blackmanflag=False)
     figure_landau_zener(model_sq, initial_state)
