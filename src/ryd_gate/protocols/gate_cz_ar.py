@@ -6,14 +6,9 @@ Parameters x = [ω/Ω_eff, A₁, φ₁, A₂, φ₂, δ/Ω_eff, T/T_scale, θ]
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 
 from ryd_gate.protocols.base import Protocol
-
-if TYPE_CHECKING:
-    from ryd_gate.core.atomic_system import AtomicSystem
 
 
 class ARProtocol(Protocol):
@@ -37,18 +32,20 @@ class ARProtocol(Protocol):
                 f"AR parameters must be a list of 8 elements. Got {len(x)} elements."
             )
 
-    def unpack_params(self, x: list[float], system: AtomicSystem) -> dict:
+    def unpack_params(self, x: list[float], system) -> dict:
+        rabi_eff = system.meta("rabi_eff")
+        time_scale = system.meta("time_scale")
         return {
-            "omega": x[0] * system.rabi_eff,
+            "omega": x[0] * rabi_eff,
             "phase_amp1": x[1],
             "phase_init1": x[2],
             "phase_amp2": x[3],
             "phase_init2": x[4],
-            "delta": x[5] * system.rabi_eff,
-            "t_gate": x[6] * system.time_scale,
+            "delta": x[5] * rabi_eff,
+            "t_gate": x[6] * time_scale,
             "theta": x[7],
-            "t_rise": system.t_rise,
-            "blackmanflag": system.blackmanflag,
+            "t_rise": system.meta("t_rise", 0.0),
+            "blackmanflag": system.meta("blackmanflag", True),
         }
 
     def phase_420(self, t: float, params: dict) -> complex:
@@ -62,7 +59,7 @@ class ARProtocol(Protocol):
 
     def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
         """Return drive coefficients including Blackman amplitude envelope."""
-        from ryd_gate.blackman import blackman_pulse
+        from ryd_gate.pulse import blackman_pulse
 
         phase = self.phase_420(t, params)
         amplitude = (

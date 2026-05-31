@@ -13,13 +13,13 @@ from typing import TYPE_CHECKING, Callable
 import numpy as np
 from scipy import integrate
 
-from ryd_gate.blackman import blackman_pulse
+from ryd_gate.pulse import blackman_pulse
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from ryd_gate.compilers.ir import HamiltonianIR
-    from ryd_gate.core.atomic_system import AtomicSystem
+    from ryd_gate.solvers.ir import HamiltonianIR
+    from ryd_gate.legacy.atomic_system import AtomicSystem
     from ryd_gate.protocols.base import Protocol
 
 
@@ -57,7 +57,7 @@ def solve_gate(
     ndarray
         Shape (49, len(t_eval)) or (49,) if t_eval is None.
     """
-    from ryd_gate.core.atomic_system import check_protocol_compatibility
+    from ryd_gate.protocols.registry import check_protocol_compatibility
     check_protocol_compatibility(system, protocol)
 
     params = protocol.unpack_params(x, system)

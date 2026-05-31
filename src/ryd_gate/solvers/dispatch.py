@@ -1,13 +1,13 @@
 """High-level simulation entry point.
 
-Provides :func:`simulate`, a convenience function that compiles a
-system + protocol into a HamiltonianIR and evolves the state in one call.
-Automatically selects an appropriate compiler and solver backend based on
-the system type if not explicitly provided.
+Provides :func:`simulate`, which evolves a :class:`RydbergSystem`
+(with a protocol already bound) under its time-dependent Hamiltonian
+for the duration encoded in the protocol parameters.
 """
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -15,76 +15,82 @@ import numpy as np
 from ryd_gate.solvers.base import EvolutionResult
 
 if TYPE_CHECKING:
-    from ryd_gate.compilers.base import Compiler
     from ryd_gate.protocols.base import Protocol
     from ryd_gate.solvers.base import SolverBackend
 
 
 def simulate(
-    model_or_system,
-    protocol: Protocol,
-    x: list[float],
-    psi0: np.ndarray,
+    system,
+    x_or_protocol,
+    psi0_or_x=None,
+    psi0_legacy=None,
     t_eval: np.ndarray | None = None,
-    backend: SolverBackend | None = None,
-    compiler: Compiler | None = None,
+    backend: "SolverBackend | None" = None,
+    compiler=None,
 ) -> EvolutionResult:
     """Compile + evolve in one call.
 
-    Automatically selects compiler and backend based on system type
-    if not provided.
+    Preferred signature::
 
-    Parameters
-    ----------
-    model_or_system : SystemModel, AtomicSystem, or LatticeSystem
-        The quantum system. If a SystemModel, the underlying system
-        is unwrapped for ``protocol.unpack_params()``.
-    protocol : Protocol
-        Pulse protocol providing drive coefficients.
-    x : list of float
-        Protocol parameter vector.
-    psi0 : ndarray
-        Initial state vector.
-    t_eval : ndarray or None
-        Time points at which to store intermediate states.
-    backend : SolverBackend or None
-        Solver backend. Auto-selected if None.
-    compiler : Compiler or None
-        Hamiltonian compiler. Auto-selected if None.
+        simulate(system, x, psi0, t_eval=None, backend=None)
 
-    Returns
-    -------
-    EvolutionResult
-        Result containing psi_final and optionally times/states.
+    where ``system`` is a :class:`RydbergSystem` constructed with a
+    ``protocol=`` argument.
+
+    The legacy signature ``simulate(system, protocol, x, psi0, ...)`` is
+    accepted for one release and emits a DeprecationWarning.
     """
-    from ryd_gate.compilers.dense_atomic import DenseAtomicCompiler
-    from ryd_gate.compilers.sparse_lattice import SparseLatticeCompiler
-    from ryd_gate.core.atomic_system import AtomicSystem, LatticeSystem
+    from ryd_gate.core.rydberg_system import RydbergSystem
     from ryd_gate.core.system_model import SystemModel
     from ryd_gate.solvers.dense_ode import DenseODEBackend
     from ryd_gate.solvers.sparse_expm import SparseExpmBackend
+    from ryd_gate.protocols.base import Protocol
 
-    # Unwrap SystemModel to get underlying system for unpack_params
-    if isinstance(model_or_system, SystemModel):
-        system = model_or_system.system
+    # Detect legacy (system, protocol, x, psi0) form
+    if isinstance(x_or_protocol, Protocol):
+        warnings.warn(
+            "simulate(system, protocol, x, psi0, ...) is deprecated. "
+            "Bind the protocol on the system "
+            "(RydbergSystem(..., protocol=protocol)) and call "
+            "simulate(system, x, psi0).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        protocol = x_or_protocol
+        x = psi0_or_x
+        psi0 = psi0_legacy
+        if isinstance(system, SystemModel):
+            system = system.system
+        if not isinstance(system, RydbergSystem):
+            raise TypeError(
+                "simulate() now requires RydbergSystem instances. "
+                "Build one with RydbergSystem.from_lattice(...) or from_preset(...)."
+            )
+        system = system.with_protocol(protocol)
     else:
-        system = model_or_system
+        x = x_or_protocol
+        psi0 = psi0_or_x
+        if isinstance(system, SystemModel):
+            system = system.system
+        if not isinstance(system, RydbergSystem):
+            raise TypeError(
+                "simulate() now requires RydbergSystem instances. "
+                "Build one with RydbergSystem.from_lattice(...) or from_preset(...)."
+            )
 
-    params = protocol.unpack_params(x, system)
+    if compiler is not None:
+        warnings.warn(
+            "`compiler=` is ignored; RydbergSystem.compile_ir is used instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
-    # Auto-select compiler
-    if compiler is None:
-        if isinstance(system, LatticeSystem):
-            compiler = SparseLatticeCompiler()
-        else:
-            compiler = DenseAtomicCompiler()
+    params = system.unpack_params(x)
+    ir = system.compile_ir(params)
 
-    ir = compiler.compile(system, protocol, params)
-
-    # Auto-select backend
     if backend is None:
         if ir.is_sparse:
-            n = getattr(protocol, "n_steps", 200)
+            n = getattr(system.protocol, "n_steps", 200)
             backend = SparseExpmBackend(n_steps=n)
         else:
             backend = DenseODEBackend()

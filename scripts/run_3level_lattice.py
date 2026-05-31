@@ -10,21 +10,22 @@ ordering.
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ryd_gate.lattice import (
-    build_3level_operators,
-    evolve_3level_sweep,
-    ground_state,
-    make_3level_square_lattice,
+from ryd_gate.analysis.lattice_observables import (
     measure_rydberg_occupation,
-    plot_spatial_rydberg,
     precompute_trit_masks,
     staggered_magnetization,
 )
+from ryd_gate.core.lattice_3level_cascade import (
+    build_3level_operators,
+    evolve_3level_sweep,
+)
+from ryd_gate.core.states import ground_state
+from ryd_gate.lattice import make_square_lattice, plot_spatial_rydberg
 
 
 def main():
     Lx, Ly = 3, 3
-    geom = make_3level_square_lattice(Lx, Ly, spacing_um=5.0)
+    geom = make_square_lattice(Lx, Ly, spacing_um=5.0)
     ops = build_3level_operators(
         geom, Delta=2 * np.pi * 9.1e9,
         Omega_1013=2 * np.pi * 491e6, Omega_420=2 * np.pi * 491e6,

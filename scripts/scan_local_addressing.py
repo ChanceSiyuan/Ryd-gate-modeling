@@ -34,7 +34,7 @@ from ryd_gate.analysis.local_addressing import (
     default_sweep_x,
     evaluate_addressing,
 )
-from ryd_gate.core.atomic_system import (
+from ryd_gate.legacy.atomic_system import (
     LAMBDA_D2,
     LAMBDA_PAPER,
     POWER_REF_UW,
@@ -228,7 +228,7 @@ def _simulate_grid_point(task):
 def _run_optimize_scan(args):
     """Run the 2D grid scan and return (grid, metadata dict)."""
     from ryd_gate import simulate
-    from ryd_gate.core.models.analog_3level import Analog3LevelModel
+    from ryd_gate.core.analog_3level import Analog3LevelModel
 
     print("=" * 60)
     print("  Local Addressing: Wavelength x Power Optimization")
@@ -830,7 +830,7 @@ def _read_csv_metadata(csv_path):
 
 def cmd_optimize_plot(args):
     """Re-plot from a previously saved CSV grid (no simulation)."""
-    from ryd_gate.core.models.analog_3level import Analog3LevelModel
+    from ryd_gate.core.analog_3level import Analog3LevelModel
 
     # If --csv was not given explicitly, derive it from --outdir + --prefix
     # so users only need to remember the experiment tag.

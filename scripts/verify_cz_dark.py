@@ -10,9 +10,9 @@ os.environ["JAX_PLATFORMS"] = "cpu"
 
 import numpy as np
 
-from ryd_gate.core.atomic_system import create_our_system
+from ryd_gate.legacy.atomic_system import create_our_system
 from ryd_gate.protocols.gate_cz_to import TOProtocol
-from ryd_gate.solvers.schrodinger import solve_gate
+from ryd_gate.legacy._solve_gate import solve_gate
 from ryd_gate.analysis.gate_metrics import average_gate_infidelity, sss_infidelity, bell_infidelity
 
 X_TO_OUR_DARK = [

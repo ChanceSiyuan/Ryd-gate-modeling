@@ -1,6 +1,22 @@
-"""Observable computation for many-body Rydberg states."""
+"""Measurement helpers for many-body Rydberg lattice states.
+
+Bit-mask / trit-mask routines that compute per-site occupations,
+staggered magnetization, and similar observables directly from
+state-vector amplitudes (no sparse matrix-vector products).
+
+Lives in ``analysis/`` (not ``lattice/``) because these routines assume
+specific local Hilbert dimensions (2-level vs 3-level), and ``lattice/``
+is reserved for pure geometry.
+"""
+
+from __future__ import annotations
 
 import numpy as np
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 2-level (|g>, |r>) observables
+# ─────────────────────────────────────────────────────────────────────
 
 
 def precompute_bit_masks(N):
@@ -28,9 +44,9 @@ def measure_from_states(states, bit_masks, sublattice):
     ----------
     states : ndarray, shape (n_times, dim) or (dim,) for a single state
     bit_masks : ndarray, shape (N, dim)
-        From precompute_bit_masks.
+        From :func:`precompute_bit_masks`.
     sublattice : ndarray, shape (N,)
-        Checkerboard signs from SquareLattice.
+        Checkerboard signs from lattice geometry.
 
     Returns
     -------
@@ -54,7 +70,9 @@ def measure_from_states(states, bit_masks, sublattice):
     return ms, n_mean, occ
 
 
-# ── 3-level observables ──────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
+# 3-level (g, e, r) observables
+# ─────────────────────────────────────────────────────────────────────
 
 
 def precompute_trit_masks(N):
@@ -62,13 +80,13 @@ def precompute_trit_masks(N):
 
     Returns dict with keys 'g', 'e', 'r', each shape (N, 3^N).
     """
-    dim = 3**N
+    dim = 3 ** N
     masks = {level: np.zeros((N, dim), dtype=float) for level in ('g', 'e', 'r')}
     level_map = {0: 'g', 1: 'e', 2: 'r'}
     for idx in range(dim):
         remainder = idx
         for i in range(N):
-            power = 3**(N - 1 - i)
+            power = 3 ** (N - 1 - i)
             trit = remainder // power
             remainder %= power
             masks[level_map[trit]][i, idx] = 1.0
@@ -82,9 +100,9 @@ def measure_rydberg_occupation(states, trit_masks):
     """
     mask_r = trit_masks['r']
     if states.ndim == 1:
-        return mask_r @ np.abs(states)**2
+        return mask_r @ np.abs(states) ** 2
     else:
-        return np.abs(states)**2 @ mask_r.T
+        return np.abs(states) ** 2 @ mask_r.T
 
 
 def staggered_magnetization(rydberg_occ, sublattice):

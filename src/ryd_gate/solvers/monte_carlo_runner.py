@@ -6,11 +6,9 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from ryd_gate.compilers.dense_atomic import DenseAtomicCompiler
 from ryd_gate.solvers.base import EvolutionResult
 
 if TYPE_CHECKING:
-    from ryd_gate.compilers.base import Compiler
     from ryd_gate.core.system_model import SystemModel
     from ryd_gate.protocols.base import Protocol
     from ryd_gate.solvers.base import SolverBackend
@@ -32,13 +30,31 @@ class MonteCarloRunner:
     def __init__(
         self,
         model: SystemModel,
-        protocol: Protocol,
-        x: list[float],
+        x: list[float] | Protocol,
+        x_legacy: list[float] | None = None,
         backend: SolverBackend | None = None,
     ) -> None:
-        self.model = model
-        self.protocol = protocol
-        self.x = x
+        from ryd_gate.protocols.base import Protocol
+
+        if isinstance(x, Protocol):
+            import warnings as _w
+            _w.warn(
+                "MonteCarloRunner(model, protocol, x, ...) is deprecated. "
+                "Pass a protocol-bound system: MonteCarloRunner(system, x, ...).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.model = model.with_protocol(x)
+            self.x = x_legacy
+        else:
+            if model.protocol is None:
+                raise ValueError(
+                    "MonteCarloRunner expects a RydbergSystem with a bound protocol. "
+                    "Use RydbergSystem(..., protocol=...) or .with_protocol(...)."
+                )
+            self.model = model
+            self.x = x
+        self.protocol = self.model.protocol
 
         # Default backend
         if backend is None:
@@ -86,25 +102,25 @@ class MonteCarloRunner:
 
             if self._sigma_detuning_rad is not None:
                 delta_err = rng.normal(0, self._sigma_detuning_rad)
-                # Build detuning perturbation operator
-                basis = self.model.basis
-                n = basis.local_dim
-                ryd_levels = [l for l in basis.local_levels if l.startswith("r")]
-                occ_op = np.zeros((basis.total_dim, basis.total_dim), dtype=np.complex128)
-                for level in ryd_levels:
-                    idx = basis.level_index(level)
-                    from ryd_gate.core.operators import build_occ_operator
-
-                    occ_op += build_occ_operator(idx, n)
+                if self.model.blocks.has("sum_nr"):
+                    occ_op = self.model.blocks.get("sum_nr")
+                elif self.model.blocks.has("sum_n_r"):
+                    occ_op = self.model.blocks.get("sum_n_r")
+                else:
+                    basis = self.model.basis
+                    occ_op = np.zeros((basis.total_dim, basis.total_dim), dtype=np.complex128)
+                    for level in [l for l in basis.local_levels if l.startswith("r")]:
+                        block = f"sum_n_{level}"
+                        if self.model.blocks.has(block):
+                            occ_op = occ_op + self.model.blocks.get(block)
                 ham_delta = delta_err * occ_op
 
             # Compile with noise
-            compiler = DenseAtomicCompiler(amplitude_scale=amp_scale)
-            ir = compiler.compile(system, self.protocol, params)
+            ir = system.with_amplitude_scale(amp_scale).compile_ir(params)
 
             # Add detuning perturbation to static terms if needed
             if ham_delta is not None:
-                from ryd_gate.compilers.ir import HamiltonianTerm
+                from ryd_gate.solvers.ir import HamiltonianTerm
 
                 ir.static_terms.append(HamiltonianTerm("detuning_noise", ham_delta, 1.0))
 

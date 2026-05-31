@@ -13,12 +13,12 @@ import numpy as np
 from arc import Rubidium87
 
 # Re-exports for backward compatibility -- these symbols moved to new modules
-from ryd_gate.core.ac_stark import (
+from ryd_gate.physics.ac_stark import (
     FREQ_D2, FREQ_D1, LAMBDA_D2, LAMBDA_D1, GAMMA_D2, GAMMA_D1,
     LAMBDA_PAPER, CALIBRATION_SHIFT_HZ, CALIBRATION_SCATTER_HZ, POWER_REF_UW,
     compute_shift_scatter,
 )
-from ryd_gate.core.registry import (
+from ryd_gate.protocols.registry import (
     PROTOCOL_REGISTRY, compatible_protocols, check_protocol_compatibility,
 )
 from ryd_gate.core.operators import (
@@ -114,11 +114,11 @@ def create_our_system(
 
     Compatible protocols: TOProtocol, ARProtocol.
     """
-    from ryd_gate.core.hamiltonian_builders import (
+    from ryd_gate.legacy.hamiltonian_builders import (
         _build_tq_ham_const, _tq_ham_420_our, _tq_ham_1013_our,
         _build_zero_state_lightshift,
     )
-    from ryd_gate.core.branching import _rydberg_branching_ratios, _mid_branching_ratios
+    from ryd_gate.physics.branching import _rydberg_branching_ratios, _mid_branching_ratios
 
     atom = Rubidium87()
     ryd_level = 70
@@ -210,11 +210,11 @@ def create_lukin_system(
 
     Compatible protocols: TOProtocol, ARProtocol.
     """
-    from ryd_gate.core.hamiltonian_builders import (
+    from ryd_gate.legacy.hamiltonian_builders import (
         _build_tq_ham_const, _tq_ham_420_lukin, _tq_ham_1013_lukin,
         _build_zero_state_lightshift,
     )
-    from ryd_gate.core.branching import _rydberg_branching_ratios, _mid_branching_ratios
+    from ryd_gate.physics.branching import _rydberg_branching_ratios, _mid_branching_ratios
 
     atom = Rubidium87()
     ryd_level = 53
@@ -477,6 +477,75 @@ class LatticeSystem:
     H_vdw: object                  # csc_matrix: VdW interaction (diagonal)
 
 
+def build_lattice_operators(
+    N: int,
+    vdw_pairs: tuple,
+    V_nn: float,
+    verbose: bool = False,
+) -> dict:
+    """Precompute sparse operators for a 2-level lattice Hamiltonian.
+
+    Builds:
+      - ``sum_X``  : global sigma^x drive (sum_i sigma^x_i)
+      - ``sum_n``  : global occupation (sum_i n_i)
+      - ``n_list`` : per-site occupation [n_0, ..., n_{N-1}]
+      - ``H_vdw``  : diagonal VdW interaction sum_(i,j) V_nn * v_rel_ij * n_i n_j
+
+    Parameters
+    ----------
+    N : int
+        Number of atoms.
+    vdw_pairs : iterable of (i, j, V_rel)
+        Interaction pair list (relative strengths; multiplied by V_nn).
+    V_nn : float
+        Nearest-neighbor interaction strength.
+    verbose : bool
+        Print build progress.
+    """
+    import time as _time
+    from scipy.sparse import csc_matrix, diags as spdiags
+    from ryd_gate.core.operators import embed_site_op
+
+    dim = 2 ** N
+    if verbose:
+        print(f"  Building operators for {N} atoms (dim = {dim})...")
+    t0 = _time.time()
+
+    sx = csc_matrix(np.array([[0, 1], [1, 0]], dtype=complex))
+    nr = csc_matrix(np.array([[0, 0], [0, 1]], dtype=complex))
+
+    n_list = []
+    sum_X = csc_matrix((dim, dim), dtype=complex)
+    for i in range(N):
+        n_list.append(embed_site_op(nr, i, N))
+        sum_X = sum_X + embed_site_op(sx, i, N)
+
+    n_diags = [ni.diagonal() for ni in n_list]
+    sum_n_diag = np.zeros(dim, dtype=complex)
+    for d in n_diags:
+        sum_n_diag += d
+    sum_n = spdiags([sum_n_diag], offsets=[0], shape=(dim, dim), format='csc')
+
+    h_vdw_diag = np.zeros(dim, dtype=complex)
+    for (i, j, v_rel) in vdw_pairs:
+        h_vdw_diag += V_nn * v_rel * (n_diags[i] * n_diags[j])
+    H_vdw = spdiags([h_vdw_diag], offsets=[0], shape=(dim, dim), format='csc')
+
+    if verbose:
+        print(f"  Operators built in {_time.time() - t0:.1f}s")
+    return {
+        'sum_X': sum_X,
+        'sum_n': sum_n,
+        'n_list': n_list,
+        'H_vdw': H_vdw,
+    }
+
+
+# nn_nnn_relative_pairs lives in lattice.geometry now; re-exported for callers
+# that still import it from this module.
+from ryd_gate.lattice.geometry import nn_nnn_relative_pairs  # noqa: E402
+
+
 def create_lattice_system(
     Lx: int = 3,
     Ly: int = 3,
@@ -497,17 +566,19 @@ def create_lattice_system(
         Global Rabi frequency.
     """
     from ryd_gate.lattice.geometry import make_square_lattice
-    from ryd_gate.lattice.operators import build_operators
 
-    sq = make_square_lattice(Lx, Ly)
-    ops = build_operators(sq.N, sq.vdw_pairs, V_nn)
+    # Geometry uses unit spacing so the integer grid coords match the
+    # convention assumed by nn_nnn_relative_pairs.
+    geom = make_square_lattice(Lx, Ly, spacing_um=1.0)
+    vdw_pairs = nn_nnn_relative_pairs(Lx, Ly)
+    ops = build_lattice_operators(geom.N, vdw_pairs, V_nn)
 
     return LatticeSystem(
         param_set="lattice",
-        Lx=Lx, Ly=Ly, N=sq.N,
-        coords=sq.coords,
-        sublattice=sq.sublattice,
-        vdw_pairs=sq.vdw_pairs,
+        Lx=Lx, Ly=Ly, N=geom.N,
+        coords=geom.coords,
+        sublattice=geom.sublattice,
+        vdw_pairs=vdw_pairs,
         V_nn=V_nn, Omega=Omega,
         sum_X=ops["sum_X"],
         sum_n=ops["sum_n"],

@@ -12,12 +12,12 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ryd_gate.analysis.gate_metrics import average_gate_infidelity, residuals_to_branching
-from ryd_gate.core.atomic_system import build_atom_a_projector, build_occ_operator, build_vdw_unit_operator, get_nominal_distance
+from ryd_gate.core.operators import build_atom_a_projector, build_occ_operator, build_vdw_unit_operator, get_nominal_distance
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from ryd_gate.core.atomic_system import AtomicSystem
+    from ryd_gate.legacy.atomic_system import AtomicSystem
     from ryd_gate.protocols.base import Protocol
 
 
@@ -513,7 +513,7 @@ class MonteCarloEngine:
         list of ndarray
             Final state vectors (one per shot).
         """
-        from ryd_gate.solvers.schrodinger import solve_gate
+        from ryd_gate.legacy._solve_gate import solve_gate
 
         rng = np.random.default_rng(seed)
         final_states = []
@@ -559,7 +559,7 @@ def run_monte_carlo_jax(
     import jax.numpy as jnp
     from jax.experimental.ode import odeint
 
-    from ryd_gate.blackman import blackman_pulse as _  # noqa: F401
+    from ryd_gate.pulse import blackman_pulse as _  # noqa: F401
     from ryd_gate.protocols.gate_cz_to import TOProtocol
 
     jax.config.update("jax_enable_x64", True)

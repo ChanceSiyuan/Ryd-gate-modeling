@@ -37,23 +37,26 @@ class TestPackageImports:
         import ryd_gate
 
         expected = {
-            # Legacy (backward-compatible)
-            "CZGateSimulator", "MonteCarloResult",
-            "AtomicSystem", "Protocol",
-            "create_our_system", "create_lukin_system",
-            "create_analog_system", "compatible_protocols",
-            "PROTOCOL_REGISTRY", "compute_shift_scatter",
-            "TOProtocol", "ARProtocol",
-            "SweepProtocol",
-            "LatticeSystem", "create_lattice_system",
-            "AddressingEvaluator",
+            # Systems
+            "RydbergSystem", "RydbergSystemModel",
+            "LevelStructureSpec", "TransitionSpec",
+            "InteractionSpec", "DEFAULT_C6", "level_structure",
+            "compute_shift_scatter",
+            # Protocols
+            "Protocol", "TOProtocol", "ARProtocol", "SweepProtocol",
+            "DigitalAnalogProtocol", "Segment",
+            # Simulation
+            "simulate", "EvolutionResult", "SolverBackend",
+            "HamiltonianIR", "HamiltonianTerm",
+            # Analysis
+            "average_gate_infidelity", "error_budget", "AddressingEvaluator",
+            # Pulse utilities
             "blackman_pulse", "blackman_pulse_sqrt", "blackman_window",
-            # New architecture
+            # Advanced primitives
             "SystemModel", "BasisSpec", "BlockRegistry",
             "ObservableRegistry", "Observable",
-            "HamiltonianIR", "HamiltonianTerm",
-            "SolverBackend", "EvolutionResult",
-            "simulate",
+            # Legacy (deprecated)
+            "CZGateSimulator", "MonteCarloResult",
         }
         assert set(ryd_gate.__all__) == expected
 
@@ -69,7 +72,7 @@ class TestPackageImports:
         import warnings
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
-            from ryd_gate.ideal_cz import CZGateSimulator
+            from ryd_gate.legacy.ideal_cz import CZGateSimulator
 
         assert CZGateSimulator is not None
 
@@ -84,7 +87,8 @@ class TestPackageImports:
         from ryd_gate import (
             SystemModel, BasisSpec, BlockRegistry, ObservableRegistry,
             HamiltonianIR, HamiltonianTerm, SolverBackend, EvolutionResult,
-            simulate,
+            simulate, RydbergSystemModel,
         )
         assert SystemModel is not None
+        assert RydbergSystemModel is not None
         assert simulate is not None

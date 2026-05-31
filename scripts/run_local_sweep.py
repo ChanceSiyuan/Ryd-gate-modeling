@@ -31,8 +31,8 @@ from scipy.constants import pi
 
 from ryd_gate import simulate
 from ryd_gate.analysis.observable_metrics import measure_trajectory, norm_squared
-from ryd_gate.blackman import blackman_pulse
-from ryd_gate.core.models.analog_3level import Analog3LevelModel
+from ryd_gate.pulse import blackman_pulse
+from ryd_gate.core.analog_3level import Analog3LevelModel
 from ryd_gate.core.operators import build_product_state_map
 from ryd_gate.protocols.sweep import SweepProtocol
 

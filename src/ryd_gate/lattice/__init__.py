@@ -1,74 +1,45 @@
-"""Many-body simulation of 2D Rydberg atom arrays (2-level and 3-level)."""
+"""Pure-geometry helpers for N-atom Rydberg arrays.
 
-from .evolution import (
-    EvolutionResult,
-    evolve_3level_sweep,
-    evolve_constant_H,
-    evolve_sweep,
-)
+Scope: lattice shapes, coordinates, sublattice signs, and basic helpers.
+This package does **not** define energy levels, Hamiltonians, states,
+observables, interactions, or evolution; for those see:
+
+- ``ryd_gate.core.interactions``           — pairwise VdW coupling computation
+- ``ryd_gate.core.rydberg_system``         — level structure, Hamiltonian blocks,
+                                              and observables for lattice models
+- ``ryd_gate.core.states``                 — product/AF/domain/ground state constructors
+- ``ryd_gate.analysis.lattice_observables``— bit/trit-mask occupation measurement
+- ``ryd_gate.solvers.dispatch.simulate``   — time evolution (drives in
+                                              ``ryd_gate.protocols``)
+
+Contents
+--------
+- ``geometry`` — LatticeGeometry dataclass; shape factories
+  (``make_chain``, ``make_square_lattice``, ``make_triangular_lattice``,
+  ``make_geometry_from_coords``); ``is_in_domain`` helper.
+- ``plotting`` — ``plot_spatial_rydberg``, ``plot_population_evolution``
+  (visualizations of physics quantities on lattice coordinates).
+"""
+
 from .geometry import (
     LatticeGeometry,
-    SquareLattice,
     is_in_domain,
-    make_3level_square_lattice,
+    make_chain,
     make_geometry_from_coords,
     make_square_lattice,
-)
-from .observables import (
-    measure_from_states,
-    measure_rydberg_occupation,
-    precompute_bit_masks,
-    precompute_trit_masks,
-    staggered_magnetization,
-)
-from .operators import (
-    ThreeLevelOps,
-    build_3level_operators,
-    build_hamiltonian,
-    build_hamiltonian_base,
-    build_operators,
+    make_triangular_lattice,
 )
 from .plotting import plot_population_evolution, plot_spatial_rydberg
-from .solver import solve_lattice
-from .states import (
-    af_config,
-    checkerboard_rydberg,
-    domain_config,
-    ground_state,
-    product_state,
-    product_state_3level,
-)
 
 __all__ = [
-    # 2-level
-    "SquareLattice",
-    "make_square_lattice",
-    "build_operators",
-    "build_hamiltonian",
-    "build_hamiltonian_base",
-    "evolve_constant_H",
-    "evolve_sweep",
-    "solve_lattice",
-    "product_state",
-    "af_config",
-    "domain_config",
-    "is_in_domain",
-    "precompute_bit_masks",
-    "measure_from_states",
-    # 3-level
+    # Geometry
     "LatticeGeometry",
-    "make_3level_square_lattice",
+    "make_chain",
+    "make_square_lattice",
+    "make_triangular_lattice",
     "make_geometry_from_coords",
-    "ThreeLevelOps",
-    "build_3level_operators",
-    "EvolutionResult",
-    "evolve_3level_sweep",
-    "product_state_3level",
-    "ground_state",
-    "checkerboard_rydberg",
-    "precompute_trit_masks",
-    "measure_rydberg_occupation",
-    "staggered_magnetization",
+    "is_in_domain",
+    # Plotting
     "plot_spatial_rydberg",
     "plot_population_evolution",
 ]

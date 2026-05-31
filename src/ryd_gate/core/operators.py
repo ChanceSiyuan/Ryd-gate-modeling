@@ -1,7 +1,8 @@
-"""Utility operators for two-atom Rydberg gate models.
+"""Utility operators for Rydberg gate and many-body lattice models.
 
-Provides functions to build occupation operators, state maps,
-van der Waals operators, and atom projectors.
+Two-atom dense operators (occupation, state maps, projectors) plus the
+generic many-body Kronecker embedding helper :func:`embed_site_op`
+shared by all N-atom lattice models.
 """
 
 from __future__ import annotations
@@ -9,9 +10,34 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
+from scipy.sparse import eye as speye, kron as spkron
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+
+# ======================================================================
+# MANY-BODY KRONECKER EMBEDDING
+# ======================================================================
+
+
+def embed_site_op(op, site: int, N: int, d: int | None = None):
+    """Embed a d×d single-atom operator on ``site`` into the d^N Hilbert space.
+
+    Uses I_{d^site} ⊗ op ⊗ I_{d^(N-1-site)} via sparse Kronecker products.
+    The local dimension ``d`` is inferred from ``op.shape[0]`` if not given.
+    """
+    if d is None:
+        d = op.shape[0]
+    result = op
+    if site > 0:
+        result = spkron(speye(d ** site, format='csc', dtype=complex),
+                        result, format='csc')
+    if site < N - 1:
+        result = spkron(result,
+                        speye(d ** (N - 1 - site), format='csc', dtype=complex),
+                        format='csc')
+    return result
 
 
 # ======================================================================

@@ -11,35 +11,35 @@ import pytest
 @pytest.fixture(scope="session")
 def sim_to_our():
     """Session-scoped TO simulator with 'our' params (no decay)."""
-    from ryd_gate.ideal_cz import CZGateSimulator
+    from ryd_gate.legacy.ideal_cz import CZGateSimulator
     return CZGateSimulator(param_set="our", strategy="TO")
 
 
 @pytest.fixture(scope="session")
 def sim_ar_our():
     """Session-scoped AR simulator with 'our' params (no decay)."""
-    from ryd_gate.ideal_cz import CZGateSimulator
+    from ryd_gate.legacy.ideal_cz import CZGateSimulator
     return CZGateSimulator(param_set="our", strategy="AR")
 
 
 @pytest.fixture(scope="session")
 def sim_to_lukin():
     """Session-scoped TO simulator with 'lukin' params (no decay)."""
-    from ryd_gate.ideal_cz import CZGateSimulator
+    from ryd_gate.legacy.ideal_cz import CZGateSimulator
     return CZGateSimulator(param_set="lukin", strategy="TO")
 
 
 @pytest.fixture(scope="session")
 def sim_to_our_blackman():
     """Session-scoped TO simulator with Blackman pulse (no decay)."""
-    from ryd_gate.ideal_cz import CZGateSimulator
+    from ryd_gate.legacy.ideal_cz import CZGateSimulator
     return CZGateSimulator(param_set="our", strategy="TO", blackmanflag=True)
 
 
 @pytest.fixture(scope="session")
 def sim_to_our_decay():
     """Session-scoped TO simulator with all decay flags on."""
-    from ryd_gate.ideal_cz import CZGateSimulator
+    from ryd_gate.legacy.ideal_cz import CZGateSimulator
     return CZGateSimulator(
         param_set="our", strategy="TO", blackmanflag=True,
         enable_rydberg_decay=True, enable_intermediate_decay=True,

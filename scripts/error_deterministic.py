@@ -12,7 +12,7 @@ error sources and XYZ/AL/LG branching decomposition:
 import os
 os.environ["JAX_PLATFORMS"] = "cpu"
 
-from ryd_gate.core.atomic_system import create_our_system
+from ryd_gate.legacy.atomic_system import create_our_system
 from ryd_gate.protocols.gate_cz_to import TOProtocol
 from ryd_gate.analysis.gate_metrics import sss_infidelity, error_budget
 

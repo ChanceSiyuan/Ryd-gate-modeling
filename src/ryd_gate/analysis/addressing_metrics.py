@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ryd_gate.core.atomic_system import build_atom_a_projector, build_atom_b_projector
+from ryd_gate.core.operators import build_atom_a_projector, build_atom_b_projector
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

@@ -27,7 +27,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.optimize import curve_fit
 
-from ryd_gate.core.atomic_system import create_our_system
+from ryd_gate.legacy.atomic_system import create_our_system
 from ryd_gate.protocols.gate_cz_to import TOProtocol
 from ryd_gate.analysis.gate_metrics import average_gate_infidelity, residuals_to_branching
 

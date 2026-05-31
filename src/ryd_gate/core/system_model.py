@@ -17,8 +17,7 @@ class SystemModel(ABC):
     - A registry of Hamiltonian operator blocks
     - A registry of observables for measurement
 
-    Concrete subclasses (Rb87TwoAtomModel, Lattice2LevelModel, etc.)
-    populate these registries from physical parameters.
+    ``RydbergSystemModel`` is the canonical implementation.
     """
 
     @property

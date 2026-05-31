@@ -1,4 +1,4 @@
-"""Blackman window pulse shaping utilities for adiabatic turn-on/off."""
+"""Pulse shaping utilities: Blackman-windowed envelopes for adiabatic turn-on/off."""
 
 import numpy as np
 

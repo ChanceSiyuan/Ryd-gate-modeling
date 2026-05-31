@@ -11,13 +11,13 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy import integrate, interpolate
 
-from ryd_gate.core.atomic_system import build_occ_operator, build_sss_state_map
-from ryd_gate.solvers.schrodinger import solve_gate
+from ryd_gate.core.operators import build_occ_operator, build_sss_state_map
+from ryd_gate.legacy._solve_gate import solve_gate
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from ryd_gate.core.atomic_system import AtomicSystem
+    from ryd_gate.legacy.atomic_system import AtomicSystem
     from ryd_gate.protocols.base import Protocol
 
 

@@ -12,9 +12,9 @@ os.environ["JAX_PLATFORMS"] = "cpu"
 
 import numpy as np
 
-from ryd_gate.core.atomic_system import create_our_system
+from ryd_gate.legacy.atomic_system import create_our_system
 from ryd_gate.protocols.gate_cz_to import TOProtocol
-from ryd_gate.solvers.monte_carlo import MonteCarloEngine, MonteCarloResult
+from ryd_gate.legacy._monte_carlo import MonteCarloEngine, MonteCarloResult
 
 X_TO_OUR_DARK = [
    -0.9509172186259588, 1.105272315809505, 0.383911389220584,

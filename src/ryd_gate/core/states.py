@@ -1,8 +1,31 @@
-"""Initial state preparation for Rydberg atom arrays."""
+"""Initial state constructors for many-body Rydberg lattice systems.
+
+2-level (|g>, |r>) helpers:
+- :func:`product_state`     — product state from a 0/1 bit configuration
+- :func:`af_config`         — antiferromagnetic 0/1 config from sublattice signs
+- :func:`domain_config`     — AF1 bulk with an AF2 square domain
+
+3-level (g, e, r) cascade helpers:
+- :func:`product_state_3level`  — product state from a {0,1,2} trit configuration
+- :func:`ground_state`          — all atoms in |g>
+- :func:`checkerboard_rydberg`  — |r> on one sublattice, |g> on the other
+
+Lives in ``core/`` (not ``lattice/``) because these constructors assume
+specific local Hilbert dimensions / level labels; ``lattice/`` is reserved
+for pure geometry.  Index conventions match
+:func:`ryd_gate.core.operators.embed_site_op`.
+"""
+
+from __future__ import annotations
 
 import numpy as np
 
-from .geometry import is_in_domain
+from ryd_gate.lattice.geometry import is_in_domain
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 2-level
+# ─────────────────────────────────────────────────────────────────────
 
 
 def product_state(config, N):
@@ -29,7 +52,7 @@ def af_config(sublattice, which=1):
     Parameters
     ----------
     sublattice : ndarray
-        Checkerboard signs (+1/-1) from SquareLattice.
+        Checkerboard signs (+1/-1) from lattice geometry.
     which : {1, 2}
         AF1: sublattice +1 sites excited.
         AF2: sublattice -1 sites excited.
@@ -50,7 +73,9 @@ def domain_config(coords, sublattice, domain_center, domain_radius):
     return config
 
 
-# ── 3-level state preparation ────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
+# 3-level (g, e, r cascade)
+# ─────────────────────────────────────────────────────────────────────
 
 
 def product_state_3level(config, N):
@@ -64,7 +89,7 @@ def product_state_3level(config, N):
         Number of atoms.
     """
     config = np.asarray(config, dtype=int)
-    dim = 3**N
+    dim = 3 ** N
     idx = 0
     for i in range(N):
         idx = idx * 3 + config[i]
