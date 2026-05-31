@@ -2,9 +2,9 @@
 
 All new development should import from submodules directly::
 
-    from ryd_gate.core.atomic_system import create_our_system, AtomicSystem
+    from ryd_gate.legacy.atomic_system import create_our_system, AtomicSystem
     from ryd_gate.protocols.gate_cz_to import TOProtocol
-    from ryd_gate.solvers.schrodinger import solve_gate
+    from ryd_gate.legacy._solve_gate import solve_gate
     from ryd_gate.analysis.gate_metrics import average_gate_infidelity
 """
 
@@ -17,20 +17,22 @@ import numpy as np
 from qutip import Bloch
 from scipy.optimize import minimize
 
-from ryd_gate.core.atomic_system import (
+from ryd_gate.legacy.atomic_system import (
     AtomicSystem,
+    create_lukin_system,
+    create_our_system,
+)
+from ryd_gate.core.operators import (
     build_occ_operator,
     build_sss_state_map,
     build_vdw_unit_operator,
-    create_lukin_system,
-    create_our_system,
     get_nominal_distance,
 )
 from ryd_gate.protocols.base import Protocol
 from ryd_gate.protocols.gate_cz_ar import ARProtocol
 from ryd_gate.protocols.gate_cz_to import TOProtocol
-from ryd_gate.solvers.schrodinger import solve_gate
-from ryd_gate.solvers.monte_carlo import (
+from ryd_gate.legacy._solve_gate import solve_gate
+from ryd_gate.legacy._monte_carlo import (
     MonteCarloEngine,
     MonteCarloResult,
     run_monte_carlo_jax,

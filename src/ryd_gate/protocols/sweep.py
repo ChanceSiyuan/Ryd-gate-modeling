@@ -1,12 +1,9 @@
 """Unified sweep protocol for detuning sweeps with local addressing.
 
-Works with both AtomicSystem (2-atom 3-level, phase modulation via solve_gate)
-and LatticeSystem (N-atom 2-level, piecewise-constant via solve_lattice).
-
 Parameters x = [delta_start, delta_end, t_sweep]
 
-For AtomicSystem: parameters are scaled by rabi_eff / time_scale.
-For LatticeSystem: parameters are in absolute units.
+Dense atomic-style presets scale parameters by ``rabi_eff`` / ``time_scale``.
+Lattice presets use absolute units.
 """
 
 from __future__ import annotations
@@ -77,33 +74,44 @@ class SweepProtocol(Protocol):
             )
 
     def unpack_params(self, x: list[float], system) -> dict:
-        """Unpack parameters. Scales by rabi_eff/time_scale for AtomicSystem."""
-        if hasattr(system, "rabi_eff"):
-            # AtomicSystem: parameters normalized by Ω_eff and T_scale
-            return {
-                "delta_start": x[0] * system.rabi_eff,
-                "delta_end": x[1] * system.rabi_eff,
-                "t_gate": x[2] * system.time_scale,
-                "t_rise": system.t_rise,
-                "blackmanflag": system.blackmanflag,
+        """Unpack parameters using model metadata.
+
+        Emits ``pin_deltas`` / ``scatter_rates`` / ``static_overlays`` keys
+        consumed by :meth:`ryd_gate.core.RydbergSystem.compile_ir` to build
+        time-independent overlay terms. The system owns matrix assembly; the
+        protocol owns parameter semantics only.
+        """
+        rabi_eff = system.meta("rabi_eff") if hasattr(system, "meta") else None
+        base = {
+            "pin_deltas": dict(self.addressing),
+            "scatter_rates": self._get_scatter_map(),
+            "static_overlays": [],
+        }
+        if rabi_eff is not None:
+            base.update({
+                "delta_start": x[0] * rabi_eff,
+                "delta_end": x[1] * rabi_eff,
+                "t_gate": x[2] * system.meta("time_scale"),
+                "t_rise": system.meta("t_rise", 0.0),
+                "blackmanflag": system.meta("blackmanflag", True),
                 "_system_type": "atomic",
-            }
+            })
         else:
-            # LatticeSystem: absolute units
-            return {
+            base.update({
                 "delta_start": x[0],
                 "delta_end": x[1],
                 "t_gate": x[2],
-                "Omega": getattr(system, "Omega", 1.0),
+                "Omega": system.meta("Omega", 1.0) if hasattr(system, "meta") else 1.0,
                 "omega_ramp_frac": self.omega_ramp_frac,
                 "_system_type": "lattice",
-            }
+            })
+        return base
 
     def _ensure_stark_table(self, params: dict) -> None:
         """Precompute cumulative AC Stark phase correction table."""
         if self._stark_phase_table is not None:
             return
-        from ryd_gate.blackman import blackman_pulse
+        from ryd_gate.pulse import blackman_pulse
 
         t_gate = params["t_gate"]
         t_rise = params.get("t_rise", 0)
@@ -167,7 +175,7 @@ class SweepProtocol(Protocol):
             }
         else:
             # Atomic mode: quadratic chirp phase + Blackman amplitude
-            from ryd_gate.blackman import blackman_pulse
+            from ryd_gate.pulse import blackman_pulse
 
             phase = self.phase_420(t, params)
             amplitude = (

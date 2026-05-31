@@ -20,9 +20,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-from ryd_gate.core.atomic_system import create_our_system
+from ryd_gate.legacy.atomic_system import create_our_system
 from ryd_gate.protocols.gate_cz_to import TOProtocol
-from ryd_gate.solvers.monte_carlo import MonteCarloEngine, MonteCarloResult
+from ryd_gate.legacy._monte_carlo import MonteCarloEngine, MonteCarloResult
 from ryd_gate.analysis.gate_metrics import sss_infidelity, error_budget
 
 SSS_12_STATES = [f"SSS-{i}" for i in range(12)]

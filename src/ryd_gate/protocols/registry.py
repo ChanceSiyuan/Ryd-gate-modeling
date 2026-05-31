@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ryd_gate.core.atomic_system import AtomicSystem
+    from ryd_gate.legacy.atomic_system import AtomicSystem
 
 # ======================================================================
 # PROTOCOL-SYSTEM COMPATIBILITY REGISTRY

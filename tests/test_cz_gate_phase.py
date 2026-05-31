@@ -10,7 +10,7 @@ import pytest
 
 pytestmark = pytest.mark.slow
 
-from ryd_gate.ideal_cz import CZGateSimulator
+from ryd_gate.legacy.ideal_cz import CZGateSimulator
 
 
 # Known-good dark-detuning TO parameters (re-optimized with a00 formula)

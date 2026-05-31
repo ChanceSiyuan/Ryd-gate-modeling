@@ -9,7 +9,7 @@ from typing import Any, TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from ryd_gate.compilers.ir import HamiltonianIR
+    from ryd_gate.solvers.ir import HamiltonianIR
 
 
 @dataclass

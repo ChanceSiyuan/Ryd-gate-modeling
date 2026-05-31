@@ -15,7 +15,7 @@ import numpy as np
 from ryd_gate.solvers.base import EvolutionResult, SolverBackend
 
 if TYPE_CHECKING:
-    from ryd_gate.compilers.ir import HamiltonianIR
+    from ryd_gate.solvers.ir import HamiltonianIR
 
 
 class SparseExpmBackend(SolverBackend):

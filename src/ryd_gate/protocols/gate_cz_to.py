@@ -6,14 +6,9 @@ Parameters x = [A, ω/Ω_eff, φ₀, δ/Ω_eff, θ, T/T_scale]
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 
 from ryd_gate.protocols.base import Protocol
-
-if TYPE_CHECKING:
-    from ryd_gate.core.atomic_system import AtomicSystem
 
 
 class TOProtocol(Protocol):
@@ -37,16 +32,18 @@ class TOProtocol(Protocol):
                 f"TO parameters must be a list of 6 elements. Got {len(x)} elements."
             )
 
-    def unpack_params(self, x: list[float], system: AtomicSystem) -> dict:
+    def unpack_params(self, x: list[float], system) -> dict:
+        rabi_eff = system.meta("rabi_eff")
+        time_scale = system.meta("time_scale")
         return {
             "phase_amp": x[0],
-            "omega": x[1] * system.rabi_eff,
+            "omega": x[1] * rabi_eff,
             "phase_init": x[2],
-            "delta": x[3] * system.rabi_eff,
+            "delta": x[3] * rabi_eff,
             "theta": x[4],
-            "t_gate": x[5] * system.time_scale,
-            "t_rise": system.t_rise,
-            "blackmanflag": system.blackmanflag,
+            "t_gate": x[5] * time_scale,
+            "t_rise": system.meta("t_rise", 0.0),
+            "blackmanflag": system.meta("blackmanflag", True),
         }
 
     def phase_420(self, t: float, params: dict) -> complex:
@@ -57,7 +54,7 @@ class TOProtocol(Protocol):
 
     def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
         """Return drive coefficients including Blackman amplitude envelope."""
-        from ryd_gate.blackman import blackman_pulse
+        from ryd_gate.pulse import blackman_pulse
 
         phase = self.phase_420(t, params)
         amplitude = (

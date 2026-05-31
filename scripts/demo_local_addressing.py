@@ -33,13 +33,15 @@ from ryd_gate.analysis.coarsening import (
     identify_domains,
     local_staggered_magnetization,
 )
-from ryd_gate.lattice import (
-    domain_config,
-    is_in_domain,
+from ryd_gate.analysis.lattice_observables import (
     measure_from_states,
     precompute_bit_masks,
+)
+from ryd_gate.core.states import (
+    domain_config,
     product_state,
 )
+from ryd_gate.lattice import is_in_domain
 
 # ---------------------------------------------------------------------------
 # Physics constants (in units of Omega = 1)

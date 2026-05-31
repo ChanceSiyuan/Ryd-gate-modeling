@@ -26,7 +26,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.constants import pi
 
-from ryd_gate.core.atomic_system import (
+from ryd_gate.legacy.atomic_system import (
     POWER_REF_UW,
     compute_shift_scatter,
     create_analog_system,

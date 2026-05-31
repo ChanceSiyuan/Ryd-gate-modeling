@@ -59,7 +59,7 @@ def evaluate_addressing(system, initial_state, protocol, x, engine_kwargs,
     seed : int
         Random seed for reproducibility.
     """
-    from ryd_gate.solvers.monte_carlo import MonteCarloEngine
+    from ryd_gate.legacy._monte_carlo import MonteCarloEngine
     from ryd_gate.analysis.addressing_metrics import AddressingEvaluator
 
     engine = MonteCarloEngine(system=system, protocol=protocol, x=x)

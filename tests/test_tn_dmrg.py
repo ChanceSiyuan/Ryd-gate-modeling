@@ -63,7 +63,7 @@ class TestDMRG:
     def test_2x2_energy_vs_exact(self, spec_2x2):
         """DMRG energy matches exact diagonalization for 2x2."""
         from ryd_gate import create_lattice_system
-        from ryd_gate.compilers.sparse_lattice import SparseLatticeCompiler
+        from ryd_gate.solvers.sparse_lattice import SparseLatticeCompiler
         from ryd_gate.protocols.sweep import SweepProtocol
 
         Delta = 2.0

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plot AC Stark shift and scattering rate as a function of (power, wavelength).
 
-Uses the calibrated ``compute_shift_scatter`` from ``ryd_gate.core.ac_stark``,
+Uses the calibrated ``compute_shift_scatter`` from ``ryd_gate.physics.ac_stark``,
 which returns values at ``POWER_REF_UW`` (160 μW). Both quantities scale
 linearly in power, so we just build a 1D profile in wavelength and multiply by
 ``P / POWER_REF_UW`` to get the 2D grid.
@@ -47,7 +47,8 @@ mpl.rcParams.update({
 # makes the colorbar noticeably narrower than matplotlib's default (0.15).
 _CBAR_KW = dict(fraction=0.032, pad=0.02, aspect=28)
 
-from ryd_gate.core.ac_stark import (
+from ryd_gate.physics.ac_stark import (
+    G_F_5S12_F2,
     LAMBDA_D1,
     LAMBDA_D2,
     LAMBDA_PAPER,
@@ -266,6 +267,288 @@ def plot_profiles(wl_nm, power_uw, shift_mhz, scatter_hz, args):
     print(f"Saved {path}")
 
 
+def plot_scatter_per_shift(wl_nm, args):
+    """Two power-independent figures of merit vs wavelength.
+
+    Top:    Γ_sc / |Δ_LS|   (Hz of ground-state scattering per Hz of light shift).
+    Bottom: |Δ_LS| required to make the ground-state photon scattering equal
+            the Rydberg-state decay rate Γ_r = 1/151.55 μs ≈ 6.6 kHz.
+            Equivalently: |Δ_LS|_match = Γ_r / (Γ_sc/|Δ_LS|).
+    Both ratios are power-independent because Γ_sc and Δ_LS both scale
+    linearly in laser power.
+    """
+    os.makedirs(args.outdir, exist_ok=True)
+    shift_ref_hz, scatter_ref_hz = compute_shift_scatter(wl_nm)
+    ratio = scatter_ref_hz / np.abs(shift_ref_hz)        # Hz / Hz
+    shift_match_mhz = (args.gamma_ryd_hz / ratio) / 1e6  # MHz
+
+    fig, (ax, ax2) = plt.subplots(2, 1, figsize=(10, 9), sharex=True)
+
+    # ── Panel 1: Γ_sc / |Δ_LS| ───────────────────────────────────────────
+    ax.plot(wl_nm, ratio, lw=1.8, color="C0")
+    ax.set_yscale("log")
+    ax.set_ylabel(
+        r"$\Gamma_{\mathrm{sc}}\,/\,|\Delta_{\mathrm{LS}}|$"
+        "\n(Hz scattering per Hz light shift)")
+    ax.set_title(
+        r"Scattering rate per unit light shift "
+        r"$\Gamma_{\mathrm{sc}}(\lambda)\,/\,|\Delta_{\mathrm{LS}}(\lambda)|$"
+        "   (power-independent)")
+    ax.grid(alpha=0.3, which="both")
+
+    ax_r = ax.twinx()
+    ax_r.set_yscale("log")
+    lo, hi = ax.get_ylim()
+    ax_r.set_ylim(lo * 1e6, hi * 1e6)
+    ax_r.set_ylabel(r"(Hz per MHz light shift)")
+
+    # ── Panel 2: required |Δ_LS| to match Γ_r ───────────────────────────
+    ax2.plot(wl_nm, shift_match_mhz, lw=1.8, color="C3")
+    ax2.set_yscale("log")
+    ax2.set_xlabel(r"Wavelength  $\lambda$  (nm)")
+    ax2.set_ylabel(
+        r"$|\Delta_{\mathrm{LS}}|$ to reach $\Gamma_{\mathrm{sc}}=\Gamma_r$"
+        "\n(MHz)")
+    ax2.set_title(
+        r"Light shift needed for ground-state $\Gamma_{\mathrm{sc}}$ "
+        rf"to equal $\Gamma_r = {args.gamma_ryd_hz:.0f}\,\mathrm{{Hz}}$ "
+        rf"($\tau_r = {1e6/args.gamma_ryd_hz:.1f}\,\mu\mathrm{{s}}$)")
+    ax2.grid(alpha=0.3, which="both")
+
+    # Tune-out marker (where |Δ_LS| → 0, ratio → ∞, required shift → 0)
+    i_tune = int(np.argmin(np.abs(shift_ref_hz)))
+    lambda_tune = wl_nm[i_tune]
+
+    refs = [
+        (LAMBDA_D1, "0.35", rf"$\mathrm{{D_1}}$ ({LAMBDA_D1:.2f} nm)"),
+        (LAMBDA_D2, "0.35", rf"$\mathrm{{D_2}}$ ({LAMBDA_D2:.2f} nm)"),
+        (LAMBDA_PAPER, "gold", rf"$\lambda_{{\mathrm{{cal}}}}$"),
+        (lambda_tune, "red",
+         rf"$\lambda_{{\mathrm{{tune-out}}}}\!\approx\!{lambda_tune:.2f}$ nm"),
+    ]
+    for axx in (ax, ax2):
+        for wl, color, label in refs:
+            if wl_nm[0] <= wl <= wl_nm[-1]:
+                axx.axvline(wl, color=color, lw=1.0, ls=":", alpha=0.85)
+        for wl, color, label in refs:
+            if wl_nm[0] <= wl <= wl_nm[-1]:
+                axx.text(wl, axx.get_ylim()[1], "  " + label, color=color,
+                         fontsize=8, va="top", ha="left", rotation=90)
+
+    # Print value at calibration wavelength for sanity.
+    if wl_nm[0] <= LAMBDA_PAPER <= wl_nm[-1]:
+        i = int(np.argmin(np.abs(wl_nm - LAMBDA_PAPER)))
+        print(f"  @ λ_cal={wl_nm[i]:.2f} nm: "
+              f"Γ_sc/|Δ_LS| = {ratio[i]:.3e} Hz/Hz, "
+              f"|Δ_LS| to match Γ_r = {shift_match_mhz[i]:.3f} MHz")
+
+    fig.tight_layout()
+    path = os.path.join(args.outdir,
+                        _prefixed("ac_stark_scatter_per_shift.png", args.prefix))
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f"Saved {path}")
+
+
+def plot_polarization_sensitivity(wl_nm, args):
+    """Sweep polarization purity to test the 784–786 nm sweet spot.
+
+    Compares the scalar-only (linear-pol) model against several levels of
+    circular contamination on a |F=2, m_F=-2⟩ atom (g_F = +1/2). The
+    polarization parameter passed to ``compute_shift_scatter`` is
+    ``pol = P · g_F · m_F``; for m_F=-2 this is just ``-P/1``, so a
+    helicity P ∈ [-1, 1] maps directly to pol ∈ [1, -1].
+
+    Plots, for each polarization scenario:
+      (a) |Δ_LS|(λ)            — vertical position of the tune-out
+      (b) Γ_sc / |Δ_LS|         — scattering per shift figure of merit
+      (c) |Δ_LS| to match Γ_r   — required shift for ground scattering
+                                  to equal Rydberg decay
+    """
+    os.makedirs(args.outdir, exist_ok=True)
+    m_F = -2
+    helicities = [0.0, 0.01, 0.05, 0.10, 0.30]  # |P| values, σ⁺ direction
+    cmap = plt.get_cmap("viridis")
+
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
+
+    tune_out_table = []
+    for k, P in enumerate(helicities):
+        pol = P * G_F_5S12_F2 * m_F     # = -P  for m_F=-2
+        shift_hz, scatter_hz = compute_shift_scatter(wl_nm, pol=pol)
+        ratio = scatter_hz / np.abs(shift_hz)
+        shift_match_mhz = (args.gamma_ryd_hz / ratio) / 1e6
+
+        i_tune = int(np.argmin(np.abs(shift_hz)))
+        lambda_tune = wl_nm[i_tune]
+        tune_out_table.append((P, lambda_tune))
+
+        color = cmap(0.15 + 0.75 * k / max(1, len(helicities) - 1))
+        label = (rf"$P={P:.2f}$ (linear)" if P == 0
+                 else rf"$P={P:.2f}\ \sigma^+$ contamination")
+
+        ax1.plot(wl_nm, np.abs(shift_hz) / 1e6, lw=1.6, color=color, label=label)
+        ax2.plot(wl_nm, ratio, lw=1.6, color=color, label=label)
+        ax3.plot(wl_nm, shift_match_mhz, lw=1.6, color=color, label=label)
+        ax1.axvline(lambda_tune, color=color, lw=0.8, ls=":", alpha=0.6)
+        ax3.axvline(lambda_tune, color=color, lw=0.8, ls=":", alpha=0.6)
+
+    for axx in (ax1, ax2, ax3):
+        for wl, color in [(LAMBDA_D1, "0.35"), (LAMBDA_D2, "0.35"),
+                          (LAMBDA_PAPER, "gold")]:
+            if wl_nm[0] <= wl <= wl_nm[-1]:
+                axx.axvline(wl, color=color, lw=1.0, ls="--", alpha=0.6)
+        axx.grid(alpha=0.3, which="both")
+        axx.set_yscale("log")
+
+    ax1.set_ylabel(r"$|\Delta_{\mathrm{LS}}|$  (MHz)")
+    ax1.set_ylim(1e-2, None)
+    ax1.set_title(
+        r"Light shift magnitude vs polarization purity "
+        rf"($|F=2, m_F={m_F}\rangle$, $g_F={G_F_5S12_F2}$)")
+    ax1.legend(fontsize=8, loc="lower right", framealpha=0.9)
+
+    ax2.set_ylabel(
+        r"$\Gamma_{\mathrm{sc}}/|\Delta_{\mathrm{LS}}|$" "\n(Hz / Hz)")
+    ax2.set_title("Scattering per unit light shift")
+
+    ax3.set_xlabel(r"Wavelength  $\lambda$  (nm)")
+    ax3.set_ylabel(
+        r"$|\Delta_{\mathrm{LS}}|$ to reach $\Gamma_r$" "\n(MHz)")
+    ax3.set_title(
+        rf"Light shift required so $\Gamma_{{\mathrm{{sc}}}}=\Gamma_r"
+        rf"={args.gamma_ryd_hz:.0f}\,\mathrm{{Hz}}$")
+
+    fig.tight_layout()
+    path = os.path.join(args.outdir,
+                        _prefixed("ac_stark_pol_sensitivity.png", args.prefix))
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f"Saved {path}")
+
+    # Console summary at the 784–786 sweet-spot wavelengths.
+    print("  Polarization sensitivity at sweet-spot wavelengths "
+          "(|F=2, m_F=-2⟩):")
+    print(f"    {'P':>6}  {'λ_tune (nm)':>12}  "
+          f"{'|ΔLS|@Γr (785 nm) [MHz]':>26}")
+    for (P, lam_tune) in tune_out_table:
+        pol = P * G_F_5S12_F2 * m_F
+        s, sc = compute_shift_scatter(np.array([785.0]), pol=pol)
+        match_mhz = (args.gamma_ryd_hz / (sc[0] / abs(s[0]))) / 1e6
+        print(f"    {P:>6.2f}  {lam_tune:>12.3f}  {match_mhz:>26.2f}")
+
+
+def plot_vector_optimization(wl_nm, args):
+    """Joint scalar+vector Stark figure of merit, restricted to a sweet-spot window.
+
+    Implements the "minimize vector sensitivity per unit usable scalar shift"
+    principle: rather than chasing the tune-out (where the vector contamination
+    looks small only because Δ_scalar → 0), we minimize
+
+        FOM(λ) ≡ |∂Δ_LS / ∂pol|_{pol=0} / |Δ_LS(λ, pol=0)|
+
+    which is dimensionless and equals the fractional vector-shift error per
+    unit polarization impurity. Smaller is better. We then restrict the search
+    to ``[--vec-window-min, --vec-window-max]`` (default 784–786 nm) — the
+    region you've already identified as having usable scalar shift and low
+    scattering — and report the best point inside that window.
+    """
+    os.makedirs(args.outdir, exist_ok=True)
+
+    # Δ_LS(pol=0) — scalar baseline.
+    shift0_hz, _ = compute_shift_scatter(wl_nm, pol=0.0)
+    abs_scalar_mhz = np.abs(shift0_hz) / 1e6
+
+    # Vector sensitivity ∂Δ/∂pol at pol=0 by central finite difference.
+    # The model is linear in pol, so any small step is exact up to roundoff.
+    eps = 1e-3
+    shift_p, _ = compute_shift_scatter(wl_nm, pol=+eps)
+    shift_m, _ = compute_shift_scatter(wl_nm, pol=-eps)
+    dshift_dpol_mhz = (shift_p - shift_m) / (2 * eps) / 1e6
+
+    fom = np.abs(dshift_dpol_mhz) / abs_scalar_mhz  # dimensionless
+
+    # Restrict to the user-specified sweet-spot window.
+    in_win = (wl_nm >= args.vec_window_min) & (wl_nm <= args.vec_window_max)
+    if not np.any(in_win):
+        print(f"  [vector-opt] window [{args.vec_window_min}, "
+              f"{args.vec_window_max}] nm not in plot range; skipping.")
+        return
+    fom_win = np.where(in_win, fom, np.inf)
+    i_opt = int(np.argmin(fom_win))
+    lambda_opt = wl_nm[i_opt]
+
+    fig, (ax_a, ax_b, ax_c) = plt.subplots(3, 1, figsize=(10, 11), sharex=True)
+
+    ax_a.plot(wl_nm, abs_scalar_mhz, lw=1.6, color="C0",
+              label=r"$|\Delta_{\mathrm{LS}}(\lambda,\,P=0)|$")
+    ax_a.set_yscale("log")
+    ax_a.set_ylabel(r"$|\Delta_{\mathrm{LS}}|$  (MHz)")
+    ax_a.set_title("Usable scalar light shift (linear pol, calibration cell)")
+    ax_a.set_ylim(1e-2, None)
+
+    ax_b.plot(wl_nm, np.abs(dshift_dpol_mhz), lw=1.6, color="C2",
+              label=r"$|\partial\Delta_{\mathrm{LS}}/\partial\mathrm{pol}|$")
+    ax_b.set_yscale("log")
+    ax_b.set_ylabel(
+        r"$|\partial\Delta_{\mathrm{LS}}/\partial\mathrm{pol}|$" "\n(MHz / unit pol)")
+    ax_b.set_title("Vector-shift sensitivity (slope at pol = 0)")
+
+    ax_c.plot(wl_nm, fom, lw=1.6, color="C3", label="FOM (all λ)")
+    ax_c.plot(wl_nm[in_win], fom[in_win], lw=2.4, color="C3",
+              label=rf"window [{args.vec_window_min:.1f}, "
+                    rf"{args.vec_window_max:.1f}] nm")
+    ax_c.axvspan(args.vec_window_min, args.vec_window_max,
+                 color="C3", alpha=0.08)
+    ax_c.axvline(lambda_opt, color="k", lw=1.0, ls="-")
+    ax_c.scatter([lambda_opt], [fom[i_opt]], color="k", zorder=5,
+                 label=rf"$\lambda^\star = {lambda_opt:.3f}$ nm,  "
+                       rf"FOM $={fom[i_opt]:.4f}$")
+    ax_c.set_yscale("log")
+    ax_c.set_ylabel(
+        r"FOM $=|\partial\Delta/\partial\mathrm{pol}|/|\Delta|$"
+        "\n(unitless; rel. error per unit pol)")
+    ax_c.set_xlabel(r"Wavelength  $\lambda$  (nm)")
+    ax_c.set_title("Joint scalar+vector figure of merit (smaller = better)")
+    ax_c.legend(fontsize=8, loc="upper left", framealpha=0.9)
+
+    for axx in (ax_a, ax_b, ax_c):
+        for wl, color in [(LAMBDA_D1, "0.35"), (LAMBDA_D2, "0.35"),
+                          (LAMBDA_PAPER, "gold")]:
+            if wl_nm[0] <= wl <= wl_nm[-1]:
+                axx.axvline(wl, color=color, lw=1.0, ls="--", alpha=0.6)
+        axx.grid(alpha=0.3, which="both")
+
+    fig.tight_layout()
+    path = os.path.join(args.outdir,
+                        _prefixed("ac_stark_vector_opt.png", args.prefix))
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f"Saved {path}")
+
+    # Console report: best point in window, plus a few comparison rows.
+    print("  Vector-Stark joint-optimization report "
+          f"(window {args.vec_window_min:.2f}–{args.vec_window_max:.2f} nm):")
+    print(f"    {'λ (nm)':>10}  {'|Δ_scalar| (MHz)':>18}  "
+          f"{'|∂Δ/∂pol| (MHz)':>18}  {'FOM':>10}")
+    sample_wl = sorted(set(
+        [float(args.vec_window_min), float(args.vec_window_max),
+         float(lambda_opt), 784.0, 785.0, 786.0]
+    ))
+    for swl in sample_wl:
+        if not (wl_nm[0] <= swl <= wl_nm[-1]):
+            continue
+        i = int(np.argmin(np.abs(wl_nm - swl)))
+        marker = " ←★" if i == i_opt else ""
+        print(f"    {wl_nm[i]:>10.3f}  {abs_scalar_mhz[i]:>18.3f}  "
+              f"{abs(dshift_dpol_mhz[i]):>18.4f}  {fom[i]:>10.5f}{marker}")
+    print(f"    Optimum in window: λ* = {lambda_opt:.3f} nm, "
+          f"FOM = {fom[i_opt]:.5f}")
+    print(f"    Interpretation: a 1% polarization impurity (P·g_F·m_F = 0.01)")
+    print(f"    contaminates the scalar shift by "
+          f"≈ {fom[i_opt]*0.01*100:.3f}% at λ*.")
+
+
 def save_csv(wl_nm, power_uw, shift_mhz, scatter_hz, args):
     """Flatten the grid to a long CSV with one row per (wl, power) cell."""
     os.makedirs(args.outdir, exist_ok=True)
@@ -303,6 +586,13 @@ def main():
                    help="Output directory")
     p.add_argument("--prefix", type=str, default="",
                    help="Filename prefix for outputs")
+    p.add_argument("--vec-window-min", type=float, default=784.0,
+                   help="Lower edge of sweet-spot window for vector-opt FOM")
+    p.add_argument("--vec-window-max", type=float, default=786.0,
+                   help="Upper edge of sweet-spot window for vector-opt FOM")
+    p.add_argument("--gamma-ryd-hz", type=float, default=1.0 / 151.55e-6,
+                   help="Rydberg-state decay rate Γ_r in Hz "
+                        "(default: 1/151.55 μs ≈ 6598 Hz, n=70 Rb 'our' system)")
     p.add_argument("--no-csv", action="store_true",
                    help="Skip writing the flattened CSV")
     args = p.parse_args()
@@ -347,6 +637,9 @@ def main():
 
     plot_landscape(wl_nm, power_uw, shift_mhz, scatter_hz, args)
     plot_profiles(wl_nm, power_uw, shift_mhz, scatter_hz, args)
+    plot_scatter_per_shift(wl_nm, args)
+    plot_polarization_sensitivity(wl_nm, args)
+    plot_vector_optimization(wl_nm, args)
     if not args.no_csv:
         save_csv(wl_nm, power_uw, shift_mhz, scatter_hz, args)
 

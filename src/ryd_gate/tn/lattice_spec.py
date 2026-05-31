@@ -92,19 +92,23 @@ def create_tn_lattice_spec(
     """Build a TN-friendly lattice spec reusing geometry conventions.
 
     Matches the coordinate and sublattice conventions of
-    :func:`ryd_gate.lattice.geometry.make_square_lattice` so that
-    addressing indices remain consistent across exact and TN paths.
+    :func:`ryd_gate.lattice.geometry.make_square_lattice` (with unit
+    spacing) and the NN/NNN VdW convention of
+    :func:`ryd_gate.lattice.geometry.nn_nnn_relative_pairs`, so that
+    addressing indices and interactions stay consistent across the
+    exact and TN paths.
     """
-    from ryd_gate.lattice.geometry import make_square_lattice
+    from ryd_gate.lattice.geometry import make_square_lattice, nn_nnn_relative_pairs
 
-    sq = make_square_lattice(Lx, Ly)
+    geom = make_square_lattice(Lx, Ly, spacing_um=1.0)
+    vdw_pairs = nn_nnn_relative_pairs(Lx, Ly)
     snake_to_2d, inv_snake = snake_order_mapping(Lx, Ly)
 
     return TNLatticeSpec(
-        Lx=Lx, Ly=Ly, N=sq.N,
-        coords=sq.coords,
-        sublattice=sq.sublattice,
-        vdw_pairs=sq.vdw_pairs,
+        Lx=Lx, Ly=Ly, N=geom.N,
+        coords=geom.coords,
+        sublattice=geom.sublattice,
+        vdw_pairs=vdw_pairs,
         V_nn=V_nn,
         Omega=Omega,
         snake_to_2d=snake_to_2d,

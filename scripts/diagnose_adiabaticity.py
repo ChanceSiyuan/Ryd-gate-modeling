@@ -54,9 +54,9 @@ import matplotlib.pyplot as plt
 from scipy.constants import pi
 
 from ryd_gate import simulate
-from ryd_gate.compilers.dense_atomic import DenseAtomicCompiler
-from ryd_gate.core.atomic_system import POWER_REF_UW, compute_shift_scatter
-from ryd_gate.core.models.analog_3level import Analog3LevelModel
+from ryd_gate.solvers.dense_atomic import DenseAtomicCompiler
+from ryd_gate.legacy.atomic_system import POWER_REF_UW, compute_shift_scatter
+from ryd_gate.core.analog_3level import Analog3LevelModel
 from ryd_gate.protocols.sweep import SweepProtocol
 
 

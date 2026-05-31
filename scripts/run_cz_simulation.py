@@ -3,7 +3,7 @@
 import os
 os.environ["JAX_PLATFORMS"] = "cpu"
 
-from ryd_gate.core.atomic_system import create_our_system
+from ryd_gate.legacy.atomic_system import create_our_system
 from ryd_gate.protocols.gate_cz_to import TOProtocol
 from ryd_gate.protocols.gate_cz_ar import ARProtocol
 from ryd_gate.analysis.gate_metrics import average_gate_infidelity, population_evolution

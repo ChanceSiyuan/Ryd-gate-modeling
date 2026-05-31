@@ -57,17 +57,16 @@ class TestCreateTNLatticeSpec:
         from ryd_gate.lattice.geometry import make_square_lattice
 
         spec = create_tn_lattice_spec(Lx=4, Ly=4)
-        sq = make_square_lattice(4, 4)
+        sq = make_square_lattice(4, 4, spacing_um=1.0)
         np.testing.assert_array_equal(spec.sublattice, sq.sublattice)
         np.testing.assert_array_equal(spec.coords, sq.coords)
 
     def test_vdw_pairs_consistency(self):
-        """VdW pairs match ryd_gate.lattice convention."""
-        from ryd_gate.lattice.geometry import make_square_lattice
+        """VdW pairs match the shared NN/NNN lattice convention."""
+        from ryd_gate.lattice.geometry import nn_nnn_relative_pairs
 
         spec = create_tn_lattice_spec(Lx=3, Ly=3)
-        sq = make_square_lattice(3, 3)
-        assert spec.vdw_pairs == sq.vdw_pairs
+        assert spec.vdw_pairs == nn_nnn_relative_pairs(3, 3)
 
     def test_frozen(self):
         """Spec is immutable."""
