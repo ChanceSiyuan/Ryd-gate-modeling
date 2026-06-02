@@ -9,7 +9,7 @@ observables, interactions, or evolution; for those see:
                                               and observables for lattice models
 - ``ryd_gate.core.states``                 — product/AF/domain/ground state constructors
 - ``ryd_gate.analysis.lattice_observables``— bit/trit-mask occupation measurement
-- ``ryd_gate.solvers.dispatch.simulate``   — time evolution (drives in
+- ``ryd_gate.simulate``                    — time evolution (drives in
                                               ``ryd_gate.protocols``)
 
 Contents
@@ -29,7 +29,14 @@ from .geometry import (
     make_square_lattice,
     make_triangular_lattice,
 )
-from .plotting import plot_population_evolution, plot_spatial_rydberg
+
+
+def __getattr__(name: str):
+    if name in {"plot_population_evolution", "plot_spatial_rydberg"}:
+        from . import plotting
+
+        return getattr(plotting, name)
+    raise AttributeError(f"module 'ryd_gate.lattice' has no attribute {name!r}")
 
 __all__ = [
     # Geometry

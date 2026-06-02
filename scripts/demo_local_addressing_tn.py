@@ -26,7 +26,7 @@ from ryd_gate.analysis.coarsening import (
     correct_single_spin_flips,
     identify_domains,
 )
-from ryd_gate.core.states import domain_config
+from ryd_gate.model.states import domain_config
 from ryd_gate.lattice import is_in_domain
 from ryd_gate.protocols.sweep import SweepProtocol
 from ryd_gate.tn import TNLatticeSpec, create_tn_lattice_spec, simulate_tn

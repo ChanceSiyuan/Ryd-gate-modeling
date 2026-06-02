@@ -1,6 +1,6 @@
 # Schrodinger Solver for CZ Gate Simulation
 
-This document describes the Schrodinger equation solvers in `ryd_gate.solvers.schrodinger` and the backward-compatible `CZGateSimulator` facade in `ryd_gate.ideal_cz`.
+This document describes the historical Schrodinger equation path now kept under `ryd_gate.legacy`, plus the current compiler/backend API.
 
 ## Overview
 
@@ -8,10 +8,10 @@ This document describes the Schrodinger equation solvers in `ryd_gate.solvers.sc
 
 | Use Case | Function | Module |
 |----------|----------|--------|
-| CZ gate fidelity (TO/AR) | `solve_gate()` | `ryd_gate.solvers.schrodinger` |
-| Generic time-dependent H(t) | `evolve()` | `ryd_gate.solvers.schrodinger` |
-| Backward-compatible API | `CZGateSimulator` | `ryd_gate.ideal_cz` |
-| Local addressing sweep | `evolve()` + `SweepAddressingProtocol` | `ryd_gate.solvers` + `ryd_gate.protocols` |
+| CZ gate fidelity (TO/AR) | `CZGateSimulator` | `ryd_gate.legacy.ideal_cz` |
+| Generic time-dependent H(t) | `simulate()` | `ryd_gate.simulate` |
+| Exact state-vector backend | `DenseODEBackend` / `SparseExpmBackend` | `ryd_gate.backends` |
+| Local addressing sweep | `SweepProtocol` + `simulate()` | `ryd_gate.protocols` + `ryd_gate.simulate` |
 
 ## Modular Architecture
 
@@ -23,11 +23,12 @@ protocols/base.py           -- Protocol ABC + SweepProtocol ABC
 protocols/gate_cz_to.py     -- TOProtocol (cos phase, 6 params)
 protocols/gate_cz_ar.py     -- ARProtocol (dual-sine phase, 8 params)
 protocols/local_sweep.py    -- SweepAddressingProtocol
-solvers/schrodinger.py      -- solve_gate() + evolve()
-solvers/monte_carlo.py      -- MonteCarloEngine + AddressingMCEngine
+simulate.py                 -- high-level compile + evolve
+backends/                   -- DenseODEBackend, SparseExpmBackend, MonteCarloRunner
+compilers/                  -- ExactSparseCompiler and future compiler targets
 analysis/gate_metrics.py    -- Fidelity, error budget, diagnostics
 analysis/addressing_metrics.py -- Pinning error, crosstalk, leakage
-ideal_cz.py                 -- CZGateSimulator facade (backward-compatible)
+legacy/ideal_cz.py          -- historical CZGateSimulator facade
 ```
 
 ### CZ Gate Solver: `solve_gate()`
@@ -35,7 +36,7 @@ ideal_cz.py                 -- CZGateSimulator facade (backward-compatible)
 For CZ gate protocols (TO/AR), the Hamiltonian has a fixed structure where time-dependence comes only from 420nm laser phase modulation:
 
 ```python
-from ryd_gate.solvers.schrodinger import solve_gate
+from ryd_gate.legacy.ideal_cz import CZGateSimulator
 
 final_state = solve_gate(system, protocol, x, initial_state)
 ```
@@ -45,7 +46,7 @@ final_state = solve_gate(system, protocol, x, initial_state)
 For arbitrary time-dependent Hamiltonians (e.g., sweep protocols):
 
 ```python
-from ryd_gate.solvers.schrodinger import evolve
+from ryd_gate import simulate
 
 final_state = evolve(hamiltonian_fn, t_gate, initial_state)
 ```

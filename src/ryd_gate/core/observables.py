@@ -1,4 +1,4 @@
-"""Observable registry for quantum measurement operators."""
+"""Observable registry for quantum measurement operators or specs."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ class Observable:
     """A named observable with its operator and metadata."""
 
     name: str
-    operator: Any  # ndarray or sparse matrix
+    operator: Any  # ndarray, sparse matrix, or symbolic operator spec
     description: str = ""
     per_site: bool = False
 
@@ -21,8 +21,9 @@ class Observable:
 class ObservableRegistry:
     """Registry of named observables for a quantum system.
 
-    Provides symbolic access to measurement operators, replacing
-    hardcoded matrix indices throughout the codebase.
+    Provides symbolic access to measurement definitions, replacing hardcoded
+    matrix indices throughout the codebase. Exact state-vector lattice
+    observables may store symbolic specs and are evaluated by ``RydbergSystem``.
     """
 
     def __init__(self) -> None:
@@ -46,6 +47,10 @@ class ObservableRegistry:
     def get(self, name: str) -> Observable:
         """Get an Observable by name. Raises KeyError if not found."""
         return self._observables[name]
+
+    def has(self, name: str) -> bool:
+        """Return whether an observable is registered."""
+        return name in self._observables
 
     def list_names(self) -> list[str]:
         """Return names of all registered observables."""

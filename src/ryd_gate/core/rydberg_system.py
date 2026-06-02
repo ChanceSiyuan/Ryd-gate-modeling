@@ -3,9 +3,9 @@
 A :class:`RydbergSystem` is built from three things: a lattice geometry,
 a local energy-level structure (``1r`` / ``01r`` / ``1er`` / ``rb87_7`` /
 ``analog_3``), and a pulse protocol (sweep, CZ gate, digital-analog).
-The class owns the time-independent Hamiltonian blocks, the per-site
-observables, and the routines that combine them with the protocol into
-the time-dependent ``HamiltonianIR`` consumed by ``ryd_gate.solvers``.
+The class owns symbolic Hamiltonian blocks, observables, geometry metadata,
+and the bound protocol. Backend-specific compilers materialize those symbolic
+blocks into matrices, MPOs, or other solver inputs only when needed.
 """
 
 from __future__ import annotations
@@ -15,23 +15,25 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
-from scipy.sparse import csc_matrix, diags as spdiags
 
 from ryd_gate.core.basis import BasisSpec
 from ryd_gate.core.blocks import BlockRegistry
 from ryd_gate.core.interactions import vdw_couplings
 from ryd_gate.core.observables import ObservableRegistry
-from ryd_gate.core.operators import embed_site_op
+from ryd_gate.core.operator_spec import (
+    LocalProjectorSpec,
+    RydbergPairInteractionSpec,
+    SumProjectorSpec,
+    TransitionOperatorSpec,
+    WeightedProjectorSumSpec,
+    is_operator_spec,
+    measure_state_vector_operator,
+)
 from ryd_gate.core.system_model import SystemModel
 from ryd_gate.lattice.geometry import LatticeGeometry, make_chain
 
 if TYPE_CHECKING:
     from ryd_gate.protocols.base import Protocol
-    from ryd_gate.solvers.ir import HamiltonianIR
-
-
-_HC_CHANNELS = frozenset({"global_X", "drive_R", "drive_hf"})
-_STATIC_BLOCKS = ("H_const", "H_vdw", "H_1013", "H_1013_conj")
 
 
 DEFAULT_C6 = 2 * np.pi * 874e9
@@ -128,8 +130,9 @@ class RydbergSystem(SystemModel):
 
     Built via :meth:`from_lattice` or :meth:`from_preset`. Once a protocol
     is attached (constructor arg or :meth:`with_protocol`), the system can
-    emit the time-dependent Hamiltonian description consumed by solvers
-    through :meth:`compile_ir` / :meth:`hamiltonian`.
+    be passed to backend-specific compilers. Exact state-vector solvers use
+    :func:`ryd_gate.compilers.compile_expm_ir`; large lattices should use a
+    tensor-network compiler/backend.
     """
 
     def __init__(
@@ -172,11 +175,6 @@ class RydbergSystem(SystemModel):
         return self._param_set
 
     @property
-    def system(self) -> "RydbergSystem":
-        """Compatibility with dispatch unwrapping: the model is the system."""
-        return self
-
-    @property
     def N(self) -> int:
         return self.basis.n_sites
 
@@ -215,131 +213,11 @@ class RydbergSystem(SystemModel):
         """Translate protocol parameter vector ``x`` into a params dict."""
         return self._require_protocol().unpack_params(x, self)
 
-    def compile_ir(self, params: dict) -> "HamiltonianIR":
-        """Combine static blocks + protocol drives into a HamiltonianIR."""
-        from ryd_gate.solvers.ir import HamiltonianIR, HamiltonianTerm
-
-        protocol = self._require_protocol()
-
-        static_terms: list[HamiltonianTerm] = []
-        for name in _STATIC_BLOCKS:
-            if self._blocks.has(name):
-                static_terms.append(HamiltonianTerm(name, self._blocks.get(name), 1.0))
-
-        overlay_dense, overlay_pin = self._static_overlays(params, protocol)
-        if overlay_dense is not None:
-            if static_terms and static_terms[0].name == "H_const":
-                static_terms[0] = HamiltonianTerm(
-                    "H_const",
-                    static_terms[0].operator + overlay_dense,
-                    1.0,
-                )
-            else:
-                static_terms.insert(0, HamiltonianTerm("H_const_addition", overlay_dense, 1.0))
-        if overlay_pin is not None:
-            static_terms.append(HamiltonianTerm("pinning", overlay_pin, 1.0))
-
-        amplitude_scale = self.amplitude_scale
-        drive_terms: list[HamiltonianTerm] = []
-        for channel in protocol.required_channels:
-            if not self._blocks.has(channel):
-                continue
-
-            def coeff_fn(t, channel=channel):
-                coeffs = protocol.get_drive_coefficients(t, params)
-                coeff = coeffs[channel]
-                if channel == "lightshift_zero":
-                    return amplitude_scale ** 2 * coeff
-                return amplitude_scale * coeff
-
-            drive_terms.append(
-                HamiltonianTerm(
-                    channel,
-                    self._blocks.get(channel),
-                    coeff_fn,
-                    add_hermitian_conjugate=channel in _HC_CHANNELS,
-                )
-            )
-
-        return HamiltonianIR(
-            static_terms=static_terms,
-            drive_terms=drive_terms,
-            dim=self._basis.total_dim,
-            is_sparse=self.is_sparse,
-            metadata={
-                "t_gate": params["t_gate"],
-                "param_set": self._param_set,
-                "n_sites": self._basis.n_sites,
-                "local_dim": self._basis.local_dim,
-            },
-        )
-
-    def _static_overlays(self, params: dict, protocol):
-        """Return ``(dense_overlay, sparse_pinning)`` matrices from params dict.
-
-        ``dense_overlay`` lumps protocol-supplied additions onto ``H_const``
-        (matches the legacy ``get_ham_const_additions`` channel). ``sparse_pinning``
-        uses the registered per-site occupation blocks (lattice path).
-        """
-        pin_deltas = params.get("pin_deltas")
-        scatter_rates = params.get("scatter_rates")
-        static_overlays = params.get("static_overlays")
-
-        if pin_deltas is None and scatter_rates is None and static_overlays is None:
-            dense = _protocol_static_addition(self, protocol)
-            sparse_pin = _sparse_pin_from_protocol(self, protocol)
-            return dense, sparse_pin
-
-        n_sites = self._basis.n_sites
-        n_levels = self._basis.local_dim
-        ground_label = self._basis.local_levels[0]
-        ryd_label = self._basis.local_levels[-1]
-
-        dense_overlay = None
-        sparse_pin = None
-        pin_deltas = pin_deltas or {}
-        scatter_rates = scatter_rates or {}
-        static_overlays = static_overlays or []
-
-        for idx, delta in pin_deltas.items():
-            if abs(delta) <= 1e-15 or idx >= n_sites:
-                continue
-            block_name = f"n_{ryd_label}_{idx}"
-            if self._blocks.has(block_name):
-                term = -delta * self._blocks.get(block_name)
-                sparse_pin = term if sparse_pin is None else sparse_pin + term
-            else:
-                from ryd_gate.core.operators import build_atom_projector
-                proj = build_atom_projector(idx, n_levels - 1, n_sites, n_levels)
-                term = -delta * proj
-                dense_overlay = term if dense_overlay is None else dense_overlay + term
-
-        for idx, rate in scatter_rates.items():
-            if rate <= 0 or idx >= n_sites:
-                continue
-            block_name = f"n_{ground_label}_{idx}"
-            if self._blocks.has(block_name):
-                term = (-1j * rate / 2) * self._blocks.get(block_name)
-                sparse_pin = term if sparse_pin is None else sparse_pin + term
-            else:
-                from ryd_gate.core.operators import build_atom_projector
-                proj = build_atom_projector(idx, 0, n_sites, n_levels)
-                term = (-1j * rate / 2) * proj
-                dense_overlay = term if dense_overlay is None else dense_overlay + term
-
-        for block_name, coeff in static_overlays:
-            if self._blocks.has(block_name):
-                term = coeff * self._blocks.get(block_name)
-                if hasattr(term, "toarray"):
-                    sparse_pin = term if sparse_pin is None else sparse_pin + term
-                else:
-                    dense_overlay = term if dense_overlay is None else dense_overlay + term
-
-        return dense_overlay, sparse_pin
-
     def hamiltonian(self, t: float, params: dict):
         """Assemble the time-dependent Hamiltonian H(t) as a matrix."""
-        ir = self.compile_ir(params)
+        from ryd_gate.compilers.exact_sparse import compile_expm_ir
+
+        ir = compile_expm_ir(self, params)
         H = None
         for term in ir.static_terms:
             coeff = term.coefficient if not callable(term.coefficient) else term.coefficient(0)
@@ -372,6 +250,9 @@ class RydbergSystem(SystemModel):
         return self.product_state([self.basis.local_levels[0]] * self.basis.n_sites)
 
     def expectation(self, observable: str, psi: np.ndarray) -> float:
+        obs = self.observables.get(observable)
+        if is_operator_spec(obs.operator):
+            return measure_state_vector_operator(obs.operator, self.basis, psi)
         return self.observables.measure(observable, psi)
 
     @classmethod
@@ -388,7 +269,7 @@ class RydbergSystem(SystemModel):
         spec = (
             level_structure
             if isinstance(level_structure, LevelStructureSpec)
-            else globals()["level_structure"](level_structure)
+            else globals()["level_structure"](level_structure) # use the level_structure function to get the LevelStructureSpec
         )
         interaction = interaction or InteractionSpec()
         d = spec.local_dim
@@ -404,64 +285,59 @@ class RydbergSystem(SystemModel):
         blocks = BlockRegistry()
         observables = ObservableRegistry()
 
-        n_site: dict[str, list[csc_matrix]] = {}
-        sum_n: dict[str, csc_matrix] = {}
         for level in spec.levels:
-            local = np.zeros((d, d), dtype=complex)
-            local[spec.index(level), spec.index(level)] = 1.0
-            ops = [embed_site_op(csc_matrix(local), i, N, d=d).tocsc() for i in range(N)]
-            n_site[level] = ops
-            total = _sum_sparse(ops, dim)
-            sum_n[level] = total
-            blocks.register(f"sum_n_{level}", total, description=f"total |{level}> occupation")
-            for i, op in enumerate(ops):
-                blocks.register(f"n_{level}_{i}", op, description=f"|{level}><{level}| on site {i}")
+            sum_spec = SumProjectorSpec(level)
+            blocks.register(f"sum_n_{level}", sum_spec, description=f"total |{level}> occupation")
+            for i in range(N):
+                site_spec = LocalProjectorSpec(level, i)
+                blocks.register(f"n_{level}_{i}", site_spec, description=f"|{level}><{level}| on site {i}")
                 observables.register(
                     f"n_{level}_{i}",
-                    op,
+                    site_spec,
                     description=f"|{level}> population on site {i}",
                     per_site=True,
                 )
-            observables.register(f"sum_n_{level}", total, description=f"total |{level}> population")
+            observables.register(f"sum_n_{level}", sum_spec, description=f"total |{level}> population")
 
-        ryd_site_ops = [_sum_sparse([n_site[lvl][i] for lvl in spec.rydberg_levels], dim) for i in range(N)]
-        H_vdw = spdiags([np.zeros(dim, dtype=complex)], [0], shape=(dim, dim), format="csc")
         pairs = _interaction_pairs(geometry, interaction)
-        ryd_diags = [op.diagonal() for op in ryd_site_ops]
-        h_diag = np.zeros(dim, dtype=complex)
-        for i, j, V_ij in pairs:
-            h_diag += V_ij * (ryd_diags[i] * ryd_diags[j])
-        H_vdw = spdiags([h_diag], [0], shape=(dim, dim), format="csc")
-        blocks.register("H_vdw", H_vdw, description="Rydberg VdW interaction")
+        blocks.register(
+            "H_vdw",
+            RydbergPairInteractionSpec(pairs, spec.rydberg_levels),
+            description="Rydberg VdW interaction",
+        )
 
         for transition in spec.transitions:
-            local = np.zeros((d, d), dtype=complex)
-            local[spec.index(transition.upper), spec.index(transition.lower)] = 1.0
-            per_site = [
-                embed_site_op(csc_matrix(local), i, N, d=d).tocsc()
-                for i in range(N)
-            ]
-            global_op = _sum_sparse(per_site, dim)
-            blocks.register(transition.channel, global_op, description=transition.name, hermitian=False)
-            for i, op in enumerate(per_site):
-                blocks.register(f"{transition.channel}_{i}", op, description=f"{transition.name} on site {i}", hermitian=False)
+            blocks.register(
+                transition.channel,
+                TransitionOperatorSpec(transition.lower, transition.upper),
+                description=transition.name,
+                hermitian=False,
+            )
+            for i in range(N):
+                blocks.register(
+                    f"{transition.channel}_{i}",
+                    TransitionOperatorSpec(transition.lower, transition.upper, site=i),
+                    description=f"{transition.name} on site {i}",
+                    hermitian=False,
+                )
 
         for channel, level in spec.detuning_levels.items():
-            blocks.register(channel, sum_n[level], description=f"detuning projector for |{level}>")
+            blocks.register(channel, SumProjectorSpec(level), description=f"detuning projector for |{level}>")
 
-        if "r" in sum_n:
-            blocks.register("sum_nr", sum_n["r"], description="total Rydberg occupation")
-            observables.register("sum_nr", sum_n["r"], description="total Rydberg population")
+        if "r" in spec.levels:
+            sum_r = SumProjectorSpec("r")
+            blocks.register("sum_nr", sum_r, description="total Rydberg occupation")
+            observables.register("sum_nr", sum_r, description="total Rydberg population")
         if spec.name == "1r":
-            blocks.register("global_n", sum_n["r"], description="2-level Rydberg occupation")
+            blocks.register("global_n", SumProjectorSpec("r"), description="2-level Rydberg occupation")
 
         if geometry.sublattice is not None and np.any(geometry.sublattice):
-            if "r" in n_site:
-                staggered = _sum_sparse(
-                    [geometry.sublattice[i] * n_site["r"][i] for i in range(N)],
-                    dim,
+            if "r" in spec.levels:
+                observables.register(
+                    "staggered_rydberg",
+                    WeightedProjectorSumSpec("r", tuple(float(x) for x in geometry.sublattice)),
+                    description="staggered Rydberg occupation",
                 )
-                observables.register("staggered_rydberg", staggered, description="staggered Rydberg occupation")
 
         metadata = {
             "level_structure": spec.name,
@@ -512,49 +388,6 @@ class RydbergSystem(SystemModel):
             param_set = "our" if name == "rb87_7" else name
             return _rb87_7level_model(param_set=param_set, protocol=protocol, **params)
         raise ValueError(f"Unknown RydbergSystem preset '{name}'.")
-
-
-# Backward-compatible alias (one release).
-RydbergSystemModel = RydbergSystem
-
-
-def _protocol_static_addition(system: RydbergSystem, protocol):
-    """Resolve protocol-supplied time-independent terms (legacy hook).
-
-    Used when ``unpack_params`` did not emit the new ``pin_deltas`` /
-    ``scatter_rates`` / ``static_overlays`` dict keys.
-    """
-    if not hasattr(protocol, "get_ham_const_additions"):
-        return None
-    return protocol.get_ham_const_additions(
-        n_atoms=system.basis.n_sites,
-        n_levels=system.basis.local_dim,
-    )
-
-
-def _sparse_pin_from_protocol(system: RydbergSystem, protocol):
-    """Legacy fallback for protocols that haven't migrated to params dict."""
-    if not hasattr(protocol, "get_pin_deltas"):
-        return None
-    pin = protocol.get_pin_deltas(system.basis.n_sites)
-    if not np.any(pin):
-        return None
-    sparse_pin = None
-    for i, delta_i in enumerate(pin):
-        if abs(delta_i) <= 1e-15:
-            continue
-        block_name = f"n_r_{i}"
-        if system.blocks.has(block_name):
-            term = -delta_i * system.blocks.get(block_name)
-            sparse_pin = term if sparse_pin is None else sparse_pin + term
-    return sparse_pin
-
-
-def _sum_sparse(ops: list[csc_matrix], dim: int) -> csc_matrix:
-    if not ops:
-        return csc_matrix((dim, dim), dtype=complex)
-    return sum(ops[1:], start=ops[0]).tocsc()
-
 
 def _interaction_pairs(geometry: LatticeGeometry, interaction: InteractionSpec) -> tuple:
     if interaction.mode == "all":
@@ -682,6 +515,22 @@ def _metadata_from_atomic(system) -> dict[str, Any]:
         "blackmanflag": system.blackmanflag,
         "n_atoms": system.n_atoms,
         "n_levels": system.n_levels,
+        "rabi_420": system.rabi_420,
+        "rabi_1013": system.rabi_1013,
+        "rabi_420_garbage": system.rabi_420_garbage,
+        "rabi_1013_garbage": system.rabi_1013_garbage,
         "Delta": system.Delta,
         "v_ryd": system.v_ryd,
+        "v_ryd_garb": system.v_ryd_garb,
+        "ryd_state_decay_rate": system.ryd_state_decay_rate,
+        "ryd_RD_rate": system.ryd_RD_rate,
+        "ryd_BBR_rate": system.ryd_BBR_rate,
+        "mid_state_decay_rate": system.mid_state_decay_rate,
+        "ryd_branch": system.ryd_branch,
+        "mid_branch": system.mid_branch,
+        "rydberg_indices": system.rydberg_indices,
+        "enable_rydberg_decay": system.enable_rydberg_decay,
+        "enable_intermediate_decay": system.enable_intermediate_decay,
+        "enable_0_scattering": system.enable_0_scattering,
+        "enable_polarization_leakage": system.enable_polarization_leakage,
     }

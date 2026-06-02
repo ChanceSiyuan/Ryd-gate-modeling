@@ -29,11 +29,10 @@ import numpy as np
 
 from scipy.constants import pi
 
-from ryd_gate import simulate
+from ryd_gate import RydbergSystem, simulate
 from ryd_gate.analysis.observable_metrics import measure_trajectory, norm_squared
 from ryd_gate.pulse import blackman_pulse
-from ryd_gate.core.analog_3level import Analog3LevelModel
-from ryd_gate.core.operators import build_product_state_map
+from ryd_gate.model.operators import build_product_state_map
 from ryd_gate.protocols.sweep import SweepProtocol
 
 N = 3  # 3-level system: |g>=0, |e>=1, |r>=2
@@ -58,10 +57,11 @@ RYDBERG_KEYS = ["gg", "gr", "rg", "rr"]
 
 def figure_rabi_dynamics(model, initial_state):
     """Two stacked subplots: blockaded vs free Rabi oscillations."""
-    system = model.system
+    system = model
+    time_scale = system.meta("time_scale")
     n_cycles = 5
-    t_rabi = n_cycles * system.time_scale
-    x_rabi = [0.0, 0.0, t_rabi / system.time_scale]
+    t_rabi = n_cycles * time_scale
+    x_rabi = [0.0, 0.0, t_rabi / time_scale]
     n_points = 500
     t_eval = np.linspace(0, t_rabi, n_points)
 
@@ -72,13 +72,13 @@ def figure_rabi_dynamics(model, initial_state):
     obs_names = ["pop_A_r", "pop_B_r"]
 
     # (a) No pinning -- blockade active
-    result1 = simulate(system, protocol_free, x_rabi, initial_state,
+    result1 = simulate(system.with_protocol(protocol_free), x_rabi, initial_state,
                        t_eval=t_eval)
     obs1 = measure_trajectory(model, result1.states, obs_names)
     prA1, prB1 = obs1["pop_A_r"], obs1["pop_B_r"]
 
     # (b) Atom A addressed -- blockade irrelevant
-    result2 = simulate(system, protocol_addr, x_rabi, initial_state,
+    result2 = simulate(system.with_protocol(protocol_addr), x_rabi, initial_state,
                        t_eval=t_eval)
     obs2 = measure_trajectory(model, result2.states, obs_names)
     prA2, prB2 = obs2["pop_A_r"], obs2["pop_B_r"]
@@ -126,24 +126,26 @@ def figure_rabi_dynamics(model, initial_state):
 
 def figure_final_populations(model, initial_state):
     """Two side-by-side bar charts of final {|gg>,|gr>,|rg>,|rr>}."""
-    system = model.system
+    system = model
+    rabi_eff = system.meta("rabi_eff")
+    time_scale = system.meta("time_scale")
     protocol_free = SweepProtocol()
     protocol_addr = SweepProtocol(addressing={0: LOCAL_DETUNING},
                                    scatter_rate=LOCAL_SCATTER)
     x_sweep = [
-        DELTA_START / system.rabi_eff,
-        DELTA_END / system.rabi_eff,
-        T_GATE / system.time_scale,
+        DELTA_START / rabi_eff,
+        DELTA_END / rabi_eff,
+        T_GATE / time_scale,
     ]
 
     joint_keys = RYDBERG_KEYS
 
     # (a) Global sweep -- no pinning
-    result1 = simulate(system, protocol_free, x_sweep, initial_state)
+    result1 = simulate(system.with_protocol(protocol_free), x_sweep, initial_state)
     pops1 = {k: model.observables.measure(f"pop_{k}", result1.psi_final) for k in joint_keys}
 
     # (b) Addressed sweep
-    result2 = simulate(system, protocol_addr, x_sweep, initial_state)
+    result2 = simulate(system.with_protocol(protocol_addr), x_sweep, initial_state)
     pops2 = {k: model.observables.measure(f"pop_{k}", result2.psi_final) for k in joint_keys}
 
     # -- Plot --
@@ -196,29 +198,33 @@ def figure_stark_compensation(model, initial_state):
     state. Without compensation, this parasitic detuning distorts the
     sweep. Feed-forward subtracts it from the 420nm phase.
     """
-    system = model.system
+    system = model
+    rabi_eff = system.meta("rabi_eff")
+    time_scale = system.meta("time_scale")
+    rabi_420 = system.meta("rabi_420")
+    Delta = system.meta("Delta")
 
     # AC Stark shift at peak amplitude: Omega_420^2 / (4*|delta|)
-    ac_stark_peak = system.rabi_420 ** 2 / (4 * abs(system.Delta))
+    ac_stark_peak = rabi_420 ** 2 / (4 * abs(Delta))
     print(f"  AC Stark shift at peak: {ac_stark_peak / (2*pi) / 1e6:.2f} MHz")
 
     x_sweep = [
-        DELTA_START / system.rabi_eff,
-        DELTA_END / system.rabi_eff,
-        T_GATE / system.time_scale,
+        DELTA_START / rabi_eff,
+        DELTA_END / rabi_eff,
+        T_GATE / time_scale,
     ]
     n_points = 500
-    t_gate_phys = x_sweep[2] * system.time_scale
+    t_gate_phys = x_sweep[2] * time_scale
     t_eval = np.linspace(0, t_gate_phys, n_points)
 
     # (a) Without compensation -- raw chirp, no Stark correction
     protocol_raw = SweepProtocol(ac_stark_shift=0.0)
-    result_raw = simulate(system, protocol_raw, x_sweep, initial_state,
+    result_raw = simulate(system.with_protocol(protocol_raw), x_sweep, initial_state,
                           t_eval=t_eval)
 
     # (b) With feed-forward compensation
     protocol_comp = SweepProtocol(ac_stark_shift=ac_stark_peak)
-    result_comp = simulate(system, protocol_comp, x_sweep, initial_state,
+    result_comp = simulate(system.with_protocol(protocol_comp), x_sweep, initial_state,
                            t_eval=t_eval)
 
     # Measure per-atom Rydberg populations
@@ -285,7 +291,7 @@ def figure_stark_compensation(model, initial_state):
     fig.suptitle(
         r"AC Stark feed-forward compensation  "
         f"($\\Delta_{{AC}}^{{peak}}$ = {ac_stark_peak/(2*pi)/1e6:.1f} MHz,  "
-        f"$\\Omega_{{eff}}$ = {system.rabi_eff/(2*pi)/1e6:.1f} MHz)",
+        f"$\\Omega_{{eff}}$ = {rabi_eff/(2*pi)/1e6:.1f} MHz)",
         fontsize=13)
     fig.tight_layout()
     fig.savefig("fig3_stark_compensation.png", dpi=150)
@@ -298,13 +304,17 @@ def figure_stark_compensation(model, initial_state):
 
 def figure_420_phase_diagnostics(model):
     """Plot the 420nm Blackman envelope and chirp phases."""
-    system = model.system
-    ac_stark_peak = system.rabi_420 ** 2 / (4 * abs(system.Delta))
+    system = model
+    rabi_eff = system.meta("rabi_eff")
+    time_scale = system.meta("time_scale")
+    rabi_420 = system.meta("rabi_420")
+    Delta = system.meta("Delta")
+    ac_stark_peak = rabi_420 ** 2 / (4 * abs(Delta))
 
     x_sweep = [
-        DELTA_START / system.rabi_eff,
-        DELTA_END / system.rabi_eff,
-        T_GATE / system.time_scale,
+        DELTA_START / rabi_eff,
+        DELTA_END / rabi_eff,
+        T_GATE / time_scale,
     ]
     protocol_raw = SweepProtocol(ac_stark_shift=0.0)
     protocol_comp = SweepProtocol(ac_stark_shift=ac_stark_peak)
@@ -316,7 +326,7 @@ def figure_420_phase_diagnostics(model):
     t_us = ts * 1e6
 
     envelope = blackman_pulse(ts, params_raw["t_rise"], params_raw["t_gate"])
-    omega_420_mhz = envelope * system.rabi_420 / (2 * pi) / 1e6
+    omega_420_mhz = envelope * rabi_420 / (2 * pi) / 1e6
 
     phase_raw = -np.unwrap(np.angle(
         np.array([protocol_raw.phase_420(t, params_raw) for t in ts])
@@ -392,8 +402,9 @@ def figure_landau_zener(model, initial_state):
       (c) Energy diagram of the avoided crossing
       (d) C_fit with error bar vs theoretical pi
     """
-    system = model.system
-    Omega_eff = system.rabi_eff
+    system = model
+    Omega_eff = system.meta("rabi_eff")
+    time_scale = system.meta("time_scale")
 
     # Use +-20 Omega_eff sweep range (converged per issue #41 diagnosis)
     ds = -20 * Omega_eff
@@ -406,9 +417,10 @@ def figure_landau_zener(model, initial_state):
     print("  Scanning 25 sweep rates (3-level, +-20 Omega_eff)...")
     p_defect = np.empty(len(t_gates))
     p_af = np.empty(len(t_gates))
+    sweep_system = system.with_protocol(SweepProtocol())
     for i, t_g in enumerate(t_gates):
-        x = [ds / Omega_eff, de / Omega_eff, t_g / system.time_scale]
-        result = simulate(system, SweepProtocol(), x, initial_state)
+        x = [ds / Omega_eff, de / Omega_eff, t_g / time_scale]
+        result = simulate(sweep_system, x, initial_state)
         psi_f = result.psi_final
         p_defect[i] = model.observables.measure("pop_gg", psi_f)
         p_af[i] = (model.observables.measure("pop_gr", psi_f)
@@ -454,9 +466,9 @@ def figure_landau_zener(model, initial_state):
     # (b) Dynamics at three sweep rates
     ax = axes[0, 1]
     for t_g, case_label, color in dynamics_cases:
-        x = [ds / Omega_eff, de / Omega_eff, t_g / system.time_scale]
+        x = [ds / Omega_eff, de / Omega_eff, t_g / time_scale]
         t_eval = np.linspace(0, t_g * (1 - 1e-10), 400)
-        result = simulate(system, SweepProtocol(), x, initial_state, t_eval=t_eval)
+        result = simulate(sweep_system, x, initial_state, t_eval=t_eval)
         obs = measure_trajectory(model, result.states, ["pop_A_r"])
         ax.plot(result.times / t_g, obs["pop_A_r"], color=color, lw=1.2,
                 label=case_label)
@@ -520,13 +532,13 @@ def figure_landau_zener(model, initial_state):
 def main():
     initial_state = PRODUCT_STATES["gg"]
 
-    model_no_decay = Analog3LevelModel.from_defaults(detuning_sign=1)
+    model_no_decay = RydbergSystem.from_preset("analog_3", detuning_sign=1)
     figure_rabi_dynamics(model_no_decay, initial_state)
     figure_final_populations(model_no_decay, initial_state)
     figure_stark_compensation(model_no_decay, initial_state)
     figure_420_phase_diagnostics(model_no_decay)
 
-    model_sq = Analog3LevelModel.from_defaults(detuning_sign=1, blackmanflag=False)
+    model_sq = RydbergSystem.from_preset("analog_3", detuning_sign=1, blackmanflag=False)
     figure_landau_zener(model_sq, initial_state)
     plt.show()
 

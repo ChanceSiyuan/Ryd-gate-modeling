@@ -2,48 +2,46 @@
 
 Typical workflow
 ----------------
-1. **Create a quantum system**::
-
-       system = RydbergSystemModel.from_preset("01r", N=4)
-
-2. **Choose a pulse protocol**::
+1. **Choose a pulse protocol**::
 
        protocol = TOProtocol()               # time-optimal CZ gate (6 params)
        protocol = ARProtocol()               # amplitude-robust CZ gate (8 params)
        protocol = SweepProtocol()            # adiabatic detuning sweep (lattice)
 
+2. **Create a quantum system with the protocol bound**::
+
+       system = RydbergSystem.from_preset("01r", N=4, protocol=protocol)
+
 3. **Run the simulation**::
 
-       result = simulate(system, protocol, params, psi0)
+       result = simulate(system, params, psi0)
 
 4. **Analyze results**::
 
-       from ryd_gate.analysis import average_gate_infidelity, error_budget
-       infidelity = average_gate_infidelity(system, protocol, params)
+       final_norm = abs(result.psi_final.conj() @ result.psi_final)
 
 Subpackages
 -----------
-- ``ryd_gate.core``      — Rydberg system models, Hamiltonian blocks, operators
+- ``ryd_gate.model``     — Symbolic Rydberg systems, blocks, observables
 - ``ryd_gate.protocols`` — Pulse protocols: TOProtocol, ARProtocol, SweepProtocol
-- ``ryd_gate.solvers``   — Simulation engine: ODE backends, Monte Carlo, Hamiltonian IR
+- ``ryd_gate.compilers`` — Backend-specific compilers from symbolic systems to IR
+- ``ryd_gate.ir``        — Intermediate representations
+- ``ryd_gate.backends``  — ODE, sparse-expm, and future TN backends
+- ``ryd_gate.simulate``  — High-level compile + evolve dispatch
 - ``ryd_gate.lattice``   — N-atom lattice: geometry, operators, states, evolution
 - ``ryd_gate.analysis``  — Post-processing: gate metrics, observables, domain analysis
 - ``ryd_gate.tn``        — Optional tensor-network path (requires tenpy)
-- ``ryd_gate.legacy``    — Backward-compatible ``CZGateSimulator`` facade (deprecated)
+- ``ryd_gate.legacy``    — Historical CZ and Monte-Carlo implementations
 """
 
 __version__ = "0.1.0"
 
-import warnings as _warnings
-
 # --- Systems ---
-from .physics.ac_stark import compute_shift_scatter
-from .core.rydberg_system import (
+from .model.system import (
     DEFAULT_C6,
     InteractionSpec,
     LevelStructureSpec,
     RydbergSystem,
-    RydbergSystemModel,
     TransitionSpec,
     level_structure,
 )
@@ -56,32 +54,41 @@ from .protocols.sweep import SweepProtocol
 from .protocols.digital_analog import DigitalAnalogProtocol, Segment
 
 # --- Simulation ---
-from .solvers.dispatch import simulate
-from .solvers.base import EvolutionResult, SolverBackend
-from .solvers.ir import HamiltonianIR, HamiltonianTerm
+from .simulate import simulate
+from .backends import EvolutionResult, SolverBackend
+from .ir import HamiltonianIR, HamiltonianTerm
+from .compilers import ExactSparseCompiler, compile_expm_ir
 
 # --- Analysis (convenience re-exports) ---
-from .analysis.gate_metrics import average_gate_infidelity, error_budget
-from .analysis.addressing_metrics import AddressingEvaluator
-
 # --- Pulse utilities ---
 from .pulse import blackman_pulse, blackman_pulse_sqrt, blackman_window
 
 # --- Advanced / new-arch primitives ---
-from .core.system_model import SystemModel
-from .core.basis import BasisSpec
-from .core.blocks import BlockRegistry
-from .core.observables import Observable, ObservableRegistry
+from .model.system_model import SystemModel
+from .model.basis import BasisSpec
+from .model.blocks import BlockRegistry
+from .model.observables import Observable, ObservableRegistry
 
-# --- Backward-compatible legacy facade (deprecated) ---
-with _warnings.catch_warnings():
-    _warnings.simplefilter("ignore", DeprecationWarning)
-    from .legacy.ideal_cz import CZGateSimulator, MonteCarloResult
+
+def __getattr__(name: str):
+    """Lazy exports for optional/heavy physics helpers."""
+    if name == "compute_shift_scatter":
+        from .physics.ac_stark import compute_shift_scatter
+
+        return compute_shift_scatter
+    if name in {"average_gate_infidelity", "error_budget"}:
+        from .analysis import gate_metrics
+
+        return getattr(gate_metrics, name)
+    if name == "AddressingEvaluator":
+        from .analysis.addressing_metrics import AddressingEvaluator
+
+        return AddressingEvaluator
+    raise AttributeError(f"module 'ryd_gate' has no attribute {name!r}")
 
 __all__ = [
     # Systems
     "RydbergSystem",
-    "RydbergSystemModel",
     "LevelStructureSpec",
     "TransitionSpec",
     "InteractionSpec",
@@ -101,6 +108,8 @@ __all__ = [
     "SolverBackend",
     "HamiltonianIR",
     "HamiltonianTerm",
+    "ExactSparseCompiler",
+    "compile_expm_ir",
     # Analysis
     "average_gate_infidelity",
     "error_budget",
@@ -115,7 +124,4 @@ __all__ = [
     "BlockRegistry",
     "ObservableRegistry",
     "Observable",
-    # Legacy (deprecated)
-    "CZGateSimulator",
-    "MonteCarloResult",
 ]

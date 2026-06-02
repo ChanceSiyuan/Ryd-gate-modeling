@@ -11,16 +11,17 @@ class BlockInfo:
     """Metadata for a registered Hamiltonian block."""
 
     name: str
-    operator: Any  # ndarray or sparse matrix
+    operator: Any  # ndarray, sparse matrix, or symbolic operator spec
     description: str = ""
     hermitian: bool = True
 
 
 class BlockRegistry:
-    """Dict-like container mapping string names to operator matrices.
+    """Dict-like container mapping names to operator blocks.
 
     Stores Hamiltonian building blocks (e.g. "drive_420", "H_const", "H_vdw")
-    with metadata. Operators can be dense numpy arrays or scipy sparse matrices.
+    with metadata. Operators can be dense/sparse matrices for small exact
+    models, or symbolic operator specs for large lattice models.
     """
 
     def __init__(self) -> None:
@@ -42,7 +43,7 @@ class BlockRegistry:
         )
 
     def get(self, name: str) -> Any:
-        """Get the operator matrix for a block. Raises KeyError if not found."""
+        """Get the registered matrix/spec for a block. Raises KeyError if missing."""
         return self._blocks[name].operator
 
     def get_info(self, name: str) -> BlockInfo:

@@ -93,13 +93,11 @@ class TestSimulateTN:
             simulate_tn(spec_2x2, proto, [0, 0, 1], method="invalid")
 
     @pytest.mark.slow
-    def test_auto_convert_lattice_system(self):
-        """simulate_tn accepts LatticeSystem and auto-converts."""
-        from ryd_gate import create_lattice_system
-        system = create_lattice_system(Lx=2, Ly=2, V_nn=24.0)
+    def test_dmrg_accepts_tn_spec(self, spec_2x2):
+        """simulate_tn accepts the explicit TN lattice spec."""
         proto = SweepProtocol()
         result = simulate_tn(
-            system, proto, [2.0, 2.0, 1.0],
+            spec_2x2, proto, [2.0, 2.0, 1.0],
             initial_state="all_ground",
             method="dmrg",
             backend_options={"chi_max": 16},

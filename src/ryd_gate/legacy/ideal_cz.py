@@ -1,4 +1,4 @@
-"""Backward-compatible facade for CZGateSimulator.
+"""Historical CZGateSimulator implementation.
 
 All new development should import from submodules directly::
 
@@ -59,7 +59,7 @@ InitialStateLabel = Literal[
 
 
 class CZGateSimulator:
-    """Backward-compatible facade delegating to modular subpackages.
+    """Historical CZ simulator delegating to modular subpackages.
 
     See module docstring for recommended direct imports.
     """
@@ -534,7 +534,7 @@ class CZGateSimulator:
         self, phase_amp, omega, phase_init, delta, t_gate,
         state_mat, t_eval=None,
     ):
-        """Backward-compatible wrapper for TO solver."""
+        """TO solver wrapper."""
         x = [
             phase_amp,
             omega / self.rabi_eff,
@@ -549,7 +549,7 @@ class CZGateSimulator:
         self, omega, phase_amp1, phase_init1, phase_amp2, phase_init2,
         delta, t_gate, state_mat, t_eval=None,
     ):
-        """Backward-compatible wrapper for AR solver."""
+        """AR solver wrapper."""
         x = [
             omega / self.rabi_eff,
             phase_amp1, phase_init1,

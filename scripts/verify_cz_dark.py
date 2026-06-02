@@ -10,9 +10,8 @@ os.environ["JAX_PLATFORMS"] = "cpu"
 
 import numpy as np
 
-from ryd_gate.legacy.atomic_system import create_our_system
+from ryd_gate import RydbergSystem, simulate
 from ryd_gate.protocols.gate_cz_to import TOProtocol
-from ryd_gate.legacy._solve_gate import solve_gate
 from ryd_gate.analysis.gate_metrics import average_gate_infidelity, sss_infidelity, bell_infidelity
 
 X_TO_OUR_DARK = [
@@ -20,7 +19,7 @@ X_TO_OUR_DARK = [
     1.5710180991068543, 1.4454279613697887, 1.3406239758422793,
 ]
 
-system = create_our_system(blackmanflag=True, detuning_sign=1)
+system = RydbergSystem.from_preset("our", blackmanflag=True, detuning_sign=1)
 protocol = TOProtocol()
 
 theta = X_TO_OUR_DARK[4]
@@ -40,12 +39,7 @@ print("  2. CZ phase structure")
 print("=" * 60)
 print(f"  theta (single-qubit Z) = {theta:.6f} rad")
 
-basis = {
-    "|00⟩": np.kron([1+0j,0,0,0,0,0,0], [1+0j,0,0,0,0,0,0]),
-    "|01⟩": np.kron([1+0j,0,0,0,0,0,0], [0,1+0j,0,0,0,0,0]),
-    "|10⟩": np.kron([0,1+0j,0,0,0,0,0], [1+0j,0,0,0,0,0,0]),
-    "|11⟩": np.kron([0,1+0j,0,0,0,0,0], [0,1+0j,0,0,0,0,0]),
-}
+basis = {f"|{label}⟩": system.product_state(label) for label in ("00", "01", "10", "11")}
 
 # Use theta=0 placeholder to inspect raw CZ phase structure before single-qubit Z rotation
 x_no_theta = [X_TO_OUR_DARK[0], X_TO_OUR_DARK[1], X_TO_OUR_DARK[2],
@@ -53,7 +47,7 @@ x_no_theta = [X_TO_OUR_DARK[0], X_TO_OUR_DARK[1], X_TO_OUR_DARK[2],
 
 overlaps = {}
 for label, ini in basis.items():
-    res = solve_gate(system, protocol, x_no_theta, ini)
+    res = simulate(system.with_protocol(protocol), x_no_theta, ini).psi_final
     overlap = ini.conj().dot(res.T)
     overlaps[label] = overlap
     phase = np.angle(overlap)
@@ -85,7 +79,7 @@ print(f"\n{'=' * 60}")
 print("  3. Leakage out of computational subspace")
 print("=" * 60)
 for label, ini in basis.items():
-    res = solve_gate(system, protocol, x_no_theta, ini)
+    res = simulate(system.with_protocol(protocol), x_no_theta, ini).psi_final
     # Population in computational subspace
     comp_pop = 0.0
     for other_ini in basis.values():
@@ -101,7 +95,7 @@ X_TO_OUR_BRIGHT = [
     -1.7370398295694707, 0.7988774460188806, 2.3116588890406224,
     0.5186261498956248, 0.900066116155231, 1.2415235064066774,
 ]
-system_bright = create_our_system(blackmanflag=True, detuning_sign=-1)
+system_bright = RydbergSystem.from_preset("our", blackmanflag=True, detuning_sign=-1)
 print(f"  {'metric':<12s} {'dark':>12s} {'bright':>12s}")
 print(f"  {'-'*12} {'-'*12} {'-'*12}")
 for ft, fn in _fid_funcs.items():
@@ -110,8 +104,8 @@ for ft, fn in _fid_funcs.items():
     print(f"  {ft:<12s} {vd:>12.4e} {vb:>12.4e}")
 
 print(f"\n  Gate times:")
-print(f"    dark:   {X_TO_OUR_DARK[5] * system.time_scale * 1e9:.2f} ns")
-print(f"    bright: {X_TO_OUR_BRIGHT[5] * system_bright.time_scale * 1e9:.2f} ns")
+print(f"    dark:   {X_TO_OUR_DARK[5] * system.meta('time_scale') * 1e9:.2f} ns")
+print(f"    bright: {X_TO_OUR_BRIGHT[5] * system_bright.meta('time_scale') * 1e9:.2f} ns")
 
 print("\nAll checks passed." if all(
     fn(system, protocol, X_TO_OUR_DARK) < 1e-6

@@ -1,10 +1,4 @@
-"""Sparse piecewise-constant solver using expm_multiply.
-
-Suitable for many-body systems with sparse Hamiltonians.
-Discretises time into ``n_steps`` intervals and applies the matrix
-exponential per step, evaluating time-dependent coefficients at the
-midpoint of each interval.
-"""
+"""Sparse piecewise-constant matrix exponential backend."""
 
 from __future__ import annotations
 
@@ -12,24 +6,14 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ryd_gate.solvers.base import EvolutionResult, SolverBackend
+from ryd_gate.backends.base import EvolutionResult, SolverBackend
 
 if TYPE_CHECKING:
-    from ryd_gate.solvers.ir import HamiltonianIR
+    from ryd_gate.ir.matrix import HamiltonianIR
 
 
 class SparseExpmBackend(SolverBackend):
-    """Sparse piecewise-constant solver using ``expm_multiply``.
-
-    Suitable for many-body systems with sparse Hamiltonians.
-    Discretises time into ``n_steps`` and applies matrix exponential
-    per step.
-
-    Parameters
-    ----------
-    n_steps : int
-        Number of piecewise-constant time steps.
-    """
+    """Sparse piecewise-constant backend using ``expm_multiply``."""
 
     def __init__(self, n_steps: int = 200) -> None:
         self.n_steps = n_steps
@@ -41,25 +25,17 @@ class SparseExpmBackend(SolverBackend):
         t_gate: float,
         t_eval: np.ndarray | None = None,
     ) -> EvolutionResult:
-        """Evolve using piecewise-constant matrix exponential steps.
-
-        At each step, the Hamiltonian is frozen at its midpoint value
-        and the state is propagated via ``expm_multiply(-i dt H, psi)``.
-        The state is renormalised after each step for numerical stability.
-        """
+        """Evolve by freezing H at each interval midpoint."""
         from scipy.sparse.linalg import expm_multiply
 
         psi = psi0.copy().astype(complex)
         dt = t_gate / self.n_steps
 
-        # Build static H (sparse or dense -- works for both)
         H_static = None
         for term in ir.static_terms:
             coeff = term.coefficient(0) if callable(term.coefficient) else term.coefficient
             contrib = coeff * term.operator
             H_static = contrib if H_static is None else H_static + contrib
-
-        # If there are no static terms, start from zero
         if H_static is None:
             H_static = 0
 

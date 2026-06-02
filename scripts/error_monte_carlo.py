@@ -12,9 +12,9 @@ os.environ["JAX_PLATFORMS"] = "cpu"
 
 import numpy as np
 
-from ryd_gate.legacy.atomic_system import create_our_system
+from ryd_gate import RydbergSystem
+from ryd_gate.backends import MonteCarloResult, MonteCarloRunner
 from ryd_gate.protocols.gate_cz_to import TOProtocol
-from ryd_gate.legacy._monte_carlo import MonteCarloEngine, MonteCarloResult
 
 X_TO_OUR_DARK = [
    -0.9509172186259588, 1.105272315809505, 0.383911389220584,
@@ -72,8 +72,8 @@ def main():
 
     # ==================== Dephasing with branching ====================
 
-    system_dephasing = create_our_system(blackmanflag=True, detuning_sign=1)
-    engine_dephasing = MonteCarloEngine(system_dephasing, protocol, X_TO_OUR_DARK)
+    system_dephasing = RydbergSystem.from_preset("our", blackmanflag=True, detuning_sign=1)
+    engine_dephasing = MonteCarloRunner(system_dephasing.with_protocol(protocol), X_TO_OUR_DARK)
     engine_dephasing.setup_detuning_noise(130e3)
 
     print(f"Running dephasing MC with branching ({args.n_mc} shots)...")
@@ -88,8 +88,8 @@ def main():
 
     sigma_pos = (70e-9, 70e-9, 130e-9)  # meters
 
-    system_position = create_our_system(blackmanflag=True, detuning_sign=1)
-    engine_position = MonteCarloEngine(system_position, protocol, X_TO_OUR_DARK)
+    system_position = RydbergSystem.from_preset("our", blackmanflag=True, detuning_sign=1)
+    engine_position = MonteCarloRunner(system_position.with_protocol(protocol), X_TO_OUR_DARK)
     engine_position.setup_position_noise(sigma_pos)
 
     print(f"\nRunning position MC with branching ({args.n_mc} shots)...")
@@ -102,12 +102,13 @@ def main():
 
     # ==================== All errors with branching ====================
 
-    system_all = create_our_system(
+    system_all = RydbergSystem.from_preset(
+        "our",
         blackmanflag=True, detuning_sign=1,
         enable_rydberg_decay=True, enable_intermediate_decay=True,
         enable_polarization_leakage=True,
     )
-    engine_all = MonteCarloEngine(system_all, protocol, X_TO_OUR_DARK)
+    engine_all = MonteCarloRunner(system_all.with_protocol(protocol), X_TO_OUR_DARK)
     engine_all.setup_detuning_noise(130e3)
     engine_all.setup_position_noise(sigma_pos)
 
