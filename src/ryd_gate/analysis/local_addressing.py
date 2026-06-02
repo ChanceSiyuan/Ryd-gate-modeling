@@ -42,8 +42,8 @@ def evaluate_addressing(system, initial_state, protocol, x, engine_kwargs,
 
     Parameters
     ----------
-    system : AtomicSystem
-        The 3-level analog system.
+    system : RydbergSystem
+        The 3-level analog system with no protocol bound.
     initial_state : ndarray
         Two-atom initial state vector (e.g. |g,g⟩).
     protocol : SweepProtocol
@@ -59,16 +59,17 @@ def evaluate_addressing(system, initial_state, protocol, x, engine_kwargs,
     seed : int
         Random seed for reproducibility.
     """
-    from ryd_gate.legacy._monte_carlo import MonteCarloEngine
     from ryd_gate.analysis.addressing_metrics import AddressingEvaluator
+    from ryd_gate.backends import MonteCarloRunner
 
-    engine = MonteCarloEngine(system=system, protocol=protocol, x=x)
+    engine = MonteCarloRunner(system.with_protocol(protocol), x)
     if engine_kwargs.get("sigma_detuning"):
         engine.setup_detuning_noise(engine_kwargs["sigma_detuning"])
     if engine_kwargs.get("sigma_local_rin"):
-        engine.setup_rin_noise(engine_kwargs["sigma_local_rin"])
+        engine.setup_local_rin_noise(engine_kwargs["sigma_local_rin"])
     if engine_kwargs.get("sigma_amplitude"):
         engine.setup_amplitude_noise(engine_kwargs["sigma_amplitude"])
-    final_states = engine.run_states(initial_state, n_shots=n_mc, seed=seed)
+    shots = engine.run_states([initial_state], n_shots=n_mc, seed=seed)
+    final_states = [shot[0].psi_final for shot in shots]
     ev = AddressingEvaluator(final_states)
     return ev.pinning_error(), ev.crosstalk_error(), ev.leakage_loss()

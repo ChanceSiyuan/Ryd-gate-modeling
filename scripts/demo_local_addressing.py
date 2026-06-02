@@ -25,7 +25,7 @@ import time as _time
 import numpy as np
 import matplotlib.pyplot as plt
 
-from ryd_gate import create_lattice_system, SweepProtocol, simulate
+from ryd_gate import RydbergSystem, SweepProtocol, simulate
 from ryd_gate.analysis.coarsening import (
     build_neighbor_lists,
     coarsegrained_boundary_mask,
@@ -37,11 +37,12 @@ from ryd_gate.analysis.lattice_observables import (
     measure_from_states,
     precompute_bit_masks,
 )
-from ryd_gate.core.states import (
+from ryd_gate.model.states import (
     domain_config,
     product_state,
 )
-from ryd_gate.lattice import is_in_domain
+from ryd_gate.model.system import InteractionSpec
+from ryd_gate.lattice import is_in_domain, make_square_lattice
 
 # ---------------------------------------------------------------------------
 # Physics constants (in units of Omega = 1)
@@ -59,7 +60,13 @@ OMEGA_RAMP_FRAC = 0.1 # fraction of sweep for Omega ramp-up
 
 def _setup_experiment(Lx, Ly):
     """Build lattice system and bit masks (shared by both experiments)."""
-    system = create_lattice_system(Lx=Lx, Ly=Ly, V_nn=V_NN, Omega=1.0)
+    geom = make_square_lattice(Lx, Ly, spacing_um=1.0)
+    system = RydbergSystem.from_lattice(
+        geom,
+        "1r",
+        interaction=InteractionSpec(C6=V_NN, mode="nn"),
+        Omega=1.0,
+    )
     bit_masks = precompute_bit_masks(system.N)
     print(f"  Built {Lx}x{Ly} lattice system ({system.N} atoms, "
           f"dim = {2**system.N})")
@@ -78,8 +85,8 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
 
     system, bit_masks = setup or _setup_experiment(Lx, Ly)
     N = system.N
-    coords = system.coords
-    sublattice = system.sublattice
+    coords = system.geometry.coords
+    sublattice = system.geometry.sublattice
 
     Delta_f = 2.5
     cx, cy = (Lx - 1) / 2.0, (Ly - 1) / 2.0
@@ -99,7 +106,7 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
 
     t0 = _time.time()
     sweep_result = simulate(
-        system, sweep_proto,
+        system.with_protocol(sweep_proto),
         [DELTA_START, Delta_f, T_SWEEP],
         psi0,
     )
@@ -117,7 +124,7 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
     hold_proto = SweepProtocol(n_steps=n_steps)
     t0 = _time.time()
     hold_result = simulate(
-        system, hold_proto,
+        system.with_protocol(hold_proto),
         [Delta_f, Delta_f, t_hold],
         psi_after_sweep,
         t_eval=np.linspace(0, t_hold, n_steps),
@@ -278,7 +285,7 @@ def run_higgs_mode(Lx, Ly, n_steps, figdir, setup=None):
 
     system, bit_masks = setup or _setup_experiment(Lx, Ly)
     N = system.N
-    sublattice = system.sublattice
+    sublattice = system.geometry.sublattice
 
     Delta_values = [0.0, 1.1, 2.5]
     colors = plt.cm.viridis(np.linspace(0.1, 0.9, len(Delta_values)))
@@ -297,7 +304,7 @@ def run_higgs_mode(Lx, Ly, n_steps, figdir, setup=None):
         )
         t0 = _time.time()
         sweep_result = simulate(
-            system, sweep_proto,
+            system.with_protocol(sweep_proto),
             [DELTA_START, Delta_f, T_SWEEP],
             psi0,
         )
@@ -309,7 +316,7 @@ def run_higgs_mode(Lx, Ly, n_steps, figdir, setup=None):
         hold_proto = SweepProtocol(n_steps=n_steps)
         t0 = _time.time()
         hold_result = simulate(
-            system, hold_proto,
+            system.with_protocol(hold_proto),
             [Delta_f, Delta_f, 10.0],
             psi,
             t_eval=np.linspace(0, 10.0, n_steps),

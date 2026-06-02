@@ -53,10 +53,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.constants import pi
 
-from ryd_gate import simulate
-from ryd_gate.solvers.dense_atomic import DenseAtomicCompiler
-from ryd_gate.legacy.atomic_system import POWER_REF_UW, compute_shift_scatter
-from ryd_gate.core.analog_3level import Analog3LevelModel
+from ryd_gate import RydbergSystem, simulate
+from ryd_gate.compilers import compile_expm_ir
+from ryd_gate.physics.ac_stark import POWER_REF_UW, compute_shift_scatter
 from ryd_gate.protocols.sweep import SweepProtocol
 
 
@@ -84,7 +83,7 @@ OUTDIR = "results"
 _PARENT_MODEL = None  # built once in main(), inherited by fork-based workers
 
 
-def build_model() -> Analog3LevelModel:
+def build_model() -> RydbergSystem:
     """Pure-unitary 3-level model (decay channels are off by default).
 
     Returns the parent-process pre-built model when one exists (so fork-based
@@ -93,7 +92,8 @@ def build_model() -> Analog3LevelModel:
     global _PARENT_MODEL
     if _PARENT_MODEL is not None:
         return _PARENT_MODEL
-    _PARENT_MODEL = Analog3LevelModel.from_defaults(
+    _PARENT_MODEL = RydbergSystem.from_preset(
+        "analog_3",
         detuning_sign=1, blackmanflag=True,
         distance_um=DISTANCE_UM,
         Delta_Hz=DELTA_HZ,
@@ -106,13 +106,17 @@ def build_model() -> Analog3LevelModel:
 def make_protocol_and_x(model, wl_nm, power_uw, t_gate_us,
                         delta_start_mhz, delta_end_mhz):
     """Build a fresh SweepProtocol + x_sweep for one (λ, P, T, Δ_window) cell."""
-    system = model.system
+    system = model
+    rabi_eff = system.meta("rabi_eff")
+    time_scale = system.meta("time_scale")
+    rabi_420 = system.meta("rabi_420")
+    Delta = system.meta("Delta")
     eta = np.exp(-2 * (DISTANCE_UM / WAIST_UM) ** 2)
     shift_ref, _ = compute_shift_scatter(wl_nm)
     scale = power_uw / POWER_REF_UW
     delta_A = 2 * pi * float(shift_ref) * scale  # rad/s
     delta_B = eta * delta_A
-    ac_stark_peak = system.rabi_420 ** 2 / (4 * abs(system.Delta))
+    ac_stark_peak = rabi_420 ** 2 / (4 * abs(Delta))
 
     protocol = SweepProtocol(
         addressing={0: delta_A, 1: delta_B},
@@ -120,9 +124,9 @@ def make_protocol_and_x(model, wl_nm, power_uw, t_gate_us,
     )
     t_gate = t_gate_us * 1e-6
     x_sweep = [
-        2 * pi * delta_start_mhz * 1e6 / system.rabi_eff,
-        2 * pi * delta_end_mhz * 1e6 / system.rabi_eff,
-        t_gate / system.time_scale,
+        2 * pi * delta_start_mhz * 1e6 / rabi_eff,
+        2 * pi * delta_end_mhz * 1e6 / rabi_eff,
+        t_gate / time_scale,
     ]
     return protocol, x_sweep, delta_A, delta_B
 
@@ -203,12 +207,13 @@ def _exp1_one_T(T_us, n_pts=None):
     psi0 = np.zeros(9, dtype=complex); psi0[0] = 1.0
     protocol, x, _, _ = make_protocol_and_x(
         model, WL_REF_NM, P_REF_UW, T_us, DELTA_START_MHZ, DELTA_END_MHZ)
-    params = protocol.unpack_params(x, model.system)
+    system = model.with_protocol(protocol)
+    params = system.unpack_params(x)
     t_gate = params["t_gate"]
     t_eval = np.linspace(0.0, t_gate, n_pts)
     t0 = _time.time()
-    result = simulate(model, protocol, x, psi0, t_eval=t_eval)
-    ir = DenseAtomicCompiler().compile(model.system, protocol, params)
+    result = simulate(system, x, psi0, t_eval=t_eval)
+    ir = compile_expm_ir(system, params)
     F1, F2 = adiabatic_fidelity_history(ir, result.times, result.states, k=2)
     elapsed = _time.time() - t0
     m = measure_pops(model, result.psi_final)
@@ -222,7 +227,7 @@ def _exp2_one_T(T_us):
     protocol, x, _, _ = make_protocol_and_x(
         model, WL_REF_NM, P_REF_UW, T_us, DELTA_START_MHZ, DELTA_END_MHZ)
     t0 = _time.time()
-    result = simulate(model, protocol, x, psi0)
+    result = simulate(model.with_protocol(protocol), x, psi0)
     elapsed = _time.time() - t0
     m = measure_pops(model, result.psi_final)
     return T_us, m, elapsed
@@ -235,7 +240,7 @@ def _exp3_one_dmax(dmax_T):
     protocol, x, _, _ = make_protocol_and_x(
         model, WL_REF_NM, P_REF_UW, T_us, -dmax, dmax)
     t0 = _time.time()
-    result = simulate(model, protocol, x, psi0)
+    result = simulate(model.with_protocol(protocol), x, psi0)
     elapsed = _time.time() - t0
     m = measure_pops(model, result.psi_final)
     return dmax, T_us, m, elapsed
@@ -342,7 +347,7 @@ def experiment2():
     rows = np.array(rows)
 
     # Theory: pure-LZ diabatic prediction for atom B
-    Omega_eff = build_model().system.rabi_eff  # rad/s
+    Omega_eff = build_model().meta("rabi_eff")  # rad/s
     delta_window_rad = 2 * pi * (DELTA_END_MHZ - DELTA_START_MHZ) * 1e6
     alpha = delta_window_rad / (Ts_us * 1e-6)
     P_LZ = np.exp(-pi * Omega_eff ** 2 / (2 * alpha))

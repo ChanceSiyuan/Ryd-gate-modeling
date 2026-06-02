@@ -12,7 +12,13 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ryd_gate.analysis.gate_metrics import average_gate_infidelity, residuals_to_branching
-from ryd_gate.core.operators import build_atom_a_projector, build_occ_operator, build_vdw_unit_operator, get_nominal_distance
+from ryd_gate.core.operators import (
+    build_atom_a_projector,
+    build_atom_projector,
+    build_occ_operator,
+    build_vdw_unit_operator,
+    get_nominal_distance,
+)
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -194,6 +200,38 @@ class MonteCarloResult:
         return cls(**kwargs)
 
 
+class _AtomicProtocolContext:
+    def __init__(self, system: "AtomicSystem") -> None:
+        self._system = system
+
+    def meta(self, name: str, default=None):
+        return getattr(self._system, name, default)
+
+
+def _static_overlay_from_protocol(system: "AtomicSystem", protocol: "Protocol", x: list[float]):
+    try:
+        params = protocol.unpack_params(x, _AtomicProtocolContext(system))
+    except Exception:
+        return None
+
+    H = None
+    for idx, delta in (params.get("pin_deltas") or {}).items():
+        if abs(delta) <= 1e-15 or idx >= system.n_atoms:
+            continue
+        proj_r = build_atom_projector(idx, system.n_levels - 1, system.n_atoms, system.n_levels)
+        term = -delta * proj_r
+        H = term if H is None else H + term
+
+    for idx, rate in (params.get("scatter_rates") or {}).items():
+        if rate <= 0 or idx >= system.n_atoms:
+            continue
+        proj_g = build_atom_projector(idx, 0, system.n_atoms, system.n_levels)
+        term = -1j * rate / 2 * proj_g
+        H = term if H is None else H + term
+
+    return H
+
+
 class MonteCarloEngine:
     """Unified quasi-static Monte Carlo noise sampler.
 
@@ -222,9 +260,7 @@ class MonteCarloEngine:
         self.x = x
 
         self._ham_const_base: NDArray[np.complexfloating] = system.tq_ham_const.copy()
-        ham_additions = protocol.get_ham_const_additions(
-            n_atoms=system.n_atoms, n_levels=system.n_levels,
-        )
+        ham_additions = _static_overlay_from_protocol(system, protocol, x)
         if ham_additions is not None:
             self._ham_const_base = self._ham_const_base + ham_additions
 
@@ -707,5 +743,3 @@ def run_monte_carlo_jax(
         detuning_samples=np.asarray(delta_errs) if sigma_delta_rad is not None else None,
         distance_samples=np.asarray(d_new) if use_position else None,
     )
-
-

@@ -3,12 +3,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-import numpy as np
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from numpy.typing import NDArray
 
 
 class Protocol(ABC):
@@ -49,11 +43,8 @@ class Protocol(ABC):
     def phase_420(self, t: float, params: dict) -> complex:
         """Compute exp(-i * phi(t)) for 420nm laser phase modulation.
 
-        .. deprecated::
-            Override ``get_drive_coefficients()`` instead.
-            This default implementation extracts the phase from
-            ``get_drive_coefficients()`` for backward compatibility
-            with the legacy ``solve_gate()`` code path.
+        The default implementation derives the value from the
+        ``drive_420`` coefficient when a protocol exposes that channel.
         """
         coeffs = self.get_drive_coefficients(t, params)
         return coeffs.get("drive_420", 1.0 + 0j)
@@ -68,6 +59,14 @@ class Protocol(ABC):
         Default assumes two-photon Raman (420nm + lightshift).
         """
         return frozenset({"drive_420", "drive_420_dag", "lightshift_zero"})
+
+    def drive_channels(self, system) -> frozenset[str]:
+        """Channel names wired into the Hamiltonian for *system*.
+
+        Defaults to :attr:`required_channels`.  Protocols with site-dependent
+        drives override this to include per-site channel names.
+        """
+        return frozenset(self.required_channels)
 
     @abstractmethod
     def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
@@ -88,18 +87,4 @@ class Protocol(ABC):
 
     def get_optimization_bounds(self) -> tuple | None:
         """Return bounds for optimisation, or None if not applicable."""
-        return None
-
-    def get_ham_const_additions(
-        self, n_atoms: int = 2, n_levels: int = 3,
-    ) -> "NDArray[np.complexfloating] | None":
-        """Extra time-independent Hamiltonian terms, or None.
-
-        Parameters
-        ----------
-        n_atoms : int
-            Number of atoms in the system.
-        n_levels : int
-            Number of single-atom levels.
-        """
         return None

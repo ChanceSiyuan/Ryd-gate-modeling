@@ -6,14 +6,14 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ryd_gate.solvers.base import EvolutionResult
+from ryd_gate.backends.base import EvolutionResult
 
 if TYPE_CHECKING:
     from ryd_gate.protocols.sweep import SweepProtocol
 
 
 def simulate_tn(
-    spec_or_system,
+    spec,
     protocol: SweepProtocol,
     x: list[float],
     initial_state: str | np.ndarray | object = "all_ground",
@@ -26,9 +26,8 @@ def simulate_tn(
 
     Parameters
     ----------
-    spec_or_system : TNLatticeSpec or LatticeSystem
-        If a ``LatticeSystem``, automatically converts to
-        ``TNLatticeSpec``.
+    spec : TNLatticeSpec
+        Tensor-network lattice specification.
     protocol : SweepProtocol
         Sweep protocol describing drive coefficients and local
         addressing.
@@ -51,28 +50,22 @@ def simulate_tn(
     -------
     EvolutionResult
     """
-    from .lattice_spec import TNLatticeSpec, create_tn_lattice_spec
+    from .lattice_spec import TNLatticeSpec
 
-    # Auto-convert LatticeSystem to TNLatticeSpec
-    if not isinstance(spec_or_system, TNLatticeSpec):
-        system = spec_or_system
-        spec = create_tn_lattice_spec(
-            Lx=system.Lx, Ly=system.Ly,
-            V_nn=system.V_nn, Omega=system.Omega,
-        )
-    else:
-        spec = spec_or_system
+    if not isinstance(spec, TNLatticeSpec):
+        raise TypeError("simulate_tn() requires a TNLatticeSpec.")
 
     opts = backend_options or {}
 
     if method == "dmrg":
         from .backends import TenpyDMRGBackend
+        from .backends import _TNProtocolContext, _pin_deltas_from_params
 
         backend = TenpyDMRGBackend(**opts)
-        pin_deltas = (protocol.get_pin_deltas(spec.N)
-                      if hasattr(protocol, "get_pin_deltas") else None)
+        params = protocol.unpack_params(x, _TNProtocolContext(spec))
+        pin_deltas = _pin_deltas_from_params(params, spec.N)
         # For DMRG, use delta_end as the target detuning
-        Delta = x[1] if len(x) > 1 else x[0]
+        Delta = params["delta_end"] if "delta_end" in params else x[1] if len(x) > 1 else x[0]
         return backend.find_ground_state(
             spec, Delta, pin_deltas=pin_deltas,
             initial_state=initial_state,

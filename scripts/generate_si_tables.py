@@ -20,9 +20,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-from ryd_gate.legacy.atomic_system import create_our_system
+from ryd_gate import RydbergSystem
+from ryd_gate.backends import MonteCarloResult, MonteCarloRunner
 from ryd_gate.protocols.gate_cz_to import TOProtocol
-from ryd_gate.legacy._monte_carlo import MonteCarloEngine, MonteCarloResult
 from ryd_gate.analysis.gate_metrics import sss_infidelity, error_budget
 
 SSS_12_STATES = [f"SSS-{i}" for i in range(12)]
@@ -60,7 +60,8 @@ def compute_deterministic_errors(sign, x):
 
     # Rydberg decay
     print("  Rydberg decay...")
-    system_ryd = create_our_system(
+    system_ryd = RydbergSystem.from_preset(
+        "our",
         blackmanflag=True, detuning_sign=sign,
         enable_rydberg_decay=True,
     )
@@ -73,7 +74,8 @@ def compute_deterministic_errors(sign, x):
 
     # Intermediate decay (full 0+1 scattering)
     print("  Intermediate decay (full)...")
-    system_mid = create_our_system(
+    system_mid = RydbergSystem.from_preset(
+        "our",
         blackmanflag=True, detuning_sign=sign,
         enable_intermediate_decay=True,
     )
@@ -92,7 +94,8 @@ def compute_deterministic_errors(sign, x):
     # not intermediate-state population routing, so only the total infidelity
     # difference is meaningful (no XYZ/AL/LG decomposition).
     print("  Intermediate decay (no |0> scattering)...")
-    system_mid_no0 = create_our_system(
+    system_mid_no0 = RydbergSystem.from_preset(
+        "our",
         blackmanflag=True, detuning_sign=sign,
         enable_intermediate_decay=True,
         enable_0_scattering=False,
@@ -102,7 +105,8 @@ def compute_deterministic_errors(sign, x):
 
     # Polarization leakage
     print("  Polarization leakage...")
-    system_pol = create_our_system(
+    system_pol = RydbergSystem.from_preset(
+        "our",
         blackmanflag=True, detuning_sign=sign,
         enable_polarization_leakage=True,
     )
@@ -115,7 +119,8 @@ def compute_deterministic_errors(sign, x):
 
     # All deterministic combined
     print("  All deterministic...")
-    system_all = create_our_system(
+    system_all = RydbergSystem.from_preset(
+        "our",
         blackmanflag=True, detuning_sign=sign,
         enable_rydberg_decay=True,
         enable_intermediate_decay=True,
@@ -172,8 +177,8 @@ def generate_mc_results(sign, label, x, n_shots=1000, seed=42):
     results = {}
     for i, (key, desc, system_kw, setup_fn) in enumerate(scenarios, 1):
         print(f"  [{i}/{len(scenarios)}] {desc}...")
-        system = create_our_system(**system_kw)
-        engine = MonteCarloEngine(system, protocol, x)
+        system = RydbergSystem.from_preset("our", **system_kw)
+        engine = MonteCarloRunner(system.with_protocol(protocol), x)
         setup_fn(engine)
         results[key] = engine.run_gate_fidelity(
             n_shots=n_shots, seed=seed + i - 1, compute_branching=True,

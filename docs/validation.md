@@ -6,7 +6,7 @@ This document describes the validation test suite that verifies the correctness 
 
 | Solver | Module | Hilbert Space | Method |
 |--------|--------|---------------|--------|
-| **Schrodinger** | `ryd_gate.solvers.schrodinger` | 49-dim (7-level x 2 atoms) | SciPy `solve_ivp` (DOP853) |
+| **Exact state vector** | `ryd_gate.simulate` + `ryd_gate.backends` | 49-dim (7-level x 2 atoms) | SciPy `solve_ivp` (DOP853) / sparse expm |
 
 ## Test Organization
 

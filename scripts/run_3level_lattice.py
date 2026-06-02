@@ -1,46 +1,53 @@
 #!/usr/bin/env python
-"""Validate 3-level lattice protocol: adiabatic sweep → checkerboard on 3×3.
+"""Validate a 3-level lattice protocol: detuning sweep -> checkerboard on 3x3.
 
-Starting from |ggg...g⟩, a slow sweep of the 420nm laser phase adiabatically
-prepares the Rydberg checkerboard (antiferromagnetic) phase on a 3×3 square
-lattice, demonstrating that the many-body Rydberg blockade produces spatial
-ordering.
+Starting from |111...1>, a detuning sweep on the |1>-|r> transition prepares
+a Rydberg checkerboard phase on a 3x3 square lattice.
 """
 
 import matplotlib.pyplot as plt
 import numpy as np
 
+from ryd_gate import DigitalAnalogProtocol, RydbergSystem, Segment, simulate
 from ryd_gate.analysis.lattice_observables import (
     measure_rydberg_occupation,
     precompute_trit_masks,
     staggered_magnetization,
 )
-from ryd_gate.core.lattice_3level_cascade import (
-    build_3level_operators,
-    evolve_3level_sweep,
-)
-from ryd_gate.core.states import ground_state
+from ryd_gate.model.system import InteractionSpec
 from ryd_gate.lattice import make_square_lattice, plot_spatial_rydberg
 
 
 def main():
     Lx, Ly = 3, 3
     geom = make_square_lattice(Lx, Ly, spacing_um=5.0)
-    ops = build_3level_operators(
-        geom, Delta=2 * np.pi * 9.1e9,
-        Omega_1013=2 * np.pi * 491e6, Omega_420=2 * np.pi * 491e6,
+    n_steps = 300
+    delta_start = -2 * np.pi * 40e6
+    delta_end = 2 * np.pi * 40e6
+    t_sweep = 1.5e-6
+    omega_R = 2 * np.pi * 5e6
+    dt = t_sweep / n_steps
+    segments = [
+        Segment(
+            duration=dt,
+            omega_R=omega_R,
+            delta_R=delta_start + (delta_end - delta_start) * (k + 0.5) / n_steps,
+        )
+        for k in range(n_steps)
+    ]
+    protocol = DigitalAnalogProtocol(segments, n_steps=n_steps)
+    system = RydbergSystem.from_lattice(
+        geom,
+        "01r",
+        interaction=InteractionSpec(mode="all"),
+        protocol=protocol,
     )
-    psi0 = ground_state(geom.N)
+    psi0 = system.product_state(["1"] * geom.N)
 
-    print(f"Running 3-level lattice sweep on {Lx}x{Ly} lattice...")
+    print(f"Running 3-level 01r lattice sweep on {Lx}x{Ly} lattice...")
     print(f"  Hilbert space dim = 3^{geom.N} = {3**geom.N}")
 
-    result = evolve_3level_sweep(
-        psi0, ops,
-        delta_start=-2 * np.pi * 40e6, delta_end=2 * np.pi * 40e6,
-        t_sweep=1.5e-6, n_steps=300,
-        store_every=10, verbose=True,
-    )
+    result = simulate(system, [], psi0)
 
     masks = precompute_trit_masks(geom.N)
     occ_final = measure_rydberg_occupation(result.psi_final, masks)

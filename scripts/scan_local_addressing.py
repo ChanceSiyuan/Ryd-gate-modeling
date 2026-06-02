@@ -34,13 +34,13 @@ from ryd_gate.analysis.local_addressing import (
     default_sweep_x,
     evaluate_addressing,
 )
-from ryd_gate.legacy.atomic_system import (
+from ryd_gate import RydbergSystem
+from ryd_gate.model.operators import build_product_state_map
+from ryd_gate.physics.ac_stark import (
     LAMBDA_D2,
     LAMBDA_PAPER,
     POWER_REF_UW,
-    build_product_state_map,
     compute_shift_scatter,
-    create_analog_system,
 )
 from ryd_gate.protocols.sweep import SweepProtocol
 
@@ -54,7 +54,7 @@ def cmd_noise(args):
     print("  Addressing Noise Sensitivity Scan")
     print("=" * 60)
 
-    system = create_analog_system(detuning_sign=1)
+    system = RydbergSystem.from_preset("analog_3", detuning_sign=1)
     initial_state = build_product_state_map(n_levels=3)["gg"]
     protocol = SweepProtocol(
         addressing={0: DEFAULT_LOCAL_DETUNING},
@@ -180,12 +180,15 @@ def _simulate_grid_point(task):
     psi0 = _OPT_WORKER["psi0"]
     eta = _OPT_WORKER["eta"]
     ac_stark_peak = _OPT_WORKER["ac_stark_peak"]
+    rabi_eff = system.meta("rabi_eff")
+    time_scale = system.meta("time_scale")
+    v_ryd = system.meta("v_ryd")
 
     t_gate = t_gate_us * 1e-6
     x_sweep = [
-        2 * pi * (-delta_half_mhz) * 1e6 / system.rabi_eff,
-        2 * pi *   delta_half_mhz  * 1e6 / system.rabi_eff,
-        t_gate / system.time_scale,
+        2 * pi * (-delta_half_mhz) * 1e6 / rabi_eff,
+        2 * pi *   delta_half_mhz  * 1e6 / rabi_eff,
+        t_gate / time_scale,
     ]
 
     shift_ref, scatter_ref = compute_shift_scatter(wl)
@@ -196,7 +199,7 @@ def _simulate_grid_point(task):
 
     protocol = SweepProtocol(addressing={0: delta_A, 1: delta_B},
                              ac_stark_shift=ac_stark_peak)
-    result = simulate(system, protocol, x_sweep, psi0)
+    result = simulate(system.with_protocol(protocol), x_sweep, psi0)
     psi_f = result.psi_final
 
     P_gg = model.observables.measure("pop_gg", psi_f)
@@ -215,8 +218,8 @@ def _simulate_grid_point(task):
         P_gg, P_gr, P_rg, P_rr,
         pinning_leak, crosstalk, scatter_pen, total_cost,
         P_gr, 1.0 - (P_gg + P_gr + P_rg + P_rr),
-        abs(delta_A) / system.rabi_eff,
-        abs(delta_A) / system.v_ryd,
+        abs(delta_A) / rabi_eff,
+        abs(delta_A) / v_ryd,
         # Issue #44 follow-up: trailing columns identifying which (Δ_max, T)
         # cell this row corresponds to. Constant in legacy `optimize` mode,
         # varies along an axis when --sweep-delta or --sweep-tgate is set.
@@ -228,20 +231,26 @@ def _simulate_grid_point(task):
 def _run_optimize_scan(args):
     """Run the 2D grid scan and return (grid, metadata dict)."""
     from ryd_gate import simulate
-    from ryd_gate.core.analog_3level import Analog3LevelModel
 
     print("=" * 60)
     print("  Local Addressing: Wavelength x Power Optimization")
     print("=" * 60)
 
-    model = Analog3LevelModel.from_defaults(
+    model = RydbergSystem.from_preset(
+        "analog_3",
         detuning_sign=1, blackmanflag=True,
         distance_um=args.distance_um,
         Delta_Hz=2.4e9,       # paper: ~2.4 GHz intermediate detuning
         rabi_420_Hz=135e6,    # paper: balanced Rabi, Omega_eff ≈ 3.8 MHz
         rabi_1013_Hz=135e6,
     )
-    system = model.system
+    system = model
+    rabi_eff = system.meta("rabi_eff")
+    time_scale = system.meta("time_scale")
+    rabi_420 = system.meta("rabi_420")
+    rabi_1013 = system.meta("rabi_1013")
+    Delta = system.meta("Delta")
+    v_ryd = system.meta("v_ryd")
     psi0 = np.zeros(9, dtype=complex)
     psi0[0] = 1.0  # |gg>
 
@@ -250,7 +259,7 @@ def _run_optimize_scan(args):
     # |e⟩ is in H_420 explicitly (not adiabatically eliminated), so the
     # second-order dynamical shift on |g⟩ has exactly this magnitude. See
     # the issue #44 correction comment for the analog vs 7-level distinction.
-    ac_stark_peak = system.rabi_420 ** 2 / (4 * abs(system.Delta))
+    ac_stark_peak = rabi_420 ** 2 / (4 * abs(Delta))
     if getattr(args, "no_ac_stark", False):
         ac_stark_peak = 0.0
         print("  AC-Stark feed-forward DISABLED via --no-ac-stark "
@@ -259,9 +268,9 @@ def _run_optimize_scan(args):
     # Gaussian tail factor
     eta = np.exp(-2 * (args.distance_um / args.waist_um) ** 2)
     print(f"  Gaussian tail: eta = exp(-2*(a/w)^2) = {eta:.4e}")
-    print(f"  Omega_eff/(2pi) = {system.rabi_eff/(2*pi)/1e6:.2f} MHz")
+    print(f"  Omega_eff/(2pi) = {rabi_eff/(2*pi)/1e6:.2f} MHz")
     print(f"  AC Stark peak = {ac_stark_peak/(2*pi)/1e6:.2f} MHz")
-    print(f"  V_ryd/(2pi) = {system.v_ryd/(2*pi)/1e6:.1f} MHz")
+    print(f"  V_ryd/(2pi) = {v_ryd/(2*pi)/1e6:.1f} MHz")
     print()
 
     # ── Build the four scan axes (legacy mode collapses Δ_max and T_gate
@@ -279,12 +288,12 @@ def _run_optimize_scan(args):
     adiabatic_ratio = 4.0
     adiabatic_power_min = {}  # wl -> min power (uW) for adiabatic condition
     print(f"  Adiabatic condition: |delta_A| > {adiabatic_ratio:.0f} Omega_eff "
-          f"= {adiabatic_ratio * system.rabi_eff/(2*pi)/1e6:.1f} MHz")
+          f"= {adiabatic_ratio * rabi_eff/(2*pi)/1e6:.1f} MHz")
     print(f"  {'WL (nm)':>10} {'|shift|/P (MHz/uW)':>20} {'P_min_adiab (uW)':>18}")
     for wl in wls:
         shift_ref, _ = compute_shift_scatter(wl)
         shift_per_uw = abs(float(shift_ref)) / POWER_REF_UW  # Hz per uW
-        p_adiab = adiabatic_ratio * system.rabi_eff / (2 * pi) / shift_per_uw
+        p_adiab = adiabatic_ratio * rabi_eff / (2 * pi) / shift_per_uw
         adiabatic_power_min[wl] = p_adiab
         print(f"  {wl:10.2f} {shift_per_uw/1e6*1e0:20.4f} {p_adiab:18.1f}")
 
@@ -444,9 +453,9 @@ def _run_optimize_scan(args):
         "power_max_uw": args.power_max_uw,
         "n_power": args.n_power,
         # Reproducibility (added per issue #44 metadata-completeness fix):
-        "rabi_420_hz": float(system.rabi_420 / (2 * pi)),
-        "rabi_1013_hz": float(system.rabi_1013 / (2 * pi)),
-        "Delta_hz": float(system.Delta / (2 * pi)),
+        "rabi_420_hz": float(rabi_420 / (2 * pi)),
+        "rabi_1013_hz": float(rabi_1013 / (2 * pi)),
+        "Delta_hz": float(Delta / (2 * pi)),
         "ac_stark_peak_mhz": float(ac_stark_peak / (2 * pi) / 1e6),
         "ac_stark_off": bool(getattr(args, "no_ac_stark", False)),
         # Sweep-axis support (issue #44 follow-up). When the legacy axes are
@@ -496,16 +505,16 @@ def _run_optimize_scan(args):
             dh = r["delta_half_mhz"]
             tg = r["t_gate_us"] * 1e-6
             x_sweep_r = [
-                2 * pi * (-dh) * 1e6 / system.rabi_eff,
-                2 * pi *   dh  * 1e6 / system.rabi_eff,
-                tg / system.time_scale,
+                2 * pi * (-dh) * 1e6 / rabi_eff,
+                2 * pi *   dh  * 1e6 / rabi_eff,
+                tg / time_scale,
             ]
             proto_scat = SweepProtocol(
                 addressing={0: delta_A, 1: delta_B},
                 scatter_rates={0: scatter_A, 1: scatter_B},
                 ac_stark_shift=ac_stark_peak,
             )
-            res = simulate(system, proto_scat, x_sweep_r, psi0)
+            res = simulate(system.with_protocol(proto_scat), x_sweep_r, psi0)
             P_gr_dyn = model.observables.measure("pop_gr", res.psi_final)
             norm = float(np.real(np.vdot(res.psi_final, res.psi_final)))
             print(f"    #{rank+1}: P_gr={P_gr_dyn:.4f}, norm={norm:.6f}, "
@@ -515,9 +524,9 @@ def _run_optimize_scan(args):
     best_dh = best["delta_half_mhz"]
     best_tg = best["t_gate_us"] * 1e-6
     x_sweep = [
-        2 * pi * (-best_dh) * 1e6 / system.rabi_eff,
-        2 * pi *   best_dh  * 1e6 / system.rabi_eff,
-        best_tg / system.time_scale,
+        2 * pi * (-best_dh) * 1e6 / rabi_eff,
+        2 * pi *   best_dh  * 1e6 / rabi_eff,
+        best_tg / time_scale,
     ]
 
     meta = {
@@ -830,8 +839,6 @@ def _read_csv_metadata(csv_path):
 
 def cmd_optimize_plot(args):
     """Re-plot from a previously saved CSV grid (no simulation)."""
-    from ryd_gate.core.analog_3level import Analog3LevelModel
-
     # If --csv was not given explicitly, derive it from --outdir + --prefix
     # so users only need to remember the experiment tag.
     if args.csv is None:
@@ -924,16 +931,21 @@ def cmd_optimize_plot(args):
     args.n_power = len(powers)
 
     # Rebuild model for adiabatic-boundary overlay and meta consistency
-    model = Analog3LevelModel.from_defaults(
+    model = RydbergSystem.from_preset(
+        "analog_3",
         detuning_sign=1, blackmanflag=True,
         distance_um=args.distance_um,
         Delta_Hz=2.4e9,
         rabi_420_Hz=135e6,
         rabi_1013_Hz=135e6,
     )
-    system = model.system
+    system = model
+    rabi_eff = system.meta("rabi_eff")
+    time_scale = system.meta("time_scale")
+    rabi_420 = system.meta("rabi_420")
+    Delta = system.meta("Delta")
     eta = np.exp(-2 * (args.distance_um / args.waist_um) ** 2)
-    ac_stark_peak = system.rabi_420 ** 2 / (4 * abs(system.Delta))
+    ac_stark_peak = rabi_420 ** 2 / (4 * abs(Delta))
 
     best_idx = np.argmin(grid["total_cost"])
     best = grid[best_idx]
@@ -942,9 +954,9 @@ def cmd_optimize_plot(args):
     best_dh = float(best["delta_half_mhz"])
     best_tg = float(best["t_gate_us"]) * 1e-6
     x_sweep = [
-        2 * pi * (-best_dh) * 1e6 / system.rabi_eff,
-        2 * pi *   best_dh  * 1e6 / system.rabi_eff,
-        best_tg / system.time_scale,
+        2 * pi * (-best_dh) * 1e6 / rabi_eff,
+        2 * pi *   best_dh  * 1e6 / rabi_eff,
+        best_tg / time_scale,
     ]
 
     # Adiabatic boundary
@@ -953,7 +965,7 @@ def cmd_optimize_plot(args):
     for wl in wls:
         shift_ref, _ = compute_shift_scatter(wl)
         shift_per_uw = abs(float(shift_ref)) / POWER_REF_UW
-        adiabatic_power_min[wl] = adiabatic_ratio * system.rabi_eff / (2 * pi) / shift_per_uw
+        adiabatic_power_min[wl] = adiabatic_ratio * rabi_eff / (2 * pi) / shift_per_uw
 
     meta = {
         "system": system, "model": model, "eta": eta, "x_sweep": x_sweep,

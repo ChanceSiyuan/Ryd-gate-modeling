@@ -11,17 +11,16 @@ from plotly.subplots import make_subplots
 import streamlit as st
 from scipy.constants import pi
 
-from ryd_gate.core.atomic_system import (
+from ryd_gate.physics.ac_stark import (
     LAMBDA_D1,
     LAMBDA_D2,
     LAMBDA_PAPER,
     POWER_REF_UW,
-    build_product_state_map,
     compute_shift_scatter,
 )
-from ryd_gate import simulate
+from ryd_gate import RydbergSystem, simulate
 from ryd_gate.analysis.observable_metrics import measure_trajectory, norm_squared
-from ryd_gate.core.models.analog_3level import Analog3LevelModel
+from ryd_gate.model.operators import build_product_state_map
 from ryd_gate.protocols.sweep import SweepProtocol
 
 # Sweep constants (matching scripts/run_local_sweep.py)
@@ -45,7 +44,7 @@ shift and ~35 Hz scattering.
 
 @st.cache_resource
 def _setup_model_cached(distance_um: float = 3.0):
-    model = Analog3LevelModel.from_defaults(detuning_sign=1, distance_um=distance_um)
+    model = RydbergSystem.from_preset("analog_3", detuning_sign=1, distance_um=distance_um)
     initial_state = build_product_state_map(n_levels=3)["gg"]
     return model, initial_state
 
@@ -174,23 +173,29 @@ with tab_proto:
 
     if run_proto:
         model, initial_state_m = _setup_model_cached(distance_um=proto_dist)
-        system = model.system
+        system = model
+        rabi_eff = system.meta("rabi_eff")
+        time_scale = system.meta("time_scale")
+        rabi_420 = system.meta("rabi_420")
+        Delta = system.meta("Delta")
 
         protocol_free = SweepProtocol()
         protocol_addr = SweepProtocol(
             addressing={0: local_detuning_p},
             scatter_rate=local_scatter_p)
+        system_free = system.with_protocol(protocol_free)
+        system_addr = system.with_protocol(protocol_addr)
 
         # --- A. Rabi dynamics (resonant driving) ---
         n_cycles = 5
-        t_rabi = n_cycles * system.time_scale
-        x_rabi = [0.0, 0.0, t_rabi / system.time_scale]
+        t_rabi = n_cycles * time_scale
+        x_rabi = [0.0, 0.0, t_rabi / time_scale]
         n_pts = 500
         t_eval_rabi = np.linspace(0, t_rabi, n_pts)
 
-        result_free_rabi = simulate(system, protocol_free, x_rabi,
+        result_free_rabi = simulate(system_free, x_rabi,
                                     initial_state_m, t_eval=t_eval_rabi)
-        result_addr_rabi = simulate(system, protocol_addr, x_rabi,
+        result_addr_rabi = simulate(system_addr, x_rabi,
                                     initial_state_m, t_eval=t_eval_rabi)
 
         obs_names_rabi = ["pop_A_r", "pop_B_r"]
@@ -207,12 +212,12 @@ with tab_proto:
 
         # --- B. Final populations (adiabatic sweep) ---
         x_sweep = [
-            DELTA_START / system.rabi_eff,
-            DELTA_END / system.rabi_eff,
-            T_GATE / system.time_scale,
+            DELTA_START / rabi_eff,
+            DELTA_END / rabi_eff,
+            T_GATE / time_scale,
         ]
-        res_sweep_free = simulate(system, protocol_free, x_sweep, initial_state_m)
-        res_sweep_addr = simulate(system, protocol_addr, x_sweep, initial_state_m)
+        res_sweep_free = simulate(system_free, x_sweep, initial_state_m)
+        res_sweep_addr = simulate(system_addr, x_sweep, initial_state_m)
 
         pops_free = {k: model.observables.measure(f"pop_{k}", res_sweep_free.psi_final)
                      for k in RYDBERG_KEYS}
@@ -220,16 +225,16 @@ with tab_proto:
                      for k in RYDBERG_KEYS}
 
         # --- C. AC Stark feed-forward compensation ---
-        ac_stark_peak = system.rabi_420 ** 2 / (4 * abs(system.Delta))
-        t_gate_phys = x_sweep[2] * system.time_scale
+        ac_stark_peak = rabi_420 ** 2 / (4 * abs(Delta))
+        t_gate_phys = x_sweep[2] * time_scale
         t_eval_sweep = np.linspace(0, t_gate_phys, n_pts)
 
         protocol_raw = SweepProtocol(ac_stark_shift=0.0)
         protocol_comp = SweepProtocol(ac_stark_shift=ac_stark_peak)
 
-        result_raw = simulate(system, protocol_raw, x_sweep, initial_state_m,
+        result_raw = simulate(system.with_protocol(protocol_raw), x_sweep, initial_state_m,
                               t_eval=t_eval_sweep)
-        result_comp = simulate(system, protocol_comp, x_sweep, initial_state_m,
+        result_comp = simulate(system.with_protocol(protocol_comp), x_sweep, initial_state_m,
                                t_eval=t_eval_sweep)
 
         obs_names_stark = ["pop_A_r", "pop_B_r", "pop_r"]
@@ -255,7 +260,7 @@ with tab_proto:
             "pops_raw": pops_raw,
             "pops_comp": pops_comp,
             "ac_stark_peak_MHz": ac_stark_peak / (2 * pi) / 1e6,
-            "omega_eff_MHz": system.rabi_eff / (2 * pi) / 1e6,
+            "omega_eff_MHz": rabi_eff / (2 * pi) / 1e6,
             "shift_MHz": shift_Hz_p / 1e6,
             "scatter_Hz": scatter_Hz_p,
             "wavelength": proto_wl,

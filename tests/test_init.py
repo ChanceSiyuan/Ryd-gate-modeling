@@ -20,25 +20,13 @@ class TestPackageImports:
         assert callable(blackman_pulse_sqrt)
         assert callable(blackman_window)
 
-    def test_cz_gate_simulator_export(self):
-        """CZGateSimulator should be exported."""
-        from ryd_gate import CZGateSimulator
-
-        assert CZGateSimulator is not None
-
-    def test_monte_carlo_result_export(self):
-        """MonteCarloResult should be exported."""
-        from ryd_gate import MonteCarloResult
-
-        assert MonteCarloResult is not None
-
     def test_all_exports_match(self):
         """__all__ should list exactly the expected exports."""
         import ryd_gate
 
         expected = {
             # Systems
-            "RydbergSystem", "RydbergSystemModel",
+            "RydbergSystem",
             "LevelStructureSpec", "TransitionSpec",
             "InteractionSpec", "DEFAULT_C6", "level_structure",
             "compute_shift_scatter",
@@ -48,6 +36,7 @@ class TestPackageImports:
             # Simulation
             "simulate", "EvolutionResult", "SolverBackend",
             "HamiltonianIR", "HamiltonianTerm",
+            "ExactSparseCompiler", "compile_expm_ir",
             # Analysis
             "average_gate_infidelity", "error_budget", "AddressingEvaluator",
             # Pulse utilities
@@ -55,8 +44,6 @@ class TestPackageImports:
             # Advanced primitives
             "SystemModel", "BasisSpec", "BlockRegistry",
             "ObservableRegistry", "Observable",
-            # Legacy (deprecated)
-            "CZGateSimulator", "MonteCarloResult",
         }
         assert set(ryd_gate.__all__) == expected
 
@@ -87,8 +74,25 @@ class TestPackageImports:
         from ryd_gate import (
             SystemModel, BasisSpec, BlockRegistry, ObservableRegistry,
             HamiltonianIR, HamiltonianTerm, SolverBackend, EvolutionResult,
-            simulate, RydbergSystemModel,
+            ExactSparseCompiler, compile_expm_ir, simulate, RydbergSystem,
         )
         assert SystemModel is not None
-        assert RydbergSystemModel is not None
+        assert RydbergSystem is not None
+        assert simulate is not None
+        assert ExactSparseCompiler is not None
+        assert compile_expm_ir is not None
+
+    def test_new_package_namespaces(self):
+        """Model, IR, backend, and simulate namespaces should be importable."""
+        from ryd_gate.model import RydbergSystem, BasisSpec
+        from ryd_gate.ir import HamiltonianIR, HamiltonianTerm
+        from ryd_gate.backends import DenseODEBackend, SparseExpmBackend
+        from ryd_gate.simulate import simulate
+
+        assert RydbergSystem is not None
+        assert BasisSpec is not None
+        assert HamiltonianIR is not None
+        assert HamiltonianTerm is not None
+        assert DenseODEBackend is not None
+        assert SparseExpmBackend is not None
         assert simulate is not None

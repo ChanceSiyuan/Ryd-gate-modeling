@@ -1,8 +1,4 @@
-"""Dense ODE solver backend using scipy.integrate.solve_ivp (DOP853).
-
-Suitable for small systems (dim <= ~200).  Wraps the same logic as
-``evolve_ir()`` in ``schrodinger.py`` but returns an :class:`EvolutionResult`.
-"""
+"""Dense ODE state-vector backend using scipy.integrate.solve_ivp."""
 
 from __future__ import annotations
 
@@ -11,24 +7,14 @@ from typing import TYPE_CHECKING
 import numpy as np
 import scipy.integrate
 
-from ryd_gate.solvers.base import EvolutionResult, SolverBackend
+from ryd_gate.backends.base import EvolutionResult, SolverBackend
 
 if TYPE_CHECKING:
-    from ryd_gate.solvers.ir import HamiltonianIR
+    from ryd_gate.ir.matrix import HamiltonianIR
 
 
 class DenseODEBackend(SolverBackend):
-    """Dense ODE solver backend using scipy.integrate.solve_ivp (DOP853).
-
-    Suitable for small systems (dim <= ~200).
-
-    Parameters
-    ----------
-    rtol : float
-        Relative tolerance for the ODE solver.
-    atol : float
-        Absolute tolerance for the ODE solver.
-    """
+    """Dense ODE backend using scipy DOP853."""
 
     def __init__(self, rtol: float = 1e-8, atol: float = 1e-12) -> None:
         self.rtol = rtol
@@ -41,12 +27,7 @@ class DenseODEBackend(SolverBackend):
         t_gate: float,
         t_eval: np.ndarray | None = None,
     ) -> EvolutionResult:
-        """Evolve using DOP853 adaptive ODE integration.
-
-        Precomputes the static Hamiltonian once, then evaluates
-        time-dependent drive terms at each RHS call.
-        """
-        # Precompute static Hamiltonian (sum of all constant-coefficient terms)
+        """Evolve using adaptive ODE integration."""
         H_static = np.zeros((ir.dim, ir.dim), dtype=np.complex128)
         for term in ir.static_terms:
             coeff = term.coefficient(0) if callable(term.coefficient) else term.coefficient
@@ -61,20 +42,11 @@ class DenseODEBackend(SolverBackend):
                     H += np.conj(coeff) * np.asarray(term.operator).conj().T
             return -1j * H @ y
 
-        solve_kwargs = dict(
-            method="DOP853",
-            rtol=self.rtol,
-            atol=self.atol,
-        )
+        solve_kwargs = dict(method="DOP853", rtol=self.rtol, atol=self.atol)
         if t_eval is not None:
             solve_kwargs["t_eval"] = t_eval
 
-        result = scipy.integrate.solve_ivp(
-            rhs,
-            [0, t_gate],
-            psi0,
-            **solve_kwargs,
-        )
+        result = scipy.integrate.solve_ivp(rhs, [0, t_gate], psi0, **solve_kwargs)
 
         if t_eval is not None:
             return EvolutionResult(
@@ -83,7 +55,4 @@ class DenseODEBackend(SolverBackend):
                 states=result.y,
                 metadata=ir.metadata,
             )
-        return EvolutionResult(
-            psi_final=result.y[:, -1],
-            metadata=ir.metadata,
-        )
+        return EvolutionResult(psi_final=result.y[:, -1], metadata=ir.metadata)

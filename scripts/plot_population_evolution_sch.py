@@ -16,7 +16,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-from ryd_gate.legacy.atomic_system import create_our_system
+from ryd_gate import RydbergSystem
 from ryd_gate.protocols.gate_cz_to import TOProtocol
 from ryd_gate.analysis.gate_metrics import population_evolution, state_infidelity
 
@@ -51,7 +51,7 @@ def run_schrodinger():
     infidelities : ndarray, shape (12,)
         Infidelity 1 - F for each SSS initial state.
     """
-    system = create_our_system(blackmanflag=False)
+    system = RydbergSystem.from_preset("our", blackmanflag=False)
     protocol = TOProtocol()
 
     params = protocol.unpack_params(X_TO, system)

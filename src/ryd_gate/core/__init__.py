@@ -3,11 +3,12 @@
 Contents
 --------
 - ``rydberg_system`` — RydbergSystem (universal model: lattice + level
-  structure + protocol → blocks + observables + time-dependent Hamiltonian)
+  structure + protocol → symbolic blocks + observables)
 - ``system_model``   — SystemModel ABC consumed by solvers
 - ``basis``          — BasisSpec: site/level labels and Hilbert dimensions
-- ``blocks``         — BlockRegistry: named Hamiltonian operator blocks
-- ``observables``    — ObservableRegistry: named measurement operators
+- ``blocks``         — BlockRegistry: named matrix or symbolic Hamiltonian blocks
+- ``operator_spec``  — symbolic local/sum/pair operator descriptions
+- ``observables``    — ObservableRegistry: named measurement matrices or specs
 - ``operators``      — Low-level operator builders (Kronecker embed, projectors)
 - ``interactions``   — vdw_couplings for pairwise Rydberg interactions
 - ``states``         — Many-body state constructors (product, AF, domain)
@@ -18,14 +19,12 @@ from ryd_gate.core.rydberg_system import (
     InteractionSpec,
     LevelStructureSpec,
     RydbergSystem,
-    RydbergSystemModel,
     TransitionSpec,
     level_structure,
 )
 
 __all__ = [
     "RydbergSystem",
-    "RydbergSystemModel",
     "LevelStructureSpec",
     "TransitionSpec",
     "InteractionSpec",

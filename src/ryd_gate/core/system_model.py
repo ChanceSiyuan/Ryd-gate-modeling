@@ -14,10 +14,10 @@ class SystemModel(ABC):
 
     A SystemModel provides:
     - A basis specification with symbolic level labels
-    - A registry of Hamiltonian operator blocks
-    - A registry of observables for measurement
+    - A registry of Hamiltonian matrix blocks or symbolic block specs
+    - A registry of observables or symbolic observable specs
 
-    ``RydbergSystemModel`` is the canonical implementation.
+    ``RydbergSystem`` is the canonical implementation.
     """
 
     @property
@@ -29,13 +29,13 @@ class SystemModel(ABC):
     @property
     @abstractmethod
     def blocks(self) -> BlockRegistry:
-        """Registry of Hamiltonian operator blocks."""
+        """Registry of Hamiltonian matrix blocks or symbolic block specs."""
         ...
 
     @property
     @abstractmethod
     def observables(self) -> ObservableRegistry:
-        """Registry of measurement observables."""
+        """Registry of measurement observables or symbolic observable specs."""
         ...
 
     @property

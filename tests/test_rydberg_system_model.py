@@ -5,14 +5,16 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ryd_gate import RydbergSystem, RydbergSystemModel, SweepProtocol, simulate
-from ryd_gate.core.rydberg_system import InteractionSpec, level_structure
+from ryd_gate import RydbergSystem, SweepProtocol, simulate
+from ryd_gate.compilers.exact_sparse import ExactSparseCompiler
+from ryd_gate.model.operator_spec import RydbergPairInteractionSpec
+from ryd_gate.model.system import InteractionSpec, level_structure
 from ryd_gate.lattice import make_chain, make_square_lattice
 from ryd_gate.protocols.digital_analog import DigitalAnalogProtocol
 
 
 def test_1r_lattice_basis_blocks_and_observables():
-    model = RydbergSystemModel.from_lattice(make_square_lattice(2, 2), "1r")
+    model = RydbergSystem.from_lattice(make_square_lattice(2, 2), "1r")
 
     assert model.basis.local_levels == ("1", "r")
     assert model.basis.n_sites == 4
@@ -20,18 +22,19 @@ def test_1r_lattice_basis_blocks_and_observables():
     assert model.blocks.has("global_X")
     assert model.blocks.has("global_n")
     assert model.observables.get("n_r_0").per_site is True
+    assert isinstance(model.blocks.get("H_vdw"), RydbergPairInteractionSpec)
 
 
 def test_all_pair_vdw_is_default():
     geom = make_chain(4, spacing_um=4.0)
-    model = RydbergSystemModel.from_lattice(geom, "1r")
+    model = RydbergSystem.from_lattice(geom, "1r")
 
     assert len(model.meta("interaction_pairs")) == 6
 
 
 def test_nnn_interaction_mode_truncates_pairs():
     geom = make_square_lattice(3, 3, spacing_um=1.0)
-    model = RydbergSystemModel.from_lattice(
+    model = RydbergSystem.from_lattice(
         geom,
         "1r",
         interaction=InteractionSpec(C6=1.0, mode="nnn"),
@@ -42,12 +45,38 @@ def test_nnn_interaction_mode_truncates_pairs():
 
 def test_vdw_energy_on_double_rydberg_state():
     geom = make_chain(2, spacing_um=4.0)
-    model = RydbergSystemModel.from_lattice(geom, "1r")
+    model = RydbergSystem.from_lattice(geom, "1r")
     psi = model.product_state("rr")
     pair = model.meta("interaction_pairs")[0]
 
-    energy = np.real(np.vdot(psi, model.blocks.get("H_vdw") @ psi))
+    H_vdw = ExactSparseCompiler().materialize_block(model, "H_vdw")
+    energy = np.real(np.vdot(psi, H_vdw @ psi))
     assert np.isclose(energy, pair[2])
+
+
+def test_large_lattice_construction_does_not_materialize_exact_matrices():
+    geom = make_square_lattice(20, 20, spacing_um=1.0)
+    model = RydbergSystem.from_lattice(
+        geom,
+        "1r",
+        interaction=InteractionSpec(C6=1.0, mode="nn"),
+    )
+
+    assert model.N == 400
+    assert isinstance(model.blocks.get("H_vdw"), RydbergPairInteractionSpec)
+
+
+def test_exact_sparse_compiler_rejects_too_large_hilbert_space():
+    model = RydbergSystem.from_lattice(
+        make_chain(8),
+        "1r",
+        interaction=InteractionSpec(C6=0.0),
+        protocol=SweepProtocol(n_steps=2),
+    )
+    params = model.unpack_params([-1.0, 1.0, 0.1])
+
+    with pytest.raises(ValueError, match="Exact sparse compilation"):
+        ExactSparseCompiler(max_dim=16).compile(model, params)
 
 
 def test_sweep_simulation_with_unified_model():
@@ -75,11 +104,6 @@ def test_01r_digital_analog_simulation():
     assert np.isclose(np.linalg.norm(result.psi_final), 1.0)
 
 
-def test_rydberg_system_alias_back_compat():
-    """RydbergSystemModel remains importable as an alias for RydbergSystem."""
-    assert RydbergSystemModel is RydbergSystem
-
-
 def test_level_structure_presets():
     assert level_structure("1r").levels == ("1", "r")
     assert level_structure("01r").levels == ("0", "1", "r")
@@ -89,7 +113,7 @@ def test_level_structure_presets():
 
 @pytest.mark.slow
 def test_dense_rb87_preset_constructs_model():
-    model = RydbergSystemModel.from_preset("our")
+    model = RydbergSystem.from_preset("our")
 
     assert model.basis.local_dim == 7
     assert model.basis.local_levels == ("0", "1", "e1", "e2", "e3", "r", "r_garb")

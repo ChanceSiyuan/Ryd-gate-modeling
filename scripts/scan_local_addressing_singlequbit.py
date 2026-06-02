@@ -26,10 +26,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.constants import pi
 
-from ryd_gate.legacy.atomic_system import (
+from ryd_gate import RydbergSystem
+from ryd_gate.physics.ac_stark import (
     POWER_REF_UW,
     compute_shift_scatter,
-    create_analog_system,
 )
 from ryd_gate.protocols.sweep import SweepProtocol
 
@@ -46,27 +46,31 @@ def _run_optimize_scan(args):
     print("  Single-Qubit Local Addressing: Wavelength x Power Scan")
     print("=" * 60)
 
-    system = create_analog_system(
-        detuning_sign=1, blackmanflag=True,
-        n_atoms=1,
+    rabi_420_hz = 135e6
+    system = RydbergSystem.from_preset(
+        "analog_3",
+        detuning_sign=1, blackmanflag=True, n_atoms=1,
         Delta_Hz=2.4e9,
-        rabi_420_Hz=135e6,
+        rabi_420_Hz=rabi_420_hz,
         rabi_1013_Hz=135e6,
     )
+    rabi_eff = system.meta("rabi_eff")
+    time_scale = system.meta("time_scale")
+    Delta = system.meta("Delta")
     psi0 = np.array([1.0, 0.0, 0.0], dtype=complex)  # |g>
 
-    ac_stark_peak = system.rabi_420 ** 2 / (4 * abs(system.Delta))
+    ac_stark_peak = (2 * pi * rabi_420_hz) ** 2 / (4 * abs(Delta))
 
     t_gate = args.t_gate_us * 1e-6
     x_sweep = [
-        2 * pi * args.delta_start_mhz * 1e6 / system.rabi_eff,
-        2 * pi * args.delta_end_mhz * 1e6 / system.rabi_eff,
-        t_gate / system.time_scale,
+        2 * pi * args.delta_start_mhz * 1e6 / rabi_eff,
+        2 * pi * args.delta_end_mhz * 1e6 / rabi_eff,
+        t_gate / time_scale,
     ]
 
     eta = np.exp(-2 * (args.distance_um / args.waist_um) ** 2)
     print(f"  Gaussian tail: eta = exp(-2*(a/w)^2) = {eta:.4e}")
-    print(f"  Omega_eff/(2pi) = {system.rabi_eff/(2*pi)/1e6:.2f} MHz")
+    print(f"  Omega_eff/(2pi) = {rabi_eff/(2*pi)/1e6:.2f} MHz")
     print(f"  AC Stark peak = {ac_stark_peak/(2*pi)/1e6:.2f} MHz")
     print(f"  Sweep: [{args.delta_start_mhz}, {args.delta_end_mhz}] MHz, "
           f"T_gate = {args.t_gate_us} us")
@@ -79,12 +83,12 @@ def _run_optimize_scan(args):
     adiabatic_ratio = 4.0
     adiabatic_power_min = {}
     print(f"  Adiabatic condition: |delta_A| > {adiabatic_ratio:.0f} Omega_eff "
-          f"= {adiabatic_ratio * system.rabi_eff/(2*pi)/1e6:.1f} MHz")
+          f"= {adiabatic_ratio * rabi_eff/(2*pi)/1e6:.1f} MHz")
     print(f"  {'WL (nm)':>10} {'|shift|/P (MHz/uW)':>20} {'P_min_adiab (uW)':>18}")
     for wl in wls:
         shift_ref, _ = compute_shift_scatter(wl)
         shift_per_uw = abs(float(shift_ref)) / POWER_REF_UW
-        p_adiab = adiabatic_ratio * system.rabi_eff / (2 * pi) / shift_per_uw
+        p_adiab = adiabatic_ratio * rabi_eff / (2 * pi) / shift_per_uw
         adiabatic_power_min[wl] = p_adiab
         print(f"  {wl:10.2f} {shift_per_uw/1e6:20.4f} {p_adiab:18.1f}")
 
@@ -133,7 +137,7 @@ def _run_optimize_scan(args):
             proto_A = SweepProtocol(
                 addressing={0: delta_A}, ac_stark_shift=ac_stark_peak,
             )
-            res_A = simulate(system, proto_A, x_sweep, psi0)
+            res_A = simulate(system.with_protocol(proto_A), x_sweep, psi0)
             psi_A = res_A.psi_final
             P_g_A = np.abs(psi_A[0])**2
             P_e_A = np.abs(psi_A[1])**2
@@ -143,7 +147,7 @@ def _run_optimize_scan(args):
             proto_B = SweepProtocol(
                 addressing={0: delta_B}, ac_stark_shift=ac_stark_peak,
             )
-            res_B = simulate(system, proto_B, x_sweep, psi0)
+            res_B = simulate(system.with_protocol(proto_B), x_sweep, psi0)
             psi_B = res_B.psi_final
             P_g_B = np.abs(psi_B[0])**2
             P_e_B = np.abs(psi_B[1])**2
@@ -162,7 +166,7 @@ def _run_optimize_scan(args):
                 P_g_A, P_e_A, P_r_A,
                 P_g_B, P_e_B, P_r_B,
                 not_pinned, leakage, crosstalk, scatter_pen, total_cost,
-                abs(delta_A) / system.rabi_eff,
+                abs(delta_A) / rabi_eff,
             )
             idx += 1
 
@@ -218,8 +222,8 @@ def _compute_lz_params(meta):
     """Compute single-crossing Landau-Zener parameters."""
     system = meta["system"]
     x_sweep = meta["x_sweep"]
-    Omega_eff = system.rabi_eff
-    t_gate_s = float(x_sweep[2]) * system.time_scale
+    Omega_eff = system.meta("rabi_eff")
+    t_gate_s = float(x_sweep[2]) * system.meta("time_scale")
     delta_start_rad = float(x_sweep[0]) * Omega_eff
     delta_end_rad = float(x_sweep[1]) * Omega_eff
     alpha = abs(delta_end_rad - delta_start_rad) / t_gate_s
@@ -585,17 +589,22 @@ def cmd_optimize_plot(args):
     args.n_wl = len(wls)
     args.n_power = len(powers)
 
-    system = create_analog_system(
+    rabi_420_hz = 135e6
+    system = RydbergSystem.from_preset(
+        "analog_3",
         detuning_sign=1, blackmanflag=True, n_atoms=1,
-        Delta_Hz=2.4e9, rabi_420_Hz=135e6, rabi_1013_Hz=135e6,
+        Delta_Hz=2.4e9, rabi_420_Hz=rabi_420_hz, rabi_1013_Hz=135e6,
     )
+    rabi_eff = system.meta("rabi_eff")
+    time_scale = system.meta("time_scale")
+    Delta = system.meta("Delta")
     eta = np.exp(-2 * (args.distance_um / args.waist_um) ** 2)
-    ac_stark_peak = system.rabi_420 ** 2 / (4 * abs(system.Delta))
+    ac_stark_peak = (2 * pi * rabi_420_hz) ** 2 / (4 * abs(Delta))
     t_gate = args.t_gate_us * 1e-6
     x_sweep = [
-        2 * pi * args.delta_start_mhz * 1e6 / system.rabi_eff,
-        2 * pi * args.delta_end_mhz * 1e6 / system.rabi_eff,
-        t_gate / system.time_scale,
+        2 * pi * args.delta_start_mhz * 1e6 / rabi_eff,
+        2 * pi * args.delta_end_mhz * 1e6 / rabi_eff,
+        t_gate / time_scale,
     ]
 
     adiabatic_ratio = 4.0
@@ -603,7 +612,7 @@ def cmd_optimize_plot(args):
     for wl in wls:
         shift_ref, _ = compute_shift_scatter(wl)
         shift_per_uw = abs(float(shift_ref)) / POWER_REF_UW
-        adiabatic_power_min[wl] = adiabatic_ratio * system.rabi_eff / (2 * pi) / shift_per_uw
+        adiabatic_power_min[wl] = adiabatic_ratio * rabi_eff / (2 * pi) / shift_per_uw
 
     best_idx = np.argmin(grid["total_cost"])
     best = grid[best_idx]

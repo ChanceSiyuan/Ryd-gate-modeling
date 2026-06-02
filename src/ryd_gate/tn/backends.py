@@ -6,11 +6,32 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ryd_gate.solvers.base import EvolutionResult
+from ryd_gate.backends.base import EvolutionResult
 
 if TYPE_CHECKING:
     from ryd_gate.protocols.sweep import SweepProtocol
     from .lattice_spec import TNLatticeSpec
+
+
+class _TNProtocolContext:
+    def __init__(self, spec: TNLatticeSpec) -> None:
+        self._spec = spec
+
+    def meta(self, name: str, default=None):
+        if name == "Omega":
+            return self._spec.Omega
+        return default
+
+
+def _pin_deltas_from_params(params: dict, n_sites: int) -> np.ndarray | None:
+    pin_map = params.get("pin_deltas") or {}
+    if not pin_map:
+        return None
+    pin = np.zeros(n_sites)
+    for idx, value in pin_map.items():
+        if idx < n_sites:
+            pin[idx] = value
+    return pin
 
 
 def _require_tenpy():
@@ -185,7 +206,7 @@ class TenpyTDVPBackend:
         if observables is None and t_eval is not None:
             observables = ["m_s", "n_mean"]
 
-        params = protocol.unpack_params(x, type("_Sys", (), {"Omega": spec.Omega})())
+        params = protocol.unpack_params(x, _TNProtocolContext(spec))
         t_gate = params["t_gate"]
         n_steps = int(np.ceil(t_gate / self.dt))
         dt_actual = t_gate / n_steps
@@ -216,7 +237,7 @@ class TenpyTDVPBackend:
             Omega_t = float(np.real(coeffs.get("global_X", spec.Omega / 2))) * 2
             Delta_t = -float(np.real(coeffs.get("global_n", 0)))
 
-            pin_deltas = protocol.get_pin_deltas(spec.N) if hasattr(protocol, "get_pin_deltas") else None
+            pin_deltas = _pin_deltas_from_params(params, spec.N)
 
             model = build_tenpy_model(spec, Delta_t, Omega=Omega_t,
                                       pin_deltas=pin_deltas)

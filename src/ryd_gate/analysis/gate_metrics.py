@@ -11,19 +11,70 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy import integrate, interpolate
 
-from ryd_gate.core.operators import build_occ_operator, build_sss_state_map
-from ryd_gate.legacy._solve_gate import solve_gate
+from ryd_gate.model.operators import build_occ_operator, build_sss_state_map
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from ryd_gate.legacy.atomic_system import AtomicSystem
     from ryd_gate.protocols.base import Protocol
 
 
+def _is_rydberg_system(system) -> bool:
+    from ryd_gate.model.system import RydbergSystem
+
+    return isinstance(system, RydbergSystem)
+
+
+def _system_value(system, name: str, default=None):
+    if hasattr(system, "meta"):
+        return system.meta(name, default)
+    return getattr(system, name, default)
+
+
+def _solve_state(
+    system,
+    protocol: "Protocol",
+    x: list[float],
+    state: np.ndarray,
+    *,
+    t_eval: "NDArray[np.floating] | None" = None,
+    ham_const_override: "NDArray[np.complexfloating] | None" = None,
+    amplitude_scale: float = 1.0,
+) -> "NDArray[np.complexfloating]":
+    if _is_rydberg_system(system):
+        if ham_const_override is not None:
+            raise NotImplementedError(
+                "ham_const_override is only supported by the historical AtomicSystem path. "
+                "Use MonteCarloRunner to add perturbation terms to compiled IR."
+            )
+        from ryd_gate import simulate
+
+        bound = system.with_protocol(protocol).with_amplitude_scale(amplitude_scale)
+        result = simulate(bound, x, state, t_eval=t_eval)
+        return result.states if t_eval is not None else result.psi_final
+
+    from ryd_gate.legacy._solve_gate import solve_gate
+
+    return solve_gate(
+        system,
+        protocol,
+        x,
+        state,
+        t_eval=t_eval,
+        ham_const_override=ham_const_override,
+        amplitude_scale=amplitude_scale,
+    )
+
+
+def _observable_population(system, name: str, psi: np.ndarray, fallback_op) -> float:
+    if _is_rydberg_system(system) and system.observables.has(name):
+        return system.observables.measure(name, psi)
+    return float(np.real(np.vdot(psi, fallback_op @ psi)))
+
+
 def average_gate_infidelity(
-    system: AtomicSystem,
-    protocol: Protocol,
+    system,
+    protocol: "Protocol",
     x: list[float],
     return_residuals: bool = False,
     ham_const_override: "NDArray[np.complexfloating] | None" = None,
@@ -36,7 +87,7 @@ def average_gate_infidelity(
 
     Parameters
     ----------
-    system : AtomicSystem
+    system
         Atomic system.
     protocol : Protocol
         Pulse protocol.
@@ -73,7 +124,7 @@ def average_gate_infidelity(
     ini_state_00 = np.kron(
         [1 + 0j, 0, 0, 0, 0, 0, 0], [1 + 0j, 0, 0, 0, 0, 0, 0]
     )
-    res = solve_gate(system, protocol, x, ini_state_00, **solve_kw)
+    res = _solve_state(system, protocol, x, ini_state_00, **solve_kw)
     a00 = ini_state_00.conj().dot(res.T)
 
     if return_residuals:
@@ -84,7 +135,7 @@ def average_gate_infidelity(
     ini_state = np.kron(
         [1 + 0j, 0, 0, 0, 0, 0, 0], [0, 1 + 0j, 0, 0, 0, 0, 0]
     )
-    res = solve_gate(system, protocol, x, ini_state, **solve_kw)
+    res = _solve_state(system, protocol, x, ini_state, **solve_kw)
     a01 = np.exp(-1.0j * theta) * ini_state.conj().dot(res.T)
 
     if return_residuals:
@@ -95,7 +146,7 @@ def average_gate_infidelity(
     ini_state = np.kron(
         [0, 1 + 0j, 0, 0, 0, 0, 0], [0, 1 + 0j, 0, 0, 0, 0, 0]
     )
-    res = solve_gate(system, protocol, x, ini_state, **solve_kw)
+    res = _solve_state(system, protocol, x, ini_state, **solve_kw)
     a11 = np.exp(-2.0j * theta - 1.0j * np.pi) * ini_state.conj().dot(res.T)
 
     if return_residuals:
@@ -119,8 +170,8 @@ def average_gate_infidelity(
 
 
 def sss_infidelity(
-    system: AtomicSystem,
-    protocol: Protocol,
+    system,
+    protocol: "Protocol",
     x: list[float],
 ) -> float:
     """Average state infidelity over 12 SSS states."""
@@ -131,8 +182,8 @@ def sss_infidelity(
 
 
 def bell_infidelity(
-    system: AtomicSystem,
-    protocol: Protocol,
+    system,
+    protocol: "Protocol",
     x: list[float],
 ) -> float:
     """Average state infidelity over 4 Bell states."""
@@ -150,8 +201,8 @@ def bell_infidelity(
 
 
 def state_infidelity(
-    system: AtomicSystem,
-    protocol: Protocol,
+    system,
+    protocol: "Protocol",
     x: list[float],
     initial_state,
 ) -> float:
@@ -180,7 +231,7 @@ def state_infidelity(
     state_10 = np.kron(s1, s0)
     state_11 = np.kron(s1, s1)
 
-    res = solve_gate(system, protocol, x, ini_state)
+    res = _solve_state(system, protocol, x, ini_state)
 
     c00 = np.vdot(state_00, ini_state)
     c01 = np.vdot(state_01, ini_state)
@@ -199,8 +250,8 @@ def state_infidelity(
 
 
 def population_evolution(
-    system: AtomicSystem,
-    protocol: Protocol,
+    system,
+    protocol: "Protocol",
     x: list[float],
     initial_state: str,
 ) -> "dict[str, NDArray[np.floating]]":
@@ -220,23 +271,20 @@ def population_evolution(
     t_gate = params["t_gate"]
     t_eval = np.linspace(0, t_gate, 1000)
 
-    res_list = solve_gate(system, protocol, x, ini_state, t_eval=t_eval)
+    res_list = _solve_state(system, protocol, x, ini_state, t_eval=t_eval)
 
-    occ_ops = {
-        "e1": build_occ_operator(2),
-        "e2": build_occ_operator(3),
-        "e3": build_occ_operator(4),
-        "ryd": build_occ_operator(5),
-        "ryd_garb": build_occ_operator(6),
+    occ_specs = {
+        "e1": ("pop_e1", build_occ_operator(2)),
+        "e2": ("pop_e2", build_occ_operator(3)),
+        "e3": ("pop_e3", build_occ_operator(4)),
+        "ryd": ("pop_r", build_occ_operator(5)),
+        "ryd_garb": ("pop_r_garb", build_occ_operator(6)),
     }
 
     result = {"t_list": t_eval}
-    for key, op in occ_ops.items():
+    for key, (obs_name, op) in occ_specs.items():
         pop = np.array([
-            np.abs(np.dot(
-                np.conjugate(res_list[:, col]),
-                op @ res_list[:, col],
-            ))
+            _observable_population(system, obs_name, res_list[:, col], op)
             for col in range(res_list.shape[1])
         ])
         result[key] = pop
@@ -245,7 +293,7 @@ def population_evolution(
 
 
 def residuals_to_branching(
-    system: AtomicSystem,
+    system,
     residuals: dict[str, float],
 ) -> dict[str, float]:
     """Convert per-level residual populations to XYZ/AL/LG error components."""
@@ -257,7 +305,7 @@ def residuals_to_branching(
 
     for F, key in [(1, "e1"), (2, "e2"), (3, "e3")]:
         mid_res = residuals[key]
-        mbr = system.mid_branch[F]
+        mbr = _system_value(system, "mid_branch")[F]
         xyz += mid_res * (mbr["to_0"] + mbr["to_1"])
         lg += mid_res * (mbr["to_L0"] + mbr["to_L1"])
 
@@ -265,8 +313,8 @@ def residuals_to_branching(
 
 
 def error_budget(
-    system: AtomicSystem,
-    protocol: Protocol,
+    system,
+    protocol: "Protocol",
     x: list[float],
     initial_states: list[str] | None = None,
 ) -> dict:
@@ -288,11 +336,11 @@ def error_budget(
         ryd_occ = pops["ryd"]
         ryd_garb_occ = pops["ryd_garb"]
 
-        rd_decay = decay_integrate(t_list, ryd_occ, system.ryd_RD_rate)[0, -1]
-        bbr_decay = decay_integrate(t_list, ryd_occ, system.ryd_BBR_rate)[0, -1]
+        rd_decay = decay_integrate(t_list, ryd_occ, _system_value(system, "ryd_RD_rate"))[0, -1]
+        bbr_decay = decay_integrate(t_list, ryd_occ, _system_value(system, "ryd_BBR_rate"))[0, -1]
         ryd_residual = ryd_occ[-1]
 
-        br = system.ryd_branch
+        br = _system_value(system, "ryd_branch")
         xyz_frac = br["to_0"] + br["to_1"]
         lg_frac = br["to_L0"] + br["to_L1"]
 
@@ -301,8 +349,8 @@ def error_budget(
         budget_accum["rydberg_decay"]["AL"] += bbr_decay + ryd_residual
 
         # --- Polarization leakage ---
-        garb_rd_decay = decay_integrate(t_list, ryd_garb_occ, system.ryd_RD_rate)[0, -1]
-        garb_bbr_decay = decay_integrate(t_list, ryd_garb_occ, system.ryd_BBR_rate)[0, -1]
+        garb_rd_decay = decay_integrate(t_list, ryd_garb_occ, _system_value(system, "ryd_RD_rate"))[0, -1]
+        garb_bbr_decay = decay_integrate(t_list, ryd_garb_occ, _system_value(system, "ryd_BBR_rate"))[0, -1]
         garb_residual = ryd_garb_occ[-1]
 
         budget_accum["polarization_leakage"]["XYZ"] += garb_rd_decay * xyz_frac
@@ -315,11 +363,11 @@ def error_budget(
         for F, level_key in [(1, "e1"), (2, "e2"), (3, "e3")]:
             mid_occ = pops[level_key]
             mid_decay_total = decay_integrate(
-                t_list, mid_occ, system.mid_state_decay_rate,
+                t_list, mid_occ, _system_value(system, "mid_state_decay_rate"),
             )[0, -1]
             mid_residual = mid_occ[-1]
 
-            mbr = system.mid_branch[F]
+            mbr = _system_value(system, "mid_branch")[F]
             m_xyz_frac = mbr["to_0"] + mbr["to_1"]
             m_lg_frac = mbr["to_L0"] + mbr["to_L1"]
 

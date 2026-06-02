@@ -62,17 +62,23 @@ class TestDMRG:
     @pytest.mark.slow
     def test_2x2_energy_vs_exact(self, spec_2x2):
         """DMRG energy matches exact diagonalization for 2x2."""
-        from ryd_gate import create_lattice_system
-        from ryd_gate.solvers.sparse_lattice import SparseLatticeCompiler
+        from ryd_gate import RydbergSystem
+        from ryd_gate.compilers import compile_expm_ir
+        from ryd_gate.lattice import make_square_lattice
+        from ryd_gate.model.system import InteractionSpec
         from ryd_gate.protocols.sweep import SweepProtocol
 
         Delta = 2.0
-        system = create_lattice_system(Lx=2, Ly=2, V_nn=24.0, Omega=1.0)
-        # Use omega_ramp_frac=0 so Omega is constant
         proto = SweepProtocol(omega_ramp_frac=0.0)
-        params = proto.unpack_params([Delta, Delta, 1.0], system)
-        compiler = SparseLatticeCompiler()
-        ir = compiler.compile(system, proto, params)
+        system = RydbergSystem.from_lattice(
+            make_square_lattice(2, 2, spacing_um=1.0),
+            "1r",
+            interaction=InteractionSpec(C6=24.0, mode="nn"),
+            protocol=proto,
+            Omega=1.0,
+        )
+        params = system.unpack_params([Delta, Delta, 1.0])
+        ir = compile_expm_ir(system, params)
 
         # Build full Hamiltonian at t=0.5 (midpoint, Omega fully on)
         t_mid = 0.5

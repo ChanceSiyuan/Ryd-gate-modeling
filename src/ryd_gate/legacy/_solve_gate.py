@@ -18,7 +18,7 @@ from ryd_gate.pulse import blackman_pulse
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from ryd_gate.solvers.ir import HamiltonianIR
+    from ryd_gate.ir.matrix import HamiltonianIR
     from ryd_gate.legacy.atomic_system import AtomicSystem
     from ryd_gate.protocols.base import Protocol
 

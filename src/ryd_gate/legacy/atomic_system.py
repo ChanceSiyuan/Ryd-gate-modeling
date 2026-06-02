@@ -12,20 +12,6 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 from arc import Rubidium87
 
-# Re-exports for backward compatibility -- these symbols moved to new modules
-from ryd_gate.physics.ac_stark import (
-    FREQ_D2, FREQ_D1, LAMBDA_D2, LAMBDA_D1, GAMMA_D2, GAMMA_D1,
-    LAMBDA_PAPER, CALIBRATION_SHIFT_HZ, CALIBRATION_SCATTER_HZ, POWER_REF_UW,
-    compute_shift_scatter,
-)
-from ryd_gate.protocols.registry import (
-    PROTOCOL_REGISTRY, compatible_protocols, check_protocol_compatibility,
-)
-from ryd_gate.core.operators import (
-    build_occ_operator, build_product_state_map, build_sss_state_map,
-    build_vdw_unit_operator,
-    build_atom_a_projector, build_atom_b_projector, get_nominal_distance,
-)
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -95,6 +81,10 @@ class AtomicSystem:
     n_levels: int = 7
     rydberg_indices: tuple[int, ...] = (5, 6)
     n_atoms: int = 2
+
+    def meta(self, name: str, default=None):
+        """Return a named physical parameter for protocol code."""
+        return getattr(self, name, default)
 
 
 # ======================================================================
