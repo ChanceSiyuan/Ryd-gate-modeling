@@ -3,17 +3,17 @@
 import numpy as np
 import pytest
 
-tenpy = pytest.importorskip("tenpy")
-
+from ryd_gate.tn.backends import TenpyDMRGBackend
 from ryd_gate.tn.lattice_spec import create_tn_lattice_spec
 from ryd_gate.tn.model import build_tenpy_model
-from ryd_gate.tn.state import product_state_mps
-from ryd_gate.tn.backends import TenpyDMRGBackend
 from ryd_gate.tn.observables import (
+    measure_mean_rydberg,
     measure_site_occupations,
     measure_staggered_magnetization,
-    measure_mean_rydberg,
 )
+from ryd_gate.tn.state import mps_fidelity, product_state_mps, product_superposition_mps
+
+pytest.importorskip("tenpy")
 
 
 @pytest.fixture
@@ -57,6 +57,16 @@ class TestProductStateMPS:
         expected = (spec_2x2.sublattice < 0).astype(float)
         np.testing.assert_allclose(occ, expected, atol=1e-12)
 
+    def test_three_level_complex_superposition_preserves_phase(self):
+        spec = create_tn_lattice_spec(Lx=2, Ly=2, level_structure="01r")
+        psi = product_superposition_mps(
+            spec,
+            zero_amp=-1j / np.sqrt(2),
+            ground_amp=1 / np.sqrt(2),
+            rydberg_amp=0.0,
+        )
+        np.testing.assert_allclose(mps_fidelity(psi, psi), 1.0, atol=1e-12)
+
 
 class TestDMRG:
     @pytest.mark.slow
@@ -73,7 +83,7 @@ class TestDMRG:
         system = RydbergSystem.from_lattice(
             make_square_lattice(2, 2, spacing_um=1.0),
             "1r",
-            interaction=InteractionSpec(C6=24.0, mode="nn"),
+            interaction=InteractionSpec(C6=24.0, mode="nnn"),
             protocol=proto,
             Omega=1.0,
         )
@@ -90,6 +100,8 @@ class TestDMRG:
         for term in ir.drive_terms:
             c = term.coefficient(t_mid) if callable(term.coefficient) else term.coefficient
             H_full = H_full + c * term.operator
+            if term.add_hermitian_conjugate:
+                H_full = H_full + np.conjugate(c) * term.operator.conj().T
 
         from scipy.sparse.linalg import eigsh
         E_exact = eigsh(H_full.tocsc(), k=1, which='SA', return_eigenvectors=False)[0]

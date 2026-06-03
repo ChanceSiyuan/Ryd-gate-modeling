@@ -6,6 +6,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ryd_gate.core.rydberg_system import LevelStructureSpec
+
+from .sites import resolve_level_structure
+
 
 def snake_order_mapping(Lx: int, Ly: int) -> tuple[np.ndarray, np.ndarray]:
     """Compute snake-order mapping for 2D-to-1D MPS ordering.
@@ -67,6 +71,13 @@ class TNLatticeSpec:
         ``inv_snake[i_2d] = i_1d``.
     bc : str
         Boundary conditions: ``"open"`` or ``"periodic"``.
+    level_spec : LevelStructureSpec
+        Shared central local level structure used by the exact sparse path
+        and lowered here to TeNPy site/MPO data.
+    interaction_mode : str
+        Interaction graph mode: ``"nn"`` for nearest-neighbor only or
+        ``"nnn"`` for nearest and next-nearest neighbors, or ``"system"``
+        when the pair list is lowered directly from a RydbergSystem.
     """
 
     Lx: int
@@ -77,9 +88,16 @@ class TNLatticeSpec:
     vdw_pairs: tuple
     V_nn: float
     Omega: float
+    level_spec: LevelStructureSpec
     snake_to_2d: np.ndarray
     inv_snake: np.ndarray
     bc: str = "open"
+    interaction_mode: str = "nnn"
+
+    @property
+    def level_structure(self) -> str:
+        """Name of the shared central local level structure."""
+        return self.level_spec.name
 
 
 def create_tn_lattice_spec(
@@ -88,6 +106,8 @@ def create_tn_lattice_spec(
     V_nn: float = 24.0,
     Omega: float = 1.0,
     bc: str = "open",
+    level_structure: str | LevelStructureSpec = "1r",
+    interaction_mode: str = "nnn",
 ) -> TNLatticeSpec:
     """Build a TN-friendly lattice spec reusing geometry conventions.
 
@@ -100,8 +120,14 @@ def create_tn_lattice_spec(
     """
     from ryd_gate.lattice.geometry import make_square_lattice, nn_nnn_relative_pairs
 
+    level_spec = resolve_level_structure(level_structure)
+    if interaction_mode not in {"nn", "nnn"}:
+        raise ValueError("TN lattice interaction_mode must be 'nn' or 'nnn'.")
+
     geom = make_square_lattice(Lx, Ly, spacing_um=1.0)
     vdw_pairs = nn_nnn_relative_pairs(Lx, Ly)
+    if interaction_mode == "nn":
+        vdw_pairs = tuple(pair for pair in vdw_pairs if np.isclose(pair[2], 1.0))
     snake_to_2d, inv_snake = snake_order_mapping(Lx, Ly)
 
     return TNLatticeSpec(
@@ -111,7 +137,9 @@ def create_tn_lattice_spec(
         vdw_pairs=vdw_pairs,
         V_nn=V_nn,
         Omega=Omega,
+        level_spec=level_spec,
         snake_to_2d=snake_to_2d,
         inv_snake=inv_snake,
         bc=bc,
+        interaction_mode=interaction_mode,
     )

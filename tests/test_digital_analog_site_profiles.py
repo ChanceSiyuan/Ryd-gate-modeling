@@ -7,14 +7,21 @@ import pytest
 
 from ryd_gate import RydbergSystem, simulate
 from ryd_gate.compilers.exact_sparse import compile_expm_ir
-from ryd_gate.model.system import InteractionSpec
 from ryd_gate.lattice import make_chain
+from ryd_gate.model.system import InteractionSpec, LevelStructureSpec, TransitionSpec
 from ryd_gate.protocols.digital_analog import (
     DigitalAnalogProtocol,
     Segment,
     as_site_profile,
     is_scalar_profile,
 )
+from ryd_gate.protocols.sweep import SweepProtocol
+from ryd_gate.tn.backends import (
+    _three_level_profiles_from_coeffs,
+    _TNProtocolContext,
+    _two_level_drive_and_detuning_from_coeffs,
+)
+from ryd_gate.tn.lattice_spec import create_tn_lattice_spec
 
 
 def test_is_scalar_profile():
@@ -32,6 +39,103 @@ def test_as_site_profile_broadcast():
 def test_as_site_profile_wrong_length_raises():
     with pytest.raises(ValueError, match="length-2"):
         as_site_profile([1.0, 2.0, 3.0], 2)
+
+
+def test_unpack_params_accepts_tn_context():
+    proto = DigitalAnalogProtocol.constant(omega_R=1.0, t_gate=0.1)
+    spec = create_tn_lattice_spec(2, 2)
+
+    params = proto.unpack_params([], _TNProtocolContext(spec))
+
+    assert params == {"t_gate": 0.1, "n_sites": 4}
+
+
+def test_tn_channel_mapping_for_sweep_protocol_on_1r_spec():
+    spec = create_tn_lattice_spec(2, 2)
+    proto = SweepProtocol(omega_ramp_frac=0.0)
+    params = proto.unpack_params([3.0, 3.0, 0.1], _TNProtocolContext(spec))
+    coeffs = proto.get_drive_coefficients(0.05, params)
+
+    Omega, Delta, pin = _two_level_drive_and_detuning_from_coeffs(coeffs, spec)
+
+    assert np.isclose(Omega, spec.Omega)
+    assert np.isclose(Delta, 3.0)
+    assert pin is None
+
+
+def test_digital_analog_channels_rejected_on_1r_tn_spec():
+    spec = create_tn_lattice_spec(1, 2)
+    proto = DigitalAnalogProtocol([
+        Segment(duration=0.1, omega_R=1.0),
+    ])
+    params = proto.unpack_params([], _TNProtocolContext(spec))
+    coeffs = proto.get_drive_coefficients(0.05, params)
+
+    with pytest.raises(ValueError, match="not declared"):
+        _two_level_drive_and_detuning_from_coeffs(coeffs, spec)
+
+
+def test_tn_channel_mapping_rejects_hyperfine_drive():
+    spec = create_tn_lattice_spec(1, 2, level_structure="01r")
+    proto = DigitalAnalogProtocol([
+        Segment(duration=0.1, omega_R=1.0, omega_hf=1.0),
+    ])
+    params = proto.unpack_params([], _TNProtocolContext(spec))
+    coeffs = proto.get_drive_coefficients(0.05, params)
+
+    with pytest.raises(ValueError, match="omega_hf"):
+        _two_level_drive_and_detuning_from_coeffs(coeffs, spec)
+
+
+def test_three_level_tn_profiles_for_digital_analog_segment():
+    spec = create_tn_lattice_spec(1, 2, level_structure="01r")
+    proto = DigitalAnalogProtocol([
+        Segment(
+            duration=0.1,
+            omega_R=[2.0, 4.0],
+            omega_hf=[6.0, 8.0],
+            delta_R=[1.0, 2.0],
+            delta_hf=[0.25, 0.5],
+        ),
+    ])
+    params = proto.unpack_params([], _TNProtocolContext(spec))
+    coeffs = proto.get_drive_coefficients(0.05, params)
+
+    profiles = _three_level_profiles_from_coeffs(coeffs, spec)
+
+    np.testing.assert_allclose(profiles["omega_R"], [2.0, 4.0])
+    np.testing.assert_allclose(profiles["omega_hf"], [6.0, 8.0])
+    np.testing.assert_allclose(profiles["delta_R"], [1.0, 2.0])
+    np.testing.assert_allclose(profiles["delta_hf"], [0.25, 0.5])
+
+
+def test_three_level_tn_profiles_follow_shared_level_spec_channels():
+    custom_level_spec = LevelStructureSpec(
+        name="01r",
+        levels=("0", "1", "r"),
+        rydberg_levels=("r",),
+        transitions=(
+            TransitionSpec("R_custom", "1", "r", "rydberg_drive"),
+            TransitionSpec("hf_custom", "0", "1", "hyperfine_drive"),
+        ),
+        detuning_levels={"rydberg_detuning": "r", "hyperfine_detuning": "1"},
+    )
+    spec = create_tn_lattice_spec(1, 2, level_structure=custom_level_spec)
+
+    profiles = _three_level_profiles_from_coeffs(
+        {
+            "rydberg_drive": 1.0,
+            "hyperfine_drive": 2.0,
+            "rydberg_detuning": -3.0,
+            "hyperfine_detuning": -4.0,
+        },
+        spec,
+    )
+
+    np.testing.assert_allclose(profiles["omega_R"], [2.0, 2.0])
+    np.testing.assert_allclose(profiles["omega_hf"], [4.0, 4.0])
+    np.testing.assert_allclose(profiles["delta_R"], [3.0, 3.0])
+    np.testing.assert_allclose(profiles["delta_hf"], [4.0, 4.0])
 
 
 def test_drive_channels_scalar_uses_global():

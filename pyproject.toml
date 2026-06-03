@@ -36,6 +36,10 @@ app = [
 tn = [
     "physics-tenpy>=1.0",
 ]
+gputn-cu12 = [
+    "cupy-cuda12x>=13.0",
+    "cuquantum-python-cu12>=25.3",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
