@@ -158,9 +158,20 @@ class DigitalAnalogProtocol(Protocol):
             )
 
     def unpack_params(self, x, system) -> dict:
+        basis = getattr(system, "basis", None)
+        n_sites = getattr(basis, "n_sites", None)
+        if n_sites is None:
+            n_sites = getattr(system, "N", None)
+        if n_sites is None and hasattr(system, "meta"):
+            n_sites = system.meta("n_sites", None)
+        if n_sites is None:
+            raise TypeError(
+                "DigitalAnalogProtocol.unpack_params() needs a system-like "
+                "object with basis.n_sites, N, or meta('n_sites')."
+            )
         return {
             "t_gate": self._t_gate,
-            "n_sites": system.basis.n_sites,
+            "n_sites": int(n_sites),
         }
 
     @property

@@ -14,9 +14,7 @@ def measure_site_occupations(
     psi: object,
     spec: TNLatticeSpec,
 ) -> np.ndarray:
-    """Measure <n_i> for each site, returned in 2D site order.
-
-    n_i = 0.5 + Sz_i  (since TeNPy Sz = +/- 0.5).
+    """Measure Rydberg occupation ``<n_r_i>`` in 2D site order.
 
     Parameters
     ----------
@@ -29,9 +27,36 @@ def measure_site_occupations(
     occ : ndarray, shape (N,)
         Per-site Rydberg occupation in 2D site order.
     """
-    sz_vals = psi.expectation_value("Sz")
-    occ_snake = 0.5 + np.array(sz_vals)
+    if spec.level_structure == "01r":
+        occ_snake = np.array(psi.expectation_value("n_r"))
+    else:
+        sz_vals = psi.expectation_value("Sz")
+        occ_snake = 0.5 + np.array(sz_vals)
     # Reorder from snake to 2D
+    occ_2d = np.empty(spec.N)
+    occ_2d[spec.snake_to_2d] = occ_snake
+    return occ_2d
+
+
+def measure_level_occupations(
+    psi: object,
+    spec: TNLatticeSpec,
+    level: str,
+) -> np.ndarray:
+    """Measure ``<n_level_i>`` in 2D site order."""
+    if level == "r":
+        return measure_site_occupations(psi, spec)
+
+    if spec.level_structure == "1r":
+        if level == "1":
+            return 1.0 - measure_site_occupations(psi, spec)
+        if level == "0":
+            return np.zeros(spec.N)
+        raise ValueError(f"Unknown level for 1r TN lattice: {level!r}")
+
+    if level not in {"0", "1"}:
+        raise ValueError(f"Unknown level for 01r TN lattice: {level!r}")
+    occ_snake = np.array(psi.expectation_value(f"n_{level}"))
     occ_2d = np.empty(spec.N)
     occ_2d[spec.snake_to_2d] = occ_snake
     return occ_2d
@@ -100,13 +125,16 @@ def measure_correlation(
         i_1d, j_1d = j_1d, i_1d
 
     # n_i = 0.5 + Sz_i  =>  n_i n_j = (0.5+Szi)(0.5+Szj)
-    sz_i = float(psi.expectation_value("Sz")[i_1d])
-    sz_j = float(psi.expectation_value("Sz")[j_1d])
-    n_i = 0.5 + sz_i
-    n_j = 0.5 + sz_j
-
-    szsz = psi.expectation_value_term(
-        [("Sz", i_1d), ("Sz", j_1d)]
-    )
-    nn = float(szsz) + 0.5 * (sz_i + sz_j) + 0.25
+    if spec.level_structure == "01r":
+        n_vals = psi.expectation_value("n_r")
+        n_i = float(n_vals[i_1d])
+        n_j = float(n_vals[j_1d])
+        nn = float(psi.expectation_value_term([("n_r", i_1d), ("n_r", j_1d)]))
+    else:
+        sz_i = float(psi.expectation_value("Sz")[i_1d])
+        sz_j = float(psi.expectation_value("Sz")[j_1d])
+        n_i = 0.5 + sz_i
+        n_j = 0.5 + sz_j
+        szsz = psi.expectation_value_term([("Sz", i_1d), ("Sz", j_1d)])
+        nn = float(szsz) + 0.5 * (sz_i + sz_j) + 0.25
     return float(nn - n_i * n_j)

@@ -341,6 +341,7 @@ class RydbergSystem(SystemModel):
 
         metadata = {
             "level_structure": spec.name,
+            "level_spec": spec,
             "interaction_pairs": pairs,
             "Omega": Omega,
             "local_dim": d,

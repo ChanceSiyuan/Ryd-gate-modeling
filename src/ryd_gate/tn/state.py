@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -24,47 +25,133 @@ def _require_tenpy():
 
 def product_state_mps(
     spec: TNLatticeSpec,
-    config: np.ndarray | str,
+    config: np.ndarray | Sequence[str] | str,
 ) -> object:
     """Create a product-state MPS from a per-site config or named pattern.
 
     Parameters
     ----------
     spec : TNLatticeSpec
-    config : ndarray of 0/1 (in 2D site order) or str
+    config : ndarray of 0/1, sequence of labels, or str
         Supported strings: ``"all_ground"``, ``"af1"``, ``"af2"``.
-        For ndarray: 0 = |g> (down), 1 = |r> (up).
+        For ndarray: 0 = non-Rydberg reference state, 1 = |r>.  In
+        ``01r`` this non-Rydberg reference is ``|1>``.
 
     Returns
     -------
     psi : tenpy.networks.mps.MPS
         Product-state MPS in snake order.
     """
-    tenpy = _require_tenpy()
+    _require_tenpy()
     from tenpy.networks.mps import MPS
-    from tenpy.networks.site import SpinHalfSite
 
-    if isinstance(config, str):
-        if config == "all_ground":
-            config_2d = np.zeros(spec.N, dtype=int)
-        elif config == "af1":
-            config_2d = (spec.sublattice > 0).astype(int)
-        elif config == "af2":
-            config_2d = (spec.sublattice < 0).astype(int)
-        else:
-            raise ValueError(f"Unknown config string: {config!r}")
-    else:
-        config_2d = np.asarray(config, dtype=int)
+    from .sites import build_tenpy_site
 
-    # Reorder to snake order for MPS
-    config_1d = config_2d[spec.snake_to_2d]
+    labels_2d = _state_labels_2d(spec, config)
+    labels_1d = [labels_2d[i] for i in spec.snake_to_2d]
 
-    site = SpinHalfSite(conserve=None)
+    site = build_tenpy_site(spec.level_spec)
     sites = [site] * spec.N
-    # TeNPy SpinHalfSite: index 0 = |up>, index 1 = |down>
-    # Our convention: 0 = |g> = |down>, 1 = |r> = |up>
-    state_labels = ["up" if c == 1 else "down" for c in config_1d]
-    return MPS.from_product_state(sites, state_labels, bc="finite")
+    return MPS.from_product_state(sites, labels_1d, bc="finite")
+
+
+def _state_labels_2d(spec: TNLatticeSpec, config: np.ndarray | Sequence[str] | str) -> list[str]:
+    if isinstance(config, str):
+        return _named_state_labels_2d(spec, config)
+
+    arr = np.asarray(config)
+    if arr.shape != (spec.N,):
+        raise ValueError(f"config must have shape ({spec.N},), got {arr.shape}.")
+
+    if arr.dtype.kind in {"U", "S", "O"}:
+        labels = [str(x) for x in arr]
+        _validate_level_labels(spec, labels)
+        return [_tenpy_label(spec, label) for label in labels]
+
+    occ = arr.astype(int)
+    non_rydberg = "1"
+    labels = ["r" if c == 1 else non_rydberg for c in occ]
+    return [_tenpy_label(spec, label) for label in labels]
+
+
+def _named_state_labels_2d(spec: TNLatticeSpec, name: str) -> list[str]:
+    if name in {"all_ground", "all_1"}:
+        labels = ["1"] * spec.N
+    elif name in {"all_0", "all_zero"}:
+        if "0" not in spec.level_spec.levels:
+            raise ValueError("'all_0' requires a TN lattice spec with a |0> level.")
+        labels = ["0"] * spec.N
+    elif name == "all_r":
+        labels = ["r"] * spec.N
+    elif name == "af1":
+        labels = ["r" if s > 0 else "1" for s in spec.sublattice]
+    elif name == "af2":
+        labels = ["r" if s < 0 else "1" for s in spec.sublattice]
+    else:
+        raise ValueError(f"Unknown config string: {name!r}")
+    return [_tenpy_label(spec, label) for label in labels]
+
+
+def _validate_level_labels(spec: TNLatticeSpec, labels: Sequence[str]) -> None:
+    allowed = set(spec.level_spec.levels)
+    unknown = sorted(set(labels) - allowed)
+    if unknown:
+        raise ValueError(f"Unknown level label(s) for {spec.level_structure}: {unknown}.")
+
+
+def _tenpy_label(spec: TNLatticeSpec, label: str) -> str:
+    if spec.level_structure == "1r":
+        return "up" if label == "r" else "down"
+    return label
+
+
+def product_superposition_mps(
+    spec: TNLatticeSpec,
+    ground_amp: complex = 1 / np.sqrt(2),
+    rydberg_amp: complex = -1j / np.sqrt(2),
+    zero_amp: complex = 0.0,
+) -> object:
+    """Create a uniform product superposition MPS.
+
+    In ``1r`` the local state is ``ground_amp * |1> + rydberg_amp * |r>``.
+    In ``01r`` it is
+    ``zero_amp * |0> + ground_amp * |1> + rydberg_amp * |r>``.
+    """
+    _require_tenpy()
+    from tenpy.networks.mps import MPS
+
+    from .sites import build_tenpy_site
+
+    site = build_tenpy_site(spec.level_spec)
+    sites = [site] * spec.N
+    if spec.level_structure == "1r":
+        if zero_amp != 0:
+            raise ValueError("zero_amp requires a 01r TN lattice spec.")
+        norm = np.sqrt(abs(ground_amp) ** 2 + abs(rydberg_amp) ** 2)
+        if norm == 0:
+            raise ValueError("At least one local amplitude must be nonzero.")
+        # SpinHalfSite basis order is |up>, |down>; our |r> is up and |1> is down.
+        local_state = np.array([rydberg_amp, ground_amp], dtype=complex) / norm
+    else:
+        local_amps = {
+            "0": zero_amp,
+            "1": ground_amp,
+            "r": rydberg_amp,
+        }
+        norm = np.sqrt(sum(abs(local_amps.get(level, 0.0)) ** 2 for level in spec.level_spec.levels))
+        if norm == 0:
+            raise ValueError("At least one local amplitude must be nonzero.")
+        local_state = np.array(
+            [local_amps.get(level, 0.0) for level in spec.level_spec.levels],
+            dtype=complex,
+        ) / norm
+    return MPS.from_product_state(sites, [local_state] * spec.N, bc="finite", dtype=complex)
+
+
+def mps_fidelity(psi_target: object, psi: object) -> float:
+    """Return ``|<psi_target|psi>|^2`` for TeNPy MPS states."""
+    overlap = psi_target.overlap(psi)
+    return float(abs(overlap) ** 2)
 
 
 def domain_state_mps(

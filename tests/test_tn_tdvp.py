@@ -3,14 +3,16 @@
 import numpy as np
 import pytest
 
-tenpy = pytest.importorskip("tenpy")
-
+from ryd_gate import RydbergSystem, simulate
+from ryd_gate.lattice import make_square_lattice
+from ryd_gate.model.system import InteractionSpec
 from ryd_gate.protocols.sweep import SweepProtocol
-from ryd_gate.tn.lattice_spec import create_tn_lattice_spec
 from ryd_gate.tn.backends import TenpyTDVPBackend
-from ryd_gate.tn.state import product_state_mps
-from ryd_gate.tn.observables import measure_staggered_magnetization
+from ryd_gate.tn.lattice_spec import create_tn_lattice_spec
 from ryd_gate.tn.simulate import simulate_tn
+from ryd_gate.tn.state import product_state_mps
+
+tenpy = pytest.importorskip("tenpy")
 
 
 @pytest.fixture
@@ -103,3 +105,29 @@ class TestSimulateTN:
             backend_options={"chi_max": 16},
         )
         assert result.metadata["method"] == "dmrg"
+
+    @pytest.mark.slow
+    def test_unified_simulate_tenpy_backend(self):
+        proto = SweepProtocol(omega_ramp_frac=0.0)
+        system = RydbergSystem.from_lattice(
+            make_square_lattice(2, 2, spacing_um=1.0),
+            level_structure="1r",
+            interaction=InteractionSpec(C6=24.0, mode="nnn"),
+            protocol=proto,
+            Omega=1.0,
+        )
+
+        result = simulate(
+            system,
+            [2.0, 2.0, 1.0],
+            "all_1",
+            backend="tenpy",
+            backend_options={"chi_max": 16, "dt": 0.5},
+            t_eval=np.array([0.5, 1.0]),
+            observables=["n_mean"],
+        )
+
+        assert result.metadata["compiler"] == "tn"
+        assert result.metadata["backend"] == "tenpy"
+        assert result.psi_final is not None
+        assert "n_mean" in result.metadata["obs"]
