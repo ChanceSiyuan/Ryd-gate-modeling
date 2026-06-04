@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 
 from ryd_gate import RydbergSystem, simulate
+from ryd_gate.core.rydberg_system import InteractionSpec
 from ryd_gate.lattice import make_square_lattice
-from ryd_gate.model.system import InteractionSpec
 from ryd_gate.protocols.sweep import SweepProtocol
 from ryd_gate.tn.backends import TenpyTDVPBackend
 from ryd_gate.tn.lattice_spec import create_tn_lattice_spec

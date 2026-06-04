@@ -7,8 +7,8 @@ import pytest
 
 from ryd_gate import RydbergSystem, SweepProtocol, simulate
 from ryd_gate.compilers.exact_sparse import ExactSparseCompiler
-from ryd_gate.model.operator_spec import RydbergPairInteractionSpec
-from ryd_gate.model.system import InteractionSpec, level_structure
+from ryd_gate.core.operator_spec import RydbergPairInteractionSpec
+from ryd_gate.core.rydberg_system import InteractionSpec, level_structure
 from ryd_gate.lattice import make_chain, make_square_lattice
 from ryd_gate.protocols.digital_analog import DigitalAnalogProtocol
 
@@ -92,6 +92,37 @@ def test_sweep_simulation_with_unified_model():
     assert np.isclose(np.linalg.norm(result.psi_final), 1.0)
 
 
+def test_sparse_expm_t_eval_array_records_requested_steps_only():
+    model = RydbergSystem.from_lattice(
+        make_chain(1),
+        "1r",
+        interaction=InteractionSpec(C6=0.0),
+        protocol=SweepProtocol(n_steps=10),
+    )
+    psi0 = model.ground_state()
+    t_eval = np.array([0.0, 0.05, 0.1])
+
+    result = simulate(model, [-1.0, 1.0, 0.1], psi0, t_eval=t_eval)
+
+    np.testing.assert_allclose(result.times, t_eval)
+    assert result.states.shape == (len(t_eval), model.dim)
+
+
+def test_sparse_expm_t_eval_true_records_internal_steps_for_compatibility():
+    model = RydbergSystem.from_lattice(
+        make_chain(1),
+        "1r",
+        interaction=InteractionSpec(C6=0.0),
+        protocol=SweepProtocol(n_steps=4),
+    )
+    psi0 = model.ground_state()
+
+    result = simulate(model, [-1.0, 1.0, 0.1], psi0, t_eval=True)
+
+    assert result.times.shape == (4,)
+    assert result.states.shape == (4, model.dim)
+
+
 def test_01r_digital_analog_simulation():
     protocol = DigitalAnalogProtocol.constant(omega_R=1.0, t_gate=0.1, n_steps=10)
     model = RydbergSystem.from_preset(
@@ -107,8 +138,32 @@ def test_01r_digital_analog_simulation():
 def test_level_structure_presets():
     assert level_structure("1r").levels == ("1", "r")
     assert level_structure("01r").levels == ("0", "1", "r")
-    assert level_structure("1er").levels == ("1", "e", "r")
+    assert level_structure("ger").levels == ("g", "e", "r")
     assert level_structure("rb87_7").levels == ("0", "1", "e1", "e2", "e3", "r", "r_garb")
+
+    with pytest.raises(ValueError, match="Unknown level-structure"):
+        level_structure("1er")
+
+
+def test_ger_lattice_preset_builds_g_e_r_levels():
+    model = RydbergSystem.from_preset("ger", N=1, C6=0.0)
+
+    assert model.basis.local_levels == ("g", "e", "r")
+    assert model.blocks.has("drive_420")
+    assert model.blocks.has("H_1013")
+
+
+def test_ger_transition_blocks_are_not_compiled_as_static_dense_terms():
+    model = RydbergSystem.from_preset(
+        "ger",
+        N=1,
+        C6=0.0,
+        protocol=SweepProtocol(n_steps=1),
+    )
+    params = model.unpack_params([0.0, 0.0, 0.1])
+    ir = ExactSparseCompiler().compile(model, params)
+
+    assert "H_1013" not in {term.name for term in ir.static_terms}
 
 
 @pytest.mark.slow

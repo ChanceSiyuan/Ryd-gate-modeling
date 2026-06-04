@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -31,7 +31,7 @@ class SolverBackend(ABC):
         ir: HamiltonianIR,
         psi0: Any,
         t_gate: float,
-        t_eval: np.ndarray | None = None,
+        t_eval: np.ndarray | bool | None = None,
     ) -> EvolutionResult:
         """Evolve initial state under a compiled IR."""
         ...

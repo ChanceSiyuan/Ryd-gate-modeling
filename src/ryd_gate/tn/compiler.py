@@ -6,11 +6,20 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ryd_gate.core.rydberg_system import LevelStructureSpec, level_structure
-from ryd_gate.model.system import RydbergSystem
+from ryd_gate.core.rydberg_system import LevelStructureSpec, RydbergSystem, level_structure
 
 from .lattice_spec import TNLatticeSpec, snake_order_mapping
 from .sites import resolve_level_structure
+
+SUPPORTED_TN_METHODS = frozenset({
+    "tdvp",
+    "mps_tdvp",
+    "itensors_tebd",
+    "ttn_tdvp",
+    "2dtn_bp",
+    "peps_bp",
+    "nqs_tvmc",
+})
 
 
 @dataclass(frozen=True)
@@ -40,8 +49,9 @@ class TNCompiler:
             raise TypeError("TNCompiler.compile() requires a RydbergSystem.")
         if system.geometry is None:
             raise ValueError("TNCompiler requires a lattice RydbergSystem with geometry.")
-        if self.method != "tdvp":
-            raise ValueError("TNCompiler currently supports method='tdvp' only.")
+        if self.method not in SUPPORTED_TN_METHODS:
+            supported = ", ".join(sorted(SUPPORTED_TN_METHODS))
+            raise ValueError(f"Unknown TN method {self.method!r}. Supported: {supported}.")
 
         spec = tn_lattice_spec_from_system(system)
         return TNEvolutionIR(

@@ -9,14 +9,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
-
-from ryd_gate.model.operator_spec import is_operator_spec, materialize_sparse_operator
+from ryd_gate.core.channel_lowering import (
+    block_name_for_drive_channel,
+    channel_needs_hermitian_conjugate,
+    transition_channels,
+)
+from ryd_gate.core.operator_spec import is_operator_spec, materialize_sparse_operator
+from ryd_gate.core.rydberg_system import LevelStructureSpec
 from ryd_gate.ir.matrix import HamiltonianIR, HamiltonianTerm
 
-
-_HC_CHANNELS = frozenset({"global_X", "drive_R", "drive_hf"})
-_HC_CHANNEL_PREFIXES = ("drive_R_", "drive_hf_", "global_X_")
 _STATIC_BLOCKS = ("H_const", "H_vdw", "H_1013", "H_1013_conj")
 
 
@@ -39,7 +40,14 @@ class ExactSparseCompiler:
         block_cache: dict[str, Any] = {}
 
         static_terms: list[HamiltonianTerm] = []
+        level_spec = system.meta("level_spec", None)
+        if not isinstance(level_spec, LevelStructureSpec):
+            level_spec = None
+        transition_block_names = transition_channels(level_spec)
+
         for name in _STATIC_BLOCKS:
+            if name in transition_block_names:
+                continue
             if system.blocks.has(name):
                 static_terms.append(
                     HamiltonianTerm(name, self.materialize_block(system, name, block_cache), 1.0)
@@ -62,7 +70,7 @@ class ExactSparseCompiler:
         drive_terms: list[HamiltonianTerm] = []
         drive_channel_set = protocol.drive_channels(system)
         for channel in drive_channel_set:
-            block_name = self.block_name_for_drive_channel(system, channel)
+            block_name = block_name_for_drive_channel(system, channel)
             if block_name is None:
                 continue
 
@@ -78,7 +86,9 @@ class ExactSparseCompiler:
                     channel,
                     self.materialize_block(system, block_name, block_cache),
                     coeff_fn,
-                    add_hermitian_conjugate=self.channel_needs_hermitian_conjugate(channel),
+                    add_hermitian_conjugate=channel_needs_hermitian_conjugate(
+                        channel, level_spec
+                    ),
                 )
             )
 
@@ -106,24 +116,6 @@ class ExactSparseCompiler:
         cache[name] = operator
         return operator
 
-    def block_name_for_drive_channel(self, system, channel: str) -> str | None:
-        """Map a protocol channel name to a registered block name."""
-        if system.blocks.has(channel):
-            return channel
-        if channel.startswith("delta_R_"):
-            block = f"n_r_{channel.rsplit('_', 1)[-1]}"
-            return block if system.blocks.has(block) else None
-        if channel.startswith("delta_hf_"):
-            block = f"n_1_{channel.rsplit('_', 1)[-1]}"
-            return block if system.blocks.has(block) else None
-        return None
-
-    @staticmethod
-    def channel_needs_hermitian_conjugate(channel: str) -> bool:
-        if channel in _HC_CHANNELS:
-            return True
-        return any(channel.startswith(prefix) for prefix in _HC_CHANNEL_PREFIXES)
-
     def _static_overlays(self, system, params: dict, block_cache: dict[str, Any]):
         """Return ``(dense_overlay, sparse_pinning)`` matrices from params dict."""
         n_sites = system.basis.n_sites
@@ -145,7 +137,7 @@ class ExactSparseCompiler:
                 term = -delta * self.materialize_block(system, block_name, block_cache)
                 sparse_pin = term if sparse_pin is None else sparse_pin + term
             else:
-                from ryd_gate.model.operators import build_atom_projector
+                from ryd_gate.core.operators import build_atom_projector
 
                 proj = build_atom_projector(idx, n_levels - 1, n_sites, n_levels)
                 term = -delta * proj
@@ -159,7 +151,7 @@ class ExactSparseCompiler:
                 term = (-1j * rate / 2) * self.materialize_block(system, block_name, block_cache)
                 sparse_pin = term if sparse_pin is None else sparse_pin + term
             else:
-                from ryd_gate.model.operators import build_atom_projector
+                from ryd_gate.core.operators import build_atom_projector
 
                 proj = build_atom_projector(idx, 0, n_sites, n_levels)
                 term = (-1j * rate / 2) * proj
@@ -174,6 +166,7 @@ class ExactSparseCompiler:
                     dense_overlay = term if dense_overlay is None else dense_overlay + term
 
         return dense_overlay, sparse_pin
+
 
 def compile_expm_ir(system, params: dict, *, max_dim: int | None = 2_000_000) -> HamiltonianIR:
     """Compile *system* into exact matrix IR for expm/ODE state-vector backends."""

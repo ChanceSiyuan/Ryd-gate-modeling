@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from ryd_gate.model.system_model import SystemModel
     from ryd_gate.backends.base import EvolutionResult
+    from ryd_gate.core.system_model import SystemModel
 
 
 def measure_observables(

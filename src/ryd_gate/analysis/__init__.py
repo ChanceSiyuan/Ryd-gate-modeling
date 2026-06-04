@@ -10,6 +10,8 @@ Contents
 - ``coarsening``           — Lattice domain identification, boundary masks, magnetization
 - ``lattice_observables``  — Bit/trit-mask occupation, staggered magnetization for
                              many-body lattice states (2-level and 3-level)
+- ``spin_observables``     — TFIM sigma_z / C_zz conversions and benchmark errors
+- ``symmetry``             — D4 symmetry-error convergence diagnostics
 """
 
 from .coarsening import (
@@ -27,6 +29,21 @@ from .lattice_observables import (
     precompute_trit_masks,
     staggered_magnetization,
 )
+from .spin_observables import (
+    center_line_sites,
+    center_reference_site,
+    connected_zz_from_connected_nn,
+    epsilon_z,
+    epsilon_zz,
+    line_pairs_from_reference,
+    sigma_z_from_rydberg_occ,
+)
+from .symmetry import (
+    SymmetryError,
+    d4_permutations,
+    d4_symmetry_error,
+    first_unconverged_time,
+)
 
 __all__ = [
     # Coarsening / domain analysis
@@ -42,4 +59,17 @@ __all__ = [
     "measure_from_states",
     "measure_rydberg_occupation",
     "staggered_magnetization",
+    # TFIM / spin observables and paper-style benchmark metrics
+    "sigma_z_from_rydberg_occ",
+    "connected_zz_from_connected_nn",
+    "center_line_sites",
+    "center_reference_site",
+    "line_pairs_from_reference",
+    "epsilon_z",
+    "epsilon_zz",
+    # D4 symmetry diagnostics
+    "SymmetryError",
+    "d4_permutations",
+    "d4_symmetry_error",
+    "first_unconverged_time",
 ]

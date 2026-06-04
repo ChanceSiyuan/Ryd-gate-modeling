@@ -35,7 +35,7 @@ from ryd_gate.analysis.local_addressing import (
     evaluate_addressing,
 )
 from ryd_gate import RydbergSystem
-from ryd_gate.model.operators import build_product_state_map
+from ryd_gate.core.operators import build_product_state_map
 from ryd_gate.physics.ac_stark import (
     LAMBDA_D2,
     LAMBDA_PAPER,

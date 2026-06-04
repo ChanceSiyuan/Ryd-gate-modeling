@@ -7,6 +7,7 @@ Typical workflow
        protocol = TOProtocol()               # time-optimal CZ gate (6 params)
        protocol = ARProtocol()               # amplitude-robust CZ gate (8 params)
        protocol = SweepProtocol()            # adiabatic detuning sweep (lattice)
+       protocol = TFIMQuenchProtocol(...)     # 2D TFIM / g-r lattice quench
 
 2. **Create a quantum system with the protocol bound**::
 
@@ -22,7 +23,7 @@ Typical workflow
 
 Subpackages
 -----------
-- ``ryd_gate.model``     — Symbolic Rydberg systems, blocks, observables
+- ``ryd_gate.core``      — Symbolic Rydberg systems, blocks, observables
 - ``ryd_gate.protocols`` — Pulse protocols: TOProtocol, ARProtocol, SweepProtocol
 - ``ryd_gate.compilers`` — Backend-specific compilers from symbolic systems to IR
 - ``ryd_gate.ir``        — Intermediate representations
@@ -37,7 +38,12 @@ Subpackages
 __version__ = "0.1.0"
 
 # --- Systems ---
-from .model.system import (
+from .backends import EvolutionResult, SolverBackend
+from .compilers import ExactSparseCompiler, compile_expm_ir
+from .core.basis import BasisSpec
+from .core.blocks import BlockRegistry
+from .core.observables import Observable, ObservableRegistry
+from .core.rydberg_system import (
     DEFAULT_C6,
     InteractionSpec,
     LevelStructureSpec,
@@ -46,28 +52,30 @@ from .model.system import (
     level_structure,
 )
 
+# --- Advanced / new-arch primitives ---
+from .core.system_model import SystemModel
+from .ir import HamiltonianIR, HamiltonianTerm
+
 # --- Protocols ---
 from .protocols.base import Protocol
+from .protocols.digital_analog import DigitalAnalogProtocol, Segment
 from .protocols.gate_cz_ar import ARProtocol
 from .protocols.gate_cz_to import TOProtocol
+from .protocols.lattice_dynamics import (
+    TFIMAnnealProtocol,
+    TFIMQuenchProtocol,
+    TFIMRydbergControls,
+    interaction_longitudinal_shifts,
+    tfim_to_rydberg_controls,
+)
 from .protocols.sweep import SweepProtocol
-from .protocols.digital_analog import DigitalAnalogProtocol, Segment
-
-# --- Simulation ---
-from .simulate import simulate
-from .backends import EvolutionResult, SolverBackend
-from .ir import HamiltonianIR, HamiltonianTerm
-from .compilers import ExactSparseCompiler, compile_expm_ir
 
 # --- Analysis (convenience re-exports) ---
 # --- Pulse utilities ---
 from .pulse import blackman_pulse, blackman_pulse_sqrt, blackman_window
 
-# --- Advanced / new-arch primitives ---
-from .model.system_model import SystemModel
-from .model.basis import BasisSpec
-from .model.blocks import BlockRegistry
-from .model.observables import Observable, ObservableRegistry
+# --- Simulation ---
+from .simulate import simulate
 
 
 def __getattr__(name: str):
@@ -100,6 +108,11 @@ __all__ = [
     "TOProtocol",
     "ARProtocol",
     "SweepProtocol",
+    "TFIMAnnealProtocol",
+    "TFIMQuenchProtocol",
+    "TFIMRydbergControls",
+    "tfim_to_rydberg_controls",
+    "interaction_longitudinal_shifts",
     "DigitalAnalogProtocol",
     "Segment",
     # Simulation

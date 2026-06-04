@@ -1,7 +1,5 @@
 """Tests for ryd_gate package initialization."""
 
-import pytest
-
 
 class TestPackageImports:
     """Tests for package-level imports."""
@@ -32,6 +30,8 @@ class TestPackageImports:
             "compute_shift_scatter",
             # Protocols
             "Protocol", "TOProtocol", "ARProtocol", "SweepProtocol",
+            "TFIMAnnealProtocol", "TFIMQuenchProtocol", "TFIMRydbergControls",
+            "tfim_to_rydberg_controls", "interaction_longitudinal_shifts",
             "DigitalAnalogProtocol", "Segment",
             # Simulation
             "simulate", "EvolutionResult", "SolverBackend",
@@ -72,27 +72,53 @@ class TestPackageImports:
     def test_new_architecture_exports(self):
         """New architecture types should be importable from top level."""
         from ryd_gate import (
-            SystemModel, BasisSpec, BlockRegistry, ObservableRegistry,
-            HamiltonianIR, HamiltonianTerm, SolverBackend, EvolutionResult,
-            ExactSparseCompiler, compile_expm_ir, simulate, RydbergSystem,
+            BasisSpec,
+            BlockRegistry,
+            EvolutionResult,
+            ExactSparseCompiler,
+            HamiltonianIR,
+            HamiltonianTerm,
+            ObservableRegistry,
+            RydbergSystem,
+            SolverBackend,
+            SystemModel,
+            compile_expm_ir,
+            simulate,
         )
-        assert SystemModel is not None
-        assert RydbergSystem is not None
-        assert simulate is not None
-        assert ExactSparseCompiler is not None
-        assert compile_expm_ir is not None
+        assert all(
+            item is not None
+            for item in (
+                BasisSpec,
+                BlockRegistry,
+                EvolutionResult,
+                ExactSparseCompiler,
+                HamiltonianIR,
+                HamiltonianTerm,
+                ObservableRegistry,
+                RydbergSystem,
+                SolverBackend,
+                SystemModel,
+                compile_expm_ir,
+                simulate,
+            )
+        )
 
     def test_new_package_namespaces(self):
-        """Model, IR, backend, and simulate namespaces should be importable."""
-        from ryd_gate.model import RydbergSystem, BasisSpec
-        from ryd_gate.ir import HamiltonianIR, HamiltonianTerm
+        """Core, IR, backend, and simulate namespaces should be importable."""
         from ryd_gate.backends import DenseODEBackend, SparseExpmBackend
+        from ryd_gate.core import BasisSpec, RydbergSystem
+        from ryd_gate.ir import HamiltonianIR, HamiltonianTerm
         from ryd_gate.simulate import simulate
 
-        assert RydbergSystem is not None
-        assert BasisSpec is not None
-        assert HamiltonianIR is not None
-        assert HamiltonianTerm is not None
-        assert DenseODEBackend is not None
-        assert SparseExpmBackend is not None
-        assert simulate is not None
+        assert all(
+            item is not None
+            for item in (
+                BasisSpec,
+                DenseODEBackend,
+                HamiltonianIR,
+                HamiltonianTerm,
+                RydbergSystem,
+                SparseExpmBackend,
+                simulate,
+            )
+        )

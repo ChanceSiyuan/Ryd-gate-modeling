@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 
 from ryd_gate import DEFAULT_C6, RydbergSystem, SweepProtocol
+from ryd_gate.core.rydberg_system import InteractionSpec, level_structure
 from ryd_gate.lattice import make_square_lattice
-from ryd_gate.model.system import InteractionSpec, level_structure
 from ryd_gate.tn.compiler import TNCompiler, tn_lattice_spec_from_system
 from ryd_gate.tn.lattice_spec import (
     create_tn_lattice_spec,
@@ -74,7 +74,7 @@ class TestCreateTNLatticeSpec:
 
     def test_registered_but_unsupported_level_structure_raises(self):
         with pytest.raises(ValueError, match="not supported"):
-            create_tn_lattice_spec(Lx=2, Ly=2, level_structure="1er")
+            create_tn_lattice_spec(Lx=2, Ly=2, level_structure="ger")
 
     def test_nn_interaction_mode_filters_diagonals(self):
         spec = create_tn_lattice_spec(Lx=2, Ly=2, interaction_mode="nn")

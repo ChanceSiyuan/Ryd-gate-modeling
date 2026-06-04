@@ -74,8 +74,8 @@ class TestDMRG:
         """DMRG energy matches exact diagonalization for 2x2."""
         from ryd_gate import RydbergSystem
         from ryd_gate.compilers import compile_expm_ir
+        from ryd_gate.core.rydberg_system import InteractionSpec
         from ryd_gate.lattice import make_square_lattice
-        from ryd_gate.model.system import InteractionSpec
         from ryd_gate.protocols.sweep import SweepProtocol
 
         Delta = 2.0

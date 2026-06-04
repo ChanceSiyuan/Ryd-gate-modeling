@@ -14,6 +14,9 @@ Contents
 - ``states``         — Many-body state constructors (product, AF, domain)
 """
 
+from ryd_gate.core.basis import BasisSpec
+from ryd_gate.core.blocks import BlockRegistry
+from ryd_gate.core.observables import Observable, ObservableRegistry
 from ryd_gate.core.rydberg_system import (
     DEFAULT_C6,
     InteractionSpec,
@@ -30,4 +33,8 @@ __all__ = [
     "InteractionSpec",
     "DEFAULT_C6",
     "level_structure",
+    "BasisSpec",
+    "BlockRegistry",
+    "Observable",
+    "ObservableRegistry",
 ]

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy import integrate, interpolate
 
-from ryd_gate.model.operators import build_occ_operator, build_sss_state_map
+from ryd_gate.core.operators import build_occ_operator, build_sss_state_map
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 def _is_rydberg_system(system) -> bool:
-    from ryd_gate.model.system import RydbergSystem
+    from ryd_gate.core.rydberg_system import RydbergSystem
 
     return isinstance(system, RydbergSystem)
 
