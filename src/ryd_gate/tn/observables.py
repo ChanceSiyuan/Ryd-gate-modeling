@@ -100,6 +100,14 @@ def measure_mean_rydberg(
     return float(occ.mean())
 
 
+def measure_sigma_z(
+    psi: object,
+    spec: TNLatticeSpec,
+) -> np.ndarray:
+    """Measure per-site ``<sigma_z_i> = 2<n_r_i> - 1`` in 2D site order."""
+    return 2.0 * measure_site_occupations(psi, spec) - 1.0
+
+
 def measure_correlation(
     psi: object,
     spec: TNLatticeSpec,
@@ -138,3 +146,28 @@ def measure_correlation(
         szsz = psi.expectation_value_term([("Sz", i_1d), ("Sz", j_1d)])
         nn = float(szsz) + 0.5 * (sz_i + sz_j) + 0.25
     return float(nn - n_i * n_j)
+
+
+def measure_connected_zz(
+    psi: object,
+    spec: TNLatticeSpec,
+    i_2d: int,
+    j_2d: int,
+) -> float:
+    """Compute connected ``<sigma_z_i sigma_z_j> - <sigma_z_i><sigma_z_j>``."""
+    return 4.0 * measure_correlation(psi, spec, i_2d, j_2d)
+
+
+def measure_centerline_connected_zz(
+    psi: object,
+    spec: TNLatticeSpec,
+    *,
+    axis: str = "horizontal",
+) -> np.ndarray:
+    """Measure connected ``C_zz`` from a center site along a center line."""
+    from ryd_gate.analysis.spin_observables import line_pairs_from_reference
+
+    return np.array([
+        measure_connected_zz(psi, spec, i, j)
+        for i, j in line_pairs_from_reference(spec.Lx, spec.Ly, axis=axis)
+    ])

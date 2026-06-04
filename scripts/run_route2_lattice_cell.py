@@ -8,7 +8,7 @@ import numpy as np
 from itertools import product
 
 from ryd_gate import RydbergSystem, simulate
-from ryd_gate.model.system import InteractionSpec
+from ryd_gate.core.rydberg_system import InteractionSpec
 from ryd_gate.lattice import make_square_lattice
 from ryd_gate.protocols.digital_analog import DigitalAnalogProtocol, Segment
 

@@ -36,6 +36,20 @@ app = [
 tn = [
     "physics-tenpy>=1.0",
 ]
+tn-2d = [
+    "physics-tenpy>=1.0",
+    "yastn",
+    "quimb",
+    "cotengra",
+    "autoray",
+]
+tn-ttn = [
+    "pytreenet",
+]
+nqs = [
+    "netket",
+    "jVMC",
+]
 gputn-cu12 = [
     "cupy-cuda12x>=13.0",
     "cuquantum-python-cu12>=25.3",

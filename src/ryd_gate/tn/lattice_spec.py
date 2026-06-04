@@ -45,6 +45,33 @@ def snake_order_mapping(Lx: int, Ly: int) -> tuple[np.ndarray, np.ndarray]:
     return snake_to_2d, inv_snake
 
 
+def diagonal_order_mapping(Lx: int, Ly: int) -> tuple[np.ndarray, np.ndarray]:
+    """Compute a diagonal snake mapping for rectangular square grids."""
+    order: list[int] = []
+    for diag in range(Lx + Ly - 1):
+        cells = [
+            (ix, diag - ix)
+            for ix in range(Lx)
+            if 0 <= diag - ix < Ly
+        ]
+        if diag % 2 == 1:
+            cells.reverse()
+        order.extend(ix * Ly + iy for ix, iy in cells)
+    order_to_2d = np.asarray(order, dtype=int)
+    inv_order = np.empty(Lx * Ly, dtype=int)
+    inv_order[order_to_2d] = np.arange(Lx * Ly)
+    return order_to_2d, inv_order
+
+
+def ordering_mapping(Lx: int, Ly: int, ordering: str = "snake") -> tuple[np.ndarray, np.ndarray]:
+    """Return ``(order_to_2d, inv_order)`` for a named MPS mapping."""
+    if ordering == "snake":
+        return snake_order_mapping(Lx, Ly)
+    if ordering in {"diagonal", "diagonal_snake"}:
+        return diagonal_order_mapping(Lx, Ly)
+    raise ValueError("ordering must be 'snake' or 'diagonal'.")
+
+
 @dataclass(frozen=True)
 class TNLatticeSpec:
     """TN-friendly lattice description without 2^N matrices.
@@ -78,6 +105,9 @@ class TNLatticeSpec:
         Interaction graph mode: ``"nn"`` for nearest-neighbor only or
         ``"nnn"`` for nearest and next-nearest neighbors, or ``"system"``
         when the pair list is lowered directly from a RydbergSystem.
+    ordering : str
+        One-dimensional tensor-network site ordering. ``"snake"`` is the
+        default; ``"diagonal"`` is useful for MPS convergence checks.
     """
 
     Lx: int
@@ -93,6 +123,7 @@ class TNLatticeSpec:
     inv_snake: np.ndarray
     bc: str = "open"
     interaction_mode: str = "nnn"
+    ordering: str = "snake"
 
     @property
     def level_structure(self) -> str:
@@ -108,6 +139,7 @@ def create_tn_lattice_spec(
     bc: str = "open",
     level_structure: str | LevelStructureSpec = "1r",
     interaction_mode: str = "nnn",
+    ordering: str = "snake",
 ) -> TNLatticeSpec:
     """Build a TN-friendly lattice spec reusing geometry conventions.
 
@@ -128,7 +160,7 @@ def create_tn_lattice_spec(
     vdw_pairs = nn_nnn_relative_pairs(Lx, Ly)
     if interaction_mode == "nn":
         vdw_pairs = tuple(pair for pair in vdw_pairs if np.isclose(pair[2], 1.0))
-    snake_to_2d, inv_snake = snake_order_mapping(Lx, Ly)
+    snake_to_2d, inv_snake = ordering_mapping(Lx, Ly, ordering)
 
     return TNLatticeSpec(
         Lx=Lx, Ly=Ly, N=geom.N,
@@ -142,4 +174,5 @@ def create_tn_lattice_spec(
         inv_snake=inv_snake,
         bc=bc,
         interaction_mode=interaction_mode,
+        ordering=ordering,
     )

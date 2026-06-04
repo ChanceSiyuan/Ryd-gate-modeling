@@ -20,7 +20,7 @@ from ryd_gate.physics.ac_stark import (
 )
 from ryd_gate import RydbergSystem, simulate
 from ryd_gate.analysis.observable_metrics import measure_trajectory, norm_squared
-from ryd_gate.model.operators import build_product_state_map
+from ryd_gate.core.operators import build_product_state_map
 from ryd_gate.protocols.sweep import SweepProtocol
 
 # Sweep constants (matching scripts/run_local_sweep.py)

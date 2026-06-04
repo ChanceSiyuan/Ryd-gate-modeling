@@ -8,6 +8,10 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ryd_gate.backends.base import EvolutionResult
+from ryd_gate.core.channel_lowering import (
+    three_level_profiles_from_coeffs,
+    two_level_drive_and_detuning_from_coeffs,
+)
 
 if TYPE_CHECKING:
     from ryd_gate.protocols.base import Protocol
@@ -43,58 +47,6 @@ def _pin_deltas_from_params(params: dict, n_sites: int) -> np.ndarray | None:
     return pin
 
 
-def _has_channel(coeffs: dict[str, complex], channel: str | None, n_sites: int) -> bool:
-    if channel is None:
-        return False
-    if channel in coeffs:
-        return True
-    return any(f"{channel}_{i}" in coeffs for i in range(n_sites))
-
-
-def _declared_channels(spec: TNLatticeSpec) -> set[str]:
-    channels = {transition.channel for transition in spec.level_spec.transitions}
-    channels.update(spec.level_spec.detuning_levels)
-    return channels
-
-
-def _validate_coeff_channels(coeffs: dict[str, complex], spec: TNLatticeSpec) -> None:
-    declared = _declared_channels(spec)
-    unknown = []
-    for channel in coeffs:
-        base = channel.rsplit("_", 1)[0] if channel.rsplit("_", 1)[-1].isdigit() else channel
-        if base not in declared:
-            unknown.append(channel)
-    if unknown:
-        raise ValueError(
-            f"Protocol emitted channel(s) not declared by level_structure "
-            f"{spec.level_structure!r}: {sorted(unknown)}."
-        )
-
-
-def _site_profile_from_coeffs(
-    coeffs: dict[str, complex],
-    channel: str,
-    n_sites: int,
-    scale: float,
-) -> np.ndarray | None:
-    keys = [f"{channel}_{i}" for i in range(n_sites)]
-    if not any(key in coeffs for key in keys):
-        return None
-    return np.array([scale * float(np.real(coeffs.get(key, 0.0))) for key in keys])
-
-
-def _channel_profile_from_coeffs(
-    coeffs: dict[str, complex],
-    channel: str,
-    n_sites: int,
-    scale: float,
-) -> np.ndarray:
-    site_profile = _site_profile_from_coeffs(coeffs, channel, n_sites, scale=scale)
-    if site_profile is not None:
-        return site_profile
-    return np.full(n_sites, scale * float(np.real(coeffs.get(channel, 0.0))))
-
-
 def _merge_pin_deltas(*profiles: np.ndarray | None, n_sites: int) -> np.ndarray | None:
     merged = np.zeros(n_sites)
     any_profile = False
@@ -104,91 +56,6 @@ def _merge_pin_deltas(*profiles: np.ndarray | None, n_sites: int) -> np.ndarray 
         merged += profile
         any_profile = True
     return merged if any_profile else None
-
-
-def _transition_channel(spec: TNLatticeSpec, lower: str, upper: str) -> str | None:
-    for transition in spec.level_spec.transitions:
-        if transition.lower == lower and transition.upper == upper:
-            return transition.channel
-    return None
-
-
-def _detuning_channel(spec: TNLatticeSpec, level: str) -> str | None:
-    for channel, detuned_level in spec.level_spec.detuning_levels.items():
-        if detuned_level == level:
-            return channel
-    return None
-
-
-def _profile_for_optional_channel(
-    coeffs: dict[str, complex],
-    channel: str | None,
-    n_sites: int,
-    scale: float,
-) -> np.ndarray:
-    if channel is None:
-        return np.zeros(n_sites)
-    return _channel_profile_from_coeffs(coeffs, channel, n_sites, scale=scale)
-
-
-def _three_level_profiles_from_coeffs(
-    coeffs: dict[str, complex],
-    spec: TNLatticeSpec,
-) -> dict[str, np.ndarray]:
-    """Map protocol coefficients to explicit 01r per-site profiles."""
-    _validate_coeff_channels(coeffs, spec)
-    drive_r = _transition_channel(spec, "1", "r")
-    drive_hf = _transition_channel(spec, "0", "1")
-    delta_r = _detuning_channel(spec, "r")
-    delta_hf = _detuning_channel(spec, "1")
-
-    return {
-        "omega_R": _profile_for_optional_channel(coeffs, drive_r, spec.N, scale=2.0),
-        "omega_hf": _profile_for_optional_channel(coeffs, drive_hf, spec.N, scale=2.0),
-        "delta_R": _profile_for_optional_channel(coeffs, delta_r, spec.N, scale=-1.0),
-        "delta_hf": _profile_for_optional_channel(coeffs, delta_hf, spec.N, scale=-1.0),
-    }
-
-
-def _split_uniform_profile(profile: np.ndarray) -> tuple[float, np.ndarray | None]:
-    if np.allclose(profile, profile[0]):
-        return float(profile[0]), None
-    return 0.0, profile
-
-
-def _two_level_drive_and_detuning_from_coeffs(
-    coeffs: dict[str, complex],
-    spec: TNLatticeSpec,
-) -> tuple[float | np.ndarray, float, np.ndarray | None]:
-    """Map protocol channel coefficients onto the TN 1/r Hamiltonian.
-
-    ``SweepProtocol`` already emits 2-level channels ``global_X`` and
-    ``global_n``.  ``DigitalAnalogProtocol`` emits 01r channels; for the TN
-    2-level subspace we identify ``|g>`` with ``|1>`` and keep only the
-    ``|1><->|r>`` drive.  The hyperfine drive is outside that subspace, while
-    hyperfine detuning contributes an effective Rydberg detuning because
-    ``n_1 = I - n_r``.
-    """
-    profiles = _three_level_profiles_from_coeffs(coeffs, spec)
-
-    if np.any(np.abs(profiles["omega_hf"]) > 0):
-        raise ValueError(
-            "TN TDVP supports the |1>-|r> two-level subspace only; "
-            "DigitalAnalogProtocol segments with omega_hf != 0 are not supported."
-        )
-
-    omega_profile = profiles["omega_R"]
-    if np.allclose(omega_profile, omega_profile[0]):
-        Omega_t: float | np.ndarray = float(omega_profile[0])
-    else:
-        Omega_t = omega_profile
-
-    # 01r -> effective 1r mapping:
-    # -Delta_R n_r - Delta_hf n_1 = const - (Delta_R - Delta_hf) n_r.
-    Delta_t, delta_profile = _split_uniform_profile(
-        profiles["delta_R"] - profiles["delta_hf"]
-    )
-    return Omega_t, Delta_t, delta_profile
 
 
 def _require_tenpy():
@@ -347,8 +214,9 @@ class TenpyTDVPBackend:
         observables : list of str or None
             Observable names to stream: ``"m_s"``, ``"n_mean"``,
             ``"n_i"``/``"n_r"`` (per-site Rydberg occupations),
-            ``"n_0"``, and ``"n_1"``. If None, stores ``"m_s"`` and
-            ``"n_mean"`` when ``t_eval`` is given.
+            ``"sigma_z"``/``"z_i"`` (per-site TFIM magnetization),
+            ``"czz_centerline"``, ``"n_0"``, and ``"n_1"``. If None,
+            stores ``"m_s"`` and ``"n_mean"`` when ``t_eval`` is given.
 
         Returns
         -------
@@ -400,8 +268,10 @@ class TenpyTDVPBackend:
 
         from .model import build_tenpy_model
         from .observables import (
+            measure_centerline_connected_zz,
             measure_level_occupations,
             measure_mean_rydberg,
+            measure_sigma_z,
             measure_site_occupations,
             measure_staggered_magnetization,
         )
@@ -444,6 +314,12 @@ class TenpyTDVPBackend:
                 elif name == "n_i":
                     obs_data[name].append(
                         measure_site_occupations(psi, spec).copy())
+                elif name in {"sigma_z", "z_i"}:
+                    obs_data[name].append(
+                        measure_sigma_z(psi, spec).copy())
+                elif name == "czz_centerline":
+                    obs_data[name].append(
+                        measure_centerline_connected_zz(psi, spec).copy())
                 elif name in {"n_0", "n_1", "n_r"}:
                     obs_data[name].append(
                         measure_level_occupations(psi, spec, name[-1]).copy())
@@ -455,14 +331,14 @@ class TenpyTDVPBackend:
             t_mid = (k + 0.5) * dt_actual
             coeffs = protocol.get_drive_coefficients(t_mid, params)
             if spec.level_structure == "01r":
-                profiles = _three_level_profiles_from_coeffs(coeffs, spec)
+                profiles = three_level_profiles_from_coeffs(coeffs, spec)
                 pin = _pin_deltas_from_params(params, spec.N)
                 if pin is not None:
                     profiles["delta_R"] = profiles["delta_R"] + pin
                 model = build_tenpy_model(spec, Delta=0.0, **profiles)
             else:
                 Omega_t, Delta_t, channel_pin_deltas = (
-                    _two_level_drive_and_detuning_from_coeffs(coeffs, spec)
+                    two_level_drive_and_detuning_from_coeffs(coeffs, spec)
                 )
 
                 pin_deltas = _merge_pin_deltas(

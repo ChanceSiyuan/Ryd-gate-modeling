@@ -172,7 +172,7 @@ def domain_state_mps(
     -------
     psi : tenpy.networks.mps.MPS
     """
-    from ryd_gate.model.states import domain_config
+    from ryd_gate.core.states import domain_config
 
     config = domain_config(spec.coords, spec.sublattice,
                            domain_center, domain_radius)

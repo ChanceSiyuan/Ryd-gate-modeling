@@ -11,7 +11,7 @@ from ryd_gate.backends.base import EvolutionResult
 
 if TYPE_CHECKING:
     from ryd_gate.backends.base import SolverBackend
-    from ryd_gate.model.system import RydbergSystem
+    from ryd_gate.core.rydberg_system import RydbergSystem
 
 
 @dataclass
@@ -171,7 +171,7 @@ class MonteCarloRunner:
 
     def setup_position_noise(self, sigma_pos_xyz: tuple[float, float, float]) -> None:
         """Enable two-atom interatomic-distance fluctuation noise."""
-        from ryd_gate.model.operators import get_nominal_distance
+        from ryd_gate.core.operators import get_nominal_distance
 
         self._sigma_pos_um = tuple(float(s) * 1e6 for s in sigma_pos_xyz)
         self._d_nominal_um = get_nominal_distance(self.system.param_set)
@@ -213,9 +213,9 @@ class MonteCarloRunner:
         compute_branching: bool = False,
     ) -> MonteCarloResult:
         """Compute CZ average gate fidelity for each sampled noise shot."""
+        from ryd_gate.analysis.gate_metrics import residuals_to_branching
         from ryd_gate.compilers.exact_sparse import ExactSparseCompiler
         from ryd_gate.ir.matrix import HamiltonianTerm
-        from ryd_gate.analysis.gate_metrics import residuals_to_branching
 
         rng = np.random.default_rng(seed)
         compiler = ExactSparseCompiler()
@@ -336,7 +336,7 @@ class MonteCarloRunner:
             samples["detuning"] = delta_err
 
         if self._sigma_pos_um is not None:
-            from ryd_gate.model.operators import build_vdw_unit_operator
+            from ryd_gate.core.operators import build_vdw_unit_operator
 
             sigmas = np.array(self._sigma_pos_um * 2)
             dx1, dy1, dz1, dx2, dy2, dz2 = rng.normal(0, sigmas)

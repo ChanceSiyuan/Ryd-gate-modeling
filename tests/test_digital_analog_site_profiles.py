@@ -7,8 +7,12 @@ import pytest
 
 from ryd_gate import RydbergSystem, simulate
 from ryd_gate.compilers.exact_sparse import compile_expm_ir
+from ryd_gate.core.channel_lowering import (
+    three_level_profiles_from_coeffs,
+    two_level_drive_and_detuning_from_coeffs,
+)
+from ryd_gate.core.rydberg_system import InteractionSpec, LevelStructureSpec, TransitionSpec
 from ryd_gate.lattice import make_chain
-from ryd_gate.model.system import InteractionSpec, LevelStructureSpec, TransitionSpec
 from ryd_gate.protocols.digital_analog import (
     DigitalAnalogProtocol,
     Segment,
@@ -16,11 +20,7 @@ from ryd_gate.protocols.digital_analog import (
     is_scalar_profile,
 )
 from ryd_gate.protocols.sweep import SweepProtocol
-from ryd_gate.tn.backends import (
-    _three_level_profiles_from_coeffs,
-    _TNProtocolContext,
-    _two_level_drive_and_detuning_from_coeffs,
-)
+from ryd_gate.tn.backends import _TNProtocolContext
 from ryd_gate.tn.lattice_spec import create_tn_lattice_spec
 
 
@@ -56,7 +56,7 @@ def test_tn_channel_mapping_for_sweep_protocol_on_1r_spec():
     params = proto.unpack_params([3.0, 3.0, 0.1], _TNProtocolContext(spec))
     coeffs = proto.get_drive_coefficients(0.05, params)
 
-    Omega, Delta, pin = _two_level_drive_and_detuning_from_coeffs(coeffs, spec)
+    Omega, Delta, pin = two_level_drive_and_detuning_from_coeffs(coeffs, spec)
 
     assert np.isclose(Omega, spec.Omega)
     assert np.isclose(Delta, 3.0)
@@ -72,7 +72,7 @@ def test_digital_analog_channels_rejected_on_1r_tn_spec():
     coeffs = proto.get_drive_coefficients(0.05, params)
 
     with pytest.raises(ValueError, match="not declared"):
-        _two_level_drive_and_detuning_from_coeffs(coeffs, spec)
+        two_level_drive_and_detuning_from_coeffs(coeffs, spec)
 
 
 def test_tn_channel_mapping_rejects_hyperfine_drive():
@@ -84,7 +84,7 @@ def test_tn_channel_mapping_rejects_hyperfine_drive():
     coeffs = proto.get_drive_coefficients(0.05, params)
 
     with pytest.raises(ValueError, match="omega_hf"):
-        _two_level_drive_and_detuning_from_coeffs(coeffs, spec)
+        two_level_drive_and_detuning_from_coeffs(coeffs, spec)
 
 
 def test_three_level_tn_profiles_for_digital_analog_segment():
@@ -101,7 +101,7 @@ def test_three_level_tn_profiles_for_digital_analog_segment():
     params = proto.unpack_params([], _TNProtocolContext(spec))
     coeffs = proto.get_drive_coefficients(0.05, params)
 
-    profiles = _three_level_profiles_from_coeffs(coeffs, spec)
+    profiles = three_level_profiles_from_coeffs(coeffs, spec)
 
     np.testing.assert_allclose(profiles["omega_R"], [2.0, 4.0])
     np.testing.assert_allclose(profiles["omega_hf"], [6.0, 8.0])
@@ -122,7 +122,7 @@ def test_three_level_tn_profiles_follow_shared_level_spec_channels():
     )
     spec = create_tn_lattice_spec(1, 2, level_structure=custom_level_spec)
 
-    profiles = _three_level_profiles_from_coeffs(
+    profiles = three_level_profiles_from_coeffs(
         {
             "rydberg_drive": 1.0,
             "hyperfine_drive": 2.0,

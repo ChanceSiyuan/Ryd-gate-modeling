@@ -37,11 +37,11 @@ from ryd_gate.analysis.lattice_observables import (
     measure_from_states,
     precompute_bit_masks,
 )
-from ryd_gate.model.states import (
+from ryd_gate.core.states import (
     domain_config,
     product_state,
 )
-from ryd_gate.model.system import InteractionSpec
+from ryd_gate.core.rydberg_system import InteractionSpec
 from ryd_gate.lattice import is_in_domain, make_square_lattice
 
 # ---------------------------------------------------------------------------

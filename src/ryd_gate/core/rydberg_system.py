@@ -1,7 +1,7 @@
 """Universal Rydberg system model.
 
 A :class:`RydbergSystem` is built from three things: a lattice geometry,
-a local energy-level structure (``1r`` / ``01r`` / ``1er`` / ``rb87_7`` /
+a local energy-level structure (``1r`` / ``01r`` / ``ger`` / ``rb87_7`` /
 ``analog_3``), and a pulse protocol (sweep, CZ gate, digital-analog).
 The class owns symbolic Hamiltonian blocks, observables, geometry metadata,
 and the bound protocol. Backend-specific compilers materialize those symbolic
@@ -103,12 +103,12 @@ def level_structure(name: str) -> LevelStructureSpec:
             ),
             detuning_levels={"delta_R": "r", "delta_hf": "1"},
         ),
-        "1er": LevelStructureSpec(
-            name="1er",
-            levels=("1", "e", "r"),
+        "ger": LevelStructureSpec(
+            name="ger",
+            levels=("g", "e", "r"),
             rydberg_levels=("r",),
             transitions=(
-                TransitionSpec("420", "1", "e", "drive_420"),
+                TransitionSpec("420", "g", "e", "drive_420"),
                 TransitionSpec("1013", "e", "r", "H_1013"),
             ),
             detuning_levels={"delta_e": "e", "delta_R": "r"},
@@ -367,7 +367,7 @@ class RydbergSystem(SystemModel):
         **params,
     ) -> "RydbergSystem":
         """Build a named model preset."""
-        if name in {"1r", "01r", "1er"}:
+        if name in {"1r", "01r", "ger"}:
             if geometry is None:
                 geometry = make_chain(params.pop("N", 2), spacing_um=params.pop("spacing_um", 4.0))
             interaction = InteractionSpec(
