@@ -43,7 +43,7 @@ Every gate infidelity contribution is decomposed into four channels:
 ### Basic Setup
 
 ```python
-from exact.legacy.ideal_cz import CZGateSimulator, MonteCarloResult
+from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator, MonteCarloResult
 
 X_TO_OUR_DARK = [
    -0.9509172186259588, 1.105272315809505, 0.383911389220584,

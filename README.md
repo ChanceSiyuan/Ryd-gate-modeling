@@ -24,7 +24,6 @@ uv pip install -e ".[dev,tn]"
 
 ```python
 import ryd_gate as rg
-from exact import simulate
 from ryd_gate.lattice import make_chain
 
 # 1. Choose protocol
@@ -44,7 +43,7 @@ psi0 = np.zeros(49, dtype=complex)
 psi0[8] = 1.0  # |11> state
 
 X_TO = [0.1122, 1.0431, -0.72565603, 0.0, 0.452, 1.219096]
-result = simulate(system, X_TO, psi0)
+result = rg.simulate(system, X_TO, psi0)
 
 # 4. Analyze
 print(f"Final state norm: {np.linalg.norm(result.psi_final):.6f}")
@@ -54,7 +53,6 @@ print(f"Final state norm: {np.linalg.norm(result.psi_final):.6f}")
 
 ```python
 import ryd_gate as rg
-from exact import simulate
 import numpy as np
 from ryd_gate.lattice import make_chain
 
@@ -71,7 +69,7 @@ system = rg.RydbergSystem.from_lattice(
 # 3. Simulate (psi0 = ground state |gggg>)
 psi0 = system.ground_state()
 params = [2 * np.pi * -40e6, 2 * np.pi * 40e6, 10e-6]  # [delta_start, delta_end, t_sweep]
-result = simulate(system, params, psi0)
+result = rg.simulate(system, params, psi0)
 ```
 
 ## Package Layout
@@ -100,7 +98,6 @@ All commonly used symbols are available from the top-level package:
 
 ```python
 import ryd_gate as rg
-from exact import simulate
 ```
 
 ### Systems
@@ -124,7 +121,7 @@ from exact import simulate
 
 | Symbol | Description |
 |--------|-------------|
-| `exact.simulate(system, x, psi0)` | Exact compile + evolve |
+| `rg.simulate(system, x, psi0)` | Exact compile + evolve (default backend) |
 | `rg.compile_hamiltonian_ir(system, params)` | Core unified Hamiltonian output |
 | `rg.EvolutionResult` | Result dataclass: psi_final, times, states |
 | `rg.HamiltonianIR` | Solver-agnostic Hamiltonian IR |

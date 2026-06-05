@@ -44,7 +44,7 @@ def simulate(system, x, psi0="all_ground", *, backend: str = "exact", **kwargs) 
     if key in _EXACT_BACKENDS:
         from ryd_gate.backends.exact import simulate as simulate_exact
 
-        return simulate_exact(system, x, psi0, backend=key, **kwargs)
+        return simulate_exact(system, x, psi0, **kwargs)
 
     from ryd_gate.backends.tn_common import simulate_tn
     from ryd_gate.backends.tn_common.compiler import tn_lattice_spec_from_system
