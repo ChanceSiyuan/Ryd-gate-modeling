@@ -72,25 +72,119 @@ params = [2 * np.pi * -40e6, 2 * np.pi * 40e6, 10e-6]  # [delta_start, delta_end
 result = rg.simulate(system, params, psi0)
 ```
 
-## Package Layout
+### 全流程示例：2D g–r 晶格演化（exact + ttn）
+
+构建一个 3×3 的 ground–Rydberg (`1r`) 方格晶格，用失谐扫描把原子从全基态驱动进
+Rydberg 有序相，并跟踪 Rydberg 占据均值 `<n_r>` 的时间演化。同一段代码只需切换
+`backend=` 即可在**精确态矢量**和**树张量网络 (TTN)** 之间切换。
+
+```python
+import numpy as np
+import ryd_gate as rg
+from ryd_gate import InteractionSpec
+from ryd_gate.lattice import make_square_lattice
+
+# 1. 几何 + 能级结构：3x3 方格，每个格点是 |1>(基态) / |r>(Rydberg) 两能级
+geom = make_square_lattice(3, 3, spacing_um=1.0)          # 无量纲间距
+
+# 2. 失谐扫描协议（detuning 从 -8 扫到 +8，用时 6）
+protocol = rg.SweepProtocol(n_steps=60)
+system = rg.RydbergSystem.from_lattice(
+    geom, "1r",
+    interaction=InteractionSpec(C6=6.0),                  # 近邻阻塞 ~6（无量纲）
+    protocol=protocol,
+)
+x = [-8.0, 8.0, 6.0]                                      # [delta_start, delta_end, t_sweep]
+t_eval = np.linspace(0.0, 6.0, 7)
+
+# 3a. 精确后端：states 是态矢量，用 system.expectation 读 Rydberg 均值
+res = rg.simulate(system, x, "all_ground", backend="exact", t_eval=t_eval)
+for t, psi in zip(res.times, res.states):
+    print(f"t={t:.1f}  <n_r>={system.expectation('sum_nr', psi) / system.N:.4f}")
+
+# 3b. 树张量网络后端（需要 `pip install ryd-gate[tn-ttn]`）：
+#     同样的调用，TN 后端把 <n_r> 记录在 result.metadata["obs"]["n_mean"] 里
+res_ttn = rg.simulate(
+    system, x, "all_ground",
+    backend="ttn", t_eval=t_eval, observables=["n_mean"],
+    backend_options={"chi_max": 32, "dt": 0.1},
+)
+print("TTN <n_r>:", np.round(np.asarray(res_ttn.metadata["obs"]["n_mean"]), 4))
+```
+
+精确后端的输出（TTN 在这个小体系上应当一致）：
 
 ```
-src/
-├── ryd_gate/            # Core physics layer only
-│   ├── core/                # RydbergSystem, basis, blocks, observables
-│   ├── protocols/           # Pulse/control protocols
-│   ├── ir/                  # Unified Hamiltonian/result representations
-│   ├── lattice/             # Geometry helpers
-│   └── physics/             # Atomic physics helpers
-├── exact/               # HamiltonianIR -> exact matrices; ODE/expm backends
-├── tn_common/           # HamiltonianIR -> TN lattice specs; TN dispatch
-├── tenpy_mps/           # TeNPy MPS DMRG/TDVP implementation
-├── ttn/                 # PyTreeNet TTN-TDVP implementation and vendor
-├── gputn/               # CUDA/cuTensorNet implementation and compiler entry
-├── itensor/             # Julia ITensors/TNQS bridges and Julia project
-├── peps2d/              # 2D PEPS/BP external-solver boundary
-└── nqs/                 # NQS/tVMC external-solver boundary
+t=0.0  <n_r>=0.0000
+t=1.0  <n_r>=0.0099
+t=2.0  <n_r>=0.0303
+t=3.0  <n_r>=0.0934
+t=4.0  <n_r>=0.3007
+t=5.0  <n_r>=0.3233
+t=6.0  <n_r>=0.3970
 ```
+
+`<n_r>` 随失谐扫描从 0 升到约 0.40——原子被驱动进 Rydberg 态，而近邻阻塞把均值压在
+0.5 以下。把 `backend` 换成 `"tenpy"`/`"gputn"`/`"2dtn"` 即可切到其它张量网络后端。
+
+## 项目结构 (Project structure)
+
+所有代码都在单一命名空间 `ryd_gate` 下：**物理模型**（systems / protocols / IR）与
+**算法后端**（backends）分离。核心从不构造算法专属的矩阵——每个后端把同一份
+`HamiltonianIR` 降阶成自己的表示。数据流见 [`docs/architecture.md`](docs/architecture.md)。
+
+```
+src/ryd_gate/
+├── __init__.py            # 包门面：re-export 常用类型 + 统一入口 simulate
+├── simulate.py            # 统一仿真入口 simulate(system, x, psi0, backend=...)
+├── pulse.py               # Blackman 脉冲包络工具
+│
+├── core/                  # ── Rydberg 系统模型核心 ──
+│   ├── system.py              # RydbergSystem 主类（几何 + 能级结构 + 协议）
+│   ├── level_structures.py    # 能级/跃迁/相互作用 spec + 预设 (1r/01r/ger/rb87_7)
+│   ├── rb87_params.py         # Rb87 七能级物理参数 (our / lukin)
+│   ├── local_blocks.py        # 单原子 Hamiltonian 矩阵块
+│   ├── factories.py           # from_lattice 构造逻辑
+│   ├── interactions.py        # 范德华相互作用
+│   ├── states.py              # 多体初态构造
+│   ├── channel_lowering.py    # 协议通道降阶
+│   ├── system_model.py        # 系统抽象基类（通用框架）
+│   ├── basis.py / blocks.py / observables.py / operator_spec.py / operators.py
+│                              # 通用量子框架抽象：希尔伯特空间、块/可观测量注册表、符号算符
+│
+├── ir/                    # ── 统一中间表示（算法无关）──
+│   ├── hamiltonian.py         # HamiltonianIR（静态项 + 驱动项 + basis/geometry/metadata）
+│   └── evolution.py           # EvolutionResult（所有后端的统一输出）
+│
+├── protocols/             # ── 脉冲/控制协议 ──
+│   ├── base.py / channels.py  # 协议基类、驱动通道命名约定
+│   ├── gate_cz_to.py          # 时间最优 (TO) CZ 门
+│   ├── gate_cz_ar.py          # 幅度鲁棒 (AR) CZ 门
+│   ├── sweep.py               # 失谐扫描 + 局部寻址
+│   ├── lattice_dynamics.py    # TFIM ↔ Rydberg 控制映射（淬火/退火）
+│   └── digital_analog.py      # 数字-模拟混合协议
+│
+├── lattice/               # 纯几何：晶格形状/坐标/子格标签 + 绘图（不含能量）
+├── physics/               # Rb87 原子物理：AC Stark 频移、ARC 衰变分支比
+├── analysis/              # 结果后处理：门保真度/误差预算、局部寻址、粗化、对称性等
+│
+├── backends/              # ── 算法后端（统一命名空间）──
+│   ├── _options.py            # 共享 as_backend_options()（dict/dataclass 归一化）
+│   ├── exact/                 # 精确态矢量：sparse_expm / dense_ode / monte_carlo + legacy/
+│   ├── tn_common/             # 所有 TN 后端共享：TN IR / lattice_spec / simulate_tn 分发
+│   ├── tenpy_mps/             # TeNPy MPS DMRG/TDVP（最完整的 TN 后端）   [extra: tn]
+│   ├── gputn/                 # CUDA / cuQuantum 张量网络                 [extra: gputn-cu12]
+│   ├── itensor/               # Julia ITensors 桥接
+│   ├── ttn/                   # 树张量网络（用 _vendor/pytreenet）        [extra: tn-ttn]
+│   ├── nqs/                   # NQS/tVMC 外部求解器边界                   [extra: nqs]
+│   └── peps2d/                # 2D PEPS/BP 外部求解器边界                 [extra: tn-2d]
+│
+└── _vendor/               # 内嵌第三方 PyTreeNet（见 _vendor/NOTICE.md）
+```
+
+**怎么读这个结构**：用户通常只接触三样东西 —— 一个 `protocols/` 里的协议、
+`core/` 里的 `RydbergSystem`、以及顶层的 `simulate(...)`。其余 (`ir/`、`backends/`、
+`_vendor/`) 是分发与求解的内部机制，按需深入即可。
 
 ## API Reference
 
@@ -157,7 +251,22 @@ The two-atom solver models two ⁸⁷Rb atoms with:
 The 7-level basis per atom: `|0⟩, |1⟩, |e₁⟩, |e₂⟩, |e₃⟩, |r⟩, |r_garb⟩`
 Two-atom Hilbert space: 7² = 49 dimensions.
 
+## Examples
+
+Self-contained, runnable demos live in `examples/` (a good place to start):
+
+| Example | Description |
+|---------|-------------|
+| `examples/demo_local_addressing.py` | Exact local-addressing experiments (domain shrinking, Higgs mode) |
+| `examples/demo_local_addressing_tn.py` | Same workflow through the tensor-network backend |
+
+```bash
+uv run python examples/demo_local_addressing.py --Lx 2 --Ly 2 --experiment domain
+```
+
 ## Scripts
+
+Experimental / batch / plotting scripts live in `scripts/`:
 
 | Script | Description |
 |--------|-------------|
@@ -169,8 +278,6 @@ Two-atom Hilbert space: 7² = 49 dimensions.
 | `plot_population_evolution_sch.py` | Plot Schrödinger population evolution |
 | `sensitivity_gaussian_iso.py` | Sensitivity analysis for Gaussian position errors |
 | `run_local_sweep.py` | Local addressing sweep visualization (3-level model) |
-| `demo_local_addressing.py` | Local addressing pinning error demonstration |
-| `demo_local_addressing_tn.py` | Local addressing demonstration with TN backend |
 | `scan_local_addressing.py` | 2D grid scan over addressing parameters |
 | `scan_local_addressing_singlequbit.py` | Single-qubit addressing scan |
 | `diagnose_adiabaticity.py` | Diagnose adiabaticity quality for sweep protocols |
@@ -195,6 +302,7 @@ uv run pytest -m "" --cov=ryd_gate --cov-report=html
 
 | Document | Description |
 |----------|-------------|
+| [Architecture](docs/architecture.md) | Data flow, backend table, and core layout |
 | [Getting Started](docs/getting_started.md) | Installation and basic usage |
 | [Schrodinger Solver](docs/schrodinger_solver.md) | 7-level model theory and API |
 | [Error Budget](docs/error_budget_methodology.md) | Error decomposition methodology |
