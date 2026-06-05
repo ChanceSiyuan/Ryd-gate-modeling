@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from ryd_gate.core.rydberg_system import LevelStructureSpec, TransitionSpec
-from ryd_gate.core.rydberg_system import level_structure as core_level_structure
+from ryd_gate.core.level_structures import LevelStructureSpec, TransitionSpec
+from ryd_gate.core.level_structures import level_structure as core_level_structure
 
 
 def resolve_level_structure(level_structure: str | LevelStructureSpec) -> LevelStructureSpec:
@@ -16,7 +16,7 @@ def resolve_level_structure(level_structure: str | LevelStructureSpec) -> LevelS
         except ValueError as exc:
             raise ValueError(
                 f"Unknown TN level_structure {level_structure!r}; "
-                "use a registered ryd_gate.core.rydberg_system.level_structure preset."
+                "use a registered ryd_gate.core.level_structures.level_structure preset."
             ) from exc
     validate_tn_level_structure(spec)
     return spec

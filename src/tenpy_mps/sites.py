@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ryd_gate.core.rydberg_system import LevelStructureSpec
+from ryd_gate.core.level_structures import LevelStructureSpec
 from tn_common.sites import require_transition, resolve_level_structure
 
 

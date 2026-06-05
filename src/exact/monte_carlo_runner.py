@@ -11,7 +11,7 @@ from ryd_gate.ir.evolution import EvolutionResult
 
 if TYPE_CHECKING:
     from exact.base import SolverBackend
-    from ryd_gate.core.rydberg_system import RydbergSystem
+    from ryd_gate.core.system import RydbergSystem
 
 
 @dataclass

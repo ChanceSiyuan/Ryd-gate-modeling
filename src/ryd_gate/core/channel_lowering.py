@@ -12,7 +12,7 @@ from typing import Any
 
 import numpy as np
 
-from ryd_gate.core.rydberg_system import LevelStructureSpec
+from ryd_gate.core.level_structures import LevelStructureSpec
 
 _HC_CHANNELS = frozenset({"global_X", "drive_R", "drive_hf"})
 _HC_CHANNEL_PREFIXES = ("global_X_", "drive_R_", "drive_hf_")

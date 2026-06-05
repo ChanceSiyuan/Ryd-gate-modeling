@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 def _is_rydberg_system(system) -> bool:
-    from ryd_gate.core.rydberg_system import RydbergSystem
+    from ryd_gate.core.system import RydbergSystem
 
     return isinstance(system, RydbergSystem)
 

@@ -5,7 +5,7 @@ This package does **not** define energy levels, Hamiltonians, states,
 observables, interactions, or evolution; for those see:
 
 - ``ryd_gate.core.interactions``           — pairwise VdW coupling computation
-- ``ryd_gate.core.rydberg_system``         — level structure, Hamiltonian blocks,
+- ``ryd_gate.core.system``                 — level structure, Hamiltonian blocks,
                                               and observables for lattice models
 - ``ryd_gate.core.states``                 — product/AF/domain/ground state constructors
 - ``ryd_gate.analysis.lattice_observables``— bit/trit-mask occupation measurement

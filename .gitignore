@@ -36,5 +36,8 @@ docs/_build/
 htmlcov/
 coverage.xml
 
+# Pytest
+.pytest_cache/
+
 # Lock files
 uv.lock

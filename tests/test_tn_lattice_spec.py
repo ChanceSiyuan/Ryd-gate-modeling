@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from ryd_gate import DEFAULT_C6, RydbergSystem, SweepProtocol, compile_hamiltonian_ir
-from ryd_gate.core.rydberg_system import InteractionSpec, level_structure
+from ryd_gate.core.level_structures import InteractionSpec, level_structure
 from ryd_gate.lattice import make_square_lattice
 from tn_common.compiler import TNCompiler, tn_lattice_spec_from_system
 from tn_common.lattice_spec import (

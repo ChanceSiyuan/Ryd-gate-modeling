@@ -6,7 +6,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ryd_gate.core.rydberg_system import LevelStructureSpec, RydbergSystem, level_structure
+from ryd_gate.core.level_structures import LevelStructureSpec, level_structure
+from ryd_gate.core.system import RydbergSystem
 from ryd_gate.ir import HamiltonianIR, compile_hamiltonian_ir
 
 from .lattice_spec import TNLatticeSpec, snake_order_mapping

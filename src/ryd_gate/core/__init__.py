@@ -2,8 +2,12 @@
 
 Contents
 --------
-- ``rydberg_system`` — RydbergSystem (universal model: lattice + level
+- ``system``          — RydbergSystem (universal model: lattice + level
   structure + protocol → symbolic blocks + observables)
+- ``level_structures``— level/transition/interaction specs + presets
+- ``rb87_params``     — Rb87 seven-level physical parameter sets
+- ``local_blocks``    — single-atom Hamiltonian matrix blocks
+- ``factories``       — RydbergSystem.from_lattice construction
 - ``system_model``   — SystemModel ABC consumed by solvers
 - ``basis``          — BasisSpec: site/level labels and Hilbert dimensions
 - ``blocks``         — BlockRegistry: named matrix or symbolic Hamiltonian blocks
@@ -17,14 +21,14 @@ Contents
 from ryd_gate.core.basis import BasisSpec
 from ryd_gate.core.blocks import BlockRegistry
 from ryd_gate.core.observables import Observable, ObservableRegistry
-from ryd_gate.core.rydberg_system import (
+from ryd_gate.core.level_structures import (
     DEFAULT_C6,
     InteractionSpec,
     LevelStructureSpec,
-    RydbergSystem,
     TransitionSpec,
     level_structure,
 )
+from ryd_gate.core.system import RydbergSystem
 
 __all__ = [
     "RydbergSystem",

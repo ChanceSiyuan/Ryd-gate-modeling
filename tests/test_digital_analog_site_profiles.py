@@ -12,7 +12,7 @@ from ryd_gate.core.channel_lowering import (
     three_level_profiles_from_coeffs,
     two_level_drive_and_detuning_from_coeffs,
 )
-from ryd_gate.core.rydberg_system import InteractionSpec, LevelStructureSpec, TransitionSpec
+from ryd_gate.core.level_structures import InteractionSpec, LevelStructureSpec, TransitionSpec
 from ryd_gate.lattice import make_chain
 from ryd_gate.protocols.digital_analog import (
     DigitalAnalogProtocol,

@@ -15,7 +15,7 @@ from ryd_gate.analysis.lattice_observables import (
     precompute_trit_masks,
     staggered_magnetization,
 )
-from ryd_gate.core.rydberg_system import InteractionSpec
+from ryd_gate.core.level_structures import InteractionSpec
 from ryd_gate.lattice import make_square_lattice, plot_spatial_rydberg
 
 

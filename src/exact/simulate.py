@@ -30,7 +30,7 @@ def simulate(
     from exact.dense_ode import DenseODEBackend
     from exact.sparse_expm import SparseExpmBackend
     from exact.compiler import ExactSparseCompiler
-    from ryd_gate.core.rydberg_system import RydbergSystem
+    from ryd_gate.core.system import RydbergSystem
 
     if not isinstance(system, RydbergSystem):
         raise TypeError(
