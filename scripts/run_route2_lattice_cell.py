@@ -1,4 +1,5 @@
 """Run the Route-2 lattice cell from plus_state_preparation.ipynb (headless)."""
+
 import matplotlib
 
 matplotlib.use("Agg")
@@ -32,8 +33,10 @@ proto_direct = DigitalAnalogProtocol(
     n_steps=200,
 )
 system = RydbergSystem.from_lattice(
-    geom, level_structure="01r",
-    interaction=InteractionSpec(), protocol=proto_direct,
+    geom,
+    level_structure="01r",
+    interaction=InteractionSpec(),
+    protocol=proto_direct,
 )
 psi0 = system.product_state(["1"] * N)
 result = simulate(system, [], psi0, t_eval=True)
@@ -42,17 +45,12 @@ states = [psi0, *result.states]
 
 levels = tuple(system.basis.local_levels)
 pops_site = {
-    i: {
-        lvl: np.array([system.expectation(f"n_{lvl}_{i}", psi) for psi in states])
-        for lvl in levels
-    }
-    for i in range(N)
+    i: {lvl: np.array([system.expectation(f"n_{lvl}_{i}", psi) for psi in states]) for lvl in levels} for i in range(N)
 }
 
 psi_final = states[-1]
 psi_plus = sum(
-    (-1j) ** sum(c == "r" for c in cfg) * system.product_state(list(cfg))
-    for cfg in product(["1", "r"], repeat=N)
+    (-1j) ** sum(c == "r" for c in cfg) * system.product_state(list(cfg)) for cfg in product(["1", "r"], repeat=N)
 ) / (2 ** (N / 2))
 fidelity = np.abs(np.vdot(psi_plus, psi_final)) ** 2
 print(f"N={N}, fidelity to (|1⟩ - i|r⟩)/√2^{N}: {fidelity:.4f}")
@@ -64,7 +62,7 @@ for i in range(N):
     ix, iy = i // Ly, i % Ly
     ax = axes[iy, ix]
     for lvl in ("0", "1", "r"):
-        ax.plot(times, pops_site[i][lvl], color=colors[lvl], lw=2, label=fr"$\langle n_{lvl}\rangle$")
+        ax.plot(times, pops_site[i][lvl], color=colors[lvl], lw=2, label=rf"$\langle n_{lvl}\rangle$")
     ax.axhline(0.5, color="k", ls=":", lw=1)
     ax.set_title(f"({ix}, {iy})")
     ax.grid(alpha=0.3)

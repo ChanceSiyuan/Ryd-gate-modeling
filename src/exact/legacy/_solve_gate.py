@@ -58,6 +58,7 @@ def solve_gate(
         Shape (49, len(t_eval)) or (49,) if t_eval is None.
     """
     from exact.legacy._registry import check_protocol_compatibility
+
     check_protocol_compatibility(system, protocol)
 
     params = protocol.unpack_params(x, system)
@@ -128,6 +129,7 @@ def evolve(
     ndarray
         Shape (49, len(t_eval)) or (49,) if t_eval is None.
     """
+
     def rhs(t, y):
         H = hamiltonian_fn(t)
         return -1j * H @ y

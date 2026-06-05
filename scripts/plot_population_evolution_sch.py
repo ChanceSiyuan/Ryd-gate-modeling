@@ -31,14 +31,20 @@ from ryd_gate.analysis.gate_metrics import population_evolution, state_infidelit
 #     - θ: Single-qubit Z rotation angle
 #     - T: Gate time
 # The protocol φ(t) = A·cos(ωt + φ₀) + δ·t with
-X_TO = [ -0.6990251940088914, 1.0294930712188455, 0.37642793463018853, 1.5710847832834478, 1.4454415553284314, 1.340639491094446]
+X_TO = [
+    -0.6990251940088914,
+    1.0294930712188455,
+    0.37642793463018853,
+    1.5710847832834478,
+    1.4454415553284314,
+    1.340639491094446,
+]
 
 N_SSS = 12
 
 # Aggregated population categories
-CATEGORIES = ['Intermediate', 'Rydberg |r1⟩', 'Garbage Rydberg |r2⟩']
-COLORS = {'Intermediate': 'tab:blue', 'Rydberg |r1⟩': 'tab:red',
-           'Garbage Rydberg |r2⟩': 'gray'}
+CATEGORIES = ["Intermediate", "Rydberg |r1⟩", "Garbage Rydberg |r2⟩"]
+COLORS = {"Intermediate": "tab:blue", "Rydberg |r1⟩": "tab:red", "Garbage Rydberg |r2⟩": "gray"}
 
 
 def run_schrodinger():
@@ -52,7 +58,7 @@ def run_schrodinger():
     infidelities : ndarray, shape (12,)
         Infidelity 1 - F for each SSS initial state.
     """
-    system = make_our_system( blackmanflag=False)
+    system = make_our_system(blackmanflag=False)
     protocol = TOProtocol()
 
     params = protocol.unpack_params(X_TO, system)
@@ -82,17 +88,23 @@ def plot_sss_comparison(sch_pops, sch_time, infidelities, outpath):
     for i, ax in enumerate(axes.flat):
         for c, cat in enumerate(CATEGORIES):
             color = COLORS[cat]
-            ax.plot(sch_time, sch_pops[i, c, :], color=color, linestyle='-', lw=1.3)
-        ax.set_title(f'SSS-{i}', fontsize=10)
-        ax.set_xlabel('Time (ns)', fontsize=8)
-        ax.set_ylabel('Population', fontsize=8)
+            ax.plot(sch_time, sch_pops[i, c, :], color=color, linestyle="-", lw=1.3)
+        ax.set_title(f"SSS-{i}", fontsize=10)
+        ax.set_xlabel("Time (ns)", fontsize=8)
+        ax.set_ylabel("Population", fontsize=8)
         ax.tick_params(labelsize=7)
 
         # Infidelity text
         inf = infidelities[i]
-        ax.text(0.02, 0.98, f'1−F = {inf:.2e}', transform=ax.transAxes,
-                fontsize=9, verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        ax.text(
+            0.02,
+            0.98,
+            f"1−F = {inf:.2e}",
+            transform=ax.transAxes,
+            fontsize=9,
+            verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+        )
 
         # Auto-scale y-axis per subplot
         ymax = np.max(sch_pops[i])
@@ -102,16 +114,15 @@ def plot_sss_comparison(sch_pops, sch_time, infidelities, outpath):
 
     # Shared legend at bottom
     from matplotlib.lines import Line2D
+
     legend_elements = []
     for cat in CATEGORIES:
         color = COLORS[cat]
-        legend_elements.append(Line2D([0], [0], color=color, linestyle='-', lw=1.5,
-                                       label=f'{cat}'))
-    fig.legend(handles=legend_elements, loc='lower center', ncol=3,
-               fontsize=9, bbox_to_anchor=(0.5, -0.03))
-    fig.suptitle('SSS Population Evolution — Schrödinger', fontsize=14, y=1.01)
+        legend_elements.append(Line2D([0], [0], color=color, linestyle="-", lw=1.5, label=f"{cat}"))
+    fig.legend(handles=legend_elements, loc="lower center", ncol=3, fontsize=9, bbox_to_anchor=(0.5, -0.03))
+    fig.suptitle("SSS Population Evolution — Schrödinger", fontsize=14, y=1.01)
     fig.tight_layout()
-    fig.savefig(outpath, dpi=150, bbox_inches='tight')
+    fig.savefig(outpath, dpi=150, bbox_inches="tight")
     print(f"  Saved {outpath}")
     plt.close(fig)
 
@@ -124,22 +135,22 @@ def plot_sss_averaged(sch_pops, sch_time, infidelities, outpath):
     fig, ax = plt.subplots(figsize=(10, 6))
     for c, cat in enumerate(CATEGORIES):
         color = COLORS[cat]
-        ax.plot(sch_time, sch_avg[c], color=color, linestyle='-', lw=1.8,
-                label=f'{cat}')
+        ax.plot(sch_time, sch_avg[c], color=color, linestyle="-", lw=1.8, label=f"{cat}")
 
-    ax.set_xlabel('Time (ns)', fontsize=12)
-    ax.set_ylabel('Population (SSS-averaged)', fontsize=12)
-    ax.set_title(f'SSS-Averaged Population Evolution — Schrödinger\n'
-                 f'Average Infidelity: {avg_infidelity:.2e}', fontsize=13)
+    ax.set_xlabel("Time (ns)", fontsize=12)
+    ax.set_ylabel("Population (SSS-averaged)", fontsize=12)
+    ax.set_title(
+        f"SSS-Averaged Population Evolution — Schrödinger\nAverage Infidelity: {avg_infidelity:.2e}", fontsize=13
+    )
     ax.legend(fontsize=10, ncol=2)
     fig.tight_layout()
-    fig.savefig(outpath, dpi=150, bbox_inches='tight')
+    fig.savefig(outpath, dpi=150, bbox_inches="tight")
     print(f"  Saved {outpath}")
     plt.close(fig)
 
 
 def main():
-    os.makedirs('docs/figures', exist_ok=True)
+    os.makedirs("docs/figures", exist_ok=True)
 
     print("=" * 60)
     print("SSS Population Evolution — Schrödinger")
@@ -154,13 +165,11 @@ def main():
     print(f"  Average: 1-F = {np.mean(infidelities):.2e}")
 
     print("\n[2/2] Generating figures...")
-    plot_sss_comparison(sch_pops, sch_time, infidelities,
-                        'docs/figures/population_evolution_sss_comparison.png')
-    plot_sss_averaged(sch_pops, sch_time, infidelities,
-                      'docs/figures/population_evolution_sss_averaged.png')
+    plot_sss_comparison(sch_pops, sch_time, infidelities, "docs/figures/population_evolution_sss_comparison.png")
+    plot_sss_averaged(sch_pops, sch_time, infidelities, "docs/figures/population_evolution_sss_averaged.png")
 
     print("\nDone.")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -61,10 +61,7 @@ class SweepProtocol(Protocol):
 
     def validate_params(self, x: list[float]) -> None:
         if len(x) != 3:
-            raise ValueError(
-                f"SweepProtocol requires 3 parameters "
-                f"[delta_start, delta_end, t_sweep], got {len(x)}."
-            )
+            raise ValueError(f"SweepProtocol requires 3 parameters [delta_start, delta_end, t_sweep], got {len(x)}.")
 
     def unpack_params(self, x: list[float], system) -> dict:
         """Unpack parameters using model metadata.
@@ -80,23 +77,27 @@ class SweepProtocol(Protocol):
             "static_overlays": [],
         }
         if rabi_eff is not None:
-            base.update({
-                "delta_start": x[0] * rabi_eff,
-                "delta_end": x[1] * rabi_eff,
-                "t_gate": x[2] * system.meta("time_scale"),
-                "t_rise": system.meta("t_rise", 0.0),
-                "blackmanflag": system.meta("blackmanflag", True),
-                "_system_type": "atomic",
-            })
+            base.update(
+                {
+                    "delta_start": x[0] * rabi_eff,
+                    "delta_end": x[1] * rabi_eff,
+                    "t_gate": x[2] * system.meta("time_scale"),
+                    "t_rise": system.meta("t_rise", 0.0),
+                    "blackmanflag": system.meta("blackmanflag", True),
+                    "_system_type": "atomic",
+                }
+            )
         else:
-            base.update({
-                "delta_start": x[0],
-                "delta_end": x[1],
-                "t_gate": x[2],
-                "Omega": system.meta("Omega", 1.0) if hasattr(system, "meta") else 1.0,
-                "omega_ramp_frac": self.omega_ramp_frac,
-                "_system_type": "lattice",
-            })
+            base.update(
+                {
+                    "delta_start": x[0],
+                    "delta_end": x[1],
+                    "t_gate": x[2],
+                    "Omega": system.meta("Omega", 1.0) if hasattr(system, "meta") else 1.0,
+                    "omega_ramp_frac": self.omega_ramp_frac,
+                    "_system_type": "lattice",
+                }
+            )
         return base
 
     def _ensure_stark_table(self, params: dict) -> None:
@@ -116,6 +117,7 @@ class SweepProtocol(Protocol):
             A2 = np.ones(n_pts)
         # Cumulative integral of Δ_AC(t') = ac_stark_shift * A²(t')
         from scipy.integrate import cumulative_trapezoid
+
         cum_phase = np.zeros(n_pts)
         cum_phase[1:] = cumulative_trapezoid(self.ac_stark_shift * A2, ts)
         self._stark_phase_table = (ts, cum_phase)
@@ -146,10 +148,15 @@ class SweepProtocol(Protocol):
     @property
     def required_channels(self) -> frozenset[str]:
         """Channels depend on system type; return union of both modes."""
-        return frozenset({
-            "drive_420", "drive_420_dag", "lightshift_zero",
-            "global_X", "global_n",
-        })
+        return frozenset(
+            {
+                "drive_420",
+                "drive_420_dag",
+                "lightshift_zero",
+                "global_X",
+                "global_n",
+            }
+        )
 
     def drive_channels(self, system) -> frozenset[str]:
         """Return atomic or lattice channels based on the bound system."""
@@ -177,9 +184,7 @@ class SweepProtocol(Protocol):
 
             phase = self.phase_420(t, params)
             amplitude = (
-                blackman_pulse(t, params["t_rise"], params["t_gate"])
-                if params.get("blackmanflag", True)
-                else 1.0
+                blackman_pulse(t, params["t_rise"], params["t_gate"]) if params.get("blackmanflag", True) else 1.0
             )
             return {
                 "drive_420": amplitude * phase,

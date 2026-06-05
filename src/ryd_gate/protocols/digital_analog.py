@@ -61,10 +61,7 @@ def as_site_profile(value: SiteProfile, n_sites: int) -> np.ndarray:
     if arr.ndim == 0:
         return np.full(n_sites, float(arr))
     if arr.shape != (n_sites,):
-        raise ValueError(
-            f"Site profile must be a scalar or length-{n_sites} sequence; "
-            f"got shape {arr.shape}."
-        )
+        raise ValueError(f"Site profile must be a scalar or length-{n_sites} sequence; got shape {arr.shape}.")
     return arr
 
 
@@ -138,8 +135,7 @@ class DigitalAnalogProtocol(Protocol):
     ) -> "DigitalAnalogProtocol":
         """Single-segment schedule with constant drives over [0, t_gate]."""
         return cls(
-            [Segment(duration=t_gate, omega_R=omega_R, omega_hf=omega_hf,
-                     delta_R=delta_R, delta_hf=delta_hf)],
+            [Segment(duration=t_gate, omega_R=omega_R, omega_hf=omega_hf, delta_R=delta_R, delta_hf=delta_hf)],
             n_steps=n_steps,
         )
 
@@ -153,8 +149,7 @@ class DigitalAnalogProtocol(Protocol):
     def validate_params(self, x) -> None:
         if len(x) != 0:
             raise ValueError(
-                f"DigitalAnalogProtocol takes no x parameters (schedule is on the "
-                f"protocol); got {len(x)}."
+                f"DigitalAnalogProtocol takes no x parameters (schedule is on the protocol); got {len(x)}."
             )
 
     def unpack_params(self, x, system) -> dict:
@@ -216,10 +211,7 @@ class DigitalAnalogProtocol(Protocol):
         if is_scalar_profile(val):
             return {global_ch: complex(sign * scale * profile[0])}
 
-        return {
-            f"{site_prefix}_{i}": complex(sign * scale * profile[i])
-            for i in range(n_sites)
-        }
+        return {f"{site_prefix}_{i}": complex(sign * scale * profile[i]) for i in range(n_sites)}
 
     def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
         """Return channel coefficients at time *t* for the active segment.

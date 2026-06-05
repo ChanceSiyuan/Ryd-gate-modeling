@@ -8,14 +8,17 @@ Usage:
     uv run python scripts/generate_si_tables.py --recompute
     uv run python scripts/generate_si_tables.py --generate-mc --n-mc-shots 100
 """
+
 import argparse
 import datetime
 import json
 import os
+
 os.environ["JAX_PLATFORMS"] = "cpu"
 
 import numpy as np
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -29,10 +32,20 @@ from ryd_gate.analysis.gate_metrics import sss_infidelity, error_budget
 SSS_12_STATES = [f"SSS-{i}" for i in range(12)]
 
 X_TO_OUR_DARK = [
-    -0.6990251940088914, 1.0294930712188455, 0.37642793463018853, 1.5710847832834478, 1.4454415553284314, 1.340639491094446
+    -0.6990251940088914,
+    1.0294930712188455,
+    0.37642793463018853,
+    1.5710847832834478,
+    1.4454415553284314,
+    1.340639491094446,
 ]
 X_TO_OUR_BRIGHT = [
-    0.6246672641243727, 1.2369507331752663, -0.470787497434612, 1.6547386752699043, 3.41960305947842, 1.3338111168065905
+    0.6246672641243727,
+    1.2369507331752663,
+    -0.470787497434612,
+    1.6547386752699043,
+    3.41960305947842,
+    1.3338111168065905,
 ]
 
 
@@ -62,7 +75,8 @@ def compute_deterministic_errors(sign, x):
     # Rydberg decay
     print("  Rydberg decay...")
     system_ryd = make_our_system(
-        blackmanflag=True, detuning_sign=sign,
+        blackmanflag=True,
+        detuning_sign=sign,
         enable_rydberg_decay=True,
     )
     infid_ryd = sss_infidelity(system_ryd, protocol, x)
@@ -75,7 +89,8 @@ def compute_deterministic_errors(sign, x):
     # Intermediate decay (full 0+1 scattering)
     print("  Intermediate decay (full)...")
     system_mid = make_our_system(
-        blackmanflag=True, detuning_sign=sign,
+        blackmanflag=True,
+        detuning_sign=sign,
         enable_intermediate_decay=True,
     )
     infid_mid = sss_infidelity(system_mid, protocol, x)
@@ -94,7 +109,8 @@ def compute_deterministic_errors(sign, x):
     # difference is meaningful (no XYZ/AL/LG decomposition).
     print("  Intermediate decay (no |0> scattering)...")
     system_mid_no0 = make_our_system(
-        blackmanflag=True, detuning_sign=sign,
+        blackmanflag=True,
+        detuning_sign=sign,
         enable_intermediate_decay=True,
         enable_0_scattering=False,
     )
@@ -104,7 +120,8 @@ def compute_deterministic_errors(sign, x):
     # Polarization leakage
     print("  Polarization leakage...")
     system_pol = make_our_system(
-        blackmanflag=True, detuning_sign=sign,
+        blackmanflag=True,
+        detuning_sign=sign,
         enable_polarization_leakage=True,
     )
     infid_pol = sss_infidelity(system_pol, protocol, x)
@@ -117,7 +134,8 @@ def compute_deterministic_errors(sign, x):
     # All deterministic combined
     print("  All deterministic...")
     system_all = make_our_system(
-        blackmanflag=True, detuning_sign=sign,
+        blackmanflag=True,
+        detuning_sign=sign,
         enable_rydberg_decay=True,
         enable_intermediate_decay=True,
         enable_polarization_leakage=True,
@@ -144,8 +162,7 @@ def load_mc_results(label):
     for key in ("dephasing", "position", "all"):
         path = f"data/mc_{label}_{key}.txt"
         if not Path(path).exists():
-            raise FileNotFoundError(
-                f"{path} not found. Use --generate-mc to compute inline.")
+            raise FileNotFoundError(f"{path} not found. Use --generate-mc to compute inline.")
         results[key] = MonteCarloResult.load_from_file(path)
     return results
 
@@ -156,28 +173,42 @@ def generate_mc_results(sign, label, x, n_shots=1000, seed=42):
     protocol = TOProtocol()
 
     scenarios = [
-        ("dephasing", f"Dephasing ({SIGMA_DETUNING/1e3:.0f} kHz)",
-         dict(blackmanflag=True, detuning_sign=sign),
-         lambda eng: eng.setup_detuning_noise(SIGMA_DETUNING)),
-        ("position", "Position error (70,70,130 nm)",
-         dict(blackmanflag=True, detuning_sign=sign),
-         lambda eng: eng.setup_position_noise(SIGMA_POS)),
-        ("all", "All errors combined",
-         dict(blackmanflag=True, detuning_sign=sign,
-              enable_rydberg_decay=True, enable_intermediate_decay=True,
-              enable_polarization_leakage=True),
-         lambda eng: (eng.setup_detuning_noise(SIGMA_DETUNING),
-                      eng.setup_position_noise(SIGMA_POS))),
+        (
+            "dephasing",
+            f"Dephasing ({SIGMA_DETUNING / 1e3:.0f} kHz)",
+            dict(blackmanflag=True, detuning_sign=sign),
+            lambda eng: eng.setup_detuning_noise(SIGMA_DETUNING),
+        ),
+        (
+            "position",
+            "Position error (70,70,130 nm)",
+            dict(blackmanflag=True, detuning_sign=sign),
+            lambda eng: eng.setup_position_noise(SIGMA_POS),
+        ),
+        (
+            "all",
+            "All errors combined",
+            dict(
+                blackmanflag=True,
+                detuning_sign=sign,
+                enable_rydberg_decay=True,
+                enable_intermediate_decay=True,
+                enable_polarization_leakage=True,
+            ),
+            lambda eng: (eng.setup_detuning_noise(SIGMA_DETUNING), eng.setup_position_noise(SIGMA_POS)),
+        ),
     ]
 
     results = {}
     for i, (key, desc, system_kw, setup_fn) in enumerate(scenarios, 1):
         print(f"  [{i}/{len(scenarios)}] {desc}...")
-        system = make_our_system( **system_kw)
+        system = make_our_system(**system_kw)
         engine = MonteCarloRunner(system.with_protocol(protocol), x)
         setup_fn(engine)
         results[key] = engine.run_gate_fidelity(
-            n_shots=n_shots, seed=seed + i - 1, compute_branching=True,
+            n_shots=n_shots,
+            seed=seed + i - 1,
+            compute_branching=True,
         )
         results[key].save_to_file(f"data/mc_{label}_{key}.txt")
 
@@ -208,7 +239,10 @@ def build_table_rows(det, mc):
             return [
                 name,
                 f"{e['infidelity']:.6e}",
-                "\u2014", "\u2014", "\u2014", "\u2014",
+                "\u2014",
+                "\u2014",
+                "\u2014",
+                "\u2014",
             ]
 
     def mc_row(name, r):
@@ -297,8 +331,7 @@ def render_pdf(rows, title, output_path, footnotes=None):
     # Footnotes outside the table, bottom-left
     if footnotes:
         footnote_text = "\n".join(footnotes)
-        fig.text(0.05, 0.02, footnote_text, fontsize=8, fontstyle="italic",
-                 verticalalignment="bottom", wrap=True)
+        fig.text(0.05, 0.02, footnote_text, fontsize=8, fontstyle="italic", verticalalignment="bottom", wrap=True)
 
     plt.savefig(output_path, bbox_inches="tight", dpi=300)
     plt.close()
@@ -307,23 +340,25 @@ def render_pdf(rows, title, output_path, footnotes=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--recompute", action="store_true",
-                        help="Recompute deterministic errors instead of loading cached data")
-    parser.add_argument("--generate-mc", action="store_true",
-                        help="Generate MC data inline instead of loading from data/")
-    parser.add_argument("--n-mc-shots", type=int, default=1000,
-                        help="Number of MC shots when using --generate-mc (default: 1000)")
-    parser.add_argument("--mc-seed", type=int, default=42,
-                        help="RNG seed for MC generation (default: 42)")
+    parser.add_argument(
+        "--recompute", action="store_true", help="Recompute deterministic errors instead of loading cached data"
+    )
+    parser.add_argument(
+        "--generate-mc", action="store_true", help="Generate MC data inline instead of loading from data/"
+    )
+    parser.add_argument(
+        "--n-mc-shots", type=int, default=1000, help="Number of MC shots when using --generate-mc (default: 1000)"
+    )
+    parser.add_argument("--mc-seed", type=int, default=42, help="RNG seed for MC generation (default: 42)")
     args = parser.parse_args()
 
     for sign, label, x in [
         # (-1, "bright", X_TO_OUR_BRIGHT),
         (1, "dark", X_TO_OUR_DARK),
     ]:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  {label.upper()} DETUNING")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         det_path = f"data/det_{label}.json"
         if args.recompute or not Path(det_path).exists():
@@ -336,14 +371,15 @@ def main():
 
         if args.generate_mc:
             print("\nGenerating MC results:")
-            mc = generate_mc_results(sign, label, x,
-                                     n_shots=args.n_mc_shots, seed=args.mc_seed)
+            mc = generate_mc_results(sign, label, x, n_shots=args.n_mc_shots, seed=args.mc_seed)
         else:
             print("\nLoading MC results:")
             mc = load_mc_results(label)
 
         rows, footnotes = build_table_rows(det, mc)
-        render_pdf(rows, f"Error Budget: {label.capitalize()} Detuning", f"scripts/SI_Tables_{label}.pdf", footnotes=footnotes)
+        render_pdf(
+            rows, f"Error Budget: {label.capitalize()} Detuning", f"scripts/SI_Tables_{label}.pdf", footnotes=footnotes
+        )
 
     print("\nDone.")
 

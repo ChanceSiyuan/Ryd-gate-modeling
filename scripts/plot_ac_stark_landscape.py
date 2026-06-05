@@ -19,6 +19,7 @@ Usage
         --power-min 1 --power-max 500 --n-power 200 \
         --prefix wide
 """
+
 from __future__ import annotations
 
 import argparse
@@ -31,17 +32,19 @@ from matplotlib.colors import LogNorm, SymLogNorm
 
 # Use matplotlib's built-in mathtext engine (no external LaTeX install needed).
 # All label strings below use raw r"$...$" with LaTeX-style commands.
-mpl.rcParams.update({
-    "text.usetex": False,          # keep dependency-free; mathtext handles `$...$`
-    "mathtext.fontset": "cm",       # Computer Modern look-alike
-    "mathtext.default": "regular",
-    "font.family": "serif",
-    "axes.titlesize": 12,
-    "axes.labelsize": 11,
-    "legend.fontsize": 8,
-    "xtick.labelsize": 9,
-    "ytick.labelsize": 9,
-})
+mpl.rcParams.update(
+    {
+        "text.usetex": False,  # keep dependency-free; mathtext handles `$...$`
+        "mathtext.fontset": "cm",  # Computer Modern look-alike
+        "mathtext.default": "regular",
+        "font.family": "serif",
+        "axes.titlesize": 12,
+        "axes.labelsize": 11,
+        "legend.fontsize": 8,
+        "xtick.labelsize": 9,
+        "ytick.labelsize": 9,
+    }
+)
 
 # Common slim-colorbar kwargs used by both heatmap panels. `fraction=0.032`
 # makes the colorbar noticeably narrower than matplotlib's default (0.15).
@@ -71,8 +74,8 @@ def build_grid(wl_nm, power_uw):
     compute_shift_scatter profile with P/POWER_REF_UW.
     """
     shift_ref_hz, scatter_ref_hz = compute_shift_scatter(wl_nm)  # shape (n_wl,)
-    scale = power_uw / POWER_REF_UW                              # shape (n_power,)
-    shift_hz  = shift_ref_hz[:, None]   * scale[None, :]
+    scale = power_uw / POWER_REF_UW  # shape (n_power,)
+    shift_hz = shift_ref_hz[:, None] * scale[None, :]
     scatter_hz = scatter_ref_hz[:, None] * scale[None, :]
     return shift_hz / 1e6, scatter_hz  # shift in MHz, scatter in Hz
 
@@ -85,70 +88,61 @@ def plot_landscape(wl_nm, power_uw, shift_mhz, scatter_hz, args):
     # ── Light-shift heatmap (signed, so use SymLogNorm) ──────────────────
     lin_thr = 0.5  # MHz: below this magnitude show linearly
     vmax = float(np.nanmax(np.abs(shift_mhz)))
-    norm_shift = SymLogNorm(linthresh=lin_thr, linscale=0.5,
-                            vmin=-vmax, vmax=vmax, base=10)
-    im_s = ax_s.pcolormesh(power_uw, wl_nm, shift_mhz,
-                           cmap="seismic", norm=norm_shift, shading="auto")
+    norm_shift = SymLogNorm(linthresh=lin_thr, linscale=0.5, vmin=-vmax, vmax=vmax, base=10)
+    im_s = ax_s.pcolormesh(power_uw, wl_nm, shift_mhz, cmap="seismic", norm=norm_shift, shading="auto")
     # Zero-shift contour so the "magic wavelength" where shift crosses 0 is clear.
     try:
-        cs = ax_s.contour(power_uw, wl_nm, shift_mhz,
-                          levels=[0.0], colors="k", linewidths=1.2, linestyles="--")
-        ax_s.clabel(cs, inline=True, fontsize=8,
-                    fmt=r"$\Delta_{\mathrm{LS}} = 0$")
+        cs = ax_s.contour(power_uw, wl_nm, shift_mhz, levels=[0.0], colors="k", linewidths=1.2, linestyles="--")
+        ax_s.clabel(cs, inline=True, fontsize=8, fmt=r"$\Delta_{\mathrm{LS}} = 0$")
     except (ValueError, IndexError):
         pass  # no zero crossing in the plotted range
     # Reference lines: D1, D2, calibration wavelength.
     for wl, label, color in [
-        (LAMBDA_D1,
-         rf"$\mathrm{{D_1}} = {LAMBDA_D1:.2f}\,\mathrm{{nm}}$", "0.3"),
-        (LAMBDA_D2,
-         rf"$\mathrm{{D_2}} = {LAMBDA_D2:.2f}\,\mathrm{{nm}}$", "0.3"),
-        (LAMBDA_PAPER,
-         rf"$\lambda_{{\mathrm{{cal}}}} = {LAMBDA_PAPER:.0f}\,\mathrm{{nm}}$",
-         "gold"),
+        (LAMBDA_D1, rf"$\mathrm{{D_1}} = {LAMBDA_D1:.2f}\,\mathrm{{nm}}$", "0.3"),
+        (LAMBDA_D2, rf"$\mathrm{{D_2}} = {LAMBDA_D2:.2f}\,\mathrm{{nm}}$", "0.3"),
+        (LAMBDA_PAPER, rf"$\lambda_{{\mathrm{{cal}}}} = {LAMBDA_PAPER:.0f}\,\mathrm{{nm}}$", "gold"),
     ]:
         if wl_nm[0] <= wl <= wl_nm[-1]:
             ax_s.axhline(wl, color=color, lw=1.0, ls=":", alpha=0.8)
-            ax_s.text(power_uw[-1], wl, "  " + label,
-                      color=color, fontsize=7, va="center", ha="left")
+            ax_s.text(power_uw[-1], wl, "  " + label, color=color, fontsize=7, va="center", ha="left")
     # Calibration point marker
-    if (wl_nm[0] <= LAMBDA_PAPER <= wl_nm[-1]
-            and power_uw[0] <= POWER_REF_UW <= power_uw[-1]):
-        ax_s.plot(POWER_REF_UW, LAMBDA_PAPER, "k*", ms=10, mec="gold", mew=1.0,
-                  label=(rf"cal $({POWER_REF_UW:.0f}\,\mu\mathrm{{W}},\ "
-                         rf"{LAMBDA_PAPER:.0f}\,\mathrm{{nm}})$"))
+    if wl_nm[0] <= LAMBDA_PAPER <= wl_nm[-1] and power_uw[0] <= POWER_REF_UW <= power_uw[-1]:
+        ax_s.plot(
+            POWER_REF_UW,
+            LAMBDA_PAPER,
+            "k*",
+            ms=10,
+            mec="gold",
+            mew=1.0,
+            label=(
+                rf"cal $({POWER_REF_UW:.0f}\,\mu\mathrm{{W}},\ "
+                rf"{LAMBDA_PAPER:.0f}\,\mathrm{{nm}})$"
+            ),
+        )
         ax_s.legend(fontsize=8, loc="lower right")
     ax_s.set_xlabel(r"Laser power $P$ ($\mu$W)")
     ax_s.set_ylabel(r"Wavelength $\lambda$ (nm)")
-    ax_s.set_title(
-        r"Ground-state AC Stark shift $\Delta_{\mathrm{LS}}$ (MHz)")
+    ax_s.set_title(r"Ground-state AC Stark shift $\Delta_{\mathrm{LS}}$ (MHz)")
     cb_s = fig.colorbar(im_s, ax=ax_s, extend="both", **_CBAR_KW)
     cb_s.set_label(r"$\Delta_{\mathrm{LS}}$ (MHz)")
 
     # ── Scattering-rate heatmap (positive-definite, pure log) ─────────────
     # Floor tiny values to avoid log(0).
-    sc_floor = max(1e-3, float(np.nanmin(scatter_hz[scatter_hz > 0])) if
-                   np.any(scatter_hz > 0) else 1e-3)
+    sc_floor = max(1e-3, float(np.nanmin(scatter_hz[scatter_hz > 0])) if np.any(scatter_hz > 0) else 1e-3)
     sc_ceil = float(np.nanmax(scatter_hz))
     norm_sc = LogNorm(vmin=sc_floor, vmax=sc_ceil)
-    im_sc = ax_sc.pcolormesh(power_uw, wl_nm,
-                             np.clip(scatter_hz, sc_floor, None),
-                             cmap="magma_r", norm=norm_sc, shading="auto")
+    im_sc = ax_sc.pcolormesh(
+        power_uw, wl_nm, np.clip(scatter_hz, sc_floor, None), cmap="magma_r", norm=norm_sc, shading="auto"
+    )
     for wl, label, color in [
-        (LAMBDA_D1,
-         rf"$\mathrm{{D_1}} = {LAMBDA_D1:.2f}\,\mathrm{{nm}}$", "0.3"),
-        (LAMBDA_D2,
-         rf"$\mathrm{{D_2}} = {LAMBDA_D2:.2f}\,\mathrm{{nm}}$", "0.3"),
-        (LAMBDA_PAPER,
-         rf"$\lambda_{{\mathrm{{cal}}}} = {LAMBDA_PAPER:.0f}\,\mathrm{{nm}}$",
-         "gold"),
+        (LAMBDA_D1, rf"$\mathrm{{D_1}} = {LAMBDA_D1:.2f}\,\mathrm{{nm}}$", "0.3"),
+        (LAMBDA_D2, rf"$\mathrm{{D_2}} = {LAMBDA_D2:.2f}\,\mathrm{{nm}}$", "0.3"),
+        (LAMBDA_PAPER, rf"$\lambda_{{\mathrm{{cal}}}} = {LAMBDA_PAPER:.0f}\,\mathrm{{nm}}$", "gold"),
     ]:
         if wl_nm[0] <= wl <= wl_nm[-1]:
             ax_sc.axhline(wl, color=color, lw=1.0, ls=":", alpha=0.8)
-            ax_sc.text(power_uw[-1], wl, "  " + label,
-                       color=color, fontsize=7, va="center", ha="left")
-    if (wl_nm[0] <= LAMBDA_PAPER <= wl_nm[-1]
-            and power_uw[0] <= POWER_REF_UW <= power_uw[-1]):
+            ax_sc.text(power_uw[-1], wl, "  " + label, color=color, fontsize=7, va="center", ha="left")
+    if wl_nm[0] <= LAMBDA_PAPER <= wl_nm[-1] and power_uw[0] <= POWER_REF_UW <= power_uw[-1]:
         ax_sc.plot(POWER_REF_UW, LAMBDA_PAPER, "w*", ms=10, mec="k", mew=1.0)
     ax_sc.set_xlabel(r"Laser power $P$ ($\mu$W)")
     ax_sc.set_ylabel(r"Wavelength $\lambda$ (nm)")
@@ -161,10 +155,10 @@ def plot_landscape(wl_nm, power_uw, shift_mhz, scatter_hz, args):
         rf"$\lambda = {LAMBDA_PAPER:.0f}\,\mathrm{{nm}}$, "
         rf"$P = {POWER_REF_UW:.0f}\,\mu\mathrm{{W}}$ "
         r"(Manovitz et al.)",
-        fontsize=13)
+        fontsize=13,
+    )
     fig.tight_layout()
-    path = os.path.join(args.outdir,
-                        _prefixed("ac_stark_landscape.png", args.prefix))
+    path = os.path.join(args.outdir, _prefixed("ac_stark_landscape.png", args.prefix))
     fig.savefig(path, dpi=150)
     plt.close(fig)
     print(f"Saved {path}")
@@ -193,13 +187,11 @@ def plot_profiles(wl_nm, power_uw, shift_mhz, scatter_hz, args):
         s = shift_mhz[:, ip]
         mask_neg = s < 0
         mask_pos = s > 0
-        ax_s.plot(wl_nm[mask_neg], np.abs(s[mask_neg]),
-                  lw=1.6, color=color, ls="-",
-                  label=rf"$P = {P:.0f}\,\mu\mathrm{{W}}$")
-        ax_s.plot(wl_nm[mask_pos], np.abs(s[mask_pos]),
-                  lw=1.6, color=color, ls="--")
-        ax_sc.plot(wl_nm, scatter_hz[:, ip], lw=1.6, color=color,
-                   label=rf"$P = {P:.0f}\,\mu\mathrm{{W}}$")
+        ax_s.plot(
+            wl_nm[mask_neg], np.abs(s[mask_neg]), lw=1.6, color=color, ls="-", label=rf"$P = {P:.0f}\,\mu\mathrm{{W}}$"
+        )
+        ax_s.plot(wl_nm[mask_pos], np.abs(s[mask_pos]), lw=1.6, color=color, ls="--")
+        ax_sc.plot(wl_nm, scatter_hz[:, ip], lw=1.6, color=color, label=rf"$P = {P:.0f}\,\mu\mathrm{{W}}$")
 
     # Tune-out wavelength: find where |Δ_LS| at the largest tabulated power
     # is minimum. That's the (calibration-derived) magic wavelength.
@@ -210,14 +202,10 @@ def plot_profiles(wl_nm, power_uw, shift_mhz, scatter_hz, args):
     # Reference vertical lines (D1, D2, calibration, tune-out)
     for ax in (ax_s, ax_sc):
         for wl, color, label in [
-            (LAMBDA_D1, "0.35",
-             rf"$\mathrm{{D_1}}$ ({LAMBDA_D1:.2f} nm)"),
-            (LAMBDA_D2, "0.35",
-             rf"$\mathrm{{D_2}}$ ({LAMBDA_D2:.2f} nm)"),
-            (LAMBDA_PAPER, "gold",
-             rf"$\lambda_{{\mathrm{{cal}}}}$"),
-            (lambda_tune, "red",
-             rf"$\lambda_{{\mathrm{{tune-out}}}}\!\approx\!{lambda_tune:.2f}$ nm"),
+            (LAMBDA_D1, "0.35", rf"$\mathrm{{D_1}}$ ({LAMBDA_D1:.2f} nm)"),
+            (LAMBDA_D2, "0.35", rf"$\mathrm{{D_2}}$ ({LAMBDA_D2:.2f} nm)"),
+            (LAMBDA_PAPER, "gold", rf"$\lambda_{{\mathrm{{cal}}}}$"),
+            (lambda_tune, "red", rf"$\lambda_{{\mathrm{{tune-out}}}}\!\approx\!{lambda_tune:.2f}$ nm"),
         ]:
             if wl_nm[0] <= wl <= wl_nm[-1]:
                 ax.axvline(wl, color=color, lw=1.0, ls=":", alpha=0.85)
@@ -230,7 +218,8 @@ def plot_profiles(wl_nm, power_uw, shift_mhz, scatter_hz, args):
         "\n"
         r"(solid: $\Delta_{\mathrm{LS}}<0$ red-detuned,  "
         r"dashed: $\Delta_{\mathrm{LS}}>0$ blue-detuned)",
-        fontsize=11)
+        fontsize=11,
+    )
     ax_s.set_yscale("log")
     # Clamp the lower y limit so the dip at the tune-out doesn't stretch the
     # axis to 1e-8 MHz. 10 kHz = 1e-2 MHz is already below any physics relevant
@@ -249,19 +238,18 @@ def plot_profiles(wl_nm, power_uw, shift_mhz, scatter_hz, args):
         rf"tune-out $\approx {lambda_tune:.2f}$ nm",
         xy=(lambda_tune, lo_s * 1.5),
         xytext=(lambda_tune + 0.4, lo_s * 20),
-        color="red", fontsize=8,
-        arrowprops=dict(arrowstyle="->", color="red", lw=0.8))
+        color="red",
+        fontsize=8,
+        arrowprops=dict(arrowstyle="->", color="red", lw=0.8),
+    )
 
     # One shared legend at the top (powers) to avoid duplication.
     handles, labels = ax_s.get_legend_handles_labels()
-    ax_s.legend(handles, labels, fontsize=9, loc="upper left", ncol=1,
-                framealpha=0.9, title=r"$P_{\mathrm{laser}}$")
-    ax_sc.legend(fontsize=9, loc="lower right", framealpha=0.9,
-                 title=r"$P_{\mathrm{laser}}$")
+    ax_s.legend(handles, labels, fontsize=9, loc="upper left", ncol=1, framealpha=0.9, title=r"$P_{\mathrm{laser}}$")
+    ax_sc.legend(fontsize=9, loc="lower right", framealpha=0.9, title=r"$P_{\mathrm{laser}}$")
 
     fig.tight_layout()
-    path = os.path.join(args.outdir,
-                        _prefixed("ac_stark_profiles.png", args.prefix))
+    path = os.path.join(args.outdir, _prefixed("ac_stark_profiles.png", args.prefix))
     fig.savefig(path, dpi=150)
     plt.close(fig)
     print(f"Saved {path}")
@@ -279,7 +267,7 @@ def plot_scatter_per_shift(wl_nm, args):
     """
     os.makedirs(args.outdir, exist_ok=True)
     shift_ref_hz, scatter_ref_hz = compute_shift_scatter(wl_nm)
-    ratio = scatter_ref_hz / np.abs(shift_ref_hz)        # Hz / Hz
+    ratio = scatter_ref_hz / np.abs(shift_ref_hz)  # Hz / Hz
     shift_match_mhz = (args.gamma_ryd_hz / ratio) / 1e6  # MHz
 
     fig, (ax, ax2) = plt.subplots(2, 1, figsize=(10, 9), sharex=True)
@@ -289,11 +277,13 @@ def plot_scatter_per_shift(wl_nm, args):
     ax.set_yscale("log")
     ax.set_ylabel(
         r"$\Gamma_{\mathrm{sc}}\,/\,|\Delta_{\mathrm{LS}}|$"
-        "\n(Hz scattering per Hz light shift)")
+        "\n(Hz scattering per Hz light shift)"
+    )
     ax.set_title(
         r"Scattering rate per unit light shift "
         r"$\Gamma_{\mathrm{sc}}(\lambda)\,/\,|\Delta_{\mathrm{LS}}(\lambda)|$"
-        "   (power-independent)")
+        "   (power-independent)"
+    )
     ax.grid(alpha=0.3, which="both")
 
     ax_r = ax.twinx()
@@ -308,11 +298,13 @@ def plot_scatter_per_shift(wl_nm, args):
     ax2.set_xlabel(r"Wavelength  $\lambda$  (nm)")
     ax2.set_ylabel(
         r"$|\Delta_{\mathrm{LS}}|$ to reach $\Gamma_{\mathrm{sc}}=\Gamma_r$"
-        "\n(MHz)")
+        "\n(MHz)"
+    )
     ax2.set_title(
         r"Light shift needed for ground-state $\Gamma_{\mathrm{sc}}$ "
         rf"to equal $\Gamma_r = {args.gamma_ryd_hz:.0f}\,\mathrm{{Hz}}$ "
-        rf"($\tau_r = {1e6/args.gamma_ryd_hz:.1f}\,\mu\mathrm{{s}}$)")
+        rf"($\tau_r = {1e6 / args.gamma_ryd_hz:.1f}\,\mu\mathrm{{s}}$)"
+    )
     ax2.grid(alpha=0.3, which="both")
 
     # Tune-out marker (where |Δ_LS| → 0, ratio → ∞, required shift → 0)
@@ -323,8 +315,7 @@ def plot_scatter_per_shift(wl_nm, args):
         (LAMBDA_D1, "0.35", rf"$\mathrm{{D_1}}$ ({LAMBDA_D1:.2f} nm)"),
         (LAMBDA_D2, "0.35", rf"$\mathrm{{D_2}}$ ({LAMBDA_D2:.2f} nm)"),
         (LAMBDA_PAPER, "gold", rf"$\lambda_{{\mathrm{{cal}}}}$"),
-        (lambda_tune, "red",
-         rf"$\lambda_{{\mathrm{{tune-out}}}}\!\approx\!{lambda_tune:.2f}$ nm"),
+        (lambda_tune, "red", rf"$\lambda_{{\mathrm{{tune-out}}}}\!\approx\!{lambda_tune:.2f}$ nm"),
     ]
     for axx in (ax, ax2):
         for wl, color, label in refs:
@@ -332,19 +323,19 @@ def plot_scatter_per_shift(wl_nm, args):
                 axx.axvline(wl, color=color, lw=1.0, ls=":", alpha=0.85)
         for wl, color, label in refs:
             if wl_nm[0] <= wl <= wl_nm[-1]:
-                axx.text(wl, axx.get_ylim()[1], "  " + label, color=color,
-                         fontsize=8, va="top", ha="left", rotation=90)
+                axx.text(wl, axx.get_ylim()[1], "  " + label, color=color, fontsize=8, va="top", ha="left", rotation=90)
 
     # Print value at calibration wavelength for sanity.
     if wl_nm[0] <= LAMBDA_PAPER <= wl_nm[-1]:
         i = int(np.argmin(np.abs(wl_nm - LAMBDA_PAPER)))
-        print(f"  @ λ_cal={wl_nm[i]:.2f} nm: "
-              f"Γ_sc/|Δ_LS| = {ratio[i]:.3e} Hz/Hz, "
-              f"|Δ_LS| to match Γ_r = {shift_match_mhz[i]:.3f} MHz")
+        print(
+            f"  @ λ_cal={wl_nm[i]:.2f} nm: "
+            f"Γ_sc/|Δ_LS| = {ratio[i]:.3e} Hz/Hz, "
+            f"|Δ_LS| to match Γ_r = {shift_match_mhz[i]:.3f} MHz"
+        )
 
     fig.tight_layout()
-    path = os.path.join(args.outdir,
-                        _prefixed("ac_stark_scatter_per_shift.png", args.prefix))
+    path = os.path.join(args.outdir, _prefixed("ac_stark_scatter_per_shift.png", args.prefix))
     fig.savefig(path, dpi=150)
     plt.close(fig)
     print(f"Saved {path}")
@@ -374,7 +365,7 @@ def plot_polarization_sensitivity(wl_nm, args):
 
     tune_out_table = []
     for k, P in enumerate(helicities):
-        pol = P * G_F_5S12_F2 * m_F     # = -P  for m_F=-2
+        pol = P * G_F_5S12_F2 * m_F  # = -P  for m_F=-2
         shift_hz, scatter_hz = compute_shift_scatter(wl_nm, pol=pol)
         ratio = scatter_hz / np.abs(shift_hz)
         shift_match_mhz = (args.gamma_ryd_hz / ratio) / 1e6
@@ -384,8 +375,7 @@ def plot_polarization_sensitivity(wl_nm, args):
         tune_out_table.append((P, lambda_tune))
 
         color = cmap(0.15 + 0.75 * k / max(1, len(helicities) - 1))
-        label = (rf"$P={P:.2f}$ (linear)" if P == 0
-                 else rf"$P={P:.2f}\ \sigma^+$ contamination")
+        label = rf"$P={P:.2f}$ (linear)" if P == 0 else rf"$P={P:.2f}\ \sigma^+$ contamination"
 
         ax1.plot(wl_nm, np.abs(shift_hz) / 1e6, lw=1.6, color=color, label=label)
         ax2.plot(wl_nm, ratio, lw=1.6, color=color, label=label)
@@ -394,8 +384,7 @@ def plot_polarization_sensitivity(wl_nm, args):
         ax3.axvline(lambda_tune, color=color, lw=0.8, ls=":", alpha=0.6)
 
     for axx in (ax1, ax2, ax3):
-        for wl, color in [(LAMBDA_D1, "0.35"), (LAMBDA_D2, "0.35"),
-                          (LAMBDA_PAPER, "gold")]:
+        for wl, color in [(LAMBDA_D1, "0.35"), (LAMBDA_D2, "0.35"), (LAMBDA_PAPER, "gold")]:
             if wl_nm[0] <= wl <= wl_nm[-1]:
                 axx.axvline(wl, color=color, lw=1.0, ls="--", alpha=0.6)
         axx.grid(alpha=0.3, which="both")
@@ -405,33 +394,30 @@ def plot_polarization_sensitivity(wl_nm, args):
     ax1.set_ylim(1e-2, None)
     ax1.set_title(
         r"Light shift magnitude vs polarization purity "
-        rf"($|F=2, m_F={m_F}\rangle$, $g_F={G_F_5S12_F2}$)")
+        rf"($|F=2, m_F={m_F}\rangle$, $g_F={G_F_5S12_F2}$)"
+    )
     ax1.legend(fontsize=8, loc="lower right", framealpha=0.9)
 
-    ax2.set_ylabel(
-        r"$\Gamma_{\mathrm{sc}}/|\Delta_{\mathrm{LS}}|$" "\n(Hz / Hz)")
+    ax2.set_ylabel(r"$\Gamma_{\mathrm{sc}}/|\Delta_{\mathrm{LS}}|$" "\n(Hz / Hz)")
     ax2.set_title("Scattering per unit light shift")
 
     ax3.set_xlabel(r"Wavelength  $\lambda$  (nm)")
-    ax3.set_ylabel(
-        r"$|\Delta_{\mathrm{LS}}|$ to reach $\Gamma_r$" "\n(MHz)")
+    ax3.set_ylabel(r"$|\Delta_{\mathrm{LS}}|$ to reach $\Gamma_r$" "\n(MHz)")
     ax3.set_title(
         rf"Light shift required so $\Gamma_{{\mathrm{{sc}}}}=\Gamma_r"
-        rf"={args.gamma_ryd_hz:.0f}\,\mathrm{{Hz}}$")
+        rf"={args.gamma_ryd_hz:.0f}\,\mathrm{{Hz}}$"
+    )
 
     fig.tight_layout()
-    path = os.path.join(args.outdir,
-                        _prefixed("ac_stark_pol_sensitivity.png", args.prefix))
+    path = os.path.join(args.outdir, _prefixed("ac_stark_pol_sensitivity.png", args.prefix))
     fig.savefig(path, dpi=150)
     plt.close(fig)
     print(f"Saved {path}")
 
     # Console summary at the 784–786 sweet-spot wavelengths.
-    print("  Polarization sensitivity at sweet-spot wavelengths "
-          "(|F=2, m_F=-2⟩):")
-    print(f"    {'P':>6}  {'λ_tune (nm)':>12}  "
-          f"{'|ΔLS|@Γr (785 nm) [MHz]':>26}")
-    for (P, lam_tune) in tune_out_table:
+    print("  Polarization sensitivity at sweet-spot wavelengths (|F=2, m_F=-2⟩):")
+    print(f"    {'P':>6}  {'λ_tune (nm)':>12}  {'|ΔLS|@Γr (785 nm) [MHz]':>26}")
+    for P, lam_tune in tune_out_table:
         pol = P * G_F_5S12_F2 * m_F
         s, sc = compute_shift_scatter(np.array([785.0]), pol=pol)
         match_mhz = (args.gamma_ryd_hz / (sc[0] / abs(s[0]))) / 1e6
@@ -471,8 +457,7 @@ def plot_vector_optimization(wl_nm, args):
     # Restrict to the user-specified sweet-spot window.
     in_win = (wl_nm >= args.vec_window_min) & (wl_nm <= args.vec_window_max)
     if not np.any(in_win):
-        print(f"  [vector-opt] window [{args.vec_window_min}, "
-              f"{args.vec_window_max}] nm not in plot range; skipping.")
+        print(f"  [vector-opt] window [{args.vec_window_min}, {args.vec_window_max}] nm not in plot range; skipping.")
         return
     fom_win = np.where(in_win, fom, np.inf)
     i_opt = int(np.argmin(fom_win))
@@ -480,73 +465,81 @@ def plot_vector_optimization(wl_nm, args):
 
     fig, (ax_a, ax_b, ax_c) = plt.subplots(3, 1, figsize=(10, 11), sharex=True)
 
-    ax_a.plot(wl_nm, abs_scalar_mhz, lw=1.6, color="C0",
-              label=r"$|\Delta_{\mathrm{LS}}(\lambda,\,P=0)|$")
+    ax_a.plot(wl_nm, abs_scalar_mhz, lw=1.6, color="C0", label=r"$|\Delta_{\mathrm{LS}}(\lambda,\,P=0)|$")
     ax_a.set_yscale("log")
     ax_a.set_ylabel(r"$|\Delta_{\mathrm{LS}}|$  (MHz)")
     ax_a.set_title("Usable scalar light shift (linear pol, calibration cell)")
     ax_a.set_ylim(1e-2, None)
 
-    ax_b.plot(wl_nm, np.abs(dshift_dpol_mhz), lw=1.6, color="C2",
-              label=r"$|\partial\Delta_{\mathrm{LS}}/\partial\mathrm{pol}|$")
+    ax_b.plot(
+        wl_nm,
+        np.abs(dshift_dpol_mhz),
+        lw=1.6,
+        color="C2",
+        label=r"$|\partial\Delta_{\mathrm{LS}}/\partial\mathrm{pol}|$",
+    )
     ax_b.set_yscale("log")
-    ax_b.set_ylabel(
-        r"$|\partial\Delta_{\mathrm{LS}}/\partial\mathrm{pol}|$" "\n(MHz / unit pol)")
+    ax_b.set_ylabel(r"$|\partial\Delta_{\mathrm{LS}}/\partial\mathrm{pol}|$" "\n(MHz / unit pol)")
     ax_b.set_title("Vector-shift sensitivity (slope at pol = 0)")
 
     ax_c.plot(wl_nm, fom, lw=1.6, color="C3", label="FOM (all λ)")
-    ax_c.plot(wl_nm[in_win], fom[in_win], lw=2.4, color="C3",
-              label=rf"window [{args.vec_window_min:.1f}, "
-                    rf"{args.vec_window_max:.1f}] nm")
-    ax_c.axvspan(args.vec_window_min, args.vec_window_max,
-                 color="C3", alpha=0.08)
+    ax_c.plot(
+        wl_nm[in_win],
+        fom[in_win],
+        lw=2.4,
+        color="C3",
+        label=rf"window [{args.vec_window_min:.1f}, "
+        rf"{args.vec_window_max:.1f}] nm",
+    )
+    ax_c.axvspan(args.vec_window_min, args.vec_window_max, color="C3", alpha=0.08)
     ax_c.axvline(lambda_opt, color="k", lw=1.0, ls="-")
-    ax_c.scatter([lambda_opt], [fom[i_opt]], color="k", zorder=5,
-                 label=rf"$\lambda^\star = {lambda_opt:.3f}$ nm,  "
-                       rf"FOM $={fom[i_opt]:.4f}$")
+    ax_c.scatter(
+        [lambda_opt],
+        [fom[i_opt]],
+        color="k",
+        zorder=5,
+        label=rf"$\lambda^\star = {lambda_opt:.3f}$ nm,  "
+        rf"FOM $={fom[i_opt]:.4f}$",
+    )
     ax_c.set_yscale("log")
     ax_c.set_ylabel(
         r"FOM $=|\partial\Delta/\partial\mathrm{pol}|/|\Delta|$"
-        "\n(unitless; rel. error per unit pol)")
+        "\n(unitless; rel. error per unit pol)"
+    )
     ax_c.set_xlabel(r"Wavelength  $\lambda$  (nm)")
     ax_c.set_title("Joint scalar+vector figure of merit (smaller = better)")
     ax_c.legend(fontsize=8, loc="upper left", framealpha=0.9)
 
     for axx in (ax_a, ax_b, ax_c):
-        for wl, color in [(LAMBDA_D1, "0.35"), (LAMBDA_D2, "0.35"),
-                          (LAMBDA_PAPER, "gold")]:
+        for wl, color in [(LAMBDA_D1, "0.35"), (LAMBDA_D2, "0.35"), (LAMBDA_PAPER, "gold")]:
             if wl_nm[0] <= wl <= wl_nm[-1]:
                 axx.axvline(wl, color=color, lw=1.0, ls="--", alpha=0.6)
         axx.grid(alpha=0.3, which="both")
 
     fig.tight_layout()
-    path = os.path.join(args.outdir,
-                        _prefixed("ac_stark_vector_opt.png", args.prefix))
+    path = os.path.join(args.outdir, _prefixed("ac_stark_vector_opt.png", args.prefix))
     fig.savefig(path, dpi=150)
     plt.close(fig)
     print(f"Saved {path}")
 
     # Console report: best point in window, plus a few comparison rows.
-    print("  Vector-Stark joint-optimization report "
-          f"(window {args.vec_window_min:.2f}–{args.vec_window_max:.2f} nm):")
-    print(f"    {'λ (nm)':>10}  {'|Δ_scalar| (MHz)':>18}  "
-          f"{'|∂Δ/∂pol| (MHz)':>18}  {'FOM':>10}")
-    sample_wl = sorted(set(
-        [float(args.vec_window_min), float(args.vec_window_max),
-         float(lambda_opt), 784.0, 785.0, 786.0]
-    ))
+    print(f"  Vector-Stark joint-optimization report (window {args.vec_window_min:.2f}–{args.vec_window_max:.2f} nm):")
+    print(f"    {'λ (nm)':>10}  {'|Δ_scalar| (MHz)':>18}  {'|∂Δ/∂pol| (MHz)':>18}  {'FOM':>10}")
+    sample_wl = sorted(
+        set([float(args.vec_window_min), float(args.vec_window_max), float(lambda_opt), 784.0, 785.0, 786.0])
+    )
     for swl in sample_wl:
         if not (wl_nm[0] <= swl <= wl_nm[-1]):
             continue
         i = int(np.argmin(np.abs(wl_nm - swl)))
         marker = " ←★" if i == i_opt else ""
-        print(f"    {wl_nm[i]:>10.3f}  {abs_scalar_mhz[i]:>18.3f}  "
-              f"{abs(dshift_dpol_mhz[i]):>18.4f}  {fom[i]:>10.5f}{marker}")
-    print(f"    Optimum in window: λ* = {lambda_opt:.3f} nm, "
-          f"FOM = {fom[i_opt]:.5f}")
+        print(
+            f"    {wl_nm[i]:>10.3f}  {abs_scalar_mhz[i]:>18.3f}  "
+            f"{abs(dshift_dpol_mhz[i]):>18.4f}  {fom[i]:>10.5f}{marker}"
+        )
+    print(f"    Optimum in window: λ* = {lambda_opt:.3f} nm, FOM = {fom[i_opt]:.5f}")
     print(f"    Interpretation: a 1% polarization impurity (P·g_F·m_F = 0.01)")
-    print(f"    contaminates the scalar shift by "
-          f"≈ {fom[i_opt]*0.01*100:.3f}% at λ*.")
+    print(f"    contaminates the scalar shift by ≈ {fom[i_opt] * 0.01 * 100:.3f}% at λ*.")
 
 
 def save_csv(wl_nm, power_uw, shift_mhz, scatter_hz, args):
@@ -557,44 +550,43 @@ def save_csv(wl_nm, power_uw, shift_mhz, scatter_hz, args):
         for j, P in enumerate(power_uw):
             rows.append((wl, P, shift_mhz[i, j], scatter_hz[i, j]))
     arr = np.array(rows)
-    path = os.path.join(args.outdir,
-                        _prefixed("ac_stark_landscape.csv", args.prefix))
-    np.savetxt(path, arr, fmt="%.6e", delimiter=",",
-               header=f"wavelength_nm,power_uw,shift_mhz,scatter_hz\n"
-                      f"# calibrated at lambda={LAMBDA_PAPER} nm, "
-                      f"P={POWER_REF_UW} uW",
-               comments="")
+    path = os.path.join(args.outdir, _prefixed("ac_stark_landscape.csv", args.prefix))
+    np.savetxt(
+        path,
+        arr,
+        fmt="%.6e",
+        delimiter=",",
+        header=f"wavelength_nm,power_uw,shift_mhz,scatter_hz\n"
+        f"# calibrated at lambda={LAMBDA_PAPER} nm, "
+        f"P={POWER_REF_UW} uW",
+        comments="",
+    )
     print(f"Saved {path}")
 
 
 def main():
-    p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--wl-min", type=float, default=780.5,
-                   help="Minimum wavelength [nm] (default: just above D2)")
-    p.add_argument("--wl-max", type=float, default=794.5,
-                   help="Maximum wavelength [nm] (default: just below D1)")
-    p.add_argument("--n-wl", type=int, default=400,
-                   help="Number of wavelength samples")
-    p.add_argument("--power-min", type=float, default=1.0,
-                   help="Minimum laser power [μW]")
-    p.add_argument("--power-max", type=float, default=500.0,
-                   help="Maximum laser power [μW]")
-    p.add_argument("--n-power", type=int, default=200,
-                   help="Number of power samples")
-    p.add_argument("--outdir", type=str, default="results",
-                   help="Output directory")
-    p.add_argument("--prefix", type=str, default="",
-                   help="Filename prefix for outputs")
-    p.add_argument("--vec-window-min", type=float, default=784.0,
-                   help="Lower edge of sweet-spot window for vector-opt FOM")
-    p.add_argument("--vec-window-max", type=float, default=786.0,
-                   help="Upper edge of sweet-spot window for vector-opt FOM")
-    p.add_argument("--gamma-ryd-hz", type=float, default=1.0 / 151.55e-6,
-                   help="Rydberg-state decay rate Γ_r in Hz "
-                        "(default: 1/151.55 μs ≈ 6598 Hz, n=70 Rb 'our' system)")
-    p.add_argument("--no-csv", action="store_true",
-                   help="Skip writing the flattened CSV")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--wl-min", type=float, default=780.5, help="Minimum wavelength [nm] (default: just above D2)")
+    p.add_argument("--wl-max", type=float, default=794.5, help="Maximum wavelength [nm] (default: just below D1)")
+    p.add_argument("--n-wl", type=int, default=400, help="Number of wavelength samples")
+    p.add_argument("--power-min", type=float, default=1.0, help="Minimum laser power [μW]")
+    p.add_argument("--power-max", type=float, default=500.0, help="Maximum laser power [μW]")
+    p.add_argument("--n-power", type=int, default=200, help="Number of power samples")
+    p.add_argument("--outdir", type=str, default="results", help="Output directory")
+    p.add_argument("--prefix", type=str, default="", help="Filename prefix for outputs")
+    p.add_argument(
+        "--vec-window-min", type=float, default=784.0, help="Lower edge of sweet-spot window for vector-opt FOM"
+    )
+    p.add_argument(
+        "--vec-window-max", type=float, default=786.0, help="Upper edge of sweet-spot window for vector-opt FOM"
+    )
+    p.add_argument(
+        "--gamma-ryd-hz",
+        type=float,
+        default=1.0 / 151.55e-6,
+        help="Rydberg-state decay rate Γ_r in Hz (default: 1/151.55 μs ≈ 6598 Hz, n=70 Rb 'our' system)",
+    )
+    p.add_argument("--no-csv", action="store_true", help="Skip writing the flattened CSV")
     args = p.parse_args()
 
     if args.wl_min >= args.wl_max:
@@ -613,12 +605,9 @@ def main():
     wl_nm = np.array([_nudge_away(w) for w in wl_nm])
     power_uw = np.linspace(args.power_min, args.power_max, args.n_power)
 
-    print(f"Grid: {args.n_wl} wavelengths × {args.n_power} powers "
-          f"= {args.n_wl * args.n_power} cells")
-    print(f"  λ:  {wl_nm[0]:.3f} .. {wl_nm[-1]:.3f} nm   "
-          f"(D1={LAMBDA_D1:.3f}, D2={LAMBDA_D2:.3f})")
-    print(f"  P:  {power_uw[0]:.1f} .. {power_uw[-1]:.1f} μW   "
-          f"(calib {POWER_REF_UW:.0f} μW)")
+    print(f"Grid: {args.n_wl} wavelengths × {args.n_power} powers = {args.n_wl * args.n_power} cells")
+    print(f"  λ:  {wl_nm[0]:.3f} .. {wl_nm[-1]:.3f} nm   (D1={LAMBDA_D1:.3f}, D2={LAMBDA_D2:.3f})")
+    print(f"  P:  {power_uw[0]:.1f} .. {power_uw[-1]:.1f} μW   (calib {POWER_REF_UW:.0f} μW)")
     print()
 
     shift_mhz, scatter_hz = build_grid(wl_nm, power_uw)
@@ -626,13 +615,14 @@ def main():
     print(f"  Δ_LS range:    [{shift_mhz.min():.3e}, {shift_mhz.max():.3e}] MHz")
     print(f"  Γ_sc range:    [{scatter_hz.min():.3e}, {scatter_hz.max():.3e}] Hz")
     # Report the values at the calibration cell for sanity.
-    if (wl_nm[0] <= LAMBDA_PAPER <= wl_nm[-1]
-            and power_uw[0] <= POWER_REF_UW <= power_uw[-1]):
+    if wl_nm[0] <= LAMBDA_PAPER <= wl_nm[-1] and power_uw[0] <= POWER_REF_UW <= power_uw[-1]:
         iwl = int(np.argmin(np.abs(wl_nm - LAMBDA_PAPER)))
         ip = int(np.argmin(np.abs(power_uw - POWER_REF_UW)))
-        print(f"  @ calib cell   ({wl_nm[iwl]:.2f} nm, {power_uw[ip]:.1f} μW): "
-              f"Δ_LS={shift_mhz[iwl, ip]:.4f} MHz, "
-              f"Γ_sc={scatter_hz[iwl, ip]:.2f} Hz")
+        print(
+            f"  @ calib cell   ({wl_nm[iwl]:.2f} nm, {power_uw[ip]:.1f} μW): "
+            f"Δ_LS={shift_mhz[iwl, ip]:.4f} MHz, "
+            f"Γ_sc={scatter_hz[iwl, ip]:.2f} Hz"
+        )
     print()
 
     plot_landscape(wl_nm, power_uw, shift_mhz, scatter_hz, args)

@@ -51,6 +51,7 @@ OMEGA_RAMP_FRAC = 0.1
 # Experiment 1: Domain shrinking (TN)
 # ---------------------------------------------------------------------------
 
+
 def run_domain_shrinking_tn(spec, args):
     """Prepare AF2 domain inside AF1 bulk, release, watch it shrink."""
     print("=" * 60)
@@ -74,7 +75,8 @@ def run_domain_shrinking_tn(spec, args):
 
     t0 = _time.time()
     sweep_result = simulate_tn(
-        spec, sweep_proto,
+        spec,
+        sweep_proto,
         [DELTA_START, Delta_f, T_SWEEP],
         initial_state="all_ground",
         method="tdvp",
@@ -97,7 +99,8 @@ def run_domain_shrinking_tn(spec, args):
 
     t0 = _time.time()
     hold_result = simulate_tn(
-        spec, hold_proto,
+        spec,
+        hold_proto,
         [Delta_f, Delta_f, t_hold],
         initial_state=psi_after_sweep,
         method="tdvp",
@@ -129,37 +132,37 @@ def run_domain_shrinking_tn(spec, args):
 
     # Top-left: final local staggered magnetization
     local_ms = spec.sublattice * (2 * occ_final - 1)
-    im = axes[0, 0].imshow(local_ms.reshape(Lx, Ly), cmap='RdBu', vmin=-1, vmax=1,
-                            origin='lower', interpolation='nearest')
-    axes[0, 0].set_title('Final local staggered mag.')
+    im = axes[0, 0].imshow(
+        local_ms.reshape(Lx, Ly), cmap="RdBu", vmin=-1, vmax=1, origin="lower", interpolation="nearest"
+    )
+    axes[0, 0].set_title("Final local staggered mag.")
     fig.colorbar(im, ax=axes[0, 0], shrink=0.8)
 
     # Top-right: domain boundaries
     bnd_img = is_bnd.astype(float).reshape(Lx, Ly)
-    axes[0, 1].imshow(bnd_img, cmap='Reds', vmin=0, vmax=1,
-                      origin='lower', interpolation='nearest')
-    axes[0, 1].set_title(f'Boundaries ({n_domains} domains)')
+    axes[0, 1].imshow(bnd_img, cmap="Reds", vmin=0, vmax=1, origin="lower", interpolation="nearest")
+    axes[0, 1].set_title(f"Boundaries ({n_domains} domains)")
 
     # Bottom-left: staggered magnetization over time
     if len(ms) > 0 and hold_times is not None:
-        axes[1, 0].plot(hold_times, ms, 'b-', lw=1.5)
-    axes[1, 0].set_xlabel('Hold time ($1/\\Omega$)')
-    axes[1, 0].set_ylabel('$m_s$')
-    axes[1, 0].set_title('Staggered magnetization')
-    axes[1, 0].axhline(0, color='gray', ls='--', lw=0.5)
+        axes[1, 0].plot(hold_times, ms, "b-", lw=1.5)
+    axes[1, 0].set_xlabel("Hold time ($1/\\Omega$)")
+    axes[1, 0].set_ylabel("$m_s$")
+    axes[1, 0].set_title("Staggered magnetization")
+    axes[1, 0].axhline(0, color="gray", ls="--", lw=0.5)
 
     # Bottom-right: mean Rydberg fraction over time
     if len(n_mean) > 0 and hold_times is not None:
-        axes[1, 1].plot(hold_times, n_mean, 'g-', lw=1.5)
-    axes[1, 1].set_xlabel('Hold time ($1/\\Omega$)')
-    axes[1, 1].set_ylabel('$\\langle n \\rangle$')
-    axes[1, 1].set_title('Mean Rydberg fraction')
+        axes[1, 1].plot(hold_times, n_mean, "g-", lw=1.5)
+    axes[1, 1].set_xlabel("Hold time ($1/\\Omega$)")
+    axes[1, 1].set_ylabel("$\\langle n \\rangle$")
+    axes[1, 1].set_title("Mean Rydberg fraction")
 
-    fig.suptitle(f'Domain Shrinking (TN, {Lx}x{Ly}, '
-                 f'$\\chi$={args.chi_max}, $\\Delta/\\Omega$={Delta_f:.1f})',
-                 fontsize=14)
+    fig.suptitle(
+        f"Domain Shrinking (TN, {Lx}x{Ly}, $\\chi$={args.chi_max}, $\\Delta/\\Omega$={Delta_f:.1f})", fontsize=14
+    )
     fig.tight_layout()
-    path = os.path.join(args.figdir, 'demo_domain_shrinking_tn.png')
+    path = os.path.join(args.figdir, "demo_domain_shrinking_tn.png")
     fig.savefig(path, dpi=150)
     print(f"\n  Figure saved to {path}")
     plt.close(fig)
@@ -168,6 +171,7 @@ def run_domain_shrinking_tn(spec, args):
 # ---------------------------------------------------------------------------
 # Experiment 2: Higgs mode oscillations (TN)
 # ---------------------------------------------------------------------------
+
 
 def run_higgs_mode_tn(spec, args):
     """Pin one sublattice, release, observe order parameter oscillations."""
@@ -189,7 +193,8 @@ def run_higgs_mode_tn(spec, args):
         )
         t0 = _time.time()
         sweep_result = simulate_tn(
-            spec, sweep_proto,
+            spec,
+            sweep_proto,
             [DELTA_START, Delta_f, T_SWEEP],
             initial_state="all_ground",
             method="tdvp",
@@ -206,7 +211,8 @@ def run_higgs_mode_tn(spec, args):
 
         t0 = _time.time()
         hold_result = simulate_tn(
-            spec, hold_proto,
+            spec,
+            hold_proto,
             [Delta_f, Delta_f, t_hold],
             initial_state=psi,
             method="tdvp",
@@ -231,13 +237,12 @@ def run_higgs_mode_tn(spec, args):
     for Delta_f, color in zip(Delta_values, colors):
         r = all_results[Delta_f]
         if len(r["ms"]) > 0 and r["times"] is not None:
-            ax.plot(r["times"], r["ms"], color=color, lw=1.2,
-                    label=f'$\\Delta/\\Omega$ = {Delta_f:.1f}')
-    ax.set_xlabel('Hold time ($1/\\Omega$)')
-    ax.set_ylabel('Staggered magnetization $m_s$')
-    ax.set_title('Order parameter oscillations')
+            ax.plot(r["times"], r["ms"], color=color, lw=1.2, label=f"$\\Delta/\\Omega$ = {Delta_f:.1f}")
+    ax.set_xlabel("Hold time ($1/\\Omega$)")
+    ax.set_ylabel("Staggered magnetization $m_s$")
+    ax.set_title("Order parameter oscillations")
     ax.legend(fontsize=8)
-    ax.axhline(0, color='gray', ls='--', lw=0.5)
+    ax.axhline(0, color="gray", ls="--", lw=0.5)
 
     ax = axes[1]
     for Delta_f, color in zip(Delta_values, colors):
@@ -250,19 +255,18 @@ def run_higgs_mode_tn(spec, args):
         power = np.abs(np.fft.rfft(ms_centered * np.hanning(len(ms_centered)))) ** 2
         power[0] = 0
         pmax = power.max()
-        ax.plot(freqs, power / pmax if pmax > 0 else power,
-                color=color, lw=1.2,
-                label=f'$\\Delta/\\Omega$ = {Delta_f:.1f}')
-    ax.set_xlabel('Frequency ($\\Omega / 2\\pi$)')
-    ax.set_ylabel('Spectral power (normalized)')
-    ax.set_title('Oscillation spectrum')
+        ax.plot(
+            freqs, power / pmax if pmax > 0 else power, color=color, lw=1.2, label=f"$\\Delta/\\Omega$ = {Delta_f:.1f}"
+        )
+    ax.set_xlabel("Frequency ($\\Omega / 2\\pi$)")
+    ax.set_ylabel("Spectral power (normalized)")
+    ax.set_title("Oscillation spectrum")
     ax.set_xlim(0, 2.0)
     ax.legend(fontsize=8)
 
-    fig.suptitle(f'Higgs Mode (TN, {spec.Lx}x{spec.Ly}, '
-                 f'$\\chi$={args.chi_max})', fontsize=14)
+    fig.suptitle(f"Higgs Mode (TN, {spec.Lx}x{spec.Ly}, $\\chi$={args.chi_max})", fontsize=14)
     fig.tight_layout()
-    path = os.path.join(args.figdir, 'demo_higgs_mode_tn.png')
+    path = os.path.join(args.figdir, "demo_higgs_mode_tn.png")
     fig.savefig(path, dpi=150)
     print(f"\n  Figure saved to {path}")
     plt.close(fig)
@@ -272,20 +276,16 @@ def run_higgs_mode_tn(spec, args):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
-    parser = argparse.ArgumentParser(
-        description='Large-scale local addressing demo using TeNPy (MPS/TDVP).')
-    parser.add_argument('--experiment', choices=['domain', 'higgs', 'both'],
-                        default='both')
-    parser.add_argument('--Lx', type=int, default=10)
-    parser.add_argument('--Ly', type=int, default=10)
-    parser.add_argument('--chi-max', type=int, default=256,
-                        help='Max MPS bond dimension (default: 256)')
-    parser.add_argument('--dt', type=float, default=0.2,
-                        help='TDVP time step (default: 0.2)')
-    parser.add_argument('--n-eval', type=int, default=30,
-                        help='Number of observable evaluation points (default: 30)')
-    parser.add_argument('--figdir', type=str, default='docs/figures')
+    parser = argparse.ArgumentParser(description="Large-scale local addressing demo using TeNPy (MPS/TDVP).")
+    parser.add_argument("--experiment", choices=["domain", "higgs", "both"], default="both")
+    parser.add_argument("--Lx", type=int, default=10)
+    parser.add_argument("--Ly", type=int, default=10)
+    parser.add_argument("--chi-max", type=int, default=256, help="Max MPS bond dimension (default: 256)")
+    parser.add_argument("--dt", type=float, default=0.2, help="TDVP time step (default: 0.2)")
+    parser.add_argument("--n-eval", type=int, default=30, help="Number of observable evaluation points (default: 30)")
+    parser.add_argument("--figdir", type=str, default="docs/figures")
     args = parser.parse_args()
 
     print(f"Rydberg Array Local Addressing Demo (TN)")
@@ -293,16 +293,15 @@ def main():
     print(f"Backend: TDVP, chi_max={args.chi_max}, dt={args.dt}")
     print()
 
-    spec = create_tn_lattice_spec(
-        Lx=args.Lx, Ly=args.Ly, V_nn=V_NN, Omega=1.0)
+    spec = create_tn_lattice_spec(Lx=args.Lx, Ly=args.Ly, V_nn=V_NN, Omega=1.0)
 
-    if args.experiment in ('domain', 'both'):
+    if args.experiment in ("domain", "both"):
         run_domain_shrinking_tn(spec, args)
-    if args.experiment in ('higgs', 'both'):
+    if args.experiment in ("higgs", "both"):
         run_higgs_mode_tn(spec, args)
 
     print("\nDone.")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

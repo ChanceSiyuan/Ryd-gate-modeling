@@ -147,9 +147,7 @@ def _static_overlay_terms(system, params: dict, local_projector_cls) -> list[Ham
             continue
         block_name = f"n_{ryd_label}_{idx}"
         operator = (
-            system.blocks.get(block_name)
-            if system.blocks.has(block_name)
-            else local_projector_cls(ryd_label, idx)
+            system.blocks.get(block_name) if system.blocks.has(block_name) else local_projector_cls(ryd_label, idx)
         )
         terms.append(
             HamiltonianTerm(
@@ -165,9 +163,7 @@ def _static_overlay_terms(system, params: dict, local_projector_cls) -> list[Ham
             continue
         block_name = f"n_{ground_label}_{idx}"
         operator = (
-            system.blocks.get(block_name)
-            if system.blocks.has(block_name)
-            else local_projector_cls(ground_label, idx)
+            system.blocks.get(block_name) if system.blocks.has(block_name) else local_projector_cls(ground_label, idx)
         )
         terms.append(
             HamiltonianTerm(

@@ -56,15 +56,15 @@ PARAM_INDICES = [0, 1, 2, 3, 5]
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-N_SWEEP_POINTS = 51                # per-parameter sweep (keep odd for centre)
-INFIDELITY_CEILING = 0.01          # auto-expand sweep until this is reached
-INITIAL_HALF_WIDTH_ABS = 0.02      # seed half-width for sweep range search
+N_SWEEP_POINTS = 51  # per-parameter sweep (keep odd for centre)
+INFIDELITY_CEILING = 0.01  # auto-expand sweep until this is reached
+INITIAL_HALF_WIDTH_ABS = 0.02  # seed half-width for sweep range search
 
-SIMULTANEOUS_TARGET = 0.001        # target infidelity for α search
+SIMULTANEOUS_TARGET = 0.001  # target infidelity for α search
 
-ISO_FIDELITY_DROP = 0.001          # 0.1 % fidelity drop
-N_DIRECTIONS = 100                 # random directions for iso-surface
-BISECTION_TOL = 1e-4               # sufficient precision for surface location
+ISO_FIDELITY_DROP = 0.001  # 0.1 % fidelity drop
+N_DIRECTIONS = 100  # random directions for iso-surface
+BISECTION_TOL = 1e-4  # sufficient precision for surface location
 BISECTION_MAX_ITER = 25
 MAX_ALPHA_SCALE = 20.0
 DIRECTION_SEED = 42
@@ -72,13 +72,14 @@ DIRECTION_SEED = 42
 # ---------------------------------------------------------------------------
 # System and protocol
 # ---------------------------------------------------------------------------
-system = make_our_system( blackmanflag=True, detuning_sign=+1)
+system = make_our_system(blackmanflag=True, detuning_sign=+1)
 protocol = TOProtocol()
 
 
 # ===================================================================
 # Helpers
 # ===================================================================
+
 
 def _infidelity_at(x: list[float]) -> float:
     """Deterministic average infidelity for parameter vector *x*."""
@@ -96,6 +97,7 @@ def _infidelity_shifted(idx: int, dp: float) -> float:
 # Part 1 — Gaussian-waist 1D scan
 # ===================================================================
 
+
 def _determine_sweep_range(idx: int) -> float:
     """Return half-width for the 1D sweep of parameter *idx*.
 
@@ -112,10 +114,9 @@ def _determine_sweep_range(idx: int) -> float:
     return hw
 
 
-def _gaussian_fidelity(p: np.ndarray, f_peak: float, p0: float,
-                        sigma: float) -> np.ndarray:
+def _gaussian_fidelity(p: np.ndarray, f_peak: float, p0: float, sigma: float) -> np.ndarray:
     """Gaussian model: F(p) = F_peak · exp(-(p - p0)² / (2σ²))."""
-    return f_peak * np.exp(-(p - p0) ** 2 / (2 * sigma ** 2))
+    return f_peak * np.exp(-((p - p0) ** 2) / (2 * sigma**2))
 
 
 def _sweep_and_fit(idx: int, n_points: int = N_SWEEP_POINTS) -> dict:
@@ -127,8 +128,7 @@ def _sweep_and_fit(idx: int, n_points: int = N_SWEEP_POINTS) -> dict:
     hw = _determine_sweep_range(idx)
 
     p_values = np.linspace(p_opt - hw, p_opt + hw, n_points)
-    infidelities = np.array([_infidelity_shifted(idx, p - p_opt)
-                             for p in p_values])
+    infidelities = np.array([_infidelity_shifted(idx, p - p_opt) for p in p_values])
     fidelities = 1.0 - infidelities
 
     # --- initial guesses ---
@@ -145,10 +145,11 @@ def _sweep_and_fit(idx: int, n_points: int = N_SWEEP_POINTS) -> dict:
 
     try:
         popt, pcov = curve_fit(
-            _gaussian_fidelity, p_values, fidelities,
+            _gaussian_fidelity,
+            p_values,
+            fidelities,
             p0=[f_peak_guess, p0_guess, max(sigma_guess, 1e-15)],
-            bounds=([0.0, p_opt - hw, 1e-15],
-                    [1.0 + 1e-10, p_opt + hw, hw * 3]),
+            bounds=([0.0, p_opt - hw, 1e-15], [1.0 + 1e-10, p_opt + hw, hw * 3]),
             maxfev=10000,
         )
         success = True
@@ -170,8 +171,7 @@ def _sweep_and_fit(idx: int, n_points: int = N_SWEEP_POINTS) -> dict:
     }
 
 
-def _plot_gaussian_waists(results: dict[int, dict],
-                          save_path: str = "gaussian_waist_scan.pdf") -> None:
+def _plot_gaussian_waists(results: dict[int, dict], save_path: str = "gaussian_waist_scan.pdf") -> None:
     """Plot 1D fidelity curves with Gaussian fits for all parameters."""
     import matplotlib.pyplot as plt
 
@@ -182,8 +182,7 @@ def _plot_gaussian_waists(results: dict[int, dict],
         ax = axes_flat[i]
         r = results[idx]
 
-        ax.semilogy(r["p_values"], r["infidelities"], "b.", ms=2,
-                     label="Data")
+        ax.semilogy(r["p_values"], r["infidelities"], "b.", ms=2, label="Data")
 
         p_fine = np.linspace(r["p_values"][0], r["p_values"][-1], 500)
         f_fit = _gaussian_fidelity(p_fine, *r["fit_params"])
@@ -231,19 +230,16 @@ def run_gaussian_waist_scan(plot: bool = True) -> dict[int, float]:
         results[idx] = r
         sigmas[idx] = r["sigma"]
         status = "OK" if r["fit_success"] else "FAILED"
-        print(f"    σ = {r['sigma']:.8f}  p0_fit = {r['p0_fit']:.8f}  "
-              f"F_peak = {r['F_peak_fit']:.10f}  fit: {status}")
+        print(f"    σ = {r['sigma']:.8f}  p0_fit = {r['p0_fit']:.8f}  F_peak = {r['F_peak_fit']:.10f}  fit: {status}")
 
     # summary table
-    print(f"\n  {'Parameter':<26} {'p_opt':>12} {'σ_i':>14} "
-          f"{'σ/|p|':>12}")
+    print(f"\n  {'Parameter':<26} {'p_opt':>12} {'σ_i':>14} {'σ/|p|':>12}")
     print(f"  {'-' * 66}")
     for idx in PARAM_INDICES:
         p_opt = X_TO_OUR_DARK[idx]
         sig = sigmas[idx]
         rel = abs(sig / p_opt) if p_opt != 0 else float("inf")
-        print(f"  {PARAM_NAMES[idx]:<26} {p_opt:>12.8f} {sig:>14.8f} "
-              f"{rel:>12.6f}")
+        print(f"  {PARAM_NAMES[idx]:<26} {p_opt:>12.8f} {sig:>14.8f} {rel:>12.6f}")
 
     if plot:
         _plot_gaussian_waists(results)
@@ -254,6 +250,7 @@ def run_gaussian_waist_scan(plot: bool = True) -> dict[int, float]:
 # ===================================================================
 # Part 1b — σ-based simultaneous sensitivity
 # ===================================================================
+
 
 def run_sigma_based_sensitivity(sigmas: dict[int, float]) -> None:
     """Find unified α such that shifting all params by ±α·σ_i reaches
@@ -302,16 +299,15 @@ def run_sigma_based_sensitivity(sigmas: dict[int, float]) -> None:
             dp = sign * alpha * sigma_arr[j]
             p = X_TO_OUR_DARK[idx]
             rel = abs(dp / p) * 100 if p != 0 else float("inf")
-            print(f"      {PARAM_NAMES[idx]}: Δp = {dp:+.8e} "
-                  f"({rel:.4f} %)")
+            print(f"      {PARAM_NAMES[idx]}: Δp = {dp:+.8e} ({rel:.4f} %)")
 
 
 # ===================================================================
 # Part 2 — Iso-fidelity surface error decomposition
 # ===================================================================
 
-def _sample_directions(n_dirs: int, n_dim: int = 5,
-                       seed: int = DIRECTION_SEED) -> np.ndarray:
+
+def _sample_directions(n_dirs: int, n_dim: int = 5, seed: int = DIRECTION_SEED) -> np.ndarray:
     """Uniformly distributed unit vectors on the (n_dim-1)-sphere."""
     rng = np.random.default_rng(seed)
     raw = rng.standard_normal((n_dirs, n_dim))
@@ -326,6 +322,7 @@ def _find_iso_surface_point(
     target_infidelity: float,
 ) -> float | None:
     """Bisection for α along *direction* in σ-normalised space."""
+
     def _inf_at(alpha: float) -> float:
         x = list(X_TO_OUR_DARK)
         dp = alpha * sigma_arr * direction
@@ -364,7 +361,10 @@ def _find_iso_surface_point(
 def _decompose_at_point(x: list[float]) -> dict[str, float]:
     """Error decomposition at parameter point *x*."""
     infidelity, residuals = average_gate_infidelity(
-        system, protocol, x, return_residuals=True,
+        system,
+        protocol,
+        x,
+        return_residuals=True,
     )
     branching = residuals_to_branching(system, residuals)
     xyz = branching["XYZ"]
@@ -383,14 +383,21 @@ def _decompose_at_point(x: list[float]) -> dict[str, float]:
 
     return {
         "infidelity": infidelity,
-        "XYZ": xyz, "AL": al, "LG": lg, "Phase": phase,
-        "f_XYZ": f_xyz, "f_AL": f_al, "f_LG": f_lg, "f_Phase": f_phase,
+        "XYZ": xyz,
+        "AL": al,
+        "LG": lg,
+        "Phase": phase,
+        "f_XYZ": f_xyz,
+        "f_AL": f_al,
+        "f_LG": f_lg,
+        "f_Phase": f_phase,
     }
 
 
-def _plot_iso_fidelity(result: dict,
-                       save_path: str = "iso_fidelity_decomposition.pdf",
-                       ) -> None:
+def _plot_iso_fidelity(
+    result: dict,
+    save_path: str = "iso_fidelity_decomposition.pdf",
+) -> None:
     """Visualise iso-fidelity surface decomposition."""
     import matplotlib.pyplot as plt
 
@@ -403,25 +410,27 @@ def _plot_iso_fidelity(result: dict,
     means = [result["mean_fractions"][k] for k in frac_keys]
     stds = [result["std_fractions"][k] for k in frac_keys]
     colors = ["#2196F3", "#FF9800", "#4CAF50", "#F44336"]
-    bars = ax.bar(names, means, yerr=stds, capsize=5, color=colors,
-                  alpha=0.8)
+    bars = ax.bar(names, means, yerr=stds, capsize=5, color=colors, alpha=0.8)
     ax.set_ylabel("Fractional contribution")
     ax.set_title("Mean error decomposition\non iso-fidelity surface")
     ax.set_ylim(0, 1)
     for bar, m in zip(bars, means):
-        ax.text(bar.get_x() + bar.get_width() / 2,
-                bar.get_height() + 0.02, f"{m:.3f}",
-                ha="center", va="bottom", fontsize=10)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.02,
+            f"{m:.3f}",
+            ha="center",
+            va="bottom",
+            fontsize=10,
+        )
 
     # --- histogram of α ---
     ax = axes[1]
-    ax.hist(result["alphas"], bins=30, color="steelblue", alpha=0.7,
-            edgecolor="black")
+    ax.hist(result["alphas"], bins=30, color="steelblue", alpha=0.7, edgecolor="black")
     ax.set_xlabel("$\\alpha$ (σ-units)")
     ax.set_ylabel("Count")
     ax.set_title("Distance to iso-fidelity surface")
-    ax.axvline(result["alphas"].mean(), color="red", ls="--",
-               label=f"mean = {result['alphas'].mean():.3f}")
+    ax.axvline(result["alphas"].mean(), color="red", ls="--", label=f"mean = {result['alphas'].mean():.3f}")
     ax.legend()
 
     # --- AL vs Phase scatter ---
@@ -435,8 +444,7 @@ def _plot_iso_fidelity(result: dict,
     ax.plot([0, 1], [1, 0], "k--", alpha=0.3)
 
     fig.suptitle(
-        f"Iso-Fidelity Surface "
-        f"($\\Delta$infidelity = {ISO_FIDELITY_DROP})",
+        f"Iso-Fidelity Surface ($\\Delta$infidelity = {ISO_FIDELITY_DROP})",
         fontsize=14,
     )
     fig.tight_layout()
@@ -470,8 +478,7 @@ def run_iso_fidelity_decomposition(
     baseline = _infidelity_at(X_TO_OUR_DARK)
     target = baseline + ISO_FIDELITY_DROP
     print(f"  Baseline infidelity: {baseline:.4e}")
-    print(f"  Target infidelity:   {target:.4e}  "
-          f"(baseline + {ISO_FIDELITY_DROP})")
+    print(f"  Target infidelity:   {target:.4e}  (baseline + {ISO_FIDELITY_DROP})")
     print(f"  Sampling {n_directions} random directions …\n")
 
     sigma_arr = np.array([sigmas[idx] for idx in PARAM_INDICES])
@@ -499,8 +506,7 @@ def run_iso_fidelity_decomposition(
         if (i + 1) % 50 == 0:
             print(f"    {i + 1}/{n_directions} directions done …")
 
-    print(f"\n  {len(decompositions)} surface points found, "
-          f"{skipped} skipped.")
+    print(f"\n  {len(decompositions)} surface points found, {skipped} skipped.")
 
     if not decompositions:
         print("  ERROR: no surface points found.")
@@ -508,8 +514,7 @@ def run_iso_fidelity_decomposition(
 
     # --- aggregate ---
     frac_keys = ["f_XYZ", "f_AL", "f_LG", "f_Phase"]
-    display = {"f_XYZ": "XYZ", "f_AL": "AL", "f_LG": "LG",
-               "f_Phase": "Phase"}
+    display = {"f_XYZ": "XYZ", "f_AL": "AL", "f_LG": "LG", "f_Phase": "Phase"}
 
     mean_fracs: dict[str, float] = {}
     std_fracs: dict[str, float] = {}
@@ -521,23 +526,23 @@ def run_iso_fidelity_decomposition(
     print(f"\n  {'Error type':<12} {'Mean fraction':>14} {'Std':>14}")
     print(f"  {'-' * 42}")
     for key in frac_keys:
-        print(f"  {display[key]:<12} {mean_fracs[key]:>14.6f} "
-              f"{std_fracs[key]:>14.6f}")
+        print(f"  {display[key]:<12} {mean_fracs[key]:>14.6f} {std_fracs[key]:>14.6f}")
 
     # absolute contributions
     print(f"\n  {'Error type':<12} {'Mean absolute':>14} {'Std absolute':>14}")
     print(f"  {'-' * 42}")
     for abs_key in ["XYZ", "AL", "LG", "Phase"]:
         vals = np.array([d[abs_key] for d in decompositions])
-        print(f"  {abs_key:<12} {np.mean(vals):>14.4e} "
-              f"{np.std(vals):>14.4e}")
+        print(f"  {abs_key:<12} {np.mean(vals):>14.4e} {np.std(vals):>14.4e}")
 
     alphas_arr = np.array(alphas)
     print(f"\n  α statistics (σ-units to surface):")
-    print(f"    mean = {alphas_arr.mean():.4f}  "
-          f"std = {alphas_arr.std():.4f}  "
-          f"min = {alphas_arr.min():.4f}  "
-          f"max = {alphas_arr.max():.4f}")
+    print(
+        f"    mean = {alphas_arr.mean():.4f}  "
+        f"std = {alphas_arr.std():.4f}  "
+        f"min = {alphas_arr.min():.4f}  "
+        f"max = {alphas_arr.max():.4f}"
+    )
 
     result = {
         "mean_fractions": mean_fracs,

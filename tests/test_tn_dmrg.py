@@ -105,14 +105,14 @@ class TestDMRG:
                 H_full = H_full + np.conjugate(c) * term.operator.conj().T
 
         from scipy.sparse.linalg import eigsh
-        E_exact = eigsh(H_full.tocsc(), k=1, which='SA', return_eigenvectors=False)[0]
+
+        E_exact = eigsh(H_full.tocsc(), k=1, which="SA", return_eigenvectors=False)[0]
 
         backend = TenpyDMRGBackend(chi_max=32, n_sweeps=20)
         result = backend.find_ground_state(spec_2x2, Delta)
         E_dmrg = result.metadata["energy"]
 
-        np.testing.assert_allclose(E_dmrg, E_exact, atol=1e-6,
-                                   err_msg=f"DMRG E={E_dmrg}, exact E={E_exact}")
+        np.testing.assert_allclose(E_dmrg, E_exact, atol=1e-6, err_msg=f"DMRG E={E_dmrg}, exact E={E_exact}")
 
     @pytest.mark.slow
     def test_3x3_dmrg_converges(self, spec_3x3):

@@ -289,11 +289,7 @@ def _parse_float_csv(text: str) -> list[float]:
 
 
 def _jsonable_options(options: dict) -> dict:
-    return {
-        key: value
-        for key, value in options.items()
-        if isinstance(value, (str, int, float, bool)) or value is None
-    }
+    return {key: value for key, value in options.items() if isinstance(value, (str, int, float, bool)) or value is None}
 
 
 def _metadata_for_json(metadata: dict) -> dict:

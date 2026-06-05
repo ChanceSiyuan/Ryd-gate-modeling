@@ -44,6 +44,7 @@ Outputs (under ``results/``):
     diagnose_exp2_slow_sweep.{png,csv}
     diagnose_exp3_boundary.{png,csv}
 """
+
 from __future__ import annotations
 
 import os
@@ -95,7 +96,8 @@ def build_model() -> RydbergSystem:
     if _PARENT_MODEL is not None:
         return _PARENT_MODEL
     _PARENT_MODEL = make_analog_3_system(
-        detuning_sign=1, blackmanflag=True,
+        detuning_sign=1,
+        blackmanflag=True,
         distance_um=DISTANCE_UM,
         Delta_Hz=DELTA_HZ,
         rabi_420_Hz=RABI_420_HZ,
@@ -104,8 +106,7 @@ def build_model() -> RydbergSystem:
     return _PARENT_MODEL
 
 
-def make_protocol_and_x(model, wl_nm, power_uw, t_gate_us,
-                        delta_start_mhz, delta_end_mhz):
+def make_protocol_and_x(model, wl_nm, power_uw, t_gate_us, delta_start_mhz, delta_end_mhz):
     """Build a fresh SweepProtocol + x_sweep for one (λ, P, T, Δ_window) cell."""
     system = model
     rabi_eff = system.meta("rabi_eff")
@@ -117,7 +118,7 @@ def make_protocol_and_x(model, wl_nm, power_uw, t_gate_us,
     scale = power_uw / POWER_REF_UW
     delta_A = 2 * pi * float(shift_ref) * scale  # rad/s
     delta_B = eta * delta_A
-    ac_stark_peak = rabi_420 ** 2 / (4 * abs(Delta))
+    ac_stark_peak = rabi_420**2 / (4 * abs(Delta))
 
     protocol = SweepProtocol(
         addressing={0: delta_A, 1: delta_B},
@@ -205,9 +206,9 @@ def _exp1_one_T(T_us, n_pts=None):
     if n_pts is None:
         n_pts = _EXP1_N_PTS
     model = build_model()
-    psi0 = np.zeros(9, dtype=complex); psi0[0] = 1.0
-    protocol, x, _, _ = make_protocol_and_x(
-        model, WL_REF_NM, P_REF_UW, T_us, DELTA_START_MHZ, DELTA_END_MHZ)
+    psi0 = np.zeros(9, dtype=complex)
+    psi0[0] = 1.0
+    protocol, x, _, _ = make_protocol_and_x(model, WL_REF_NM, P_REF_UW, T_us, DELTA_START_MHZ, DELTA_END_MHZ)
     system = model.with_protocol(protocol)
     params = system.unpack_params(x)
     t_gate = params["t_gate"]
@@ -225,9 +226,9 @@ def _exp1_one_T(T_us, n_pts=None):
 def _exp2_one_T(T_us):
     """Run one (λ, P, T) cell for experiment 2 (final populations only)."""
     model = build_model()
-    psi0 = np.zeros(9, dtype=complex); psi0[0] = 1.0
-    protocol, x, _, _ = make_protocol_and_x(
-        model, WL_REF_NM, P_REF_UW, T_us, DELTA_START_MHZ, DELTA_END_MHZ)
+    psi0 = np.zeros(9, dtype=complex)
+    psi0[0] = 1.0
+    protocol, x, _, _ = make_protocol_and_x(model, WL_REF_NM, P_REF_UW, T_us, DELTA_START_MHZ, DELTA_END_MHZ)
     t0 = _time.time()
     result = simulate(model.with_protocol(protocol), x, psi0)
     elapsed = _time.time() - t0
@@ -238,9 +239,9 @@ def _exp2_one_T(T_us):
 def _exp3_one_dmax(dmax_T):
     dmax, T_us = dmax_T
     model = build_model()
-    psi0 = np.zeros(9, dtype=complex); psi0[0] = 1.0
-    protocol, x, _, _ = make_protocol_and_x(
-        model, WL_REF_NM, P_REF_UW, T_us, -dmax, dmax)
+    psi0 = np.zeros(9, dtype=complex)
+    psi0[0] = 1.0
+    protocol, x, _, _ = make_protocol_and_x(model, WL_REF_NM, P_REF_UW, T_us, -dmax, dmax)
     t0 = _time.time()
     result = simulate(model.with_protocol(protocol), x, psi0)
     elapsed = _time.time() - t0
@@ -272,12 +273,10 @@ def experiment1():
     print("Experiment 1: adiabatic fidelity tracking")
     print("=" * 64)
 
-    Ts_us = [4.5, 9.0, 20.0]   # T>20 μs starves under cpu contention
+    Ts_us = [4.5, 9.0, 20.0]  # T>20 μs starves under cpu contention
     n_pts = 251  # samples per trajectory
 
-    fig, axes = plt.subplots(len(Ts_us), 1,
-                             figsize=(9, 2.4 * len(Ts_us)),
-                             sharex=False)
+    fig, axes = plt.subplots(len(Ts_us), 1, figsize=(9, 2.4 * len(Ts_us)), sharex=False)
 
     global _EXP1_N_PTS
     _EXP1_N_PTS = n_pts
@@ -289,19 +288,30 @@ def experiment1():
         max_drop_F1 = float((1.0 - F1).max())
         max_drop_F2 = float((1.0 - F2).max())
         summary.append((T_us, max_drop_F1, max_drop_F2, m))
-        print(f"  T={T_us:6.1f} μs  max(1-F2)={max_drop_F2:.2e}  "
-              f"max(1-F1)={max_drop_F1:.2e}  "
-              f"P_gg={m['P_gg']:.4e}  P_gr={m['P_gr']:.6f}  "
-              f"P_rg={m['P_rg']:.4e}  ({elapsed:.1f}s)")
+        print(
+            f"  T={T_us:6.1f} μs  max(1-F2)={max_drop_F2:.2e}  "
+            f"max(1-F1)={max_drop_F1:.2e}  "
+            f"P_gg={m['P_gg']:.4e}  P_gr={m['P_gr']:.6f}  "
+            f"P_rg={m['P_rg']:.4e}  ({elapsed:.1f}s)"
+        )
 
         # Light gray: top-1 overlap (the misleading "non-adiabatic" artifact).
-        ax.semilogy(times * 1e6, np.maximum(1.0 - F1, 1e-16),
-                    color='0.65', lw=1.0, ls='-',
-                    label="1 − top-1 overlap (eigh artifact)")
+        ax.semilogy(
+            times * 1e6,
+            np.maximum(1.0 - F1, 1e-16),
+            color="0.65",
+            lw=1.0,
+            ls="-",
+            label="1 − top-1 overlap (eigh artifact)",
+        )
         # Black: top-2 overlap (the physically meaningful metric).
-        ax.semilogy(times * 1e6, np.maximum(1.0 - F2, 1e-16),
-                    color='k', lw=1.6,
-                    label="1 − top-2 overlap (true 2D-subspace dropout)")
+        ax.semilogy(
+            times * 1e6,
+            np.maximum(1.0 - F2, 1e-16),
+            color="k",
+            lw=1.6,
+            label="1 − top-2 overlap (true 2D-subspace dropout)",
+        )
         ax.set_ylim(1e-14, 1.0)
         ax.set_xlabel("time (μs)")
         ax.set_ylabel(r"$1 - F(t)$")
@@ -312,14 +322,17 @@ def experiment1():
             f"P_gg = {m['P_gg']:.2e}   "
             f"P_gr = {m['P_gr']:.4f}   "
             f"P_rg = {m['P_rg']:.2e}",
-            fontsize=9)
-        ax.grid(alpha=0.3, which='both')
-        ax.legend(loc='lower center', fontsize=7, framealpha=0.9)
+            fontsize=9,
+        )
+        ax.grid(alpha=0.3, which="both")
+        ax.legend(loc="lower center", fontsize=7, framealpha=0.9)
 
     fig.suptitle(
         "Exp 1 — Adiabatic fidelity tracking (top-1 vs top-2 overlap) "
         f"\nλ={WL_REF_NM} nm, P={P_REF_UW:.0f} μW, ±{abs(DELTA_START_MHZ):.0f} MHz sweep",
-        y=1.0, fontsize=11)
+        y=1.0,
+        fontsize=11,
+    )
     fig.tight_layout()
     path = os.path.join(OUTDIR, "diagnose_exp1_adiabatic_fidelity.png")
     fig.savefig(path, dpi=150)
@@ -343,39 +356,44 @@ def experiment2():
     rows = []
     for T_us, m, elapsed in out:
         rows.append((T_us, m["P_gg"], m["P_gr"], m["P_rg"], m["P_rr"]))
-        print(f"  T={T_us:6.1f} μs   "
-              f"P_gg={m['P_gg']:.4e}  P_gr={m['P_gr']:.6f}  "
-              f"P_rg={m['P_rg']:.4e}  P_rr={m['P_rr']:.4e}  ({elapsed:.1f}s)")
+        print(
+            f"  T={T_us:6.1f} μs   "
+            f"P_gg={m['P_gg']:.4e}  P_gr={m['P_gr']:.6f}  "
+            f"P_rg={m['P_rg']:.4e}  P_rr={m['P_rr']:.4e}  ({elapsed:.1f}s)"
+        )
     rows = np.array(rows)
 
     # Theory: pure-LZ diabatic prediction for atom B
     Omega_eff = build_model().meta("rabi_eff")  # rad/s
     delta_window_rad = 2 * pi * (DELTA_END_MHZ - DELTA_START_MHZ) * 1e6
     alpha = delta_window_rad / (Ts_us * 1e-6)
-    P_LZ = np.exp(-pi * Omega_eff ** 2 / (2 * alpha))
+    P_LZ = np.exp(-pi * Omega_eff**2 / (2 * alpha))
 
     fig, ax = plt.subplots(figsize=(8.5, 6))
-    ax.loglog(Ts_us, np.maximum(rows[:, 1], 1e-16),  'o-', label="P_gg (crosstalk)")
-    ax.loglog(Ts_us, np.maximum(rows[:, 3], 1e-16),  's-', label="P_rg (atom A pinning leak)")
-    ax.loglog(Ts_us, np.maximum(rows[:, 4], 1e-16),  '^-', label="P_rr")
-    ax.loglog(Ts_us, np.maximum(1.0 - rows[:, 2], 1e-16), 'x--',
-              label="1 − P_gr (target infidelity)")
-    ax.loglog(Ts_us, P_LZ, 'k:', alpha=0.7,
-              label=r"pure-LZ prediction $e^{-\pi\Omega^2/2\alpha}$")
+    ax.loglog(Ts_us, np.maximum(rows[:, 1], 1e-16), "o-", label="P_gg (crosstalk)")
+    ax.loglog(Ts_us, np.maximum(rows[:, 3], 1e-16), "s-", label="P_rg (atom A pinning leak)")
+    ax.loglog(Ts_us, np.maximum(rows[:, 4], 1e-16), "^-", label="P_rr")
+    ax.loglog(Ts_us, np.maximum(1.0 - rows[:, 2], 1e-16), "x--", label="1 − P_gr (target infidelity)")
+    ax.loglog(Ts_us, P_LZ, "k:", alpha=0.7, label=r"pure-LZ prediction $e^{-\pi\Omega^2/2\alpha}$")
     ax.set_xlabel("Gate time T (μs)")
     ax.set_ylabel("Population")
     ax.set_title(
         f"Exp 2 — Pure unitary slow-sweep test\n"
-        f"λ={WL_REF_NM} nm, P={P_REF_UW:.0f} μW, ±{abs(DELTA_START_MHZ):.0f} MHz sweep")
-    ax.legend(loc='best', fontsize=9)
-    ax.grid(alpha=0.3, which='both')
+        f"λ={WL_REF_NM} nm, P={P_REF_UW:.0f} μW, ±{abs(DELTA_START_MHZ):.0f} MHz sweep"
+    )
+    ax.legend(loc="best", fontsize=9)
+    ax.grid(alpha=0.3, which="both")
     fig.tight_layout()
     path = os.path.join(OUTDIR, "diagnose_exp2_slow_sweep.png")
     fig.savefig(path, dpi=150)
     plt.close(fig)
-    np.savetxt(os.path.join(OUTDIR, "diagnose_exp2_slow_sweep.csv"), rows,
-               fmt="%.6e", delimiter=",",
-               header="T_us,P_gg,P_gr,P_rg,P_rr")
+    np.savetxt(
+        os.path.join(OUTDIR, "diagnose_exp2_slow_sweep.csv"),
+        rows,
+        fmt="%.6e",
+        delimiter=",",
+        header="T_us,P_gg,P_gr,P_rg,P_rr",
+    )
     print(f"Saved {path}\n")
     return rows
 
@@ -400,31 +418,34 @@ def experiment3():
     rows = []
     for dmax, T_us, m, elapsed in out:
         rows.append((dmax, T_us, m["P_gg"], m["P_gr"], m["P_rg"], m["P_rr"]))
-        print(f"  Δmax={dmax:6.1f} MHz  T={T_us:6.2f} μs   "
-              f"P_gg={m['P_gg']:.4e}  P_rg={m['P_rg']:.4e}  ({elapsed:.1f}s)")
+        print(
+            f"  Δmax={dmax:6.1f} MHz  T={T_us:6.2f} μs   P_gg={m['P_gg']:.4e}  P_rg={m['P_rg']:.4e}  ({elapsed:.1f}s)"
+        )
     rows = np.array(rows)
 
     fig, ax = plt.subplots(figsize=(8.5, 6))
     dmax = rows[:, 0]
-    ax.loglog(dmax, np.maximum(rows[:, 2], 1e-16), 'o-', label="P_gg")
-    ax.loglog(dmax, np.maximum(rows[:, 4], 1e-16), 's-', label="P_rg")
+    ax.loglog(dmax, np.maximum(rows[:, 2], 1e-16), "o-", label="P_gg")
+    ax.loglog(dmax, np.maximum(rows[:, 4], 1e-16), "s-", label="P_rg")
     # 1/Δ² reference, anchored to first point
     inv_sq = (dmax[0] / dmax) ** 2 * rows[0, 2]
-    ax.loglog(dmax, inv_sq, 'k--', alpha=0.5, label=r"$\propto 1/\Delta_{\max}^{\,2}$")
+    ax.loglog(dmax, inv_sq, "k--", alpha=0.5, label=r"$\propto 1/\Delta_{\max}^{\,2}$")
     ax.set_xlabel(r"Sweep half-width $\Delta_\max$ (MHz)")
     ax.set_ylabel("Population")
-    ax.set_title(
-        f"Exp 3 — Boundary scaling at constant sweep rate\n"
-        f"α = 2Δ/T = {alpha:.1f} MHz/μs")
-    ax.legend(loc='best')
-    ax.grid(alpha=0.3, which='both')
+    ax.set_title(f"Exp 3 — Boundary scaling at constant sweep rate\nα = 2Δ/T = {alpha:.1f} MHz/μs")
+    ax.legend(loc="best")
+    ax.grid(alpha=0.3, which="both")
     fig.tight_layout()
     path = os.path.join(OUTDIR, "diagnose_exp3_boundary.png")
     fig.savefig(path, dpi=150)
     plt.close(fig)
-    np.savetxt(os.path.join(OUTDIR, "diagnose_exp3_boundary.csv"), rows,
-               fmt="%.6e", delimiter=",",
-               header="delta_max_mhz,T_us,P_gg,P_gr,P_rg,P_rr")
+    np.savetxt(
+        os.path.join(OUTDIR, "diagnose_exp3_boundary.csv"),
+        rows,
+        fmt="%.6e",
+        delimiter=",",
+        header="delta_max_mhz,T_us,P_gg,P_gr,P_rg,P_rr",
+    )
     print(f"Saved {path}\n")
     return rows
 
@@ -435,10 +456,11 @@ def main():
     # it instead of each racing on ARC's SQLite cache.
     print("Pre-building model in parent process (warms ARC cache)...")
     build_model()
-    print(f"Reference operating point: λ={WL_REF_NM} nm, P={P_REF_UW} μW, "
-          f"sweep ±{abs(DELTA_START_MHZ)} MHz")
-    print(f"  distance={DISTANCE_UM} μm  waist={WAIST_UM} μm  "
-          f"Δ_int/(2π)={DELTA_HZ/1e9} GHz  Ω_420={RABI_420_HZ/1e6} MHz\n")
+    print(f"Reference operating point: λ={WL_REF_NM} nm, P={P_REF_UW} μW, sweep ±{abs(DELTA_START_MHZ)} MHz")
+    print(
+        f"  distance={DISTANCE_UM} μm  waist={WAIST_UM} μm  "
+        f"Δ_int/(2π)={DELTA_HZ / 1e9} GHz  Ω_420={RABI_420_HZ / 1e6} MHz\n"
+    )
 
     s1 = experiment1()
     r2 = experiment2()
@@ -449,9 +471,11 @@ def main():
     print("=" * 64)
     print("\nExp 1 max dropouts per T (top-2 is the meaningful metric):")
     for T_us, drop_F1, drop_F2, m in s1:
-        print(f"  T={T_us:6.1f} μs  max(1-F2)={drop_F2:.2e}  "
-              f"max(1-F1)={drop_F1:.2e}  "
-              f"P_gg={m['P_gg']:.4e}  P_rg={m['P_rg']:.4e}")
+        print(
+            f"  T={T_us:6.1f} μs  max(1-F2)={drop_F2:.2e}  "
+            f"max(1-F1)={drop_F1:.2e}  "
+            f"P_gg={m['P_gg']:.4e}  P_rg={m['P_rg']:.4e}"
+        )
     print(f"\nExp 2 final populations vs T (see CSV).")
     print(f"Exp 3 final populations vs Δ_max (see CSV).")
     print("\nDone.")

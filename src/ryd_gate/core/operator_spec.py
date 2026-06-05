@@ -114,22 +114,15 @@ def materialize_sparse_operator(
 def measure_state_vector_operator(spec: OperatorSpec, basis: BasisSpec, psi: np.ndarray) -> float:
     """Measure a symbolic observable against an exact state vector."""
     if psi.shape[0] != basis.total_dim:
-        raise ValueError(
-            f"State dimension {psi.shape[0]} does not match basis dimension {basis.total_dim}."
-        )
+        raise ValueError(f"State dimension {psi.shape[0]} does not match basis dimension {basis.total_dim}.")
 
     if isinstance(spec, LocalProjectorSpec):
         return _projector_expectation(spec.level, spec.site, basis, psi)
     if isinstance(spec, SumProjectorSpec):
-        return float(
-            sum(_projector_expectation(spec.level, i, basis, psi) for i in range(basis.n_sites))
-        )
+        return float(sum(_projector_expectation(spec.level, i, basis, psi) for i in range(basis.n_sites)))
     if isinstance(spec, WeightedProjectorSumSpec):
         return float(
-            sum(
-                weight * _projector_expectation(spec.level, i, basis, psi)
-                for i, weight in enumerate(spec.weights)
-            )
+            sum(weight * _projector_expectation(spec.level, i, basis, psi) for i, weight in enumerate(spec.weights))
         )
 
     op = materialize_sparse_operator(spec, basis)
@@ -160,11 +153,7 @@ def _sum_projector(level: str, basis: BasisSpec):
 def _weighted_projector_sum(level: str, weights: tuple[float, ...], basis: BasisSpec):
     if len(weights) != basis.n_sites:
         raise ValueError(f"Expected {basis.n_sites} weights, got {len(weights)}.")
-    terms = [
-        weight * _local_projector(level, i, basis)
-        for i, weight in enumerate(weights)
-        if abs(weight) > 1e-15
-    ]
+    terms = [weight * _local_projector(level, i, basis) for i, weight in enumerate(weights) if abs(weight) > 1e-15]
     return _sum_sparse(terms, basis.total_dim)
 
 
@@ -193,8 +182,7 @@ def _local_matrix_sum(matrix: np.ndarray, basis: BasisSpec):
 def _rydberg_pair_interaction(spec: RydbergPairInteractionSpec, basis: BasisSpec):
     indices = np.arange(basis.total_dim, dtype=np.int64)
     ryd_mask_by_site = [
-        _site_level_mask(indices, basis, site, spec.rydberg_levels).astype(float)
-        for site in range(basis.n_sites)
+        _site_level_mask(indices, basis, site, spec.rydberg_levels).astype(float) for site in range(basis.n_sites)
     ]
     h_diag = np.zeros(basis.total_dim, dtype=complex)
     for i, j, V_ij in spec.pairs:

@@ -57,23 +57,28 @@ def main():
     print(f"\nFinal staggered magnetization: m_s = {ms:.3f}")
     print(f"Per-atom Rydberg populations:")
     for i, (x, y) in enumerate(geom.coords):
-        sub = '+' if geom.sublattice[i] > 0 else '-'
+        sub = "+" if geom.sublattice[i] > 0 else "-"
         print(f"  Atom {i} ({x:.0f},{y:.0f}) [{sub}]: P_r = {occ_final[i]:.3f}")
 
     # Plot spatial distribution
     fig = plot_spatial_rydberg(
-        geom.coords, occ_final, geom.sublattice,
+        geom.coords,
+        occ_final,
+        geom.sublattice,
         title=f"3×3 checkerboard after adiabatic sweep (m_s = {ms:.2f})",
     )
-    fig.savefig("fig_3level_lattice_checkerboard.png", dpi=150, bbox_inches='tight')
+    fig.savefig("fig_3level_lattice_checkerboard.png", dpi=150, bbox_inches="tight")
     print("\nSaved fig_3level_lattice_checkerboard.png")
 
     # Plot evolution if stored
     if result.states is not None:
         from ryd_gate.lattice import plot_population_evolution
+
         occ_traj = measure_rydberg_occupation(result.states, masks)
         fig2 = plot_population_evolution(
-            result.times, occ_traj, geom.sublattice,
+            result.times,
+            occ_traj,
+            geom.sublattice,
         )
         fig2.suptitle("Rydberg population during adiabatic sweep")
         fig2.tight_layout()
