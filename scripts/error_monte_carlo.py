@@ -18,8 +18,12 @@ from exact import MonteCarloResult, MonteCarloRunner
 from ryd_gate.protocols.gate_cz_to import TOProtocol
 
 X_TO_OUR_DARK = [
-   -0.9509172186259588, 1.105272315809505, 0.383911389220584,
-   1.2848721417313045, 1.3035218398648376, 1.246566016566724
+    -0.9509172186259588,
+    1.105272315809505,
+    0.383911389220584,
+    1.2848721417313045,
+    1.3035218398648376,
+    1.246566016566724,
 ]
 
 
@@ -30,28 +34,37 @@ def print_branching_table(result: MonteCarloResult, label: str) -> None:
     def sem(std):
         return std / np.sqrt(n)
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"  {label} ({n} shots)")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     print(f"  {'Category':<20} {'Mean':>14} {'Std':>14} {'SEM':>14}")
-    print(f"  {'-'*62}")
-    print(f"  {'Total infidelity':<20} {result.mean_infidelity:>14.6e} "
-          f"{result.std_infidelity:>14.6e} {sem(result.std_infidelity):>14.6e}")
+    print(f"  {'-' * 62}")
+    print(
+        f"  {'Total infidelity':<20} {result.mean_infidelity:>14.6e} "
+        f"{result.std_infidelity:>14.6e} {sem(result.std_infidelity):>14.6e}"
+    )
 
     if result.mean_branch_XYZ is not None:
-        print(f"  {'XYZ (Pauli)':<20} {result.mean_branch_XYZ:>14.6e} "
-              f"{result.std_branch_XYZ:>14.6e} {sem(result.std_branch_XYZ):>14.6e}")
-        print(f"  {'AL (Atom Loss)':<20} {result.mean_branch_AL:>14.6e} "
-              f"{result.std_branch_AL:>14.6e} {sem(result.std_branch_AL):>14.6e}")
-        print(f"  {'LG (Leakage)':<20} {result.mean_branch_LG:>14.6e} "
-              f"{result.std_branch_LG:>14.6e} {sem(result.std_branch_LG):>14.6e}")
-        print(f"  {'Phase error':<20} {result.mean_branch_phase:>14.6e} "
-              f"{result.std_branch_phase:>14.6e} {sem(result.std_branch_phase):>14.6e}")
-        branch_sum = (result.mean_branch_XYZ + result.mean_branch_AL
-                     + result.mean_branch_LG + result.mean_branch_phase)
-        print(f"  {'-'*62}")
+        print(
+            f"  {'XYZ (Pauli)':<20} {result.mean_branch_XYZ:>14.6e} "
+            f"{result.std_branch_XYZ:>14.6e} {sem(result.std_branch_XYZ):>14.6e}"
+        )
+        print(
+            f"  {'AL (Atom Loss)':<20} {result.mean_branch_AL:>14.6e} "
+            f"{result.std_branch_AL:>14.6e} {sem(result.std_branch_AL):>14.6e}"
+        )
+        print(
+            f"  {'LG (Leakage)':<20} {result.mean_branch_LG:>14.6e} "
+            f"{result.std_branch_LG:>14.6e} {sem(result.std_branch_LG):>14.6e}"
+        )
+        print(
+            f"  {'Phase error':<20} {result.mean_branch_phase:>14.6e} "
+            f"{result.std_branch_phase:>14.6e} {sem(result.std_branch_phase):>14.6e}"
+        )
+        branch_sum = result.mean_branch_XYZ + result.mean_branch_AL + result.mean_branch_LG + result.mean_branch_phase
+        print(f"  {'-' * 62}")
         print(f"  {'Sum of branches':<20} {branch_sum:>14.6e}")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
 
 def main():
@@ -73,7 +86,7 @@ def main():
 
     # ==================== Dephasing with branching ====================
 
-    system_dephasing = make_our_system( blackmanflag=True, detuning_sign=1)
+    system_dephasing = make_our_system(blackmanflag=True, detuning_sign=1)
     engine_dephasing = MonteCarloRunner(system_dephasing.with_protocol(protocol), X_TO_OUR_DARK)
     engine_dephasing.setup_detuning_noise(130e3)
 
@@ -89,7 +102,7 @@ def main():
 
     sigma_pos = (70e-9, 70e-9, 130e-9)  # meters
 
-    system_position = make_our_system( blackmanflag=True, detuning_sign=1)
+    system_position = make_our_system(blackmanflag=True, detuning_sign=1)
     engine_position = MonteCarloRunner(system_position.with_protocol(protocol), X_TO_OUR_DARK)
     engine_position.setup_position_noise(sigma_pos)
 
@@ -104,8 +117,10 @@ def main():
     # ==================== All errors with branching ====================
 
     system_all = make_our_system(
-        blackmanflag=True, detuning_sign=1,
-        enable_rydberg_decay=True, enable_intermediate_decay=True,
+        blackmanflag=True,
+        detuning_sign=1,
+        enable_rydberg_decay=True,
+        enable_intermediate_decay=True,
         enable_polarization_leakage=True,
     )
     engine_all = MonteCarloRunner(system_all.with_protocol(protocol), X_TO_OUR_DARK)

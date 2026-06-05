@@ -52,9 +52,22 @@ if TYPE_CHECKING:
 
 # Supported initial state labels for diagnostic methods
 InitialStateLabel = Literal[
-    "00", "01", "10", "11",
-    "SSS-0", "SSS-1", "SSS-2", "SSS-3", "SSS-4", "SSS-5",
-    "SSS-6", "SSS-7", "SSS-8", "SSS-9", "SSS-10", "SSS-11",
+    "00",
+    "01",
+    "10",
+    "11",
+    "SSS-0",
+    "SSS-1",
+    "SSS-2",
+    "SSS-3",
+    "SSS-4",
+    "SSS-5",
+    "SSS-6",
+    "SSS-7",
+    "SSS-8",
+    "SSS-9",
+    "SSS-10",
+    "SSS-11",
 ]
 
 
@@ -94,8 +107,7 @@ class CZGateSimulator:
 
         if enable_rydberg_dephasing and sigma_detuning is None:
             raise ValueError(
-                "sigma_detuning must be provided when enable_rydberg_dephasing=True. "
-                "Typical value: 130e3 (Hz)."
+                "sigma_detuning must be provided when enable_rydberg_dephasing=True. Typical value: 130e3 (Hz)."
             )
         if enable_position_error and sigma_pos_xyz is None:
             raise ValueError(
@@ -117,10 +129,7 @@ class CZGateSimulator:
         elif param_set == "lukin":
             self._system = create_lukin_system(**_factory_kwargs)
         else:
-            raise ValueError(
-                f"CZGateSimulator only supports 'our' or 'lukin' systems, "
-                f"got '{param_set}'."
-            )
+            raise ValueError(f"CZGateSimulator only supports 'our' or 'lukin' systems, got '{param_set}'.")
 
         # Create protocol object
         if strategy == "TO":
@@ -128,9 +137,7 @@ class CZGateSimulator:
         elif strategy == "AR":
             self._protocol = ARProtocol()
         else:
-            raise ValueError(
-                f"Unknown strategy: '{strategy}'. Choose 'TO' or 'AR'."
-            )
+            raise ValueError(f"Unknown strategy: '{strategy}'. Choose 'TO' or 'AR'.")
 
     # ==================================================================
     # ATTRIBUTE COMPATIBILITY LAYER
@@ -274,17 +281,13 @@ class CZGateSimulator:
 
     def _setup_protocol_TO(self, x: list[float]) -> None:
         if len(x) != 6:
-            raise ValueError(
-                f"TO parameters must be a list of 6 elements. Got {len(x)} elements."
-            )
+            raise ValueError(f"TO parameters must be a list of 6 elements. Got {len(x)} elements.")
         self.x_initial = x
         print(f"TO parameters is set to: [A, ω/Ω_eff, φ₀, δ/Ω_eff, θ, T/T_scale] = {x}")
 
     def _setup_protocol_AR(self, x: list[float]) -> None:
         if len(x) != 8:
-            raise ValueError(
-                f"AR parameters must be a list of 8 elements. Got {len(x)} elements."
-            )
+            raise ValueError(f"AR parameters must be a list of 8 elements. Got {len(x)} elements.")
         self.x_initial = x
         print(f"AR parameters is set to: [ω/Ω_eff, A₁, φ₁, A₂, φ₂, δ/Ω_eff, T/T_scale, θ] = {x}")
 
@@ -294,9 +297,7 @@ class CZGateSimulator:
         elif self.strategy == "AR":
             self._setup_protocol_AR(x)
         else:
-            raise ValueError(
-                f"Unknown strategy: '{self.strategy}'. Choose 'TO' or 'AR'."
-            )
+            raise ValueError(f"Unknown strategy: '{self.strategy}'. Choose 'TO' or 'AR'.")
 
     def setup_protocol(self, x: list[float]) -> None:
         """Store pulse parameters for subsequent method calls."""
@@ -327,9 +328,7 @@ class CZGateSimulator:
         elif self.strategy == "AR":
             return self._optimization_AR(fid_type, x=x_initial)
         else:
-            raise ValueError(
-                f"Unknown strategy: '{self.strategy}'. Choose 'TO' or 'AR'."
-            )
+            raise ValueError(f"Unknown strategy: '{self.strategy}'. Choose 'TO' or 'AR'.")
 
     def _gate_infidelity_single(
         self,
@@ -339,21 +338,19 @@ class CZGateSimulator:
     ) -> "float | tuple[float, dict[str, float]]":
         """Compute single-shot gate infidelity (no MC averaging)."""
         if return_residuals and fid_type != "average":
-            raise ValueError(
-                "return_residuals is only supported for fid_type='average'."
-            )
+            raise ValueError("return_residuals is only supported for fid_type='average'.")
         if fid_type == "average":
             return average_gate_infidelity(
-                self._system, self._protocol, x,
+                self._system,
+                self._protocol,
+                x,
                 return_residuals=return_residuals,
             )
         elif fid_type == "sss":
             return sss_infidelity(self._system, self._protocol, x)
         elif fid_type == "bell":
             return bell_infidelity(self._system, self._protocol, x)
-        raise ValueError(
-            f"Unknown fid_type: '{fid_type}'. Choose 'average', 'sss', or 'bell'."
-        )
+        raise ValueError(f"Unknown fid_type: '{fid_type}'. Choose 'average', 'sss', or 'bell'.")
 
     def gate_fidelity(
         self,
@@ -366,7 +363,9 @@ class CZGateSimulator:
         if self.enable_rydberg_dephasing or self.enable_position_error:
             if use_jax_mc:
                 result = run_monte_carlo_jax(
-                    self._system, self._protocol, x,
+                    self._system,
+                    self._protocol,
+                    x,
                     n_shots=self.n_mc_shots,
                     sigma_detuning=self.sigma_detuning,
                     sigma_pos_xyz=self.sigma_pos_xyz,
@@ -376,7 +375,8 @@ class CZGateSimulator:
                 )
             else:
                 engine = MonteCarloEngine(
-                    self._system, self._protocol,
+                    self._system,
+                    self._protocol,
                     enable_rydberg_dephasing=self.enable_rydberg_dephasing,
                     enable_position_error=self.enable_position_error,
                     sigma_detuning=self.sigma_detuning,
@@ -402,7 +402,9 @@ class CZGateSimulator:
         return _error_budget(self._system, self._protocol, x, initial_states)
 
     def _population_evolution(
-        self, x: list[float], initial_state: str,
+        self,
+        x: list[float],
+        initial_state: str,
     ) -> "dict[str, NDArray[np.floating]]":
         return _population_evolution(self._system, self._protocol, x, initial_state)
 
@@ -423,12 +425,11 @@ class CZGateSimulator:
 
         plt.style.use("seaborn-v0_8-whitegrid")
         _fig, ax = plt.subplots(figsize=(10, 6))
-        ax.plot(time_axis_ns, population_evo[0],
-                label=f"Intermediate states population for |{initial_state}⟩ state", lw=2)
-        ax.plot(time_axis_ns, population_evo[1],
-                label="Rydberg state |r⟩ population", linestyle="--", lw=2)
-        ax.plot(time_axis_ns, population_evo[2],
-                label="Unwanted Rydberg |r'⟩ population", linestyle=":", lw=2)
+        ax.plot(
+            time_axis_ns, population_evo[0], label=f"Intermediate states population for |{initial_state}⟩ state", lw=2
+        )
+        ax.plot(time_axis_ns, population_evo[1], label="Rydberg state |r⟩ population", linestyle="--", lw=2)
+        ax.plot(time_axis_ns, population_evo[2], label="Unwanted Rydberg |r'⟩ population", linestyle=":", lw=2)
         ax.set_title(f"Population Evolution During CPHASE Gate ({self.strategy})", fontsize=16)
         ax.set_xlabel("Time (ns)", fontsize=12)
         ax.set_ylabel("Population Probability", fontsize=12)
@@ -517,7 +518,9 @@ class CZGateSimulator:
     ) -> MonteCarloResult:
         """GPU-accelerated Monte Carlo (TO only)."""
         return run_monte_carlo_jax(
-            self._system, self._protocol, x,
+            self._system,
+            self._protocol,
+            x,
             n_shots=n_shots,
             sigma_detuning=sigma_detuning,
             sigma_pos_xyz=sigma_pos_xyz,
@@ -531,8 +534,14 @@ class CZGateSimulator:
     # ==================================================================
 
     def _get_gate_result_TO(
-        self, phase_amp, omega, phase_init, delta, t_gate,
-        state_mat, t_eval=None,
+        self,
+        phase_amp,
+        omega,
+        phase_init,
+        delta,
+        t_gate,
+        state_mat,
+        t_eval=None,
     ):
         """TO solver wrapper."""
         x = [
@@ -546,14 +555,24 @@ class CZGateSimulator:
         return solve_gate(self._system, TOProtocol(), x, state_mat, t_eval)
 
     def _get_gate_result_AR(
-        self, omega, phase_amp1, phase_init1, phase_amp2, phase_init2,
-        delta, t_gate, state_mat, t_eval=None,
+        self,
+        omega,
+        phase_amp1,
+        phase_init1,
+        phase_amp2,
+        phase_init2,
+        delta,
+        t_gate,
+        state_mat,
+        t_eval=None,
     ):
         """AR solver wrapper."""
         x = [
             omega / self.rabi_eff,
-            phase_amp1, phase_init1,
-            phase_amp2, phase_init2,
+            phase_amp1,
+            phase_init1,
+            phase_amp2,
+            phase_init2,
             delta / self.rabi_eff,
             t_gate / self.time_scale,
             0.0,  # theta placeholder
@@ -568,12 +587,18 @@ class CZGateSimulator:
 
     def _fidelity_avg(self, x, return_residuals=False):
         return average_gate_infidelity(
-            self._system, self._protocol, x, return_residuals=return_residuals,
+            self._system,
+            self._protocol,
+            x,
+            return_residuals=return_residuals,
         )
 
     def _avg_fidelity_AR(self, x, return_residuals=False):
         return average_gate_infidelity(
-            self._system, self._protocol, x, return_residuals=return_residuals,
+            self._system,
+            self._protocol,
+            x,
+            return_residuals=return_residuals,
         )
 
     def _residuals_to_branching(self, residuals):
@@ -594,6 +619,7 @@ class CZGateSimulator:
 
     def _decay_integrate(self, t_list, occ_list, decay_rate):
         from ryd_gate.analysis.gate_metrics import decay_integrate
+
         return decay_integrate(t_list, occ_list, decay_rate)
 
     # ==================================================================
@@ -614,7 +640,7 @@ class CZGateSimulator:
 
         def objective(x):
             val = raw_objective(x)
-            cache['last_val'] = val
+            cache["last_val"] = val
             return val
 
         def callback_func(x, saveflag=False):
@@ -623,13 +649,16 @@ class CZGateSimulator:
                     for var in x:
                         f.write("{:.9f},".format(var))
                     f.write("\n")
-            print("Current iteration parameters:", x, "Infidelity:", cache.get('last_val', '?'))
+            print("Current iteration parameters:", x, "Infidelity:", cache.get("last_val", "?"))
 
         bounds = TOProtocol().get_optimization_bounds()
         optimres = minimize(
-            fun=objective, x0=x, method="Nelder-Mead",
+            fun=objective,
+            x0=x,
+            method="Nelder-Mead",
             options={"disp": True, "fatol": 1e-9},
-            bounds=bounds, callback=callback_func,
+            bounds=bounds,
+            callback=callback_func,
         )
         print(f"The final optimized protocol is: {optimres.x.tolist()}, with infidelity: {optimres.fun}")
         return optimres
@@ -644,7 +673,7 @@ class CZGateSimulator:
 
         def objective(x):
             val = self._gate_infidelity_single(x, fid_type=fid_type)
-            cache['last_val'] = val
+            cache["last_val"] = val
             return val
 
         def callback_func(x, saveflag=False):
@@ -653,15 +682,18 @@ class CZGateSimulator:
                     for var in x:
                         f.write("{:.9f},".format(var))
                     f.write("\n")
-            print("Current iteration parameters:", x, "Infidelity:", cache.get('last_val', '?'))
+            print("Current iteration parameters:", x, "Infidelity:", cache.get("last_val", "?"))
             print(f"overwrite protocol from {self.x_initial} to {x}")
             self._setup_protocol_AR(x)
 
         bounds = ARProtocol().get_optimization_bounds()
         optimres = minimize(
-            fun=objective, x0=x, method="Nelder-Mead",
+            fun=objective,
+            x0=x,
+            method="Nelder-Mead",
             options={"disp": True, "fatol": 1e-9},
-            bounds=bounds, callback=callback_func,
+            bounds=bounds,
+            callback=callback_func,
         )
         print(f"The final optimized protocol is: {optimres.x.tolist()}, with infidelity: {optimres.fun}")
         return optimres

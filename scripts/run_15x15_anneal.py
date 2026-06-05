@@ -92,7 +92,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--julia-cmd", default="julia", help="Julia executable for backend=itensors/2dtn")
     parser.add_argument("--julia-project", default=None, help="Julia project dir for backend=itensors/2dtn")
     parser.add_argument("--julia-script", default=None, help="Julia kernel script for backend=itensors/2dtn")
-    parser.add_argument("--julia-timeout", type=float, default=None, help="subprocess timeout for backend=itensors/2dtn")
+    parser.add_argument(
+        "--julia-timeout", type=float, default=None, help="subprocess timeout for backend=itensors/2dtn"
+    )
     parser.add_argument(
         "--julia-no-bashrc",
         action="store_true",
@@ -241,11 +243,7 @@ def _parse_observables(text: str) -> list[str]:
 
 
 def _jsonable_options(options: dict) -> dict:
-    return {
-        key: value
-        for key, value in options.items()
-        if isinstance(value, (str, int, float, bool)) or value is None
-    }
+    return {key: value for key, value in options.items() if isinstance(value, (str, int, float, bool)) or value is None}
 
 
 def _save_result(path: Path, result) -> None:

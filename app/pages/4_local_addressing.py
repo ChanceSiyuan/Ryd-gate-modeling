@@ -26,9 +26,9 @@ from ryd_gate.lattice import make_chain
 from ryd_gate.protocols.sweep import SweepProtocol
 
 # Sweep constants (matching scripts/run_local_sweep.py)
-DELTA_START = -2 * pi * 40e6   # rad/s
-DELTA_END = 2 * pi * 40e6      # rad/s
-T_GATE = 1.5e-6                # s
+DELTA_START = -2 * pi * 40e6  # rad/s
+DELTA_END = 2 * pi * 40e6  # rad/s
+T_GATE = 1.5e-6  # s
 RYDBERG_KEYS = ["gg", "gr", "rg", "rr"]
 
 st.set_page_config(page_title="Local Addressing", layout="wide", page_icon="\u269b")
@@ -43,6 +43,7 @@ shift and ~35 Hz scattering.
 
 
 # ── Cached helpers ──────────────────────────────────────────────────────
+
 
 @st.cache_resource
 def _setup_model_cached(distance_um: float = 3.0):
@@ -79,13 +80,10 @@ with tab_phys:
     col_cfg, col_plot = st.columns([1, 3])
 
     with col_cfg:
-        wl_min = st.slider("Min wavelength (nm)", 780.5, 783.0, 780.5, step=0.1,
-                            key="phys_wl_min")
-        wl_max = st.slider("Max wavelength (nm)", 783.0, 790.0, 786.0, step=0.1,
-                            key="phys_wl_max")
+        wl_min = st.slider("Min wavelength (nm)", 780.5, 783.0, 780.5, step=0.1, key="phys_wl_min")
+        wl_max = st.slider("Max wavelength (nm)", 783.0, 790.0, 786.0, step=0.1, key="phys_wl_max")
         n_wl = st.slider("Points", 50, 500, 200, key="phys_n")
-        power_uw = st.number_input("Power per spot (\u03bcW)", value=POWER_REF_UW,
-                                    step=10.0, key="phys_power")
+        power_uw = st.number_input("Power per spot (\u03bcW)", value=POWER_REF_UW, step=10.0, key="phys_power")
         power_scale = power_uw / POWER_REF_UW
         st.markdown("---")
         st.caption(f"D2 line: {LAMBDA_D2:.3f} nm")
@@ -96,26 +94,30 @@ with tab_phys:
     fom = np.abs(shifts_Hz) / np.maximum(scatters_Hz, 1e-10)
 
     with col_plot:
-        fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.08,
-                             subplot_titles=["AC Stark Shift", "Scattering Rate",
-                                             "Figure of Merit"])
-        fig.add_trace(go.Scatter(x=wavelengths, y=shifts_MHz, name="Shift",
-                                  line=dict(color="steelblue", width=2)), row=1, col=1)
-        fig.add_trace(go.Scatter(x=wavelengths, y=scatters_Hz, name="Scatter",
-                                  line=dict(color="crimson", width=2)), row=2, col=1)
-        fig.add_trace(go.Scatter(x=wavelengths, y=fom / 1e6, name="FOM",
-                                  line=dict(color="mediumpurple", width=2)), row=3, col=1)
+        fig = make_subplots(
+            rows=3,
+            cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.08,
+            subplot_titles=["AC Stark Shift", "Scattering Rate", "Figure of Merit"],
+        )
+        fig.add_trace(
+            go.Scatter(x=wavelengths, y=shifts_MHz, name="Shift", line=dict(color="steelblue", width=2)), row=1, col=1
+        )
+        fig.add_trace(
+            go.Scatter(x=wavelengths, y=scatters_Hz, name="Scatter", line=dict(color="crimson", width=2)), row=2, col=1
+        )
+        fig.add_trace(
+            go.Scatter(x=wavelengths, y=fom / 1e6, name="FOM", line=dict(color="mediumpurple", width=2)), row=3, col=1
+        )
         for row in [1, 2, 3]:
-            fig.add_vline(x=LAMBDA_D2, line_dash="dash", line_color="red",
-                          opacity=0.4, row=row, col=1)
-            fig.add_vline(x=LAMBDA_PAPER, line_dash="dot", line_color="green",
-                          opacity=0.6, row=row, col=1)
+            fig.add_vline(x=LAMBDA_D2, line_dash="dash", line_color="red", opacity=0.4, row=row, col=1)
+            fig.add_vline(x=LAMBDA_PAPER, line_dash="dot", line_color="green", opacity=0.6, row=row, col=1)
         fig.update_yaxes(title_text="Shift (MHz)", row=1)
         fig.update_yaxes(title_text="Scatter (Hz)", type="log", row=2)
         fig.update_yaxes(title_text="|Shift|/Scatter (\u00d710\u2076)", row=3)
         fig.update_xaxes(title_text="Wavelength (nm)", row=3)
-        fig.update_layout(height=700, showlegend=False,
-                          margin=dict(l=60, r=20, t=40, b=40))
+        fig.update_layout(height=700, showlegend=False, margin=dict(l=60, r=20, t=40, b=40))
         st.plotly_chart(fig, use_container_width=True)
 
     # Table at key wavelengths
@@ -125,18 +127,24 @@ with tab_phys:
     key_shifts *= power_scale
     key_scatters *= power_scale
     key_fom = np.abs(key_shifts) / np.maximum(key_scatters, 1e-10)
-    rows = [{"Wavelength (nm)": f"{lam:.1f}",
-             "Shift (MHz)": f"{s/1e6:.2f}",
-             "Scatter (Hz)": f"{sc:.1f}",
-             "FOM (\u00d710\u2076)": f"{f/1e6:.2f}"}
-            for lam, s, sc, f in zip(key_lams, key_shifts, key_scatters, key_fom)]
+    rows = [
+        {
+            "Wavelength (nm)": f"{lam:.1f}",
+            "Shift (MHz)": f"{s / 1e6:.2f}",
+            "Scatter (Hz)": f"{sc:.1f}",
+            "FOM (\u00d710\u2076)": f"{f / 1e6:.2f}",
+        }
+        for lam, s, sc, f in zip(key_lams, key_shifts, key_scatters, key_fom)
+    ]
     st.dataframe(rows, use_container_width=True, hide_index=True)
 
     opt_idx = np.argmax(fom)
-    st.success(f"Optimal wavelength: **{wavelengths[opt_idx]:.1f} nm** "
-               f"(FOM = {fom[opt_idx]/1e6:.2f}\u00d710\u2076, "
-               f"shift = {shifts_MHz[opt_idx]:.2f} MHz, "
-               f"scatter = {scatters_Hz[opt_idx]:.1f} Hz)")
+    st.success(
+        f"Optimal wavelength: **{wavelengths[opt_idx]:.1f} nm** "
+        f"(FOM = {fom[opt_idx] / 1e6:.2f}\u00d710\u2076, "
+        f"shift = {shifts_MHz[opt_idx]:.2f} MHz, "
+        f"scatter = {scatters_Hz[opt_idx]:.1f} Hz)"
+    )
 
 
 # =====================================================================
@@ -155,19 +163,16 @@ with tab_proto:
     col_pcfg, col_pres = st.columns([1, 3])
 
     with col_pcfg:
-        proto_wl = st.slider("Wavelength (nm)", 780.5, 786.0, 784.0, step=0.1,
-                              key="proto_wl")
-        proto_power = st.number_input("Power per spot (\u03bcW)", value=POWER_REF_UW,
-                                       step=10.0, key="proto_power")
-        proto_dist = st.slider("Atom distance (\u03bcm)", 1.0, 10.0, 3.0, step=0.1,
-                                key="proto_dist")
+        proto_wl = st.slider("Wavelength (nm)", 780.5, 786.0, 784.0, step=0.1, key="proto_wl")
+        proto_power = st.number_input("Power per spot (\u03bcW)", value=POWER_REF_UW, step=10.0, key="proto_power")
+        proto_dist = st.slider("Atom distance (\u03bcm)", 1.0, 10.0, 3.0, step=0.1, key="proto_dist")
         power_scale_p = proto_power / POWER_REF_UW
 
         shift_Hz_arr, scatter_Hz_arr = compute_shift_scatter(np.array([proto_wl]))
         shift_Hz_p = float(shift_Hz_arr[0]) * power_scale_p
         scatter_Hz_p = float(scatter_Hz_arr[0]) * power_scale_p
-        local_detuning_p = 2 * pi * shift_Hz_p   # rad/s (negative for red-detuned)
-        local_scatter_p = scatter_Hz_p            # Hz
+        local_detuning_p = 2 * pi * shift_Hz_p  # rad/s (negative for red-detuned)
+        local_scatter_p = scatter_Hz_p  # Hz
 
         # V_ryd at chosen distance
         v_ryd_p = 2 * pi * 874e9 / proto_dist**6
@@ -175,8 +180,7 @@ with tab_proto:
         st.metric("Scattering rate", f"{scatter_Hz_p:.1f} Hz")
         st.metric("V_ryd", f"{v_ryd_p / (2 * pi) / 1e6:.1f} MHz")
         st.markdown("---")
-        run_proto = st.button("Run Simulation", type="primary",
-                               use_container_width=True, key="btn_proto")
+        run_proto = st.button("Run Simulation", type="primary", use_container_width=True, key="btn_proto")
 
     if run_proto:
         model, initial_state_m = _setup_model_cached(distance_um=proto_dist)
@@ -187,9 +191,7 @@ with tab_proto:
         Delta = system.meta("Delta")
 
         protocol_free = SweepProtocol()
-        protocol_addr = SweepProtocol(
-            addressing={0: local_detuning_p},
-            scatter_rate=local_scatter_p)
+        protocol_addr = SweepProtocol(addressing={0: local_detuning_p}, scatter_rate=local_scatter_p)
         system_free = system.with_protocol(protocol_free)
         system_addr = system.with_protocol(protocol_addr)
 
@@ -200,10 +202,8 @@ with tab_proto:
         n_pts = 500
         t_eval_rabi = np.linspace(0, t_rabi, n_pts)
 
-        result_free_rabi = simulate(system_free, x_rabi,
-                                    initial_state_m, t_eval=t_eval_rabi)
-        result_addr_rabi = simulate(system_addr, x_rabi,
-                                    initial_state_m, t_eval=t_eval_rabi)
+        result_free_rabi = simulate(system_free, x_rabi, initial_state_m, t_eval=t_eval_rabi)
+        result_addr_rabi = simulate(system_addr, x_rabi, initial_state_m, t_eval=t_eval_rabi)
 
         obs_names_rabi = ["pop_A_r", "pop_B_r"]
         obs_free_rabi = measure_trajectory(model, result_free_rabi.states, obs_names_rabi)
@@ -211,11 +211,13 @@ with tab_proto:
 
         # Norm for addressed case (column-major: dim x n_t)
         if result_addr_rabi.states.shape[0] == model.basis.total_dim:
-            norm_addr = np.array([norm_squared(result_addr_rabi.states[:, k])
-                                  for k in range(result_addr_rabi.states.shape[1])])
+            norm_addr = np.array(
+                [norm_squared(result_addr_rabi.states[:, k]) for k in range(result_addr_rabi.states.shape[1])]
+            )
         else:
-            norm_addr = np.array([norm_squared(result_addr_rabi.states[k])
-                                  for k in range(result_addr_rabi.states.shape[0])])
+            norm_addr = np.array(
+                [norm_squared(result_addr_rabi.states[k]) for k in range(result_addr_rabi.states.shape[0])]
+            )
 
         # --- B. Final populations (adiabatic sweep) ---
         x_sweep = [
@@ -226,32 +228,26 @@ with tab_proto:
         res_sweep_free = simulate(system_free, x_sweep, initial_state_m)
         res_sweep_addr = simulate(system_addr, x_sweep, initial_state_m)
 
-        pops_free = {k: model.observables.measure(f"pop_{k}", res_sweep_free.psi_final)
-                     for k in RYDBERG_KEYS}
-        pops_addr = {k: model.observables.measure(f"pop_{k}", res_sweep_addr.psi_final)
-                     for k in RYDBERG_KEYS}
+        pops_free = {k: model.observables.measure(f"pop_{k}", res_sweep_free.psi_final) for k in RYDBERG_KEYS}
+        pops_addr = {k: model.observables.measure(f"pop_{k}", res_sweep_addr.psi_final) for k in RYDBERG_KEYS}
 
         # --- C. AC Stark feed-forward compensation ---
-        ac_stark_peak = rabi_420 ** 2 / (4 * abs(Delta))
+        ac_stark_peak = rabi_420**2 / (4 * abs(Delta))
         t_gate_phys = x_sweep[2] * time_scale
         t_eval_sweep = np.linspace(0, t_gate_phys, n_pts)
 
         protocol_raw = SweepProtocol(ac_stark_shift=0.0)
         protocol_comp = SweepProtocol(ac_stark_shift=ac_stark_peak)
 
-        result_raw = simulate(system.with_protocol(protocol_raw), x_sweep, initial_state_m,
-                              t_eval=t_eval_sweep)
-        result_comp = simulate(system.with_protocol(protocol_comp), x_sweep, initial_state_m,
-                               t_eval=t_eval_sweep)
+        result_raw = simulate(system.with_protocol(protocol_raw), x_sweep, initial_state_m, t_eval=t_eval_sweep)
+        result_comp = simulate(system.with_protocol(protocol_comp), x_sweep, initial_state_m, t_eval=t_eval_sweep)
 
         obs_names_stark = ["pop_A_r", "pop_B_r", "pop_r"]
         obs_raw = measure_trajectory(model, result_raw.states, obs_names_stark)
         obs_comp = measure_trajectory(model, result_comp.states, obs_names_stark)
 
-        pops_raw = {k: model.observables.measure(f"pop_{k}", result_raw.psi_final)
-                    for k in RYDBERG_KEYS}
-        pops_comp = {k: model.observables.measure(f"pop_{k}", result_comp.psi_final)
-                     for k in RYDBERG_KEYS}
+        pops_raw = {k: model.observables.measure(f"pop_{k}", result_raw.psi_final) for k in RYDBERG_KEYS}
+        pops_comp = {k: model.observables.measure(f"pop_{k}", result_comp.psi_final) for k in RYDBERG_KEYS}
 
         st.session_state["proto_results"] = {
             "t_us_free": result_free_rabi.times * 1e6,
@@ -280,31 +276,56 @@ with tab_proto:
             # --- Figure 1: Rabi dynamics ---
             st.markdown("#### Rabi Dynamics (resonant driving)")
             fig_rabi = make_subplots(
-                rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
+                rows=2,
+                cols=1,
+                shared_xaxes=True,
+                vertical_spacing=0.1,
                 subplot_titles=[
                     "(a) Global excitation \u2014 blockade active",
-                    "(b) Atom A addressed \u2014 free oscillation"])
+                    "(b) Atom A addressed \u2014 free oscillation",
+                ],
+            )
 
-            fig_rabi.add_trace(go.Scatter(
-                x=r["t_us_free"], y=r["obs_free"]["pop_A_r"],
-                name="P_r(A)", line=dict(color="#2ca02c")), row=1, col=1)
-            fig_rabi.add_trace(go.Scatter(
-                x=r["t_us_free"], y=r["obs_free"]["pop_B_r"],
-                name="P_r(B)", line=dict(color="#1f77b4", dash="dash")),
-                row=1, col=1)
+            fig_rabi.add_trace(
+                go.Scatter(x=r["t_us_free"], y=r["obs_free"]["pop_A_r"], name="P_r(A)", line=dict(color="#2ca02c")),
+                row=1,
+                col=1,
+            )
+            fig_rabi.add_trace(
+                go.Scatter(
+                    x=r["t_us_free"], y=r["obs_free"]["pop_B_r"], name="P_r(B)", line=dict(color="#1f77b4", dash="dash")
+                ),
+                row=1,
+                col=1,
+            )
 
-            fig_rabi.add_trace(go.Scatter(
-                x=r["t_us_addr"], y=r["obs_addr"]["pop_A_r"],
-                name="P_r(A)", line=dict(color="#2ca02c"),
-                showlegend=False), row=2, col=1)
-            fig_rabi.add_trace(go.Scatter(
-                x=r["t_us_addr"], y=r["obs_addr"]["pop_B_r"],
-                name="P_r(B)", line=dict(color="#1f77b4", dash="dash"),
-                showlegend=False), row=2, col=1)
-            fig_rabi.add_trace(go.Scatter(
-                x=r["t_us_addr"], y=r["norm_addr"],
-                name="Norm", line=dict(color="gray", dash="dot")),
-                row=2, col=1)
+            fig_rabi.add_trace(
+                go.Scatter(
+                    x=r["t_us_addr"],
+                    y=r["obs_addr"]["pop_A_r"],
+                    name="P_r(A)",
+                    line=dict(color="#2ca02c"),
+                    showlegend=False,
+                ),
+                row=2,
+                col=1,
+            )
+            fig_rabi.add_trace(
+                go.Scatter(
+                    x=r["t_us_addr"],
+                    y=r["obs_addr"]["pop_B_r"],
+                    name="P_r(B)",
+                    line=dict(color="#1f77b4", dash="dash"),
+                    showlegend=False,
+                ),
+                row=2,
+                col=1,
+            )
+            fig_rabi.add_trace(
+                go.Scatter(x=r["t_us_addr"], y=r["norm_addr"], name="Norm", line=dict(color="gray", dash="dot")),
+                row=2,
+                col=1,
+            )
 
             fig_rabi.update_yaxes(title_text="Population", range=[-0.05, 1.05], row=1)
             fig_rabi.update_yaxes(title_text="Population", range=[-0.05, 1.05], row=2)
@@ -318,76 +339,125 @@ with tab_proto:
             tick_labels = [f"|{k}\u27e9" for k in RYDBERG_KEYS]
 
             fig_pops = make_subplots(
-                rows=1, cols=2, subplot_titles=[
-                    "(a) Global sweep \u2014 no pinning",
-                    "(b) Atom A addressed \u2014 pinned to |g\u27e9"])
+                rows=1,
+                cols=2,
+                subplot_titles=["(a) Global sweep \u2014 no pinning", "(b) Atom A addressed \u2014 pinned to |g\u27e9"],
+            )
 
             vals_free = [r["pops_free"][k] for k in RYDBERG_KEYS]
             vals_addr = [r["pops_addr"][k] for k in RYDBERG_KEYS]
 
-            fig_pops.add_trace(go.Bar(
-                x=tick_labels, y=vals_free, marker_color=bar_colors,
-                name="Global", text=[f"{v:.3f}" for v in vals_free],
-                textposition="outside"), row=1, col=1)
-            fig_pops.add_trace(go.Bar(
-                x=tick_labels, y=vals_addr, marker_color=bar_colors,
-                name="Addressed", text=[f"{v:.3f}" for v in vals_addr],
-                textposition="outside"), row=1, col=2)
+            fig_pops.add_trace(
+                go.Bar(
+                    x=tick_labels,
+                    y=vals_free,
+                    marker_color=bar_colors,
+                    name="Global",
+                    text=[f"{v:.3f}" for v in vals_free],
+                    textposition="outside",
+                ),
+                row=1,
+                col=1,
+            )
+            fig_pops.add_trace(
+                go.Bar(
+                    x=tick_labels,
+                    y=vals_addr,
+                    marker_color=bar_colors,
+                    name="Addressed",
+                    text=[f"{v:.3f}" for v in vals_addr],
+                    textposition="outside",
+                ),
+                row=1,
+                col=2,
+            )
 
             fig_pops.update_yaxes(title_text="Population", range=[0, 1.15], row=1, col=1)
             fig_pops.update_yaxes(range=[0, 1.15], row=1, col=2)
-            fig_pops.update_layout(height=400, showlegend=False,
-                                    margin=dict(l=60, r=20, t=40, b=40))
+            fig_pops.update_layout(height=400, showlegend=False, margin=dict(l=60, r=20, t=40, b=40))
             st.plotly_chart(fig_pops, use_container_width=True)
 
             # --- Figure 3: AC Stark compensation ---
             st.markdown(
                 f"#### AC Stark Feed-Forward Compensation "
                 f"(\u0394_AC^peak = {r['ac_stark_peak_MHz']:.1f} MHz, "
-                f"\u03a9_eff = {r['omega_eff_MHz']:.1f} MHz)")
+                f"\u03a9_eff = {r['omega_eff_MHz']:.1f} MHz)"
+            )
 
             fig_stark = make_subplots(
-                rows=2, cols=2, vertical_spacing=0.12, horizontal_spacing=0.1,
+                rows=2,
+                cols=2,
+                vertical_spacing=0.12,
+                horizontal_spacing=0.1,
                 subplot_titles=[
                     "(a) Without compensation",
                     "(b) With feed-forward compensation",
                     "(c) Final pops \u2014 no compensation",
-                    "(d) Final pops \u2014 compensated"])
+                    "(d) Final pops \u2014 compensated",
+                ],
+            )
 
-            for col_idx, (obs_key, pops_key) in enumerate([
-                ("obs_raw", "pops_raw"), ("obs_comp", "pops_comp")
-            ], start=1):
+            for col_idx, (obs_key, pops_key) in enumerate(
+                [("obs_raw", "pops_raw"), ("obs_comp", "pops_comp")], start=1
+            ):
                 obs = r[obs_key]
                 show_leg = col_idx == 1
-                fig_stark.add_trace(go.Scatter(
-                    x=r["t_us_stark"], y=obs["pop_A_r"],
-                    name="P_r(A)", line=dict(color="#2ca02c"),
-                    showlegend=show_leg, legendgroup="prA"),
-                    row=1, col=col_idx)
-                fig_stark.add_trace(go.Scatter(
-                    x=r["t_us_stark"], y=obs["pop_B_r"],
-                    name="P_r(B)", line=dict(color="#1f77b4", dash="dash"),
-                    showlegend=show_leg, legendgroup="prB"),
-                    row=1, col=col_idx)
-                fig_stark.add_trace(go.Scatter(
-                    x=r["t_us_stark"], y=np.array(obs["pop_r"]) / 2,
-                    name="\u27e8n_r\u27e9/2", line=dict(color="gray", dash="dot"),
-                    showlegend=show_leg, legendgroup="nr"),
-                    row=1, col=col_idx)
+                fig_stark.add_trace(
+                    go.Scatter(
+                        x=r["t_us_stark"],
+                        y=obs["pop_A_r"],
+                        name="P_r(A)",
+                        line=dict(color="#2ca02c"),
+                        showlegend=show_leg,
+                        legendgroup="prA",
+                    ),
+                    row=1,
+                    col=col_idx,
+                )
+                fig_stark.add_trace(
+                    go.Scatter(
+                        x=r["t_us_stark"],
+                        y=obs["pop_B_r"],
+                        name="P_r(B)",
+                        line=dict(color="#1f77b4", dash="dash"),
+                        showlegend=show_leg,
+                        legendgroup="prB",
+                    ),
+                    row=1,
+                    col=col_idx,
+                )
+                fig_stark.add_trace(
+                    go.Scatter(
+                        x=r["t_us_stark"],
+                        y=np.array(obs["pop_r"]) / 2,
+                        name="\u27e8n_r\u27e9/2",
+                        line=dict(color="gray", dash="dot"),
+                        showlegend=show_leg,
+                        legendgroup="nr",
+                    ),
+                    row=1,
+                    col=col_idx,
+                )
 
                 pops = r[pops_key]
                 vals = [pops[k] for k in RYDBERG_KEYS]
-                fig_stark.add_trace(go.Bar(
-                    x=tick_labels, y=vals, marker_color=bar_colors,
-                    text=[f"{v:.3f}" for v in vals], textposition="outside",
-                    showlegend=False), row=2, col=col_idx)
+                fig_stark.add_trace(
+                    go.Bar(
+                        x=tick_labels,
+                        y=vals,
+                        marker_color=bar_colors,
+                        text=[f"{v:.3f}" for v in vals],
+                        textposition="outside",
+                        showlegend=False,
+                    ),
+                    row=2,
+                    col=col_idx,
+                )
 
             for col_idx in [1, 2]:
-                fig_stark.update_yaxes(title_text="Population",
-                                        range=[-0.05, 1.05], row=1, col=col_idx)
+                fig_stark.update_yaxes(title_text="Population", range=[-0.05, 1.05], row=1, col=col_idx)
                 fig_stark.update_xaxes(title_text="Time (\u03bcs)", row=1, col=col_idx)
-                fig_stark.update_yaxes(title_text="Population",
-                                        range=[0, 1.15], row=2, col=col_idx)
+                fig_stark.update_yaxes(title_text="Population", range=[0, 1.15], row=2, col=col_idx)
 
             fig_stark.update_layout(height=700, margin=dict(l=60, r=20, t=40, b=40))
             st.plotly_chart(fig_stark, use_container_width=True)
@@ -395,8 +465,11 @@ with tab_proto:
             st.info(
                 f"Wavelength: {r['wavelength']:.1f} nm | "
                 f"Shift: {r['shift_MHz']:.2f} MHz | "
-                f"Scatter: {r['scatter_Hz']:.1f} Hz")
+                f"Scatter: {r['scatter_Hz']:.1f} Hz"
+            )
         else:
-            st.info("Select a wavelength and power, then click "
-                    "**Run Simulation** to see Rabi dynamics, adiabatic "
-                    "sweep populations, and AC Stark compensation.")
+            st.info(
+                "Select a wavelength and power, then click "
+                "**Run Simulation** to see Rabi dynamics, adiabatic "
+                "sweep populations, and AC Stark compensation."
+            )

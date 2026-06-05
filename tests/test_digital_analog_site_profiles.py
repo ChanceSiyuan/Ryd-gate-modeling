@@ -66,9 +66,11 @@ def test_tn_channel_mapping_for_sweep_protocol_on_1r_spec():
 
 def test_digital_analog_channels_rejected_on_1r_tn_spec():
     spec = create_tn_lattice_spec(1, 2)
-    proto = DigitalAnalogProtocol([
-        Segment(duration=0.1, omega_R=1.0),
-    ])
+    proto = DigitalAnalogProtocol(
+        [
+            Segment(duration=0.1, omega_R=1.0),
+        ]
+    )
     params = proto.unpack_params([], _TNProtocolContext(spec))
     coeffs = proto.get_drive_coefficients(0.05, params)
 
@@ -78,9 +80,11 @@ def test_digital_analog_channels_rejected_on_1r_tn_spec():
 
 def test_tn_channel_mapping_rejects_hyperfine_drive():
     spec = create_tn_lattice_spec(1, 2, level_structure="01r")
-    proto = DigitalAnalogProtocol([
-        Segment(duration=0.1, omega_R=1.0, omega_hf=1.0),
-    ])
+    proto = DigitalAnalogProtocol(
+        [
+            Segment(duration=0.1, omega_R=1.0, omega_hf=1.0),
+        ]
+    )
     params = proto.unpack_params([], _TNProtocolContext(spec))
     coeffs = proto.get_drive_coefficients(0.05, params)
 
@@ -90,15 +94,17 @@ def test_tn_channel_mapping_rejects_hyperfine_drive():
 
 def test_three_level_tn_profiles_for_digital_analog_segment():
     spec = create_tn_lattice_spec(1, 2, level_structure="01r")
-    proto = DigitalAnalogProtocol([
-        Segment(
-            duration=0.1,
-            omega_R=[2.0, 4.0],
-            omega_hf=[6.0, 8.0],
-            delta_R=[1.0, 2.0],
-            delta_hf=[0.25, 0.5],
-        ),
-    ])
+    proto = DigitalAnalogProtocol(
+        [
+            Segment(
+                duration=0.1,
+                omega_R=[2.0, 4.0],
+                omega_hf=[6.0, 8.0],
+                delta_R=[1.0, 2.0],
+                delta_hf=[0.25, 0.5],
+            ),
+        ]
+    )
     params = proto.unpack_params([], _TNProtocolContext(spec))
     coeffs = proto.get_drive_coefficients(0.05, params)
 
@@ -142,11 +148,12 @@ def test_three_level_tn_profiles_follow_shared_level_spec_channels():
 def test_drive_channels_scalar_uses_global():
     proto = DigitalAnalogProtocol.constant(omega_R=1.0, t_gate=0.1)
     system = RydbergSystem.from_lattice(
-        make_chain(2), "01r", interaction=InteractionSpec(C6=0.0), protocol=proto,
+        make_chain(2),
+        "01r",
+        interaction=InteractionSpec(C6=0.0),
+        protocol=proto,
     )
-    assert proto.drive_channels(system) == frozenset(
-        {"drive_R", "drive_hf", "delta_R", "delta_hf"}
-    )
+    assert proto.drive_channels(system) == frozenset({"drive_R", "drive_hf", "delta_R", "delta_hf"})
 
 
 def test_drive_channels_site_profile_uses_per_site():
@@ -155,7 +162,10 @@ def test_drive_channels_site_profile_uses_per_site():
         n_steps=20,
     )
     system = RydbergSystem.from_lattice(
-        make_chain(2), "01r", interaction=InteractionSpec(C6=0.0), protocol=proto,
+        make_chain(2),
+        "01r",
+        interaction=InteractionSpec(C6=0.0),
+        protocol=proto,
     )
     channels = proto.drive_channels(system)
     assert "drive_R" not in channels
@@ -171,7 +181,10 @@ def test_site_dependent_omega_R_drives_one_site_only():
         n_steps=50,
     )
     system = RydbergSystem.from_lattice(
-        make_chain(2), "01r", interaction=InteractionSpec(C6=0.0), protocol=proto,
+        make_chain(2),
+        "01r",
+        interaction=InteractionSpec(C6=0.0),
+        protocol=proto,
     )
     psi0 = system.product_state(["1", "1"])
     result = simulate(system, [], psi0, t_eval=True)
@@ -189,7 +202,10 @@ def test_compile_expm_ir_includes_per_site_drive_terms():
         n_steps=10,
     )
     system = RydbergSystem.from_lattice(
-        make_chain(2), "01r", interaction=InteractionSpec(C6=0.0), protocol=proto,
+        make_chain(2),
+        "01r",
+        interaction=InteractionSpec(C6=0.0),
+        protocol=proto,
     )
     params = system.unpack_params([])
     ham = compile_hamiltonian_ir(system, params)

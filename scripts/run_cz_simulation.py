@@ -1,6 +1,7 @@
 """Example: run a CZ gate simulation using the modular ryd_gate package."""
 
 import os
+
 os.environ["JAX_PLATFORMS"] = "cpu"
 
 from ryd_gate import RydbergSystem
@@ -20,8 +21,7 @@ print(f"TO gate infidelity: {infidelity:.2e}")
 
 # AR strategy
 protocol_ar = ARProtocol()
-X_AR = [0.85973359, 0.39146974, 0.99181418, 0.1924498,
-        -1.17123748, -0.00826712, 1.67429728, 0.28527346]
+X_AR = [0.85973359, 0.39146974, 0.99181418, 0.1924498, -1.17123748, -0.00826712, 1.67429728, 0.28527346]
 infidelity_AR = average_gate_infidelity(system, protocol_ar, X_AR)
 print(f"AR gate infidelity: {infidelity_AR:.2e}")
 

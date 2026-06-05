@@ -16,8 +16,11 @@ from arc.wigner import CG
 
 
 def _build_tq_ham_const(
-    Delta: float, v_ryd: float, ryd_zeeman_shift: float,
-    middecay: float, ryddecay: float,
+    Delta: float,
+    v_ryd: float,
+    ryd_zeeman_shift: float,
+    middecay: float,
+    ryddecay: float,
 ) -> np.ndarray:
     """Build the time-independent two-atom Hamiltonian."""
     ham_tq_mat = np.zeros((49, 49), dtype=np.complex128)
@@ -42,9 +45,7 @@ def _build_tq_ham_const(
     ham_vdw_mat[5][5] = 1
     ham_vdw_mat_garb = np.zeros((7, 7))
     ham_vdw_mat_garb[6][6] = 1
-    ham_tq_mat = ham_tq_mat + v_ryd * np.kron(
-        ham_vdw_mat + ham_vdw_mat_garb, ham_vdw_mat + ham_vdw_mat_garb
-    )
+    ham_tq_mat = ham_tq_mat + v_ryd * np.kron(ham_vdw_mat + ham_vdw_mat_garb, ham_vdw_mat + ham_vdw_mat_garb)
     return ham_tq_mat
 
 
@@ -54,16 +55,13 @@ def _tq_ham_420_our(rabi_420, rabi_420_garbage):
     ham_sq_mat = np.zeros((7, 7), dtype=np.complex128)
 
     ham_sq_mat[2][1] = (
-        rabi_420 * CG(3 / 2, -3 / 2, 3 / 2, 1 / 2, 1, -1)
-        + rabi_420_garbage * CG(3 / 2, -1 / 2, 3 / 2, -1 / 2, 1, -1)
+        rabi_420 * CG(3 / 2, -3 / 2, 3 / 2, 1 / 2, 1, -1) + rabi_420_garbage * CG(3 / 2, -1 / 2, 3 / 2, -1 / 2, 1, -1)
     ) / 2
     ham_sq_mat[3][1] = (
-        rabi_420 * CG(3 / 2, -3 / 2, 3 / 2, 1 / 2, 2, -1)
-        + rabi_420_garbage * CG(3 / 2, -1 / 2, 3 / 2, -1 / 2, 2, -1)
+        rabi_420 * CG(3 / 2, -3 / 2, 3 / 2, 1 / 2, 2, -1) + rabi_420_garbage * CG(3 / 2, -1 / 2, 3 / 2, -1 / 2, 2, -1)
     ) / 2
     ham_sq_mat[4][1] = (
-        rabi_420 * CG(3 / 2, -3 / 2, 3 / 2, 1 / 2, 3, -1)
-        + rabi_420_garbage * CG(3 / 2, -1 / 2, 3 / 2, -1 / 2, 3, -1)
+        rabi_420 * CG(3 / 2, -3 / 2, 3 / 2, 1 / 2, 3, -1) + rabi_420_garbage * CG(3 / 2, -1 / 2, 3 / 2, -1 / 2, 3, -1)
     ) / 2
 
     ham_tq_mat = ham_tq_mat + np.kron(np.eye(7), ham_sq_mat)
@@ -95,16 +93,13 @@ def _tq_ham_420_lukin(rabi_420, rabi_420_garbage):
     ham_sq_mat = np.zeros((7, 7), dtype=np.complex128)
 
     ham_sq_mat[2][1] = (
-        rabi_420 * CG(3 / 2, 3 / 2, 3 / 2, -1 / 2, 1, 1)
-        + rabi_420_garbage * CG(3 / 2, 1 / 2, 3 / 2, 1 / 2, 1, 1)
+        rabi_420 * CG(3 / 2, 3 / 2, 3 / 2, -1 / 2, 1, 1) + rabi_420_garbage * CG(3 / 2, 1 / 2, 3 / 2, 1 / 2, 1, 1)
     ) / 2
     ham_sq_mat[3][1] = (
-        rabi_420 * CG(3 / 2, 3 / 2, 3 / 2, -1 / 2, 2, 1)
-        + rabi_420_garbage * CG(3 / 2, 1 / 2, 3 / 2, 1 / 2, 2, 1)
+        rabi_420 * CG(3 / 2, 3 / 2, 3 / 2, -1 / 2, 2, 1) + rabi_420_garbage * CG(3 / 2, 1 / 2, 3 / 2, 1 / 2, 2, 1)
     ) / 2
     ham_sq_mat[4][1] = (
-        rabi_420 * CG(3 / 2, 3 / 2, 3 / 2, -1 / 2, 3, 1)
-        + rabi_420_garbage * CG(3 / 2, 1 / 2, 3 / 2, 1 / 2, 3, 1)
+        rabi_420 * CG(3 / 2, 3 / 2, 3 / 2, -1 / 2, 3, 1) + rabi_420_garbage * CG(3 / 2, 1 / 2, 3 / 2, 1 / 2, 3, 1)
     ) / 2
 
     ham_tq_mat = ham_tq_mat + np.kron(np.eye(7), ham_sq_mat)
@@ -131,43 +126,45 @@ def _tq_ham_1013_lukin(rabi_1013, rabi_1013_garbage):
 
 
 def _build_zero_state_lightshift(
-    param_set, Delta, rabi_420, rabi_420_garbage,
-    mid_state_decay_rate, enable_intermediate_decay, enable_0_scattering,
+    param_set,
+    Delta,
+    rabi_420,
+    rabi_420_garbage,
+    mid_state_decay_rate,
+    enable_intermediate_decay,
+    enable_0_scattering,
 ):
     """Build perturbative light-shift Hamiltonian from |0> -> |e_i> coupling."""
     E_0 = -2 * np.pi * 6.835e9
-    mid_energies = np.array([
-        Delta - 2 * np.pi * 51e6,
-        Delta,
-        Delta + 2 * np.pi * 87e6,
-    ], dtype=np.float64)
+    mid_energies = np.array(
+        [
+            Delta - 2 * np.pi * 51e6,
+            Delta,
+            Delta + 2 * np.pi * 87e6,
+        ],
+        dtype=np.float64,
+    )
 
     if param_set == "our":
-        cg_ratio_main = CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 1, 0) / CG(
-            1 / 2, -1 / 2, 3 / 2, 1 / 2, 2, 0
-        )
-        cg_ratio_garb = CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 1, 0) / CG(
-            1 / 2, 1 / 2, 3 / 2, -1 / 2, 2, 0
-        )
+        cg_ratio_main = CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 1, 0) / CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 2, 0)
+        cg_ratio_garb = CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 1, 0) / CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 2, 0)
         couplings = [
             (
                 cg_ratio_main * rabi_420 * CG(3 / 2, -3 / 2, 3 / 2, 1 / 2, F, -1)
                 + cg_ratio_garb * rabi_420_garbage * CG(3 / 2, -1 / 2, 3 / 2, -1 / 2, F, -1)
-            ) / 2
+            )
+            / 2
             for F in (1, 2, 3)
         ]
     else:  # lukin
-        cg_ratio_main = CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 1, 0) / CG(
-            1 / 2, 1 / 2, 3 / 2, -1 / 2, 2, 0
-        )
-        cg_ratio_garb = CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 1, 0) / CG(
-            1 / 2, -1 / 2, 3 / 2, 1 / 2, 2, 0
-        )
+        cg_ratio_main = CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 1, 0) / CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 2, 0)
+        cg_ratio_garb = CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 1, 0) / CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 2, 0)
         couplings = [
             (
                 cg_ratio_main * rabi_420 * CG(3 / 2, 3 / 2, 3 / 2, -1 / 2, F, 1)
                 + cg_ratio_garb * rabi_420_garbage * CG(3 / 2, 1 / 2, 3 / 2, 1 / 2, F, 1)
-            ) / 2
+            )
+            / 2
             for F in (1, 2, 3)
         ]
 
@@ -180,7 +177,7 @@ def _build_zero_state_lightshift(
         shift = (np.abs(g_i) ** 2) / detuning
         ls_sq[idx][idx] = shift
         total_shift += shift
-        scatter_rate += (np.abs(g_i) ** 2) * gamma / (detuning ** 2)
+        scatter_rate += (np.abs(g_i) ** 2) * gamma / (detuning**2)
     ls_sq[0][0] = -total_shift - 1j * scatter_rate / 2 if enable_0_scattering else -total_shift
 
     ls_tq = np.kron(np.eye(7), ls_sq) + np.kron(ls_sq, np.eye(7))

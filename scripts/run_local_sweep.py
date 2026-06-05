@@ -40,13 +40,13 @@ from ryd_gate.protocols.sweep import SweepProtocol
 N = 3  # 3-level system: |g>=0, |e>=1, |r>=2
 
 # Pinning parameters scaled for Omega_eff ~ 13 MHz (equal-Rabi regime).
-LOCAL_DETUNING = -2 * pi * 50e6    # rad/s  (AC Stark shift on |r>_A)
-LOCAL_SCATTER = 150.0              # Hz     (scales with laser power)
+LOCAL_DETUNING = -2 * pi * 50e6  # rad/s  (AC Stark shift on |r>_A)
+LOCAL_SCATTER = 150.0  # Hz     (scales with laser power)
 
 # Sweep range: |delta| >> Omega_eff for adiabatic passage.
-DELTA_START = -2 * pi * 40e6       # rad/s
-DELTA_END = 2 * pi * 40e6          # rad/s
-T_GATE = 4.5e-6                    # s
+DELTA_START = -2 * pi * 40e6  # rad/s
+DELTA_END = 2 * pi * 40e6  # rad/s
+T_GATE = 4.5e-6  # s
 
 # Product state map: gg, ge, gr, eg, ee, er, rg, re, rr
 PRODUCT_STATES = build_product_state_map(n_levels=N)
@@ -56,6 +56,7 @@ RYDBERG_KEYS = ["gg", "gr", "rg", "rr"]
 # ======================================================================
 # Figure 1: Rabi dynamics (resonant driving)
 # ======================================================================
+
 
 def figure_rabi_dynamics(model, initial_state):
     """Two stacked subplots: blockaded vs free Rabi oscillations."""
@@ -68,55 +69,49 @@ def figure_rabi_dynamics(model, initial_state):
     t_eval = np.linspace(0, t_rabi, n_points)
 
     protocol_free = SweepProtocol()
-    protocol_addr = SweepProtocol(addressing={0: LOCAL_DETUNING},
-                                   scatter_rate=LOCAL_SCATTER)
+    protocol_addr = SweepProtocol(addressing={0: LOCAL_DETUNING}, scatter_rate=LOCAL_SCATTER)
 
     obs_names = ["pop_A_r", "pop_B_r"]
 
     # (a) No pinning -- blockade active
-    result1 = simulate(system.with_protocol(protocol_free), x_rabi, initial_state,
-                       t_eval=t_eval)
+    result1 = simulate(system.with_protocol(protocol_free), x_rabi, initial_state, t_eval=t_eval)
     obs1 = measure_trajectory(model, result1.states, obs_names)
     prA1, prB1 = obs1["pop_A_r"], obs1["pop_B_r"]
 
     # (b) Atom A addressed -- blockade irrelevant
-    result2 = simulate(system.with_protocol(protocol_addr), x_rabi, initial_state,
-                       t_eval=t_eval)
+    result2 = simulate(system.with_protocol(protocol_addr), x_rabi, initial_state, t_eval=t_eval)
     obs2 = measure_trajectory(model, result2.states, obs_names)
     prA2, prB2 = obs2["pop_A_r"], obs2["pop_B_r"]
-    norm2 = np.array([norm_squared(result2.states[:, k])
-                       for k in range(result2.states.shape[1])])
+    norm2 = np.array([norm_squared(result2.states[:, k]) for k in range(result2.states.shape[1])])
 
     # -- Plot --
     fig, axes = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
     t1_us = result1.times * 1e6
     t2_us = result2.times * 1e6
 
-    axes[0].plot(t1_us, prA1, color="#2ca02c", ls="-", lw=1.5,
-                 label=r"$P_r^{(A)}$")
-    axes[0].plot(t1_us, prB1, color="#1f77b4", ls="--", lw=1.5,
-                 label=r"$P_r^{(B)}$")
+    axes[0].plot(t1_us, prA1, color="#2ca02c", ls="-", lw=1.5, label=r"$P_r^{(A)}$")
+    axes[0].plot(t1_us, prB1, color="#1f77b4", ls="--", lw=1.5, label=r"$P_r^{(B)}$")
     axes[0].set_ylabel("Population")
-    axes[0].set_title(r"(a) Global excitation — blockade active "
-                      r"($\sqrt{2}\,\Omega_{\rm eff}$ oscillation)")
+    axes[0].set_title(
+        r"(a) Global excitation — blockade active "
+        r"($\sqrt{2}\,\Omega_{\rm eff}$ oscillation)"
+    )
     axes[0].legend(loc="upper right")
     axes[0].set_ylim(-0.05, 1.05)
 
-    axes[1].plot(t2_us, prA2, color="#2ca02c", ls="-", lw=1.5,
-                 label=r"$P_r^{(A)}$")
-    axes[1].plot(t2_us, prB2, color="#1f77b4", ls="--", lw=1.5,
-                 label=r"$P_r^{(B)}$")
-    axes[1].plot(t2_us, norm2, color="gray", ls=":", lw=1.2,
-                 label="Total norm")
+    axes[1].plot(t2_us, prA2, color="#2ca02c", ls="-", lw=1.5, label=r"$P_r^{(A)}$")
+    axes[1].plot(t2_us, prB2, color="#1f77b4", ls="--", lw=1.5, label=r"$P_r^{(B)}$")
+    axes[1].plot(t2_us, norm2, color="gray", ls=":", lw=1.2, label="Total norm")
     axes[1].set_xlabel(r"Time ($\mu$s)")
     axes[1].set_ylabel("Population")
-    axes[1].set_title(r"(b) Atom A addressed — free single-atom oscillation "
-                      r"($\Omega_{\rm eff}$)")
+    axes[1].set_title(
+        r"(b) Atom A addressed — free single-atom oscillation "
+        r"($\Omega_{\rm eff}$)"
+    )
     axes[1].legend(loc="upper right")
     axes[1].set_ylim(-0.05, 1.05)
 
-    fig.suptitle("Rabi dynamics: Rydberg blockade breakdown via local addressing",
-                 fontsize=13)
+    fig.suptitle("Rabi dynamics: Rydberg blockade breakdown via local addressing", fontsize=13)
     fig.tight_layout()
     fig.savefig("fig1_rabi_dynamics.png", dpi=150)
     print("Saved fig1_rabi_dynamics.png")
@@ -126,14 +121,14 @@ def figure_rabi_dynamics(model, initial_state):
 # Figure 2: Final state populations (adiabatic sweep)
 # ======================================================================
 
+
 def figure_final_populations(model, initial_state):
     """Two side-by-side bar charts of final {|gg>,|gr>,|rg>,|rr>}."""
     system = model
     rabi_eff = system.meta("rabi_eff")
     time_scale = system.meta("time_scale")
     protocol_free = SweepProtocol()
-    protocol_addr = SweepProtocol(addressing={0: LOCAL_DETUNING},
-                                   scatter_rate=LOCAL_SCATTER)
+    protocol_addr = SweepProtocol(addressing={0: LOCAL_DETUNING}, scatter_rate=LOCAL_SCATTER)
     x_sweep = [
         DELTA_START / rabi_eff,
         DELTA_END / rabi_eff,
@@ -169,8 +164,7 @@ def figure_final_populations(model, initial_state):
     axes[0].set_ylim(0, 1.1)
     for bar, val in zip(bars1, vals1):
         if val > 0.01:
-            axes[0].text(bar.get_x() + bar.get_width() / 2, val + 0.02,
-                         f"{val:.2f}", ha="center", fontsize=10)
+            axes[0].text(bar.get_x() + bar.get_width() / 2, val + 0.02, f"{val:.2f}", ha="center", fontsize=10)
 
     bars2 = axes[1].bar(x_pos, vals2, color=bar_colors, edgecolor="black", lw=0.8)
     axes[1].set_xticks(x_pos)
@@ -179,8 +173,7 @@ def figure_final_populations(model, initial_state):
     axes[1].set_ylim(0, 1.1)
     for bar, val in zip(bars2, vals2):
         if val > 0.01:
-            axes[1].text(bar.get_x() + bar.get_width() / 2, val + 0.02,
-                         f"{val:.2f}", ha="center", fontsize=10)
+            axes[1].text(bar.get_x() + bar.get_width() / 2, val + 0.02, f"{val:.2f}", ha="center", fontsize=10)
 
     fig.suptitle("Final state populations after adiabatic sweep", fontsize=13)
     fig.tight_layout()
@@ -191,6 +184,7 @@ def figure_final_populations(model, initial_state):
 # ======================================================================
 # Figure 3: AC Stark feed-forward compensation comparison
 # ======================================================================
+
 
 def figure_stark_compensation(model, initial_state):
     """Compare adiabatic sweep with and without AC Stark feed-forward.
@@ -207,8 +201,8 @@ def figure_stark_compensation(model, initial_state):
     Delta = system.meta("Delta")
 
     # AC Stark shift at peak amplitude: Omega_420^2 / (4*|delta|)
-    ac_stark_peak = rabi_420 ** 2 / (4 * abs(Delta))
-    print(f"  AC Stark shift at peak: {ac_stark_peak / (2*pi) / 1e6:.2f} MHz")
+    ac_stark_peak = rabi_420**2 / (4 * abs(Delta))
+    print(f"  AC Stark shift at peak: {ac_stark_peak / (2 * pi) / 1e6:.2f} MHz")
 
     x_sweep = [
         DELTA_START / rabi_eff,
@@ -221,13 +215,11 @@ def figure_stark_compensation(model, initial_state):
 
     # (a) Without compensation -- raw chirp, no Stark correction
     protocol_raw = SweepProtocol(ac_stark_shift=0.0)
-    result_raw = simulate(system.with_protocol(protocol_raw), x_sweep, initial_state,
-                          t_eval=t_eval)
+    result_raw = simulate(system.with_protocol(protocol_raw), x_sweep, initial_state, t_eval=t_eval)
 
     # (b) With feed-forward compensation
     protocol_comp = SweepProtocol(ac_stark_shift=ac_stark_peak)
-    result_comp = simulate(system.with_protocol(protocol_comp), x_sweep, initial_state,
-                           t_eval=t_eval)
+    result_comp = simulate(system.with_protocol(protocol_comp), x_sweep, initial_state, t_eval=t_eval)
 
     # Measure per-atom Rydberg populations
     obs_names = ["pop_A_r", "pop_B_r", "pop_r"]
@@ -239,29 +231,32 @@ def figure_stark_compensation(model, initial_state):
     pops_raw = {k: model.observables.measure(f"pop_{k}", result_raw.psi_final) for k in joint_keys}
     pops_comp = {k: model.observables.measure(f"pop_{k}", result_comp.psi_final) for k in joint_keys}
 
-    print(f"  Without compensation: P(gg)={pops_raw['gg']:.3f}, "
-          f"P(gr)={pops_raw['gr']:.3f}, P(rg)={pops_raw['rg']:.3f}, "
-          f"P(rr)={pops_raw['rr']:.3f}")
-    print(f"  With compensation:    P(gg)={pops_comp['gg']:.3f}, "
-          f"P(gr)={pops_comp['gr']:.3f}, P(rg)={pops_comp['rg']:.3f}, "
-          f"P(rr)={pops_comp['rr']:.3f}")
+    print(
+        f"  Without compensation: P(gg)={pops_raw['gg']:.3f}, "
+        f"P(gr)={pops_raw['gr']:.3f}, P(rg)={pops_raw['rg']:.3f}, "
+        f"P(rr)={pops_raw['rr']:.3f}"
+    )
+    print(
+        f"  With compensation:    P(gg)={pops_comp['gg']:.3f}, "
+        f"P(gr)={pops_comp['gr']:.3f}, P(rg)={pops_comp['rg']:.3f}, "
+        f"P(rr)={pops_comp['rr']:.3f}"
+    )
 
     # -- Plot (2 rows x 2 cols) --
     fig, axes = plt.subplots(2, 2, figsize=(14, 9))
     t_us = result_raw.times * 1e6
 
     # Row 0: Rydberg populations during sweep
-    for col, (obs, label) in enumerate([
-        (obs_raw, "(a) Without compensation"),
-        (obs_comp, "(b) With feed-forward compensation"),
-    ]):
+    for col, (obs, label) in enumerate(
+        [
+            (obs_raw, "(a) Without compensation"),
+            (obs_comp, "(b) With feed-forward compensation"),
+        ]
+    ):
         ax = axes[0, col]
-        ax.plot(t_us, obs["pop_A_r"], color="#2ca02c", ls="-", lw=1.5,
-                label=r"$P_r^{(A)}$")
-        ax.plot(t_us, obs["pop_B_r"], color="#1f77b4", ls="--", lw=1.5,
-                label=r"$P_r^{(B)}$")
-        ax.plot(t_us, obs["pop_r"] / 2, color="gray", ls=":", lw=1.2,
-                label=r"$\langle n_r \rangle / 2$")
+        ax.plot(t_us, obs["pop_A_r"], color="#2ca02c", ls="-", lw=1.5, label=r"$P_r^{(A)}$")
+        ax.plot(t_us, obs["pop_B_r"], color="#1f77b4", ls="--", lw=1.5, label=r"$P_r^{(B)}$")
+        ax.plot(t_us, obs["pop_r"] / 2, color="gray", ls=":", lw=1.2, label=r"$\langle n_r \rangle / 2$")
         ax.set_xlabel(r"Time ($\mu$s)")
         ax.set_ylabel("Population")
         ax.set_title(label)
@@ -273,10 +268,12 @@ def figure_stark_compensation(model, initial_state):
     x_pos = np.arange(len(joint_keys))
     tick_labels = [f"|{k}>" for k in joint_keys]
 
-    for col, (pops, label) in enumerate([
-        (pops_raw, "(c) Final pops — no compensation"),
-        (pops_comp, "(d) Final pops — compensated"),
-    ]):
+    for col, (pops, label) in enumerate(
+        [
+            (pops_raw, "(c) Final pops — no compensation"),
+            (pops_comp, "(d) Final pops — compensated"),
+        ]
+    ):
         ax = axes[1, col]
         vals = [pops[k] for k in joint_keys]
         bars = ax.bar(x_pos, vals, color=bar_colors, edgecolor="black", lw=0.8)
@@ -287,14 +284,14 @@ def figure_stark_compensation(model, initial_state):
         ax.set_ylim(0, 1.1)
         for bar, val in zip(bars, vals):
             if val > 0.01:
-                ax.text(bar.get_x() + bar.get_width() / 2, val + 0.02,
-                        f"{val:.3f}", ha="center", fontsize=9)
+                ax.text(bar.get_x() + bar.get_width() / 2, val + 0.02, f"{val:.3f}", ha="center", fontsize=9)
 
     fig.suptitle(
         r"AC Stark feed-forward compensation  "
-        f"($\\Delta_{{AC}}^{{peak}}$ = {ac_stark_peak/(2*pi)/1e6:.1f} MHz,  "
-        f"$\\Omega_{{eff}}$ = {rabi_eff/(2*pi)/1e6:.1f} MHz)",
-        fontsize=13)
+        f"($\\Delta_{{AC}}^{{peak}}$ = {ac_stark_peak / (2 * pi) / 1e6:.1f} MHz,  "
+        f"$\\Omega_{{eff}}$ = {rabi_eff / (2 * pi) / 1e6:.1f} MHz)",
+        fontsize=13,
+    )
     fig.tight_layout()
     fig.savefig("fig3_stark_compensation.png", dpi=150)
     print("Saved fig3_stark_compensation.png")
@@ -304,6 +301,7 @@ def figure_stark_compensation(model, initial_state):
 # Figure 4: 420nm Blackman envelope and phase diagnostics
 # ======================================================================
 
+
 def figure_420_phase_diagnostics(model):
     """Plot the 420nm Blackman envelope and chirp phases."""
     system = model
@@ -311,7 +309,7 @@ def figure_420_phase_diagnostics(model):
     time_scale = system.meta("time_scale")
     rabi_420 = system.meta("rabi_420")
     Delta = system.meta("Delta")
-    ac_stark_peak = rabi_420 ** 2 / (4 * abs(Delta))
+    ac_stark_peak = rabi_420**2 / (4 * abs(Delta))
 
     x_sweep = [
         DELTA_START / rabi_eff,
@@ -330,12 +328,8 @@ def figure_420_phase_diagnostics(model):
     envelope = blackman_pulse(ts, params_raw["t_rise"], params_raw["t_gate"])
     omega_420_mhz = envelope * rabi_420 / (2 * pi) / 1e6
 
-    phase_raw = -np.unwrap(np.angle(
-        np.array([protocol_raw.phase_420(t, params_raw) for t in ts])
-    ))
-    phase_comp = -np.unwrap(np.angle(
-        np.array([protocol_comp.phase_420(t, params_comp) for t in ts])
-    ))
+    phase_raw = -np.unwrap(np.angle(np.array([protocol_raw.phase_420(t, params_raw) for t in ts])))
+    phase_comp = -np.unwrap(np.angle(np.array([protocol_comp.phase_420(t, params_comp) for t in ts])))
 
     fig, axes = plt.subplots(3, 1, figsize=(8, 10), sharex=True)
 
@@ -360,8 +354,8 @@ def figure_420_phase_diagnostics(model):
     fig.suptitle(
         r"420nm pulse diagnostics for the adiabatic sweep"
         "\n"
-        f"$\\Delta_{{AC}}^{{peak}}/(2\\pi)$ = {ac_stark_peak/(2*pi)/1e6:.2f} MHz,  "
-        f"$T_{{gate}}$ = {params_raw['t_gate']*1e6:.2f} $\\mu$s",
+        f"$\\Delta_{{AC}}^{{peak}}/(2\\pi)$ = {ac_stark_peak / (2 * pi) / 1e6:.2f} MHz,  "
+        f"$T_{{gate}}$ = {params_raw['t_gate'] * 1e6:.2f} $\\mu$s",
         fontsize=12,
     )
     fig.tight_layout(rect=[0, 0, 1, 0.92])
@@ -373,18 +367,19 @@ def figure_420_phase_diagnostics(model):
 # Figure 6: Two-atom Landau-Zener / Quantum Kibble-Zurek
 # ======================================================================
 
+
 def _fit_lz_envelope(sweep_rates, p_defect, Omega_eff):
     """Fit P = exp(-C * Omega_eff^2 / v) to the data."""
     from scipy.optimize import curve_fit
+
     mask = (p_defect > 0.005) & (p_defect < 0.95)
 
     def lz_model(v, C):
-        return np.exp(np.clip(-C * Omega_eff ** 2 / v, -500, 0))
+        return np.exp(np.clip(-C * Omega_eff**2 / v, -500, 0))
 
     if mask.sum() >= 3:
         try:
-            popt, pcov = curve_fit(lz_model, sweep_rates[mask], p_defect[mask],
-                                   p0=[1.0], maxfev=5000)
+            popt, pcov = curve_fit(lz_model, sweep_rates[mask], p_defect[mask], p0=[1.0], maxfev=5000)
             C_err = float(np.sqrt(pcov[0, 0])) if pcov[0, 0] > 0 else 0.0
             return popt[0], C_err
         except RuntimeError:
@@ -425,21 +420,18 @@ def figure_landau_zener(model, initial_state):
         result = simulate(sweep_system, x, initial_state)
         psi_f = result.psi_final
         p_defect[i] = model.observables.measure("pop_gg", psi_f)
-        p_af[i] = (model.observables.measure("pop_gr", psi_f)
-                   + model.observables.measure("pop_rg", psi_f))
+        p_af[i] = model.observables.measure("pop_gr", psi_f) + model.observables.measure("pop_rg", psi_f)
 
     C_fit, C_err = _fit_lz_envelope(sweep_rates, p_defect, Omega_eff)
     C_rel_err = abs(C_fit - np.pi) / np.pi * 100
 
     def lz_curve(v, C):
-        return np.exp(np.clip(-C * Omega_eff ** 2 / v, -500, 0))
+        return np.exp(np.clip(-C * Omega_eff**2 / v, -500, 0))
 
-    v_fine = np.logspace(np.log10(sweep_rates.min()),
-                         np.log10(sweep_rates.max()), 200)
+    v_fine = np.logspace(np.log10(sweep_rates.min()), np.log10(sweep_rates.max()), 200)
     t_fine_us = (delta_range / v_fine) * 1e6
 
-    print(f"  C_fit = {C_fit:.3f} +/- {C_err:.3f}  "
-          f"(theory pi = {np.pi:.3f}, error = {C_rel_err:.1f}%)")
+    print(f"  C_fit = {C_fit:.3f} +/- {C_err:.3f}  (theory pi = {np.pi:.3f}, error = {C_rel_err:.1f}%)")
 
     # Three representative dynamics
     dynamics_cases = [
@@ -453,11 +445,9 @@ def figure_landau_zener(model, initial_state):
 
     # (a) P_defect vs T_gate with LZ fit and theory
     ax = axes[0, 0]
-    ax.plot(t_gates * 1e6, p_defect, 'ko-', ms=4, lw=0.8, label="3-level simulation")
-    ax.plot(t_fine_us, lz_curve(v_fine, C_fit), 'r-', lw=1.5, alpha=0.7,
-            label=f"LZ fit $C={C_fit:.2f}$")
-    ax.plot(t_fine_us, lz_curve(v_fine, np.pi), 'b--', lw=1.2, alpha=0.5,
-            label=r"Theory $C=\pi$")
+    ax.plot(t_gates * 1e6, p_defect, "ko-", ms=4, lw=0.8, label="3-level simulation")
+    ax.plot(t_fine_us, lz_curve(v_fine, C_fit), "r-", lw=1.5, alpha=0.7, label=f"LZ fit $C={C_fit:.2f}$")
+    ax.plot(t_fine_us, lz_curve(v_fine, np.pi), "b--", lw=1.2, alpha=0.5, label=r"Theory $C=\pi$")
     ax.set_xlabel(r"$T_{\rm gate}$ ($\mu$s)")
     ax.set_ylabel(r"$P_{\rm defect} = P(|gg\rangle)$")
     ax.set_title(r"(a) Defect probability — LZ fit vs theory")
@@ -472,8 +462,7 @@ def figure_landau_zener(model, initial_state):
         t_eval = np.linspace(0, t_g * (1 - 1e-10), 400)
         result = simulate(sweep_system, x, initial_state, t_eval=t_eval)
         obs = measure_trajectory(model, result.states, ["pop_A_r"])
-        ax.plot(result.times / t_g, obs["pop_A_r"], color=color, lw=1.2,
-                label=case_label)
+        ax.plot(result.times / t_g, obs["pop_A_r"], color=color, lw=1.2, label=case_label)
     ax.set_xlabel(r"Normalized time $t / T_{\rm gate}$")
     ax.set_ylabel(r"$P_r^{(A)}$")
     ax.set_title("(b) Rydberg population dynamics")
@@ -485,17 +474,19 @@ def figure_landau_zener(model, initial_state):
     t_norm = np.linspace(0, 1, 200)
     delta_mhz = (ds + delta_range * t_norm) / (2 * pi * 1e6)
     gap_mhz = Omega_eff / (2 * pi * 1e6)
-    E_plus = np.sqrt(delta_mhz ** 2 + gap_mhz ** 2) / 2
-    ax.plot(t_norm, E_plus, 'b-', lw=1.5, label="Upper adiabatic")
-    ax.plot(t_norm, -E_plus, 'r-', lw=1.5, label="Lower adiabatic")
-    ax.plot(t_norm, delta_mhz / 2, 'k--', lw=0.8, alpha=0.5,
-            label=r"$|gg\rangle$ diabatic")
-    ax.plot(t_norm, -delta_mhz / 2, 'k:', lw=0.8, alpha=0.5,
-            label=r"$|W\rangle$ diabatic")
-    ax.annotate(f"Gap = {gap_mhz:.1f} MHz",
-                xy=(0.5, 0), xytext=(0.65, gap_mhz * 1.5),
-                fontsize=9, arrowprops=dict(arrowstyle="->", color="gray"),
-                ha="center")
+    E_plus = np.sqrt(delta_mhz**2 + gap_mhz**2) / 2
+    ax.plot(t_norm, E_plus, "b-", lw=1.5, label="Upper adiabatic")
+    ax.plot(t_norm, -E_plus, "r-", lw=1.5, label="Lower adiabatic")
+    ax.plot(t_norm, delta_mhz / 2, "k--", lw=0.8, alpha=0.5, label=r"$|gg\rangle$ diabatic")
+    ax.plot(t_norm, -delta_mhz / 2, "k:", lw=0.8, alpha=0.5, label=r"$|W\rangle$ diabatic")
+    ax.annotate(
+        f"Gap = {gap_mhz:.1f} MHz",
+        xy=(0.5, 0),
+        xytext=(0.65, gap_mhz * 1.5),
+        fontsize=9,
+        arrowprops=dict(arrowstyle="->", color="gray"),
+        ha="center",
+    )
     ax.set_xlabel(r"Normalized time $t / T_{\rm gate}$")
     ax.set_ylabel("Energy (MHz)")
     ax.set_title(r"(c) Avoided crossing ($\Delta=0$ at midpoint)")
@@ -503,12 +494,19 @@ def figure_landau_zener(model, initial_state):
 
     # (d) C_fit with error bar vs pi
     ax = axes[1, 1]
-    ax.errorbar(1, C_fit, yerr=C_err, fmt='ko', ms=10, capsize=8,
-                capthick=2, elinewidth=2, label=f"$C_{{fit}} = {C_fit:.3f} \\pm {C_err:.3f}$")
-    ax.axhline(np.pi, color="red", ls="--", lw=2,
-               label=f"$\\pi = {np.pi:.3f}$")
-    ax.fill_between([0.5, 1.5], np.pi * 0.99, np.pi * 1.01,
-                    color="red", alpha=0.1, label=r"$\pm 1\%$ band")
+    ax.errorbar(
+        1,
+        C_fit,
+        yerr=C_err,
+        fmt="ko",
+        ms=10,
+        capsize=8,
+        capthick=2,
+        elinewidth=2,
+        label=f"$C_{{fit}} = {C_fit:.3f} \\pm {C_err:.3f}$",
+    )
+    ax.axhline(np.pi, color="red", ls="--", lw=2, label=f"$\\pi = {np.pi:.3f}$")
+    ax.fill_between([0.5, 1.5], np.pi * 0.99, np.pi * 1.01, color="red", alpha=0.1, label=r"$\pm 1\%$ band")
     ax.set_xlim(0.5, 1.5)
     ax.set_ylim(C_fit - max(0.5, 3 * C_err), C_fit + max(0.5, 3 * C_err))
     ax.set_xticks([1])
@@ -520,10 +518,11 @@ def figure_landau_zener(model, initial_state):
     fig.suptitle(
         r"Two-atom Landau-Zener: $P_{\rm defect} = \exp(-C\,\Omega_{\rm eff}^2 / v)$"
         "\n"
-        f"$\\Omega_{{\\rm eff}}/(2\\pi)$ = {Omega_eff/(2*pi)/1e6:.1f} MHz,  "
+        f"$\\Omega_{{\\rm eff}}/(2\\pi)$ = {Omega_eff / (2 * pi) / 1e6:.1f} MHz,  "
         f"Sweep: $\\pm 20\\,\\Omega_{{\\rm eff}}$,  "
         "square pulse (no Blackman)",
-        fontsize=12)
+        fontsize=12,
+    )
     fig.tight_layout(rect=[0, 0, 1, 0.90])
     fig.savefig("fig5_landau_zener.png", dpi=150)
     print("Saved fig5_landau_zener.png")
@@ -531,16 +530,17 @@ def figure_landau_zener(model, initial_state):
 
 # ======================================================================
 
+
 def main():
     initial_state = PRODUCT_STATES["gg"]
 
-    model_no_decay = make_analog_3_system( detuning_sign=1)
+    model_no_decay = make_analog_3_system(detuning_sign=1)
     figure_rabi_dynamics(model_no_decay, initial_state)
     figure_final_populations(model_no_decay, initial_state)
     figure_stark_compensation(model_no_decay, initial_state)
     figure_420_phase_diagnostics(model_no_decay)
 
-    model_sq = make_analog_3_system( detuning_sign=1, blackmanflag=False)
+    model_sq = make_analog_3_system(detuning_sign=1, blackmanflag=False)
     figure_landau_zener(model_sq, initial_state)
     plt.show()
 

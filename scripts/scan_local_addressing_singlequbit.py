@@ -39,6 +39,7 @@ from ryd_gate.protocols.sweep import SweepProtocol
 # Data generation
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def _run_optimize_scan(args):
     """Run the 2D grid scan with two 1-atom sims per point."""
     from exact import simulate
@@ -49,7 +50,9 @@ def _run_optimize_scan(args):
 
     rabi_420_hz = 135e6
     system = make_analog_3_system(
-        detuning_sign=1, blackmanflag=True, n_atoms=1,
+        detuning_sign=1,
+        blackmanflag=True,
+        n_atoms=1,
         Delta_Hz=2.4e9,
         rabi_420_Hz=rabi_420_hz,
         rabi_1013_Hz=135e6,
@@ -70,10 +73,9 @@ def _run_optimize_scan(args):
 
     eta = np.exp(-2 * (args.distance_um / args.waist_um) ** 2)
     print(f"  Gaussian tail: eta = exp(-2*(a/w)^2) = {eta:.4e}")
-    print(f"  Omega_eff/(2pi) = {rabi_eff/(2*pi)/1e6:.2f} MHz")
-    print(f"  AC Stark peak = {ac_stark_peak/(2*pi)/1e6:.2f} MHz")
-    print(f"  Sweep: [{args.delta_start_mhz}, {args.delta_end_mhz}] MHz, "
-          f"T_gate = {args.t_gate_us} us")
+    print(f"  Omega_eff/(2pi) = {rabi_eff / (2 * pi) / 1e6:.2f} MHz")
+    print(f"  AC Stark peak = {ac_stark_peak / (2 * pi) / 1e6:.2f} MHz")
+    print(f"  Sweep: [{args.delta_start_mhz}, {args.delta_end_mhz}] MHz, T_gate = {args.t_gate_us} us")
     print(f"  N_atoms = 1 (no Rydberg interaction)")
     print()
 
@@ -82,15 +84,17 @@ def _run_optimize_scan(args):
     # Adiabatic threshold: |delta_A| > 4*Omega_eff
     adiabatic_ratio = 4.0
     adiabatic_power_min = {}
-    print(f"  Adiabatic condition: |delta_A| > {adiabatic_ratio:.0f} Omega_eff "
-          f"= {adiabatic_ratio * rabi_eff/(2*pi)/1e6:.1f} MHz")
+    print(
+        f"  Adiabatic condition: |delta_A| > {adiabatic_ratio:.0f} Omega_eff "
+        f"= {adiabatic_ratio * rabi_eff / (2 * pi) / 1e6:.1f} MHz"
+    )
     print(f"  {'WL (nm)':>10} {'|shift|/P (MHz/uW)':>20} {'P_min_adiab (uW)':>18}")
     for wl in wls:
         shift_ref, _ = compute_shift_scatter(wl)
         shift_per_uw = abs(float(shift_ref)) / POWER_REF_UW
         p_adiab = adiabatic_ratio * rabi_eff / (2 * pi) / shift_per_uw
         adiabatic_power_min[wl] = p_adiab
-        print(f"  {wl:10.2f} {shift_per_uw/1e6:20.4f} {p_adiab:18.1f}")
+        print(f"  {wl:10.2f} {shift_per_uw / 1e6:20.4f} {p_adiab:18.1f}")
 
     # Auto power range
     p_adiab_worst = max(adiabatic_power_min.values())
@@ -106,23 +110,30 @@ def _run_optimize_scan(args):
     n_total = len(wls) * len(powers)
 
     dtype = [
-        ("wl", float), ("power_uw", float),
-        ("delta_A_mhz", float), ("delta_B_mhz", float),
+        ("wl", float),
+        ("power_uw", float),
+        ("delta_A_mhz", float),
+        ("delta_B_mhz", float),
         ("scatter_A_hz", float),
         # Pinned atom (A)
-        ("P_g_A", float), ("P_e_A", float), ("P_r_A", float),
+        ("P_g_A", float),
+        ("P_e_A", float),
+        ("P_r_A", float),
         # Crosstalk virtual atom (B)
-        ("P_g_B", float), ("P_e_B", float), ("P_r_B", float),
+        ("P_g_B", float),
+        ("P_e_B", float),
+        ("P_r_B", float),
         # Cost metrics
-        ("not_pinned", float), ("leakage", float),
-        ("crosstalk", float), ("scatter_penalty", float),
+        ("not_pinned", float),
+        ("leakage", float),
+        ("crosstalk", float),
+        ("scatter_penalty", float),
         ("total_cost", float),
         ("delta_A_over_Omega", float),
     ]
     grid = np.empty(n_total, dtype=dtype)
 
-    print(f"  Scanning {args.n_wl} x {args.n_power} = {n_total} grid points "
-          f"(2 sims each)...")
+    print(f"  Scanning {args.n_wl} x {args.n_power} = {n_total} grid points (2 sims each)...")
     t0 = _time.time()
     idx = 0
     for wl in wls:
@@ -135,23 +146,25 @@ def _run_optimize_scan(args):
 
             # Sim A: pinned atom
             proto_A = SweepProtocol(
-                addressing={0: delta_A}, ac_stark_shift=ac_stark_peak,
+                addressing={0: delta_A},
+                ac_stark_shift=ac_stark_peak,
             )
             res_A = simulate(system.with_protocol(proto_A), x_sweep, psi0)
             psi_A = res_A.psi_final
-            P_g_A = np.abs(psi_A[0])**2
-            P_e_A = np.abs(psi_A[1])**2
-            P_r_A = np.abs(psi_A[2])**2
+            P_g_A = np.abs(psi_A[0]) ** 2
+            P_e_A = np.abs(psi_A[1]) ** 2
+            P_r_A = np.abs(psi_A[2]) ** 2
 
             # Sim B: crosstalk virtual atom
             proto_B = SweepProtocol(
-                addressing={0: delta_B}, ac_stark_shift=ac_stark_peak,
+                addressing={0: delta_B},
+                ac_stark_shift=ac_stark_peak,
             )
             res_B = simulate(system.with_protocol(proto_B), x_sweep, psi0)
             psi_B = res_B.psi_final
-            P_g_B = np.abs(psi_B[0])**2
-            P_e_B = np.abs(psi_B[1])**2
-            P_r_B = np.abs(psi_B[2])**2
+            P_g_B = np.abs(psi_B[0]) ** 2
+            P_e_B = np.abs(psi_B[1]) ** 2
+            P_r_B = np.abs(psi_B[2]) ** 2
 
             not_pinned = 1.0 - P_g_A
             leakage = P_e_A
@@ -160,39 +173,54 @@ def _run_optimize_scan(args):
             total_cost = not_pinned + crosstalk + scatter_pen
 
             grid[idx] = (
-                wl, power_uw,
-                delta_A / (2 * pi * 1e6), delta_B / (2 * pi * 1e6),
+                wl,
+                power_uw,
+                delta_A / (2 * pi * 1e6),
+                delta_B / (2 * pi * 1e6),
                 scatter_A,
-                P_g_A, P_e_A, P_r_A,
-                P_g_B, P_e_B, P_r_B,
-                not_pinned, leakage, crosstalk, scatter_pen, total_cost,
+                P_g_A,
+                P_e_A,
+                P_r_A,
+                P_g_B,
+                P_e_B,
+                P_r_B,
+                not_pinned,
+                leakage,
+                crosstalk,
+                scatter_pen,
+                total_cost,
                 abs(delta_A) / rabi_eff,
             )
             idx += 1
 
     elapsed = _time.time() - t0
-    print(f"  Grid scan done in {elapsed:.1f}s ({elapsed/n_total:.2f}s per point)")
+    print(f"  Grid scan done in {elapsed:.1f}s ({elapsed / n_total:.2f}s per point)")
 
     best_idx = np.argmin(grid["total_cost"])
     best = grid[best_idx]
     print(f"\n  Best point: lambda={best['wl']:.1f} nm, P={best['power_uw']:.0f} uW")
-    print(f"    delta_A = {best['delta_A_mhz']:.2f} MHz "
-          f"({best['delta_A_over_Omega']:.1f} Omega_eff)")
+    print(f"    delta_A = {best['delta_A_mhz']:.2f} MHz ({best['delta_A_over_Omega']:.1f} Omega_eff)")
     print(f"    P_g_A={best['P_g_A']:.4f}, P_r_B={best['P_r_B']:.4f}")
-    print(f"    not_pinned={best['not_pinned']:.4f}, "
-          f"crosstalk={best['crosstalk']:.4f}, scatter={best['scatter_penalty']:.4f}")
+    print(
+        f"    not_pinned={best['not_pinned']:.4f}, "
+        f"crosstalk={best['crosstalk']:.4f}, scatter={best['scatter_penalty']:.4f}"
+    )
     print(f"    TOTAL COST = {best['total_cost']:.6f}")
 
     os.makedirs(args.outdir, exist_ok=True)
     csv_path = os.path.join(args.outdir, "addressing_1q_grid.csv")
-    np.savetxt(csv_path, grid, fmt="%.6e",
-               header=",".join(grid.dtype.names), delimiter=",")
+    np.savetxt(csv_path, grid, fmt="%.6e", header=",".join(grid.dtype.names), delimiter=",")
     print(f"\n  Grid saved to {csv_path}")
 
     meta = {
-        "system": system, "eta": eta, "x_sweep": x_sweep,
-        "ac_stark_peak": ac_stark_peak, "wls": wls, "powers": powers,
-        "best": best, "best_idx": best_idx,
+        "system": system,
+        "eta": eta,
+        "x_sweep": x_sweep,
+        "ac_stark_peak": ac_stark_peak,
+        "wls": wls,
+        "powers": powers,
+        "best": best,
+        "best_idx": best_idx,
         "adiabatic_power_min": adiabatic_power_min,
     }
     return grid, meta
@@ -201,6 +229,7 @@ def _run_optimize_scan(args):
 # ═══════════════════════════════════════════════════════════════════════
 # Shared plot helpers
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def _make_adiabatic_boundary(meta):
     """Return callable that overlays the adiabatic boundary on an axis."""
@@ -213,8 +242,10 @@ def _make_adiabatic_boundary(meta):
         p_lo, p_hi = powers[0], powers[-1]
         mask = (adiab_pows >= p_lo) & (adiab_pows <= p_hi)
         if mask.any():
-            ax.plot(adiab_pows[mask], adiab_wls[mask], "r--", lw=2, alpha=0.9,
-                    label=r"$|\delta_A| = 4\,\Omega_{\rm eff}$")
+            ax.plot(
+                adiab_pows[mask], adiab_wls[mask], "r--", lw=2, alpha=0.9, label=r"$|\delta_A| = 4\,\Omega_{\rm eff}$"
+            )
+
     return _add
 
 
@@ -255,17 +286,19 @@ def _compute_lz_params(meta):
 # Individual plot functions
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def _plot_total_cost(grid, meta, args):
     """Total cost heatmap -> addressing_1q_heatmap.png"""
-    wls = meta["wls"]; powers = meta["powers"]; best = meta["best"]
+    wls = meta["wls"]
+    powers = meta["powers"]
+    best = meta["best"]
     add_boundary = _make_adiabatic_boundary(meta)
 
     cost_2d = grid["total_cost"].reshape(args.n_wl, args.n_power)
     fig, ax = plt.subplots(figsize=(10, 7))
     im = ax.pcolormesh(powers, wls, cost_2d, cmap="viridis_r", shading="auto")
     add_boundary(ax)
-    ax.plot(best["power_uw"], best["wl"], "r*", ms=15, mew=2,
-            label=f"Best: $E$={best['total_cost']:.4f}")
+    ax.plot(best["power_uw"], best["wl"], "r*", ms=15, mew=2, label=f"Best: $E$={best['total_cost']:.4f}")
     ax.set_xlabel("Power ($\\mu$W)")
     ax.set_ylabel("Wavelength (nm)")
     ax.set_title("Single-qubit total cost $E_{total}(\\lambda, P)$")
@@ -280,16 +313,21 @@ def _plot_total_cost(grid, meta, args):
 
 def _plot_components(grid, meta, args):
     """2x2 component overview -> addressing_1q_components.png"""
-    wls = meta["wls"]; powers = meta["powers"]; best = meta["best"]
+    wls = meta["wls"]
+    powers = meta["powers"]
+    best = meta["best"]
     add_boundary = _make_adiabatic_boundary(meta)
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-    for ax, (field, title, cmap) in zip(axes.flat, [
-        ("not_pinned", "Not pinned  $1 - P_g^A$", "Reds"),
-        ("crosstalk", "Crosstalk  $1 - P_r^B$", "Blues"),
-        ("scatter_penalty", "Scatter $1-e^{-\\Gamma T}$", "Oranges"),
-        ("total_cost", "Total cost $E_{total}$", "viridis_r"),
-    ]):
+    for ax, (field, title, cmap) in zip(
+        axes.flat,
+        [
+            ("not_pinned", "Not pinned  $1 - P_g^A$", "Reds"),
+            ("crosstalk", "Crosstalk  $1 - P_r^B$", "Blues"),
+            ("scatter_penalty", "Scatter $1-e^{-\\Gamma T}$", "Oranges"),
+            ("total_cost", "Total cost $E_{total}$", "viridis_r"),
+        ],
+    ):
         data = grid[field].reshape(args.n_wl, args.n_power)
         im = ax.pcolormesh(powers, wls, data, cmap=cmap, shading="auto")
         add_boundary(ax)
@@ -308,7 +346,9 @@ def _plot_components(grid, meta, args):
 
 def _plot_not_pinned(grid, meta, args):
     """Not-pinned heatmap -> addressing_1q_not_pinned.png"""
-    wls = meta["wls"]; powers = meta["powers"]; best = meta["best"]
+    wls = meta["wls"]
+    powers = meta["powers"]
+    best = meta["best"]
     add_boundary = _make_adiabatic_boundary(meta)
 
     data = grid["not_pinned"].reshape(args.n_wl, args.n_power)
@@ -330,7 +370,9 @@ def _plot_not_pinned(grid, meta, args):
 
 def _plot_crosstalk(grid, meta, args):
     """Crosstalk heatmap -> addressing_1q_crosstalk.png"""
-    wls = meta["wls"]; powers = meta["powers"]; best = meta["best"]
+    wls = meta["wls"]
+    powers = meta["powers"]
+    best = meta["best"]
     add_boundary = _make_adiabatic_boundary(meta)
 
     data = grid["crosstalk"].reshape(args.n_wl, args.n_power)
@@ -352,7 +394,9 @@ def _plot_crosstalk(grid, meta, args):
 
 def _plot_scatter(grid, meta, args):
     """Scatter penalty heatmap -> addressing_1q_scatter.png"""
-    wls = meta["wls"]; powers = meta["powers"]; best = meta["best"]
+    wls = meta["wls"]
+    powers = meta["powers"]
+    best = meta["best"]
     add_boundary = _make_adiabatic_boundary(meta)
 
     data = grid["scatter_penalty"].reshape(args.n_wl, args.n_power)
@@ -376,7 +420,9 @@ def _plot_smoothed(grid, meta, args):
     """Gaussian-smoothed cost landscape -> addressing_1q_smoothed.png"""
     from scipy.ndimage import gaussian_filter1d
 
-    wls = meta["wls"]; powers = meta["powers"]; best = meta["best"]
+    wls = meta["wls"]
+    powers = meta["powers"]
+    best = meta["best"]
     add_boundary = _make_adiabatic_boundary(meta)
 
     sigma_smooth = 3
@@ -392,22 +438,23 @@ def _plot_smoothed(grid, meta, args):
     fig, ax = plt.subplots(figsize=(10, 7))
     im = ax.pcolormesh(powers, wls, cost_2d_smooth, cmap="viridis_r", shading="auto")
     add_boundary(ax)
-    ax.plot(best["power_uw"], best["wl"], "r*", ms=14, mew=2, mfc="none",
-            label=f"Raw best: $E$={best['total_cost']:.4f}")
-    ax.plot(best_smooth_pow, best_smooth_wl, "r*", ms=14, mew=2,
-            label=f"Smoothed best: $E$={best_smooth_cost:.4f}")
+    ax.plot(
+        best["power_uw"], best["wl"], "r*", ms=14, mew=2, mfc="none", label=f"Raw best: $E$={best['total_cost']:.4f}"
+    )
+    ax.plot(best_smooth_pow, best_smooth_wl, "r*", ms=14, mew=2, label=f"Smoothed best: $E$={best_smooth_cost:.4f}")
     ax.set_xlabel("Power ($\\mu$W)")
     ax.set_ylabel("Wavelength (nm)")
-    ax.set_title(r"Smoothed cost (Gaussian $\sigma$="
-                 f"{sigma_smooth} pts)")
+    ax.set_title(
+        r"Smoothed cost (Gaussian $\sigma$="
+        f"{sigma_smooth} pts)"
+    )
     fig.colorbar(im, ax=ax, label="$E_{total}$ (smoothed)")
     ax.legend(fontsize=9)
     fig.tight_layout()
     path = os.path.join(args.outdir, "addressing_1q_smoothed.png")
     fig.savefig(path, dpi=150)
     print(f"  Smoothed heatmap saved to {path}")
-    print(f"    Smoothed best: lambda={best_smooth_wl:.2f} nm, "
-          f"P={best_smooth_pow:.1f} uW, cost={best_smooth_cost:.5f}")
+    print(f"    Smoothed best: lambda={best_smooth_wl:.2f} nm, P={best_smooth_pow:.1f} uW, cost={best_smooth_cost:.5f}")
     plt.close(fig)
 
 
@@ -428,8 +475,7 @@ def _plot_lz_slices(grid, meta, args):
     n_sel = min(6, args.n_wl)
     sel_indices = np.linspace(0, args.n_wl - 1, n_sel, dtype=int)
 
-    fig, axes = plt.subplots(2, (n_sel + 1) // 2,
-                              figsize=(5 * ((n_sel + 1) // 2), 8), squeeze=False)
+    fig, axes = plt.subplots(2, (n_sel + 1) // 2, figsize=(5 * ((n_sel + 1) // 2), 8), squeeze=False)
     axes_flat = axes.flat
 
     for panel, wi in enumerate(sel_indices):
@@ -445,8 +491,7 @@ def _plot_lz_slices(grid, meta, args):
         lz_dense = _lz_not_pinned(ratio_dense * Omega_eff)
 
         ax.plot(ratio, sim_err * 100, "o", ms=3, color="#1f77b4", label="Simulation")
-        ax.plot(ratio_dense, lz_dense * 100, "-", lw=1.2, color="#d62728",
-                label="LZ theory", alpha=0.85)
+        ax.plot(ratio_dense, lz_dense * 100, "-", lw=1.2, color="#d62728", label="LZ theory", alpha=0.85)
         ax.axvline(4.0, color="gray", ls=":", lw=1, alpha=0.6)
         ax.set_title(f"$\\lambda$ = {wl:.1f} nm", fontsize=10)
         ax.set_xlabel(r"$|\delta_A| / \Omega_{\rm eff}$", fontsize=9)
@@ -461,8 +506,9 @@ def _plot_lz_slices(grid, meta, args):
     fig.suptitle(
         "Single-atom LZ transition (adiabatic passage)\n"
         f"$P_{{LZ}}$ = {P_LZ:.2e},  "
-        f"$\\alpha/(2\\pi)$ = {alpha/(2*pi)/1e12:.2f} THz/s",
-        fontsize=11)
+        f"$\\alpha/(2\\pi)$ = {alpha / (2 * pi) / 1e12:.2f} THz/s",
+        fontsize=11,
+    )
     fig.tight_layout()
     path = os.path.join(args.outdir, "addressing_1q_lz_slices.png")
     fig.savefig(path, dpi=150)
@@ -472,7 +518,9 @@ def _plot_lz_slices(grid, meta, args):
 
 def _plot_leakage(grid, meta, args):
     """Intermediate-state leakage heatmap -> addressing_1q_leakage.png"""
-    wls = meta["wls"]; powers = meta["powers"]; best = meta["best"]
+    wls = meta["wls"]
+    powers = meta["powers"]
+    best = meta["best"]
     add_boundary = _make_adiabatic_boundary(meta)
 
     data = grid["leakage"].reshape(args.n_wl, args.n_power)
@@ -494,7 +542,9 @@ def _plot_leakage(grid, meta, args):
 
 def _plot_atom_populations(grid, meta, args):
     """Side-by-side atom A and B population heatmaps -> addressing_1q_populations.png"""
-    wls = meta["wls"]; powers = meta["powers"]; best = meta["best"]
+    wls = meta["wls"]
+    powers = meta["powers"]
+    best = meta["best"]
     add_boundary = _make_adiabatic_boundary(meta)
 
     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
@@ -506,8 +556,7 @@ def _plot_atom_populations(grid, meta, args):
                 ax = axes[1, row]
             field = f"P_{level}_{prefix}"
             data = grid[field].reshape(args.n_wl, args.n_power)
-            im = ax.pcolormesh(powers, wls, data, cmap=cmap, shading="auto",
-                               vmin=0, vmax=1)
+            im = ax.pcolormesh(powers, wls, data, cmap=cmap, shading="auto", vmin=0, vmax=1)
             add_boundary(ax)
             ax.plot(best["power_uw"], best["wl"], "k*", ms=10)
             ax.set_xlabel("Power ($\\mu$W)")
@@ -528,13 +577,21 @@ def _plot_atom_populations(grid, meta, args):
 # ═══════════════════════════════════════════════════════════════════════
 
 GRID_DTYPE = [
-    ("wl", float), ("power_uw", float),
-    ("delta_A_mhz", float), ("delta_B_mhz", float),
+    ("wl", float),
+    ("power_uw", float),
+    ("delta_A_mhz", float),
+    ("delta_B_mhz", float),
     ("scatter_A_hz", float),
-    ("P_g_A", float), ("P_e_A", float), ("P_r_A", float),
-    ("P_g_B", float), ("P_e_B", float), ("P_r_B", float),
-    ("not_pinned", float), ("leakage", float),
-    ("crosstalk", float), ("scatter_penalty", float),
+    ("P_g_A", float),
+    ("P_e_A", float),
+    ("P_r_A", float),
+    ("P_g_B", float),
+    ("P_e_B", float),
+    ("P_r_B", float),
+    ("not_pinned", float),
+    ("leakage", float),
+    ("crosstalk", float),
+    ("scatter_penalty", float),
     ("total_cost", float),
     ("delta_A_over_Omega", float),
 ]
@@ -591,8 +648,12 @@ def cmd_optimize_plot(args):
 
     rabi_420_hz = 135e6
     system = make_analog_3_system(
-        detuning_sign=1, blackmanflag=True, n_atoms=1,
-        Delta_Hz=2.4e9, rabi_420_Hz=rabi_420_hz, rabi_1013_Hz=135e6,
+        detuning_sign=1,
+        blackmanflag=True,
+        n_atoms=1,
+        Delta_Hz=2.4e9,
+        rabi_420_Hz=rabi_420_hz,
+        rabi_1013_Hz=135e6,
     )
     rabi_eff = system.meta("rabi_eff")
     time_scale = system.meta("time_scale")
@@ -617,9 +678,14 @@ def cmd_optimize_plot(args):
     best = grid[best_idx]
 
     meta = {
-        "system": system, "eta": eta, "x_sweep": x_sweep,
-        "ac_stark_peak": ac_stark_peak, "wls": wls, "powers": powers,
-        "best": best, "best_idx": best_idx,
+        "system": system,
+        "eta": eta,
+        "x_sweep": x_sweep,
+        "ac_stark_peak": ac_stark_peak,
+        "wls": wls,
+        "powers": powers,
+        "best": best,
+        "best_idx": best_idx,
         "adiabatic_power_min": adiabatic_power_min,
     }
     _all_plots(grid, meta, args)
@@ -629,29 +695,26 @@ def cmd_optimize_plot(args):
 # Main
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def main():
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_opt = sub.add_parser("optimize",
-                            help="2D wavelength x power scan (single qubit)")
+    p_opt = sub.add_parser("optimize", help="2D wavelength x power scan (single qubit)")
     p_opt.add_argument("--wl-min", type=float, default=781.0)
     p_opt.add_argument("--wl-max", type=float, default=786.0)
     p_opt.add_argument("--n-wl", type=int, default=60)
     p_opt.add_argument("--power-min-uw", type=float, default=None)
     p_opt.add_argument("--power-max-uw", type=float, default=None)
     p_opt.add_argument("--n-power", type=int, default=40)
-    p_opt.add_argument("--distance-um", type=float, default=4.0,
-                        help="Crosstalk distance in um (default: 4.0)")
+    p_opt.add_argument("--distance-um", type=float, default=4.0, help="Crosstalk distance in um (default: 4.0)")
     p_opt.add_argument("--waist-um", type=float, default=1.0)
     p_opt.add_argument("--delta-start-mhz", type=float, default=-40.0)
     p_opt.add_argument("--delta-end-mhz", type=float, default=40.0)
     p_opt.add_argument("--t-gate-us", type=float, default=4.5)
     p_opt.add_argument("--outdir", type=str, default="results")
 
-    p_plt = sub.add_parser("optimize-plot",
-                            help="Re-plot from saved CSV (no simulation)")
+    p_plt = sub.add_parser("optimize-plot", help="Re-plot from saved CSV (no simulation)")
     p_plt.add_argument("--csv", type=str, default="results/addressing_1q_grid.csv")
     p_plt.add_argument("--distance-um", type=float, default=4.0)
     p_plt.add_argument("--waist-um", type=float, default=1.0)

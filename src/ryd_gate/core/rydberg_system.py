@@ -302,7 +302,7 @@ class RydbergSystem(SystemModel):
         interaction = interaction or _default_interaction_for_physical_model(physical_model)
         d = spec.local_dim
         N = geometry.N
-        dim = d ** N
+        dim = d**N
         basis = BasisSpec(
             site_labels=tuple(str(i) for i in range(N)),
             local_levels=spec.levels,
@@ -391,6 +391,7 @@ class RydbergSystem(SystemModel):
             _apply_rb87_7_lattice_blocks(model, physical_model, **physical_params)
         return model
 
+
 def _interaction_pairs(geometry: LatticeGeometry, interaction: InteractionSpec) -> tuple:
     if interaction.mode == "all":
         return vdw_couplings(geometry.coords, interaction.C6, interaction.max_range_um)
@@ -406,9 +407,7 @@ def _nearest_spacing(coords: np.ndarray) -> float:
     if len(coords) < 2:
         return 0.0
     dists = [
-        float(np.linalg.norm(coords[i] - coords[j]))
-        for i in range(len(coords))
-        for j in range(i + 1, len(coords))
+        float(np.linalg.norm(coords[i] - coords[j])) for i in range(len(coords)) for j in range(i + 1, len(coords))
     ]
     return min(dists)
 
@@ -606,14 +605,12 @@ def _rb87_physical_params(
         Delta = detuning_sign * 2 * np.pi * 9.1e9
         rabi_420 = 2 * np.pi * 491e6
         rabi_1013 = 2 * np.pi * 185e6
-        d_mid_ratio = atom.getDipoleMatrixElement(
-            5, 0, 0.5, 0.5, 6, 1, 1.5, -0.5, -1
-        ) / atom.getDipoleMatrixElement(5, 0, 0.5, -0.5, 6, 1, 1.5, -1.5, -1)
+        d_mid_ratio = atom.getDipoleMatrixElement(5, 0, 0.5, 0.5, 6, 1, 1.5, -0.5, -1) / atom.getDipoleMatrixElement(
+            5, 0, 0.5, -0.5, 6, 1, 1.5, -1.5, -1
+        )
         d_ryd_ratio = atom.getDipoleMatrixElement(
             6, 1, 1.5, -0.5, ryd_level, 0, 0.5, 0.5, 1
-        ) / atom.getDipoleMatrixElement(
-            6, 1, 1.5, -1.5, ryd_level, 0, 0.5, -0.5, 1
-        )
+        ) / atom.getDipoleMatrixElement(6, 1, 1.5, -1.5, ryd_level, 0, 0.5, -0.5, 1)
         v_ryd = 2 * np.pi * 874e9 / 3**6
         v_ryd_garb = v_ryd
         ryd_zeeman_shift = 2 * np.pi * 56e6 if enable_polarization_leakage else 2 * np.pi * 56e9
@@ -627,14 +624,12 @@ def _rb87_physical_params(
         Delta = detuning_sign * 2 * np.pi * 7.8e9
         rabi_420 = 2 * np.pi * 237e6
         rabi_1013 = 2 * np.pi * 303e6
-        d_mid_ratio = atom.getDipoleMatrixElement(
-            5, 0, 0.5, -0.5, 6, 1, 1.5, 0.5, 1
-        ) / atom.getDipoleMatrixElement(5, 0, 0.5, 0.5, 6, 1, 1.5, 1.5, 1)
+        d_mid_ratio = atom.getDipoleMatrixElement(5, 0, 0.5, -0.5, 6, 1, 1.5, 0.5, 1) / atom.getDipoleMatrixElement(
+            5, 0, 0.5, 0.5, 6, 1, 1.5, 1.5, 1
+        )
         d_ryd_ratio = atom.getDipoleMatrixElement(
             6, 1, 1.5, 0.5, ryd_level, 0, 0.5, -0.5, -1
-        ) / atom.getDipoleMatrixElement(
-            6, 1, 1.5, 1.5, ryd_level, 0, 0.5, 0.5, -1
-        )
+        ) / atom.getDipoleMatrixElement(6, 1, 1.5, 1.5, ryd_level, 0, 0.5, 0.5, -1)
         v_ryd = 2 * np.pi * 450e6
         v_ryd_garb = v_ryd
         ryd_zeeman_shift = 2 * np.pi * 2.4e9 if enable_polarization_leakage else 2 * np.pi * 2.4e12
@@ -746,37 +741,34 @@ def _rb87_local_zero_lightshift(
     from arc.wigner import CG
 
     E_0 = -2 * np.pi * 6.835e9
-    mid_energies = np.array([
-        Delta - 2 * np.pi * 51e6,
-        Delta,
-        Delta + 2 * np.pi * 87e6,
-    ], dtype=np.float64)
+    mid_energies = np.array(
+        [
+            Delta - 2 * np.pi * 51e6,
+            Delta,
+            Delta + 2 * np.pi * 87e6,
+        ],
+        dtype=np.float64,
+    )
     if param_set == "our":
-        cg_ratio_main = CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 1, 0) / CG(
-            1 / 2, -1 / 2, 3 / 2, 1 / 2, 2, 0
-        )
-        cg_ratio_garb = CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 1, 0) / CG(
-            1 / 2, 1 / 2, 3 / 2, -1 / 2, 2, 0
-        )
+        cg_ratio_main = CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 1, 0) / CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 2, 0)
+        cg_ratio_garb = CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 1, 0) / CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 2, 0)
         couplings = [
             (
                 cg_ratio_main * rabi_420 * CG(3 / 2, -3 / 2, 3 / 2, 1 / 2, F, -1)
                 + cg_ratio_garb * rabi_420_garbage * CG(3 / 2, -1 / 2, 3 / 2, -1 / 2, F, -1)
-            ) / 2
+            )
+            / 2
             for F in (1, 2, 3)
         ]
     else:
-        cg_ratio_main = CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 1, 0) / CG(
-            1 / 2, 1 / 2, 3 / 2, -1 / 2, 2, 0
-        )
-        cg_ratio_garb = CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 1, 0) / CG(
-            1 / 2, -1 / 2, 3 / 2, 1 / 2, 2, 0
-        )
+        cg_ratio_main = CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 1, 0) / CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 2, 0)
+        cg_ratio_garb = CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 1, 0) / CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 2, 0)
         couplings = [
             (
                 cg_ratio_main * rabi_420 * CG(3 / 2, 3 / 2, 3 / 2, -1 / 2, F, 1)
                 + cg_ratio_garb * rabi_420_garbage * CG(3 / 2, 1 / 2, 3 / 2, 1 / 2, F, 1)
-            ) / 2
+            )
+            / 2
             for F in (1, 2, 3)
         ]
 
@@ -789,7 +781,7 @@ def _rb87_local_zero_lightshift(
         shift = (np.abs(g_i) ** 2) / detuning
         local[idx, idx] = shift
         total_shift += shift
-        scatter_rate += (np.abs(g_i) ** 2) * gamma / (detuning ** 2)
+        scatter_rate += (np.abs(g_i) ** 2) * gamma / (detuning**2)
     local[0, 0] = -total_shift - 1j * scatter_rate / 2 if enable_0_scattering else -total_shift
     return local
 

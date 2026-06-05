@@ -66,6 +66,7 @@ from .protocols.sweep import SweepProtocol
 # --- Pulse utilities ---
 from .pulse import blackman_pulse, blackman_pulse_sqrt, blackman_window
 
+
 def __getattr__(name: str):
     """Lazy exports for optional/heavy physics helpers."""
     if name == "compute_shift_scatter":
@@ -87,6 +88,7 @@ def __getattr__(name: str):
             "tn_common.simulate_tn for tensor-network algorithms."
         )
     raise AttributeError(f"module 'ryd_gate' has no attribute {name!r}")
+
 
 __all__ = [
     # Systems

@@ -44,9 +44,7 @@ def test_tfim_to_rydberg_controls_compensates_open_boundary_shifts():
 
 
 def test_tfim_quench_protocol_emits_existing_lattice_channels():
-    system = _nn_square_system(2).with_protocol(
-        TFIMQuenchProtocol(hx=0.75, hz=0.0, t_gate=1.25)
-    )
+    system = _nn_square_system(2).with_protocol(TFIMQuenchProtocol(hx=0.75, hz=0.0, t_gate=1.25))
 
     params = system.unpack_params([])
     coeffs = system.protocol.get_drive_coefficients(0.5, params)

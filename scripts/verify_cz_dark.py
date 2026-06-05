@@ -5,7 +5,9 @@ Checks:
 2. Correct CZ phase structure: |00⟩→|00⟩, |01⟩→e^{iθ}|01⟩, |10⟩→e^{iθ}|10⟩, |11⟩→-e^{2iθ}|11⟩
 3. Unitarity of the gate in the computational subspace
 """
+
 import os
+
 os.environ["JAX_PLATFORMS"] = "cpu"
 
 import numpy as np
@@ -17,11 +19,15 @@ from ryd_gate.protocols.gate_cz_to import TOProtocol
 from ryd_gate.analysis.gate_metrics import average_gate_infidelity, sss_infidelity, bell_infidelity
 
 X_TO_OUR_DARK = [
-    -0.6989301339711643, 1.0296229082590798, 0.3759232324550267,
-    1.5710180991068543, 1.4454279613697887, 1.3406239758422793,
+    -0.6989301339711643,
+    1.0296229082590798,
+    0.3759232324550267,
+    1.5710180991068543,
+    1.4454279613697887,
+    1.3406239758422793,
 ]
 
-system = make_our_system( blackmanflag=True, detuning_sign=1)
+system = make_our_system(blackmanflag=True, detuning_sign=1)
 protocol = TOProtocol()
 
 theta = X_TO_OUR_DARK[4]
@@ -44,8 +50,7 @@ print(f"  theta (single-qubit Z) = {theta:.6f} rad")
 basis = {f"|{label}⟩": system.product_state(label) for label in ("00", "01", "10", "11")}
 
 # Use theta=0 placeholder to inspect raw CZ phase structure before single-qubit Z rotation
-x_no_theta = [X_TO_OUR_DARK[0], X_TO_OUR_DARK[1], X_TO_OUR_DARK[2],
-              X_TO_OUR_DARK[3], 0.0, X_TO_OUR_DARK[5]]
+x_no_theta = [X_TO_OUR_DARK[0], X_TO_OUR_DARK[1], X_TO_OUR_DARK[2], X_TO_OUR_DARK[3], 0.0, X_TO_OUR_DARK[5]]
 
 overlaps = {}
 for label, ini in basis.items():
@@ -72,7 +77,7 @@ print(f"\n  Relative phases (removing single-qubit Z = {theta:.4f} rad/qubit):")
 print(f"    φ(|00⟩)          = {phi00:+.6f} rad")
 print(f"    φ(|01⟩) - θ      = {phi01 - theta:+.6f} rad")
 print(f"    φ(|10⟩) - θ      = {phi10 - theta:+.6f} rad")
-print(f"    φ(|11⟩) - 2θ     = {phi11 - 2*theta:+.6f} rad")
+print(f"    φ(|11⟩) - 2θ     = {phi11 - 2 * theta:+.6f} rad")
 print(f"    CZ phase (|11⟩ - 2θ - |00⟩) = {cz_phase:+.6f} rad  (expect ±π)")
 print(f"    |CZ phase - π| = {abs(abs(cz_phase) - np.pi):.4e} rad")
 
@@ -94,12 +99,16 @@ print(f"\n{'=' * 60}")
 print("  4. Comparison: dark vs bright")
 print("=" * 60)
 X_TO_OUR_BRIGHT = [
-    -1.7370398295694707, 0.7988774460188806, 2.3116588890406224,
-    0.5186261498956248, 0.900066116155231, 1.2415235064066774,
+    -1.7370398295694707,
+    0.7988774460188806,
+    2.3116588890406224,
+    0.5186261498956248,
+    0.900066116155231,
+    1.2415235064066774,
 ]
-system_bright = make_our_system( blackmanflag=True, detuning_sign=-1)
+system_bright = make_our_system(blackmanflag=True, detuning_sign=-1)
 print(f"  {'metric':<12s} {'dark':>12s} {'bright':>12s}")
-print(f"  {'-'*12} {'-'*12} {'-'*12}")
+print(f"  {'-' * 12} {'-' * 12} {'-' * 12}")
 for ft, fn in _fid_funcs.items():
     vd = fn(system, protocol, X_TO_OUR_DARK)
     vb = fn(system_bright, protocol, X_TO_OUR_BRIGHT)
@@ -109,7 +118,10 @@ print(f"\n  Gate times:")
 print(f"    dark:   {X_TO_OUR_DARK[5] * system.meta('time_scale') * 1e9:.2f} ns")
 print(f"    bright: {X_TO_OUR_BRIGHT[5] * system_bright.meta('time_scale') * 1e9:.2f} ns")
 
-print("\nAll checks passed." if all(
-    fn(system, protocol, X_TO_OUR_DARK) < 1e-6
-    for fn in [average_gate_infidelity, sss_infidelity, bell_infidelity]
-) else "\nWARNING: Some fidelity checks failed!")
+print(
+    "\nAll checks passed."
+    if all(
+        fn(system, protocol, X_TO_OUR_DARK) < 1e-6 for fn in [average_gate_infidelity, sss_infidelity, bell_infidelity]
+    )
+    else "\nWARNING: Some fidelity checks failed!"
+)
