@@ -22,10 +22,9 @@ import argparse
 import os
 import time as _time
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
-from exact import simulate
 from ryd_gate import RydbergSystem, SweepProtocol
 from ryd_gate.analysis.coarsening import (
     build_neighbor_lists,
@@ -38,11 +37,12 @@ from ryd_gate.analysis.lattice_observables import (
     measure_from_states,
     precompute_bit_masks,
 )
+from ryd_gate.backends.exact import simulate
+from ryd_gate.core.level_structures import InteractionSpec
 from ryd_gate.core.states import (
     domain_config,
     product_state,
 )
-from ryd_gate.core.level_structures import InteractionSpec
 from ryd_gate.lattice import is_in_domain, make_square_lattice
 
 # ---------------------------------------------------------------------------

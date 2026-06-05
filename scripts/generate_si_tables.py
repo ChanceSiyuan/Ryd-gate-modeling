@@ -16,18 +16,19 @@ import os
 
 os.environ["JAX_PLATFORMS"] = "cpu"
 
-import numpy as np
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from pathlib import Path
 
-from ryd_gate import RydbergSystem
+import matplotlib.pyplot as plt
 from system_builders import make_analog_3_system, make_our_system
-from exact import MonteCarloResult, MonteCarloRunner
+
+from ryd_gate import RydbergSystem
+from ryd_gate.analysis.gate_metrics import error_budget, sss_infidelity
+from ryd_gate.backends.exact import MonteCarloResult, MonteCarloRunner
 from ryd_gate.protocols.gate_cz_to import TOProtocol
-from ryd_gate.analysis.gate_metrics import sss_infidelity, error_budget
 
 SSS_12_STATES = [f"SSS-{i}" for i in range(12)]
 

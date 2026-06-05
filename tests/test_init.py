@@ -57,13 +57,13 @@ class TestPackageImports:
         import warnings
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
-            from exact.legacy.ideal_cz import CZGateSimulator
+            from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         assert CZGateSimulator is not None
 
     def test_legacy_import(self):
         """Should be able to import from legacy module without deprecation."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         assert CZGateSimulator is not None
 
@@ -80,7 +80,7 @@ class TestPackageImports:
             SystemModel,
             compile_hamiltonian_ir,
         )
-        from exact import ExactSparseCompiler, SolverBackend, compile_expm_ir, simulate
+        from ryd_gate.backends.exact import ExactSparseCompiler, SolverBackend, compile_expm_ir, simulate
 
         assert all(
             item is not None
@@ -103,10 +103,9 @@ class TestPackageImports:
 
     def test_new_package_namespaces(self):
         """Core, IR, backend, and simulate namespaces should be importable."""
-        from exact import DenseODEBackend, SparseExpmBackend
+        from ryd_gate.backends.exact import DenseODEBackend, SparseExpmBackend, simulate
         from ryd_gate.core import BasisSpec, RydbergSystem
         from ryd_gate.ir import HamiltonianIR, HamiltonianTerm, compile_hamiltonian_ir
-        from exact import simulate
 
         assert all(
             item is not None

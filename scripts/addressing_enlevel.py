@@ -4,10 +4,10 @@
 This script plots the two-atom Rydberg energy levels as a function of detuning.
 """
 
-import numpy as np
-import matplotlib.pyplot as plt
 from itertools import permutations
 
+import matplotlib.pyplot as plt
+import numpy as np
 
 O420 = 135  # Ω₄₂₀/(2π) [MHz]      (range: 10–500)
 O1013 = 135  # Ω₁₀₁₃/(2π) [MHz]     (range: 10–500)

@@ -3,15 +3,15 @@
 import numpy as np
 import pytest
 
-from tenpy_mps.backends import TenpyDMRGBackend
-from tn_common.lattice_spec import create_tn_lattice_spec
-from tenpy_mps.model import build_tenpy_model
-from tenpy_mps.observables import (
+from ryd_gate.backends.tenpy_mps.backends import TenpyDMRGBackend
+from ryd_gate.backends.tenpy_mps.model import build_tenpy_model
+from ryd_gate.backends.tenpy_mps.observables import (
     measure_mean_rydberg,
     measure_site_occupations,
     measure_staggered_magnetization,
 )
-from tenpy_mps.state import mps_fidelity, product_state_mps, product_superposition_mps
+from ryd_gate.backends.tenpy_mps.state import mps_fidelity, product_state_mps, product_superposition_mps
+from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
 
 pytest.importorskip("tenpy")
 
@@ -73,7 +73,7 @@ class TestDMRG:
     def test_2x2_energy_vs_exact(self, spec_2x2):
         """DMRG energy matches exact diagonalization for 2x2."""
         from ryd_gate import RydbergSystem, compile_hamiltonian_ir
-        from exact import compile_expm_ir
+        from ryd_gate.backends.exact import compile_expm_ir
         from ryd_gate.core.level_structures import InteractionSpec
         from ryd_gate.lattice import make_square_lattice
         from ryd_gate.protocols.sweep import SweepProtocol

@@ -3,9 +3,10 @@ This script demonstrates how to use the ryd_gate package to simulate a CZ gate i
 """
 
 import numpy as np
-from exact import simulate
-from ryd_gate import RydbergSystem, SweepProtocol
 from ryd_gate.model.system import InteractionSpec
+
+from ryd_gate import RydbergSystem, SweepProtocol
+from ryd_gate.backends.exact import simulate
 from ryd_gate.lattice import make_square_lattice
 
 protocol = SweepProtocol(

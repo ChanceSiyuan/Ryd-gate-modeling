@@ -4,13 +4,14 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-import matplotlib.pyplot as plt
-import numpy as np
 from itertools import product
 
-from exact import simulate
-from ryd_gate import RydbergSystem
+import matplotlib.pyplot as plt
+import numpy as np
 from system_builders import make_analog_3_system, make_our_system
+
+from ryd_gate import RydbergSystem
+from ryd_gate.backends.exact import simulate
 from ryd_gate.core.level_structures import InteractionSpec
 from ryd_gate.lattice import make_square_lattice
 from ryd_gate.protocols.digital_analog import DigitalAnalogProtocol, Segment

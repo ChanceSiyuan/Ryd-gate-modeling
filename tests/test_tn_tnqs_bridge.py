@@ -4,11 +4,11 @@ import textwrap
 
 import numpy as np
 
+from ryd_gate.backends.itensor.tnqs_backend import build_tnqs_payload
+from ryd_gate.backends.tn_common.compiler import TNEvolutionIR
+from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
+from ryd_gate.backends.tn_common.simulate import simulate_tn
 from ryd_gate.protocols.lattice_dynamics import TFIMQuenchProtocol
-from tn_common.compiler import TNEvolutionIR
-from tn_common.lattice_spec import create_tn_lattice_spec
-from tn_common.simulate import simulate_tn
-from itensor.tnqs_backend import build_tnqs_payload
 
 
 def test_build_tnqs_payload_contains_2d_runtime_options():

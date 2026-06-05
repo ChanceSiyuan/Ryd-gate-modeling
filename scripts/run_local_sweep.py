@@ -26,16 +26,15 @@ Produces three figures:
 
 import matplotlib.pyplot as plt
 import numpy as np
-
 from scipy.constants import pi
-
-from exact import simulate
-from ryd_gate import RydbergSystem
 from system_builders import make_analog_3_system, make_our_system
+
+from ryd_gate import RydbergSystem
 from ryd_gate.analysis.observable_metrics import measure_trajectory, norm_squared
-from ryd_gate.pulse import blackman_pulse
+from ryd_gate.backends.exact import simulate
 from ryd_gate.core.operators import build_product_state_map
 from ryd_gate.protocols.sweep import SweepProtocol
+from ryd_gate.pulse import blackman_pulse
 
 N = 3  # 3-level system: |g>=0, |e>=1, |r>=2
 

@@ -62,7 +62,7 @@ class TestCZGateSimulatorInit:
 
     def test_invalid_param_set(self):
         """CZGateSimulator should raise ValueError for invalid param_set."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         with pytest.raises(ValueError, match="only supports 'our' or 'lukin'"):
             CZGateSimulator(param_set="invalid")
@@ -260,7 +260,7 @@ class TestStoredParameterWorkflow:
 
     def test_setup_protocol_TO_wrong_length_raises(self):
         """setup_protocol should raise ValueError for wrong TO parameter count."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         sim = CZGateSimulator(param_set="our", strategy="TO")
         with pytest.raises(ValueError, match="6 elements"):
@@ -268,7 +268,7 @@ class TestStoredParameterWorkflow:
 
     def test_setup_protocol_AR_wrong_length_raises(self):
         """setup_protocol should raise ValueError for wrong AR parameter count."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         sim = CZGateSimulator(param_set="our", strategy="AR")
         with pytest.raises(ValueError, match="8 elements"):
@@ -336,7 +336,7 @@ class TestMonteCarloSimulation:
 
     def test_monte_carlo_result_dataclass(self):
         """MonteCarloResult dataclass should be importable and have correct fields."""
-        from exact.legacy.ideal_cz import MonteCarloResult
+        from ryd_gate.backends.exact.legacy.ideal_cz import MonteCarloResult
 
         result = MonteCarloResult(
             mean_fidelity=0.99,
@@ -351,7 +351,7 @@ class TestMonteCarloSimulation:
 
     def test_constructor_requires_sigma_detuning_when_dephasing_enabled(self):
         """Constructor should raise if enable_rydberg_dephasing=True without sigma_detuning."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         with pytest.raises(ValueError, match="sigma_detuning"):
             CZGateSimulator(
@@ -361,7 +361,7 @@ class TestMonteCarloSimulation:
 
     def test_constructor_requires_sigma_pos_xyz_when_position_enabled(self):
         """Constructor should raise if enable_position_error=True without sigma_pos_xyz."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         with pytest.raises(ValueError, match="sigma_pos_xyz"):
             CZGateSimulator(
@@ -372,7 +372,7 @@ class TestMonteCarloSimulation:
     @pytest.mark.slow
     def test_gate_fidelity_returns_tuple_when_mc_enabled(self):
         """gate_fidelity should return (mean, std) tuple when MC flags are on."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         sim = CZGateSimulator(
             param_set="our", strategy="TO",
@@ -393,7 +393,7 @@ class TestMonteCarloSimulation:
     @pytest.mark.slow
     def test_3d_position_model_distances(self):
         """MC with 3D position model should produce positive distances."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         small_sigma = (0.05e-6, 0.05e-6, 0.05e-6)
         sim = CZGateSimulator(
@@ -445,7 +445,7 @@ class TestIndependentErrorFlags:
 
     def test_enable_rydberg_decay_only(self):
         """Rydberg diagonal should have imaginary part, mid-state should not."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         sim = CZGateSimulator(param_set="our", enable_rydberg_decay=True)
         diag = np.diag(sim.tq_ham_const)
@@ -458,7 +458,7 @@ class TestIndependentErrorFlags:
 
     def test_enable_intermediate_decay_only(self):
         """Intermediate diagonal should have imaginary part, Rydberg should not."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         sim = CZGateSimulator(param_set="our", enable_intermediate_decay=True)
         diag = np.diag(sim.tq_ham_const)
@@ -474,7 +474,7 @@ class TestIndependentErrorFlags:
 
     def test_polarization_leakage_enabled(self):
         """With leakage enabled, garbage Rabi freqs should be nonzero."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         sim = CZGateSimulator(param_set="our", enable_polarization_leakage=True)
         assert sim.rabi_420_garbage != 0.0
@@ -489,7 +489,7 @@ class TestIndependentErrorFlags:
 
     def test_zero_state_lightshift_scattering_gated_by_flag(self):
         """Scattering on |0⟩ should be gated by enable_intermediate_decay."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         sim_off = CZGateSimulator(param_set="our", enable_intermediate_decay=False)
         sim_on = CZGateSimulator(param_set="our", enable_intermediate_decay=True)
@@ -532,7 +532,7 @@ class TestIndependentErrorFlags:
 
     def test_dephasing_flag_gates_mc(self):
         """MC with enable_rydberg_dephasing=False should ignore sigma_detuning."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         sim = CZGateSimulator(
             param_set="our", strategy="TO", enable_rydberg_dephasing=False
@@ -545,7 +545,7 @@ class TestIndependentErrorFlags:
 
     def test_position_flag_gates_mc(self):
         """MC with enable_position_error=False should ignore sigma_pos_xyz."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         sim = CZGateSimulator(
             param_set="our", strategy="TO", enable_position_error=False
@@ -609,7 +609,7 @@ class TestBranchingRatios:
 
     def test_error_budget_polarization_leakage_zero_when_disabled(self):
         """Polarization leakage channel should be ~0 when flag is off."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         sim = CZGateSimulator(
             param_set="our", strategy="TO", blackmanflag=True,
@@ -639,7 +639,7 @@ class TestMonteCarloWithBranching:
     @pytest.fixture(scope="class")
     def mc_branching_result(self):
         """Shared MC result with branching for structural checks."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         sim = CZGateSimulator(
             param_set="our", strategy="TO",
@@ -654,7 +654,7 @@ class TestMonteCarloWithBranching:
 
     def test_mc_no_branching_by_default(self):
         """MC without compute_branching should return None for all branch fields."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         sim = CZGateSimulator(
             param_set="our", strategy="TO",
@@ -699,7 +699,7 @@ class TestMonteCarloWithBranching:
 
     def test_save_load_roundtrip(self, tmp_path):
         """Saving and loading should reproduce the same MonteCarloResult."""
-        from exact.legacy.ideal_cz import MonteCarloResult
+        from ryd_gate.backends.exact.legacy.ideal_cz import MonteCarloResult
 
         fids = np.array([0.995, 0.993, 0.997])
         bx = np.array([1e-3, 2e-3, 0.5e-3])
@@ -916,7 +916,7 @@ class TestMonteCarloResultSerialization:
 
     def test_save_load_with_distance_samples(self, tmp_path):
         """Save/load roundtrip should preserve distance_samples."""
-        from exact.legacy.ideal_cz import MonteCarloResult
+        from ryd_gate.backends.exact.legacy.ideal_cz import MonteCarloResult
 
         fids = np.array([0.99, 0.98, 0.97])
         dists = np.array([3.01, 2.99, 3.02])
@@ -939,7 +939,7 @@ class TestMonteCarloResultSerialization:
 
     def test_save_load_without_branching(self, tmp_path):
         """Save/load roundtrip without branching data should work."""
-        from exact.legacy.ideal_cz import MonteCarloResult
+        from ryd_gate.backends.exact.legacy.ideal_cz import MonteCarloResult
 
         fids = np.array([0.99, 0.98])
         result = MonteCarloResult(
@@ -965,7 +965,7 @@ class TestBuildSSSStateMap:
 
     def test_sss_state_map_keys(self):
         """State map should contain 4 computational + 12 SSS states."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         smap = CZGateSimulator._build_sss_state_map()
         assert "00" in smap
@@ -978,7 +978,7 @@ class TestBuildSSSStateMap:
 
     def test_sss_states_normalized(self):
         """All SSS states should be normalized."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         smap = CZGateSimulator._build_sss_state_map()
         for label, state in smap.items():
@@ -992,7 +992,7 @@ class TestOptimizeDispatch:
 
     def test_optimize_invalid_strategy_raises(self):
         """optimize() with invalid strategy should raise ValueError."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         sim = CZGateSimulator(param_set="our", strategy="TO")
         sim.strategy = "INVALID"
@@ -1029,7 +1029,7 @@ class TestDiagnosePlotDispatch:
 
     def test_invalid_strategy_at_init_raises(self):
         """Invalid strategy at construction should raise ValueError."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
         with pytest.raises(ValueError, match="Unknown strategy"):
             CZGateSimulator(param_set="our", strategy="INVALID")
 
@@ -1040,7 +1040,7 @@ class TestMCProgressPrint:
 
     def test_mc_5_shots_prints_progress(self, capsys):
         """MC with n_shots >= 5 should print progress."""
-        from exact.legacy.ideal_cz import CZGateSimulator
+        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
         sim = CZGateSimulator(
             param_set="our", strategy="TO",

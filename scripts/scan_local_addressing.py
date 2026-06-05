@@ -20,10 +20,12 @@ import argparse
 import os
 import time as _time
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from scipy.constants import pi
+from system_builders import make_analog_3_system, make_our_system
 
+from ryd_gate import RydbergSystem
 from ryd_gate.analysis.local_addressing import (
     BASELINE_AMP,
     BASELINE_DETUNING_HZ,
@@ -34,8 +36,6 @@ from ryd_gate.analysis.local_addressing import (
     default_sweep_x,
     evaluate_addressing,
 )
-from ryd_gate import RydbergSystem
-from system_builders import make_analog_3_system, make_our_system
 from ryd_gate.core.operators import build_product_state_map
 from ryd_gate.physics.ac_stark import (
     LAMBDA_D2,
@@ -179,7 +179,7 @@ def _simulate_grid_point(task):
     (``t_gate_us``) per task so the same scan loop can iterate over either
     axis (legacy ``optimize`` collapses them to a single value).
     """
-    from exact import simulate
+    from ryd_gate.backends.exact import simulate
 
     idx, wl, power_uw, delta_half_mhz, t_gate_us = task
     model = _OPT_WORKER["model"]
@@ -246,7 +246,7 @@ def _simulate_grid_point(task):
 
 def _run_optimize_scan(args):
     """Run the 2D grid scan and return (grid, metadata dict)."""
-    from exact import simulate
+    from ryd_gate.backends.exact import simulate
 
     print("=" * 60)
     print("  Local Addressing: Wavelength x Power Optimization")

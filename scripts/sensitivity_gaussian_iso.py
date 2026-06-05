@@ -26,11 +26,11 @@ from __future__ import annotations
 
 import numpy as np
 from scipy.optimize import curve_fit
+from system_builders import make_analog_3_system, make_our_system
 
 from ryd_gate import RydbergSystem
-from system_builders import make_analog_3_system, make_our_system
-from ryd_gate.protocols.gate_cz_to import TOProtocol
 from ryd_gate.analysis.gate_metrics import average_gate_infidelity, residuals_to_branching
+from ryd_gate.protocols.gate_cz_to import TOProtocol
 
 # ---------------------------------------------------------------------------
 # Optimised dark CZ gate parameters (from opt_dark.py)

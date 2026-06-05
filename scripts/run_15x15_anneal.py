@@ -12,8 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
+from ryd_gate.backends.tn_common import create_tn_lattice_spec, simulate_tn
 from ryd_gate.protocols.lattice_dynamics import TFIMAnnealProtocol
-from tn_common import create_tn_lattice_spec, simulate_tn
 
 
 def parse_args() -> argparse.Namespace:

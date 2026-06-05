@@ -49,8 +49,8 @@ def compile_hamiltonian_ir(system, params: dict) -> HamiltonianIR:
         block_name_for_drive_channel,
         channel_needs_hermitian_conjugate,
     )
-    from ryd_gate.core.operator_spec import LocalProjectorSpec
     from ryd_gate.core.level_structures import LevelStructureSpec
+    from ryd_gate.core.operator_spec import LocalProjectorSpec
 
     protocol = system._require_protocol()
     level_spec = system.meta("level_spec", None)

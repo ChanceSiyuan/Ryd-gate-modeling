@@ -7,10 +7,15 @@ Two tabs:
 
 import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import streamlit as st
+from plotly.subplots import make_subplots
 from scipy.constants import pi
 
+from ryd_gate import RydbergSystem
+from ryd_gate.analysis.observable_metrics import measure_trajectory, norm_squared
+from ryd_gate.backends.exact import simulate
+from ryd_gate.core.operators import build_product_state_map
+from ryd_gate.lattice import make_chain
 from ryd_gate.physics.ac_stark import (
     LAMBDA_D1,
     LAMBDA_D2,
@@ -18,11 +23,6 @@ from ryd_gate.physics.ac_stark import (
     POWER_REF_UW,
     compute_shift_scatter,
 )
-from exact import simulate
-from ryd_gate import RydbergSystem
-from ryd_gate.analysis.observable_metrics import measure_trajectory, norm_squared
-from ryd_gate.core.operators import build_product_state_map
-from ryd_gate.lattice import make_chain
 from ryd_gate.protocols.sweep import SweepProtocol
 
 # Sweep constants (matching scripts/run_local_sweep.py)

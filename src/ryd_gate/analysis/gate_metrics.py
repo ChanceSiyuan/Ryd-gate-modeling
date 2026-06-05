@@ -47,13 +47,13 @@ def _solve_state(
                 "ham_const_override is only supported by the historical AtomicSystem path. "
                 "Use MonteCarloRunner to add perturbation terms to compiled IR."
             )
-        from exact import simulate
+        from ryd_gate.backends.exact import simulate
 
         bound = system.with_protocol(protocol).with_amplitude_scale(amplitude_scale)
         result = simulate(bound, x, state, t_eval=t_eval)
         return result.states if t_eval is not None else result.psi_final
 
-    from exact.legacy._solve_gate import solve_gate
+    from ryd_gate.backends.exact.legacy._solve_gate import solve_gate
 
     return solve_gate(
         system,

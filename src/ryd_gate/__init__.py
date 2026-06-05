@@ -17,8 +17,8 @@ Typical workflow
 
 3. **Choose an algorithm package**::
 
-       from exact import simulate              # exact state-vector
-       from tn_common import simulate_tn       # tensor-network dispatch
+       from ryd_gate.backends.exact import simulate              # exact state-vector
+       from ryd_gate.backends.tn_common import simulate_tn       # tensor-network dispatch
 
 Subpackages
 -----------
@@ -34,7 +34,6 @@ __version__ = "0.1.0"
 # --- Systems ---
 from .core.basis import BasisSpec
 from .core.blocks import BlockRegistry
-from .core.observables import Observable, ObservableRegistry
 from .core.level_structures import (
     DEFAULT_C6,
     InteractionSpec,
@@ -42,6 +41,7 @@ from .core.level_structures import (
     TransitionSpec,
     level_structure,
 )
+from .core.observables import Observable, ObservableRegistry
 from .core.system import RydbergSystem
 
 # --- Advanced / new-arch primitives ---

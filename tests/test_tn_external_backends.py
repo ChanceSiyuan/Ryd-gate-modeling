@@ -1,11 +1,11 @@
-from ryd_gate.ir.evolution import EvolutionResult
-from ryd_gate.protocols.lattice_dynamics import TFIMAnnealProtocol, TFIMQuenchProtocol
-from tn_common.external_backends import (
+from ryd_gate.backends.tn_common.external_backends import (
     ExternalSolverDependencyError,
     available_external_solver_packages,
 )
-from tn_common.lattice_spec import create_tn_lattice_spec
-from tn_common.simulate import simulate_tn
+from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
+from ryd_gate.backends.tn_common.simulate import simulate_tn
+from ryd_gate.ir.evolution import EvolutionResult
+from ryd_gate.protocols.lattice_dynamics import TFIMAnnealProtocol, TFIMQuenchProtocol
 
 
 def test_external_ttn_backend_dispatches_to_engine():
@@ -42,7 +42,7 @@ def test_external_2dtn_backend_can_still_select_python_package(monkeypatch):
     proto = TFIMQuenchProtocol(hx=1.0, t_gate=0.25)
 
     monkeypatch.setattr(
-        "tn_common.external_backends.importlib.util.find_spec",
+        "ryd_gate.backends.tn_common.external_backends.importlib.util.find_spec",
         lambda name: None,
     )
 
