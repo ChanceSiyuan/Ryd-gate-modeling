@@ -1,17 +1,12 @@
-"""2D PEPS/BP external-solver boundary."""
+"""2D PEPS / belief-propagation external-solver boundary.
 
-from ryd_gate.backends.tn_common.compiler import (
-    TNCompiler,
-    TNEvolutionIR,
-    tn_lattice_spec_from_hamiltonian_ir,
-    tn_lattice_spec_from_system,
-)
+Thin boundary package: a 2D PEPS/BP run is dispatched through
+``ryd_gate.backends.tn_common.simulate_tn(spec, protocol, x, backend="2dtn")``,
+which builds the TN IR and hands it to :class:`External2DTNBPBackend`. That class
+is re-exported here for discovery; shared TN IR/compiler types live in
+``ryd_gate.backends.tn_common``.
+"""
+
 from ryd_gate.backends.tn_common.external_backends import External2DTNBPBackend
 
-__all__ = [
-    "External2DTNBPBackend",
-    "TNCompiler",
-    "TNEvolutionIR",
-    "tn_lattice_spec_from_system",
-    "tn_lattice_spec_from_hamiltonian_ir",
-]
+__all__ = ["External2DTNBPBackend"]

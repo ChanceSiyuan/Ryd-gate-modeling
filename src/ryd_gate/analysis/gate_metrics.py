@@ -53,7 +53,7 @@ def _solve_state(
         result = simulate(bound, x, state, t_eval=t_eval)
         return result.states if t_eval is not None else result.psi_final
 
-    from ryd_gate.backends.exact.legacy._solve_gate import solve_gate
+    from ryd_gate.backends.exact.legacy import solve_gate
 
     return solve_gate(
         system,

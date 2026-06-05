@@ -1,17 +1,12 @@
-"""Neural quantum state external-solver boundary."""
+"""Neural quantum state (tVMC) external-solver boundary.
 
-from ryd_gate.backends.tn_common.compiler import (
-    TNCompiler,
-    TNEvolutionIR,
-    tn_lattice_spec_from_hamiltonian_ir,
-    tn_lattice_spec_from_system,
-)
+Thin boundary package: an NQS run is dispatched through
+``ryd_gate.backends.tn_common.simulate_tn(spec, protocol, x, backend="nqs")``,
+which builds the TN IR and hands it to :class:`ExternalNQSTVMCBackend`. That
+class is re-exported here for discovery; shared TN IR/compiler types live in
+``ryd_gate.backends.tn_common``.
+"""
+
 from ryd_gate.backends.tn_common.external_backends import ExternalNQSTVMCBackend
 
-__all__ = [
-    "ExternalNQSTVMCBackend",
-    "TNCompiler",
-    "TNEvolutionIR",
-    "tn_lattice_spec_from_system",
-    "tn_lattice_spec_from_hamiltonian_ir",
-]
+__all__ = ["ExternalNQSTVMCBackend"]
