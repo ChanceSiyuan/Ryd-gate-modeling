@@ -66,6 +66,9 @@ from .protocols.sweep import SweepProtocol
 # --- Pulse utilities ---
 from .pulse import blackman_pulse, blackman_pulse_sqrt, blackman_window
 
+# --- Unified simulation entry point ---
+from .simulate import simulate
+
 
 def __getattr__(name: str):
     """Lazy exports for optional/heavy physics helpers."""
@@ -81,12 +84,6 @@ def __getattr__(name: str):
         from .analysis.addressing_metrics import AddressingEvaluator
 
         return AddressingEvaluator
-    if name == "simulate":
-        raise AttributeError(
-            "ryd_gate.simulate was moved out of the core package. "
-            "Use exact.simulate for exact state-vector evolution or "
-            "tn_common.simulate_tn for tensor-network algorithms."
-        )
     raise AttributeError(f"module 'ryd_gate' has no attribute {name!r}")
 
 
@@ -120,6 +117,8 @@ __all__ = [
     "average_gate_infidelity",
     "error_budget",
     "AddressingEvaluator",
+    # Simulation
+    "simulate",
     # Pulse utilities
     "blackman_pulse",
     "blackman_pulse_sqrt",
