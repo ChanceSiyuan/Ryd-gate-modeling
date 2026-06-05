@@ -50,17 +50,15 @@ from __future__ import annotations
 import os
 import time as _time
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from scipy.constants import pi
-
-from exact import simulate
-from ryd_gate import RydbergSystem, compile_hamiltonian_ir
 from system_builders import make_analog_3_system, make_our_system
-from exact import compile_expm_ir
+
+from ryd_gate import RydbergSystem, compile_hamiltonian_ir
+from ryd_gate.backends.exact import compile_expm_ir, simulate
 from ryd_gate.physics.ac_stark import POWER_REF_UW, compute_shift_scatter
 from ryd_gate.protocols.sweep import SweepProtocol
-
 
 # ──────────────────────────────────────────────────────────────────────────
 # Reference physical parameters (must match scan_local_addressing.py)

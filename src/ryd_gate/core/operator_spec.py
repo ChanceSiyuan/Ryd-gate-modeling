@@ -10,7 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.sparse import csc_matrix, diags as spdiags
+from scipy.sparse import csc_matrix
+from scipy.sparse import diags as spdiags
 
 from ryd_gate.core.basis import BasisSpec
 from ryd_gate.core.operators import embed_site_op

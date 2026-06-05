@@ -20,7 +20,6 @@ Contents
 
 from ryd_gate.core.basis import BasisSpec
 from ryd_gate.core.blocks import BlockRegistry
-from ryd_gate.core.observables import Observable, ObservableRegistry
 from ryd_gate.core.level_structures import (
     DEFAULT_C6,
     InteractionSpec,
@@ -28,6 +27,7 @@ from ryd_gate.core.level_structures import (
     TransitionSpec,
     level_structure,
 )
+from ryd_gate.core.observables import Observable, ObservableRegistry
 from ryd_gate.core.system import RydbergSystem
 
 __all__ = [

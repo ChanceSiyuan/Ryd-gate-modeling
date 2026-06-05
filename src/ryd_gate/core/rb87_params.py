@@ -68,6 +68,7 @@ def _rb87_physical_params(
     enable_polarization_leakage: bool,
 ) -> _RB87PhysicalParams:
     from arc import Rubidium87
+
     from ryd_gate.physics.branching import _mid_branching_ratios, _rydberg_branching_ratios
 
     atom = Rubidium87()

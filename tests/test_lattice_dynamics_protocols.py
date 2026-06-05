@@ -8,7 +8,7 @@ from ryd_gate import (
     compile_hamiltonian_ir,
     tfim_to_rydberg_controls,
 )
-from exact.compiler import compile_expm_ir
+from ryd_gate.backends.exact.compiler import compile_expm_ir
 from ryd_gate.lattice import make_square_lattice
 from ryd_gate.protocols.base import Protocol
 

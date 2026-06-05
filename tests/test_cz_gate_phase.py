@@ -10,8 +10,7 @@ import pytest
 
 pytestmark = pytest.mark.slow
 
-from exact.legacy.ideal_cz import CZGateSimulator
-
+from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
 # Known-good dark-detuning TO parameters (re-optimized with a00 formula)
 X_TO = [

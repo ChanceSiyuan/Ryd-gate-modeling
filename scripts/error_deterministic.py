@@ -13,10 +13,11 @@ import os
 
 os.environ["JAX_PLATFORMS"] = "cpu"
 
-from ryd_gate import RydbergSystem
 from system_builders import make_analog_3_system, make_our_system
+
+from ryd_gate import RydbergSystem
+from ryd_gate.analysis.gate_metrics import error_budget, sss_infidelity
 from ryd_gate.protocols.gate_cz_to import TOProtocol
-from ryd_gate.analysis.gate_metrics import sss_infidelity, error_budget
 
 SSS_12_STATES = [f"SSS-{i}" for i in range(12)]
 

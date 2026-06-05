@@ -4,13 +4,13 @@ import numpy as np
 import pytest
 
 from ryd_gate import DEFAULT_C6, RydbergSystem, SweepProtocol, compile_hamiltonian_ir
-from ryd_gate.core.level_structures import InteractionSpec, level_structure
-from ryd_gate.lattice import make_square_lattice
-from tn_common.compiler import TNCompiler, tn_lattice_spec_from_system
-from tn_common.lattice_spec import (
+from ryd_gate.backends.tn_common.compiler import TNCompiler, tn_lattice_spec_from_system
+from ryd_gate.backends.tn_common.lattice_spec import (
     create_tn_lattice_spec,
     snake_order_mapping,
 )
+from ryd_gate.core.level_structures import InteractionSpec, level_structure
+from ryd_gate.lattice import make_square_lattice
 
 
 class TestSnakeOrderMapping:
@@ -157,7 +157,7 @@ def test_unified_hamiltonian_ir_lowers_to_exact_and_tn():
     hamiltonian = compile_hamiltonian_ir(system, params)
     tn_ir = TNCompiler().compile(hamiltonian)
 
-    from exact.compiler import ExactSparseCompiler
+    from ryd_gate.backends.exact.compiler import ExactSparseCompiler
 
     exact_ir = ExactSparseCompiler(max_dim=1000).compile(hamiltonian)
 

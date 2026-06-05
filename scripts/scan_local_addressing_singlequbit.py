@@ -22,18 +22,17 @@ import argparse
 import os
 import time as _time
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from scipy.constants import pi
+from system_builders import make_analog_3_system, make_our_system
 
 from ryd_gate import RydbergSystem
-from system_builders import make_analog_3_system, make_our_system
 from ryd_gate.physics.ac_stark import (
     POWER_REF_UW,
     compute_shift_scatter,
 )
 from ryd_gate.protocols.sweep import SweepProtocol
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # Data generation
@@ -42,7 +41,7 @@ from ryd_gate.protocols.sweep import SweepProtocol
 
 def _run_optimize_scan(args):
     """Run the 2D grid scan with two 1-atom sims per point."""
-    from exact import simulate
+    from ryd_gate.backends.exact import simulate
 
     print("=" * 60)
     print("  Single-Qubit Local Addressing: Wavelength x Power Scan")

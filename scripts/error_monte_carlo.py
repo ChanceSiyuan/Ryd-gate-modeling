@@ -11,10 +11,10 @@ import os
 os.environ["JAX_PLATFORMS"] = "cpu"
 
 import numpy as np
+from system_builders import make_analog_3_system, make_our_system
 
 from ryd_gate import RydbergSystem
-from system_builders import make_analog_3_system, make_our_system
-from exact import MonteCarloResult, MonteCarloRunner
+from ryd_gate.backends.exact import MonteCarloResult, MonteCarloRunner
 from ryd_gate.protocols.gate_cz_to import TOProtocol
 
 X_TO_OUR_DARK = [

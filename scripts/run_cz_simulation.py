@@ -4,11 +4,12 @@ import os
 
 os.environ["JAX_PLATFORMS"] = "cpu"
 
-from ryd_gate import RydbergSystem
 from system_builders import make_analog_3_system, make_our_system
-from ryd_gate.protocols.gate_cz_to import TOProtocol
-from ryd_gate.protocols.gate_cz_ar import ARProtocol
+
+from ryd_gate import RydbergSystem
 from ryd_gate.analysis.gate_metrics import average_gate_infidelity, population_evolution
+from ryd_gate.protocols.gate_cz_ar import ARProtocol
+from ryd_gate.protocols.gate_cz_to import TOProtocol
 
 # Known good TO pulse parameters: [A, w/Omega_eff, phi_0, delta/Omega_eff, theta, T/T_scale]
 X_TO = [0.1122, 1.0431, -0.72565603, 0.0, 0.452, 1.219096]

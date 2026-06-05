@@ -11,12 +11,12 @@ import os
 os.environ["JAX_PLATFORMS"] = "cpu"
 
 import numpy as np
-
-from exact import simulate
-from ryd_gate import RydbergSystem
 from system_builders import make_analog_3_system, make_our_system
+
+from ryd_gate import RydbergSystem
+from ryd_gate.analysis.gate_metrics import average_gate_infidelity, bell_infidelity, sss_infidelity
+from ryd_gate.backends.exact import simulate
 from ryd_gate.protocols.gate_cz_to import TOProtocol
-from ryd_gate.analysis.gate_metrics import average_gate_infidelity, sss_infidelity, bell_infidelity
 
 X_TO_OUR_DARK = [
     -0.6989301339711643,

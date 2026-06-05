@@ -4,7 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
-from exact.legacy.ideal_cz import CZGateSimulator
+from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
 
 st.set_page_config(page_title="Error Analysis", layout="wide", page_icon="\u269b")
 st.title("Error Analysis")

@@ -4,14 +4,14 @@ import textwrap
 
 import numpy as np
 
+from ryd_gate.backends.itensor.backend import build_itensors_payload
+from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
+from ryd_gate.backends.tn_common.simulate import simulate_tn
 from ryd_gate.protocols.lattice_dynamics import TFIMQuenchProtocol
-from itensor.backend import build_itensors_payload
-from tn_common.lattice_spec import create_tn_lattice_spec
-from tn_common.simulate import simulate_tn
 
 
 def test_build_itensors_payload_contains_schedule_and_1d_ordering():
-    from tn_common.compiler import TNEvolutionIR
+    from ryd_gate.backends.tn_common.compiler import TNEvolutionIR
 
     spec = create_tn_lattice_spec(1, 2, V_nn=4.0)
     proto = TFIMQuenchProtocol(hx=0.5, hz=0.0, t_gate=0.2)

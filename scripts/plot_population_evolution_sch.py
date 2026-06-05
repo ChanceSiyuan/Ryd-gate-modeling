@@ -13,14 +13,13 @@ Usage:
 
 import os
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+from system_builders import make_analog_3_system, make_our_system
 
 from ryd_gate import RydbergSystem
-from system_builders import make_analog_3_system, make_our_system
-from ryd_gate.protocols.gate_cz_to import TOProtocol
 from ryd_gate.analysis.gate_metrics import population_evolution, state_infidelity
-
+from ryd_gate.protocols.gate_cz_to import TOProtocol
 
 # ── Initial Optimized TO pulse parameters ──────────────────────────────────
 # Phase function: φ(t) = A·cos(ωt + φ₀) + δ·t
