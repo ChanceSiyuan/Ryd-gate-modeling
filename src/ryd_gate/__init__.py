@@ -35,14 +35,14 @@ __version__ = "0.1.0"
 from .core.basis import BasisSpec
 from .core.blocks import BlockRegistry
 from .core.observables import Observable, ObservableRegistry
-from .core.rydberg_system import (
+from .core.level_structures import (
     DEFAULT_C6,
     InteractionSpec,
     LevelStructureSpec,
-    RydbergSystem,
     TransitionSpec,
     level_structure,
 )
+from .core.system import RydbergSystem
 
 # --- Advanced / new-arch primitives ---
 from .core.system_model import SystemModel

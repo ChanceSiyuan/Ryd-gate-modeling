@@ -50,7 +50,7 @@ def compile_hamiltonian_ir(system, params: dict) -> HamiltonianIR:
         channel_needs_hermitian_conjugate,
     )
     from ryd_gate.core.operator_spec import LocalProjectorSpec
-    from ryd_gate.core.rydberg_system import LevelStructureSpec
+    from ryd_gate.core.level_structures import LevelStructureSpec
 
     protocol = system._require_protocol()
     level_spec = system.meta("level_spec", None)

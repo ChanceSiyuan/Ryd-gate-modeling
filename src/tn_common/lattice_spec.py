@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ryd_gate.core.rydberg_system import LevelStructureSpec
+from ryd_gate.core.level_structures import LevelStructureSpec
 
 from .sites import resolve_level_structure
 
