@@ -43,7 +43,7 @@ Every gate infidelity contribution is decomposed into four channels:
 ### Basic Setup
 
 ```python
-from ryd_gate.legacy.ideal_cz import CZGateSimulator, MonteCarloResult
+from exact.legacy.ideal_cz import CZGateSimulator, MonteCarloResult
 
 X_TO_OUR_DARK = [
    -0.9509172186259588, 1.105272315809505, 0.383911389220584,
@@ -90,11 +90,15 @@ budget = sim.error_budget(X_TO_OUR_DARK)
 ### Direct Module Usage
 
 ```python
-from ryd_gate.legacy.atomic_system import create_our_system
+from ryd_gate import RydbergSystem
+from ryd_gate.lattice import make_chain
 from ryd_gate.protocols.gate_cz_to import TOProtocol
 from ryd_gate.analysis.gate_metrics import error_budget
 
-system = create_our_system(
+system = RydbergSystem.from_lattice(
+    make_chain(2, spacing_um=3.0),
+    "rb87_7",
+    param_set="our",
     detuning_sign=-1,
     enable_rydberg_decay=True,
     enable_intermediate_decay=True,

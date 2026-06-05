@@ -1,9 +1,8 @@
 """Pure lattice geometry: shapes, coordinates, and sublattice labels.
 
 Only "where the atoms sit" — no energy-level structure, no Hamiltonians,
-no interactions.  Energy structure and van der Waals coupling
-computation live in ``core/`` (see ``core/atomic_system.py``,
-``core/lattice_3level.py``, ``core/interactions.py``).
+no interactions. Energy structures live in ``core/rydberg_system.py`` and
+van der Waals coupling computation lives in ``core/interactions.py``.
 
 Available shapes
 ----------------

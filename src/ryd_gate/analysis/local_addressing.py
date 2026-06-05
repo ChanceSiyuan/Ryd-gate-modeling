@@ -60,7 +60,7 @@ def evaluate_addressing(system, initial_state, protocol, x, engine_kwargs,
         Random seed for reproducibility.
     """
     from ryd_gate.analysis.addressing_metrics import AddressingEvaluator
-    from ryd_gate.backends import MonteCarloRunner
+    from exact import MonteCarloRunner
 
     engine = MonteCarloRunner(system.with_protocol(protocol), x)
     if engine_kwargs.get("sigma_detuning"):

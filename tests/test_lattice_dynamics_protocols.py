@@ -5,9 +5,10 @@ from ryd_gate import (
     RydbergSystem,
     TFIMAnnealProtocol,
     TFIMQuenchProtocol,
+    compile_hamiltonian_ir,
     tfim_to_rydberg_controls,
 )
-from ryd_gate.compilers.exact_sparse import compile_expm_ir
+from exact.compiler import compile_expm_ir
 from ryd_gate.lattice import make_square_lattice
 from ryd_gate.protocols.base import Protocol
 
@@ -106,6 +107,7 @@ def test_exact_compiler_accepts_site_dependent_global_n_channels():
         protocol=SiteDetuningProtocol(),
     )
 
-    ir = compile_expm_ir(system, system.unpack_params([]))
+    ham = compile_hamiltonian_ir(system, system.unpack_params([]))
+    ir = compile_expm_ir(ham)
 
     assert {term.name for term in ir.drive_terms} == {"global_n_0", "global_n_1"}

@@ -5,10 +5,10 @@ import textwrap
 import numpy as np
 
 from ryd_gate.protocols.lattice_dynamics import TFIMQuenchProtocol
-from ryd_gate.tn.compiler import TNEvolutionIR
-from ryd_gate.tn.lattice_spec import create_tn_lattice_spec
-from ryd_gate.tn.simulate import simulate_tn
-from ryd_gate.tn.tnqs_bridge import build_tnqs_payload
+from tn_common.compiler import TNEvolutionIR
+from tn_common.lattice_spec import create_tn_lattice_spec
+from tn_common.simulate import simulate_tn
+from itensor.tnqs_backend import build_tnqs_payload
 
 
 def test_build_tnqs_payload_contains_2d_runtime_options():
@@ -28,6 +28,7 @@ def test_build_tnqs_payload_contains_2d_runtime_options():
         use_cuda=True,
         measurement_alg="boundary_mps",
         measurement_bond_dim=16,
+        chi_2d_prime=4,
         normalize_tensors=True,
         eltype="ComplexF32",
     )
@@ -36,6 +37,7 @@ def test_build_tnqs_payload_contains_2d_runtime_options():
     assert payload["runtime"]["chi_max"] == 8
     assert payload["runtime"]["measurement_alg"] == "boundarymps"
     assert payload["runtime"]["measurement_bond_dim"] == 16
+    assert payload["runtime"]["chi_2d_prime"] == 4
     assert payload["runtime"]["normalize_tensors"] is True
     assert payload["runtime"]["eltype"] == "ComplexF32"
     assert payload["lattice"]["vdw_pairs_1d"][0][0] >= 1
@@ -97,6 +99,7 @@ def test_simulate_tn_2dtn_dispatches_to_tnqs_subprocess(tmp_path):
             "source_bashrc": False,
             "dt": 0.1,
             "chi_max": 8,
+            "chi_2d_prime": 4,
             "measurement_alg": "bp",
         },
     )

@@ -3,15 +3,15 @@
 import numpy as np
 import pytest
 
-from ryd_gate.tn.backends import TenpyDMRGBackend
-from ryd_gate.tn.lattice_spec import create_tn_lattice_spec
-from ryd_gate.tn.model import build_tenpy_model
-from ryd_gate.tn.observables import (
+from tenpy_mps.backends import TenpyDMRGBackend
+from tn_common.lattice_spec import create_tn_lattice_spec
+from tenpy_mps.model import build_tenpy_model
+from tenpy_mps.observables import (
     measure_mean_rydberg,
     measure_site_occupations,
     measure_staggered_magnetization,
 )
-from ryd_gate.tn.state import mps_fidelity, product_state_mps, product_superposition_mps
+from tenpy_mps.state import mps_fidelity, product_state_mps, product_superposition_mps
 
 pytest.importorskip("tenpy")
 
@@ -72,8 +72,8 @@ class TestDMRG:
     @pytest.mark.slow
     def test_2x2_energy_vs_exact(self, spec_2x2):
         """DMRG energy matches exact diagonalization for 2x2."""
-        from ryd_gate import RydbergSystem
-        from ryd_gate.compilers import compile_expm_ir
+        from ryd_gate import RydbergSystem, compile_hamiltonian_ir
+        from exact import compile_expm_ir
         from ryd_gate.core.rydberg_system import InteractionSpec
         from ryd_gate.lattice import make_square_lattice
         from ryd_gate.protocols.sweep import SweepProtocol
@@ -88,7 +88,8 @@ class TestDMRG:
             Omega=1.0,
         )
         params = system.unpack_params([Delta, Delta, 1.0])
-        ir = compile_expm_ir(system, params)
+        ham = compile_hamiltonian_ir(system, params)
+        ir = compile_expm_ir(ham)
 
         # Build full Hamiltonian at t=0.5 (midpoint, Omega fully on)
         t_mid = 0.5

@@ -53,8 +53,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.constants import pi
 
-from ryd_gate import RydbergSystem, simulate
-from ryd_gate.compilers import compile_expm_ir
+from exact import simulate
+from ryd_gate import RydbergSystem, compile_hamiltonian_ir
+from system_builders import make_analog_3_system, make_our_system
+from exact import compile_expm_ir
 from ryd_gate.physics.ac_stark import POWER_REF_UW, compute_shift_scatter
 from ryd_gate.protocols.sweep import SweepProtocol
 
@@ -92,8 +94,7 @@ def build_model() -> RydbergSystem:
     global _PARENT_MODEL
     if _PARENT_MODEL is not None:
         return _PARENT_MODEL
-    _PARENT_MODEL = RydbergSystem.from_preset(
-        "analog_3",
+    _PARENT_MODEL = make_analog_3_system(
         detuning_sign=1, blackmanflag=True,
         distance_um=DISTANCE_UM,
         Delta_Hz=DELTA_HZ,
@@ -213,7 +214,8 @@ def _exp1_one_T(T_us, n_pts=None):
     t_eval = np.linspace(0.0, t_gate, n_pts)
     t0 = _time.time()
     result = simulate(system, x, psi0, t_eval=t_eval)
-    ir = compile_expm_ir(system, params)
+    ham = compile_hamiltonian_ir(system, params)
+    ir = compile_expm_ir(ham)
     F1, F2 = adiabatic_fidelity_history(ir, result.times, result.states, k=2)
     elapsed = _time.time() - t0
     m = measure_pops(model, result.psi_final)

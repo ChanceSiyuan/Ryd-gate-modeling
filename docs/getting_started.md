@@ -34,11 +34,11 @@ The codebase is organized into focused subpackages:
 |------------|-------------|
 | `ryd_gate.model` | `RydbergSystem`, symbolic blocks, observables, and lattice state helpers |
 | `ryd_gate.protocols` | Protocol classes for CZ gates, sweep protocols, and digital-analog schedules |
-| `ryd_gate.compilers` | Backend-specific compilation from symbolic systems to IR |
-| `ryd_gate.backends` | Dense ODE, sparse expm, Monte Carlo, and future solver backends |
-| `ryd_gate.simulate` | High-level compile + evolve dispatch |
+| `exact` | Backend-specific compilation from symbolic systems to IR |
+| `exact` | Dense ODE, sparse expm, Monte Carlo, and future solver backends |
+| `exact.simulate` | High-level compile + evolve dispatch |
 | `ryd_gate.analysis` | Gate fidelity metrics, error budget, addressing evaluator |
-| `ryd_gate.legacy` | Historical CZ simulator and Monte Carlo implementations |
+| `exact.legacy` | Historical CZ simulator and Monte Carlo implementations |
 
 ### Key Exports
 
@@ -64,10 +64,17 @@ Bind the protocol to `RydbergSystem`, then call `simulate(system, x, psi0)`.
 
 ```python
 import numpy as np
-from ryd_gate import RydbergSystem, TOProtocol, simulate
+from exact import simulate
+from ryd_gate import RydbergSystem, TOProtocol
+from ryd_gate.lattice import make_chain
 
 protocol = TOProtocol()
-system = RydbergSystem.from_preset("our", protocol=protocol)
+system = RydbergSystem.from_lattice(
+    make_chain(2, spacing_um=3.0),
+    "rb87_7",
+    param_set="our",
+    protocol=protocol,
+)
 psi0 = np.zeros(49, dtype=complex)
 psi0[8] = 1.0
 X_TO = [0.1122, 1.0431, -0.72565603, 0.0, 0.452, 1.219096]
@@ -78,19 +85,21 @@ print(f"Final norm: {np.linalg.norm(result.psi_final):.6f}")
 ### 2. Direct Compiler Usage
 
 ```python
-from ryd_gate import RydbergSystem, SweepProtocol
-from ryd_gate.compilers import compile_expm_ir
+from ryd_gate import RydbergSystem, SweepProtocol, compile_hamiltonian_ir
+from exact import compile_expm_ir
+from ryd_gate.lattice import make_chain
 
 protocol = SweepProtocol()
-system = RydbergSystem.from_preset("1r", N=4, protocol=protocol)
+system = RydbergSystem.from_lattice(make_chain(4), "1r", protocol=protocol)
 params = system.unpack_params([-3.0, 3.0, 10.0])
-ir = compile_expm_ir(system, params)
+hamiltonian = compile_hamiltonian_ir(system, params)
+exact_ir = compile_expm_ir(hamiltonian)
 ```
 
 ### 3. Monte Carlo Noise Analysis
 
 ```python
-from ryd_gate.backends import MonteCarloRunner
+from exact import MonteCarloRunner
 
 runner = MonteCarloRunner(system, [-3.0, 3.0, 10.0])
 runner.setup_detuning_noise(50e3)
@@ -101,10 +110,16 @@ shots = runner.run_states([system.ground_state()], n_shots=50, seed=42)
 
 ```python
 import numpy as np
-from ryd_gate import RydbergSystem, SweepProtocol, simulate
-from ryd_gate.model.operators import build_product_state_map
+from exact import simulate
+from ryd_gate import RydbergSystem, SweepProtocol
+from ryd_gate.core.operators import build_product_state_map
+from ryd_gate.lattice import make_chain
 
-system = RydbergSystem.from_preset("analog_3")
+system = RydbergSystem.from_lattice(
+    make_chain(2, spacing_um=3.0),
+    "ger",
+    param_set="analog_3",
+)
 protocol = SweepProtocol(addressing={0: -2 * np.pi * 12e6})
 psi0 = build_product_state_map(n_levels=3)["gg"]
 x = [
@@ -118,7 +133,7 @@ result = simulate(system.with_protocol(protocol), x, psi0)
 ### 5. Including Decay Effects
 
 ```python
-from ryd_gate.legacy.ideal_cz import CZGateSimulator
+from exact.legacy.ideal_cz import CZGateSimulator
 
 legacy_sim = CZGateSimulator(param_set="our", strategy="AR")
 ```

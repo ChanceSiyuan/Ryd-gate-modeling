@@ -29,10 +29,9 @@ class SweepProtocol(Protocol):
         For lattice systems: ``{i: delta_i, ...}`` pins selected atoms.
     scatter_rate : float
         Scattering rate on addressed atoms' ground state (Hz).
-        Only used with AtomicSystem (2-atom).
+        Used as a uniform fallback when ``scatter_rates`` is not provided.
     omega_ramp_frac : float
         Fraction of t_sweep over which Ω ramps from 0 to 1.
-        Only used with LatticeSystem (N-atom).
     n_steps : int
         Number of piecewise-constant time steps for lattice evolution.
     """
@@ -151,6 +150,12 @@ class SweepProtocol(Protocol):
             "drive_420", "drive_420_dag", "lightshift_zero",
             "global_X", "global_n",
         })
+
+    def drive_channels(self, system) -> frozenset[str]:
+        """Return atomic or lattice channels based on the bound system."""
+        if hasattr(system, "meta") and system.meta("rabi_eff") is not None:
+            return frozenset({"drive_420", "drive_420_dag", "lightshift_zero"})
+        return frozenset({"global_X", "global_n"})
 
     def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
         """Return drive coefficients for either atomic or lattice mode."""

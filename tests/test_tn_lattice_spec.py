@@ -3,11 +3,11 @@
 import numpy as np
 import pytest
 
-from ryd_gate import DEFAULT_C6, RydbergSystem, SweepProtocol
+from ryd_gate import DEFAULT_C6, RydbergSystem, SweepProtocol, compile_hamiltonian_ir
 from ryd_gate.core.rydberg_system import InteractionSpec, level_structure
 from ryd_gate.lattice import make_square_lattice
-from ryd_gate.tn.compiler import TNCompiler, tn_lattice_spec_from_system
-from ryd_gate.tn.lattice_spec import (
+from tn_common.compiler import TNCompiler, tn_lattice_spec_from_system
+from tn_common.lattice_spec import (
     create_tn_lattice_spec,
     snake_order_mapping,
 )
@@ -113,7 +113,7 @@ def test_tn_compiler_uses_system_level_spec_and_interactions():
     proto = SweepProtocol(omega_ramp_frac=0.0)
     system = RydbergSystem.from_lattice(
         make_square_lattice(2, 2, spacing_um=10.0),
-        level_structure="01r",
+        level_structure="1r",
         interaction=InteractionSpec(C6=DEFAULT_C6, mode="nn"),
         protocol=proto,
         Omega=2.0,
@@ -126,6 +126,46 @@ def test_tn_compiler_uses_system_level_spec_and_interactions():
     assert ir.spec.vdw_pairs == system.meta("interaction_pairs")
     assert ir.spec.interaction_mode == "system"
     assert ir.spec.Omega == 2.0
+    assert ir.hamiltonian is not None
+
+
+def test_incompatible_protocol_level_structure_is_rejected():
+    system = RydbergSystem.from_lattice(
+        make_square_lattice(2, 2, spacing_um=10.0),
+        level_structure="01r",
+        interaction=InteractionSpec(C6=DEFAULT_C6, mode="nn"),
+        protocol=SweepProtocol(omega_ramp_frac=0.0),
+        Omega=2.0,
+    )
+    params = system.unpack_params([0.0, 0.0, 1.0])
+
+    with pytest.raises(ValueError, match="channel mismatch"):
+        compile_hamiltonian_ir(system, params)
+
+
+def test_unified_hamiltonian_ir_lowers_to_exact_and_tn():
+    proto = SweepProtocol(omega_ramp_frac=0.0)
+    system = RydbergSystem.from_lattice(
+        make_square_lattice(2, 2, spacing_um=10.0),
+        level_structure="1r",
+        interaction=InteractionSpec(C6=DEFAULT_C6, mode="nn"),
+        protocol=proto,
+        Omega=2.0,
+    )
+    params = system.unpack_params([0.0, 0.0, 1.0])
+
+    hamiltonian = compile_hamiltonian_ir(system, params)
+    tn_ir = TNCompiler().compile(hamiltonian)
+
+    from exact.compiler import ExactSparseCompiler
+
+    exact_ir = ExactSparseCompiler(max_dim=1000).compile(hamiltonian)
+
+    assert tn_ir.hamiltonian is hamiltonian
+    assert tn_ir.spec.vdw_pairs == hamiltonian.metadata["interaction_pairs"]
+    assert exact_ir.metadata["source_compiler"] == "ryd_gate"
+    assert exact_ir.static_terms
+    assert exact_ir.drive_terms
 
 
 def test_tn_lattice_spec_from_system_rejects_non_rectangular_geometry():

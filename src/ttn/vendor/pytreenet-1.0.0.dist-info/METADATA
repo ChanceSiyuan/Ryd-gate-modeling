@@ -1,0 +1,22 @@
+Metadata-Version: 2.1
+Name: pytreenet
+Version: 1.0.0
+Summary: Tree tensor network library for quantum simulations
+Author: Qunsheng Huang
+Author-email: "Richard M. Milbradt" <r.milbradt@tum.de>
+License: European Union Public License, v1.1
+Project-URL: Repository, https://github.com/Drachier/PyTreeNet
+Requires-Python: >=3.8.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: numpy >=1.24.3
+Requires-Dist: scipy >=1.10.1
+Requires-Dist: tqdm >=4.65.0
+Requires-Dist: h5py >=3.10.0
+Provides-Extra: docs
+Requires-Dist: sphinx >=7.1.2 ; extra == 'docs'
+Requires-Dist: sphinxcontrib-napoleon ==0.7 ; extra == 'docs'
+Provides-Extra: notebook
+Requires-Dist: ipykernel >=6.24.0 ; extra == 'notebook'
+Requires-Dist: matplotlib ==3.7.2 ; extra == 'notebook'
+

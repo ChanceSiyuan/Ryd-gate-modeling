@@ -1,4 +1,4 @@
-"""ryd_gate — Rydberg-atom quantum gate and lattice simulation toolkit.
+"""ryd_gate — Rydberg atom systems, pulse protocols, and Hamiltonian IR.
 
 Typical workflow
 ----------------
@@ -11,35 +11,27 @@ Typical workflow
 
 2. **Create a quantum system with the protocol bound**::
 
-       system = RydbergSystem.from_preset("01r", N=4, protocol=protocol)
+       from ryd_gate.lattice import make_chain
 
-3. **Run the simulation**::
+       system = RydbergSystem.from_lattice(make_chain(4), "01r", protocol=protocol)
 
-       result = simulate(system, params, psi0)
+3. **Choose an algorithm package**::
 
-4. **Analyze results**::
-
-       final_norm = abs(result.psi_final.conj() @ result.psi_final)
+       from exact import simulate              # exact state-vector
+       from tn_common import simulate_tn       # tensor-network dispatch
 
 Subpackages
 -----------
 - ``ryd_gate.core``      — Symbolic Rydberg systems, blocks, observables
 - ``ryd_gate.protocols`` — Pulse protocols: TOProtocol, ARProtocol, SweepProtocol
-- ``ryd_gate.compilers`` — Backend-specific compilers from symbolic systems to IR
-- ``ryd_gate.ir``        — Intermediate representations
-- ``ryd_gate.backends``  — ODE, sparse-expm, and future TN backends
-- ``ryd_gate.simulate``  — High-level compile + evolve dispatch
+- ``ryd_gate.ir``        — Unified Hamiltonian and result representations
 - ``ryd_gate.lattice``   — N-atom lattice: geometry, operators, states, evolution
 - ``ryd_gate.analysis``  — Post-processing: gate metrics, observables, domain analysis
-- ``ryd_gate.tn``        — Optional tensor-network path (requires tenpy)
-- ``ryd_gate.legacy``    — Historical CZ and Monte-Carlo implementations
 """
 
 __version__ = "0.1.0"
 
 # --- Systems ---
-from .backends import EvolutionResult, SolverBackend
-from .compilers import ExactSparseCompiler, compile_expm_ir
 from .core.basis import BasisSpec
 from .core.blocks import BlockRegistry
 from .core.observables import Observable, ObservableRegistry
@@ -54,7 +46,7 @@ from .core.rydberg_system import (
 
 # --- Advanced / new-arch primitives ---
 from .core.system_model import SystemModel
-from .ir import HamiltonianIR, HamiltonianTerm
+from .ir import EvolutionResult, HamiltonianIR, HamiltonianTerm, compile_hamiltonian_ir
 
 # --- Protocols ---
 from .protocols.base import Protocol
@@ -74,10 +66,6 @@ from .protocols.sweep import SweepProtocol
 # --- Pulse utilities ---
 from .pulse import blackman_pulse, blackman_pulse_sqrt, blackman_window
 
-# --- Simulation ---
-from .simulate import simulate
-
-
 def __getattr__(name: str):
     """Lazy exports for optional/heavy physics helpers."""
     if name == "compute_shift_scatter":
@@ -92,6 +80,12 @@ def __getattr__(name: str):
         from .analysis.addressing_metrics import AddressingEvaluator
 
         return AddressingEvaluator
+    if name == "simulate":
+        raise AttributeError(
+            "ryd_gate.simulate was moved out of the core package. "
+            "Use exact.simulate for exact state-vector evolution or "
+            "tn_common.simulate_tn for tensor-network algorithms."
+        )
     raise AttributeError(f"module 'ryd_gate' has no attribute {name!r}")
 
 __all__ = [
@@ -115,14 +109,11 @@ __all__ = [
     "interaction_longitudinal_shifts",
     "DigitalAnalogProtocol",
     "Segment",
-    # Simulation
-    "simulate",
+    # IR
     "EvolutionResult",
-    "SolverBackend",
     "HamiltonianIR",
     "HamiltonianTerm",
-    "ExactSparseCompiler",
-    "compile_expm_ir",
+    "compile_hamiltonian_ir",
     # Analysis
     "average_gate_infidelity",
     "error_budget",

@@ -13,6 +13,7 @@ import os
 os.environ["JAX_PLATFORMS"] = "cpu"
 
 from ryd_gate import RydbergSystem
+from system_builders import make_analog_3_system, make_our_system
 from ryd_gate.protocols.gate_cz_to import TOProtocol
 from ryd_gate.analysis.gate_metrics import sss_infidelity, error_budget
 
@@ -43,8 +44,7 @@ def run_error_source(label, detuning_sign, x, **system_kwargs):
 
     Returns (sss_infidelity, budget_dict_or_None).
     """
-    system = RydbergSystem.from_preset(
-        "our",
+    system = make_our_system(
         blackmanflag=True, detuning_sign=detuning_sign,
         **system_kwargs,
     )

@@ -5,12 +5,31 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ryd_gate import RydbergSystem, SweepProtocol, simulate
-from ryd_gate.compilers.exact_sparse import ExactSparseCompiler
+from exact import simulate
+from ryd_gate import RydbergSystem, SweepProtocol
+from exact.compiler import ExactSparseCompiler
 from ryd_gate.core.operator_spec import RydbergPairInteractionSpec
 from ryd_gate.core.rydberg_system import InteractionSpec, level_structure
 from ryd_gate.lattice import make_chain, make_square_lattice
 from ryd_gate.protocols.digital_analog import DigitalAnalogProtocol
+
+
+class _GerProtocol:
+    n_params = 0
+
+    def validate_params(self, x):
+        if x:
+            raise ValueError("no params")
+
+    def unpack_params(self, x, system):
+        self.validate_params(x)
+        return {"t_gate": 0.1, "pin_deltas": {}, "scatter_rates": {}, "static_overlays": []}
+
+    def drive_channels(self, system):
+        return frozenset({"drive_420", "H_1013", "delta_e", "delta_R"})
+
+    def get_drive_coefficients(self, t, params):
+        return {"drive_420": 1.0, "H_1013": 1.0, "delta_e": 0.0, "delta_R": 0.0}
 
 
 def test_1r_lattice_basis_blocks_and_observables():
@@ -125,8 +144,11 @@ def test_sparse_expm_t_eval_true_records_internal_steps_for_compatibility():
 
 def test_01r_digital_analog_simulation():
     protocol = DigitalAnalogProtocol.constant(omega_R=1.0, t_gate=0.1, n_steps=10)
-    model = RydbergSystem.from_preset(
-        "01r", protocol=protocol, N=2, spacing_um=4.0, C6=0.0,
+    model = RydbergSystem.from_lattice(
+        make_chain(2, spacing_um=4.0),
+        "01r",
+        interaction=InteractionSpec(C6=0.0),
+        protocol=protocol,
     )
     psi0 = model.product_state("11")
     result = simulate(model, [], psi0)
@@ -145,8 +167,12 @@ def test_level_structure_presets():
         level_structure("1er")
 
 
-def test_ger_lattice_preset_builds_g_e_r_levels():
-    model = RydbergSystem.from_preset("ger", N=1, C6=0.0)
+def test_ger_lattice_builds_g_e_r_levels():
+    model = RydbergSystem.from_lattice(
+        make_chain(1),
+        "ger",
+        interaction=InteractionSpec(C6=0.0),
+    )
 
     assert model.basis.local_levels == ("g", "e", "r")
     assert model.blocks.has("drive_420")
@@ -154,21 +180,25 @@ def test_ger_lattice_preset_builds_g_e_r_levels():
 
 
 def test_ger_transition_blocks_are_not_compiled_as_static_dense_terms():
-    model = RydbergSystem.from_preset(
+    model = RydbergSystem.from_lattice(
+        make_chain(1),
         "ger",
-        N=1,
-        C6=0.0,
-        protocol=SweepProtocol(n_steps=1),
+        interaction=InteractionSpec(C6=0.0),
+        protocol=_GerProtocol(),
     )
-    params = model.unpack_params([0.0, 0.0, 0.1])
+    params = model.unpack_params([])
     ir = ExactSparseCompiler().compile(model, params)
 
     assert "H_1013" not in {term.name for term in ir.static_terms}
 
 
 @pytest.mark.slow
-def test_dense_rb87_preset_constructs_model():
-    model = RydbergSystem.from_preset("our")
+def test_rb87_7_lattice_constructs_our_model():
+    model = RydbergSystem.from_lattice(
+        make_chain(2, spacing_um=3.0),
+        "rb87_7",
+        param_set="our",
+    )
 
     assert model.basis.local_dim == 7
     assert model.basis.local_levels == ("0", "1", "e1", "e2", "e3", "r", "r_garb")

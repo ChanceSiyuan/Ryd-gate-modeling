@@ -1,8 +1,8 @@
 """Universal Rydberg system model.
 
 A :class:`RydbergSystem` is built from three things: a lattice geometry,
-a local energy-level structure (``1r`` / ``01r`` / ``ger`` / ``rb87_7`` /
-``analog_3``), and a pulse protocol (sweep, CZ gate, digital-analog).
+a local energy-level structure (``1r`` / ``01r`` / ``ger`` / ``rb87_7``;
+``analog_3`` is a physical ``ger`` preset), and a pulse protocol.
 The class owns symbolic Hamiltonian blocks, observables, geometry metadata,
 and the bound protocol. Backend-specific compilers materialize those symbolic
 blocks into matrices, MPOs, or other solver inputs only when needed.
@@ -21,6 +21,7 @@ from ryd_gate.core.blocks import BlockRegistry
 from ryd_gate.core.interactions import vdw_couplings
 from ryd_gate.core.observables import ObservableRegistry
 from ryd_gate.core.operator_spec import (
+    LocalMatrixSumSpec,
     LocalProjectorSpec,
     RydbergPairInteractionSpec,
     SumProjectorSpec,
@@ -30,7 +31,7 @@ from ryd_gate.core.operator_spec import (
     measure_state_vector_operator,
 )
 from ryd_gate.core.system_model import SystemModel
-from ryd_gate.lattice.geometry import LatticeGeometry, make_chain
+from ryd_gate.lattice.geometry import LatticeGeometry
 
 if TYPE_CHECKING:
     from ryd_gate.protocols.base import Protocol
@@ -83,6 +84,42 @@ class InteractionSpec:
     mode: Literal["all", "nn", "nnn"] = "all"
 
 
+@dataclass(frozen=True)
+class _RB87PhysicalParams:
+    param_set: str
+    ryd_level: int
+    Delta: float
+    rabi_420: float
+    rabi_1013: float
+    rabi_eff: float
+    time_scale: float
+    rabi_420_garbage: float
+    rabi_1013_garbage: float
+    d_mid_ratio: float
+    d_ryd_ratio: float
+    v_ryd: float
+    v_ryd_garb: float
+    ryd_zeeman_shift: float
+    detuning_sign: int
+    mid_state_decay_rate: float
+    mid_garb_decay_rate: float
+    ryd_state_decay_rate: float
+    ryd_RD_rate: float
+    ryd_BBR_rate: float
+    ryd_garb_decay_rate: float
+    ryd_branch: dict
+    mid_branch: dict
+    t_rise: float
+    blackmanflag: bool
+    enable_rydberg_decay: bool
+    enable_intermediate_decay: bool
+    enable_0_scattering: bool
+    enable_polarization_leakage: bool
+    n_levels: int = 7
+    rydberg_indices: tuple[int, ...] = (5, 6)
+    n_atoms: int = 2
+
+
 def level_structure(name: str) -> LevelStructureSpec:
     """Return a built-in level-structure preset."""
     presets = {
@@ -128,11 +165,11 @@ def level_structure(name: str) -> LevelStructureSpec:
 class RydbergSystem(SystemModel):
     """Universal Rydberg-lattice system: geometry + level structure + protocol.
 
-    Built via :meth:`from_lattice` or :meth:`from_preset`. Once a protocol
-    is attached (constructor arg or :meth:`with_protocol`), the system can
-    be passed to backend-specific compilers. Exact state-vector solvers use
-    :func:`ryd_gate.compilers.compile_expm_ir`; large lattices should use a
-    tensor-network compiler/backend.
+    Built via :meth:`from_lattice`. Once a protocol is attached (constructor
+    arg or :meth:`with_protocol`), the system can be passed to
+    :func:`ryd_gate.ir.compile_hamiltonian_ir`. Algorithm packages then lower
+    that unified Hamiltonian IR into exact matrices, MPS/MPO data, TTN inputs,
+    or external solver payloads.
     """
 
     def __init__(
@@ -214,24 +251,13 @@ class RydbergSystem(SystemModel):
         return self._require_protocol().unpack_params(x, self)
 
     def hamiltonian(self, t: float, params: dict):
-        """Assemble the time-dependent Hamiltonian H(t) as a matrix."""
-        from ryd_gate.compilers.exact_sparse import compile_expm_ir
-
-        ir = compile_expm_ir(self, params)
-        H = None
-        for term in ir.static_terms:
-            coeff = term.coefficient if not callable(term.coefficient) else term.coefficient(0)
-            contrib = coeff * term.operator
-            H = contrib if H is None else H + contrib
-        for term in ir.drive_terms:
-            coeff = term.coefficient(t) if callable(term.coefficient) else term.coefficient
-            contrib = coeff * term.operator
-            H = contrib if H is None else H + contrib
-            if term.add_hermitian_conjugate:
-                H = H + np.conjugate(coeff) * term.operator.conj().T
-        if H is None:
-            return np.zeros((self._basis.total_dim, self._basis.total_dim), dtype=complex)
-        return H
+        """Materialized Hamiltonian access has moved to algorithm packages."""
+        del t, params
+        raise RuntimeError(
+            "RydbergSystem no longer materializes algorithm-specific matrices. "
+            "Use ryd_gate.compile_hamiltonian_ir(system, params) for the unified "
+            "Hamiltonian IR, then pass that IR to an algorithm compiler."
+        )
 
     def product_state(self, config: str | list[str] | tuple[str, ...]) -> np.ndarray:
         """Return a computational product state in this model's basis."""
@@ -265,13 +291,15 @@ class RydbergSystem(SystemModel):
         protocol: "Protocol | None" = None,
         param_set: str | None = None,
         Omega: float = 1.0,
+        **physical_params,
     ) -> "RydbergSystem":
         spec = (
             level_structure
             if isinstance(level_structure, LevelStructureSpec)
-            else globals()["level_structure"](level_structure) # use the level_structure function to get the LevelStructureSpec
+            else globals()["level_structure"](level_structure)
         )
-        interaction = interaction or InteractionSpec()
+        physical_model = _physical_model_for(spec.name, param_set)
+        interaction = interaction or _default_interaction_for_physical_model(physical_model)
         d = spec.local_dim
         N = geometry.N
         dim = d ** N
@@ -347,7 +375,7 @@ class RydbergSystem(SystemModel):
             "local_dim": d,
             "n_sites": N,
         }
-        return cls(
+        model = cls(
             param_set=param_set or f"lattice_{spec.name}",
             basis=basis,
             blocks=blocks,
@@ -357,38 +385,11 @@ class RydbergSystem(SystemModel):
             geometry=geometry,
             is_sparse=True,
         )
-
-    @classmethod
-    def from_preset(
-        cls,
-        name: str,
-        protocol: "Protocol | None" = None,
-        geometry: LatticeGeometry | None = None,
-        **params,
-    ) -> "RydbergSystem":
-        """Build a named model preset."""
-        if name in {"1r", "01r", "ger"}:
-            if geometry is None:
-                geometry = make_chain(params.pop("N", 2), spacing_um=params.pop("spacing_um", 4.0))
-            interaction = InteractionSpec(
-                C6=params.pop("C6", DEFAULT_C6),
-                max_range_um=params.pop("max_range_um", None),
-                mode=params.pop("interaction_mode", "all"),
-            )
-            return cls.from_lattice(
-                geometry,
-                level_structure=name,
-                interaction=interaction,
-                protocol=protocol,
-                param_set=params.pop("param_set", f"lattice_{name}"),
-                Omega=params.pop("Omega", 1.0),
-            )
-        if name == "analog_3":
-            return _analog_3level_model(protocol=protocol, **params)
-        if name in {"rb87_7", "our", "lukin"}:
-            param_set = "our" if name == "rb87_7" else name
-            return _rb87_7level_model(param_set=param_set, protocol=protocol, **params)
-        raise ValueError(f"Unknown RydbergSystem preset '{name}'.")
+        if physical_model == "analog_3":
+            _apply_analog_3_lattice_blocks(model, **physical_params)
+        elif physical_model in {"our", "lukin"}:
+            _apply_rb87_7_lattice_blocks(model, physical_model, **physical_params)
+        return model
 
 def _interaction_pairs(geometry: LatticeGeometry, interaction: InteractionSpec) -> tuple:
     if interaction.mode == "all":
@@ -412,103 +413,400 @@ def _nearest_spacing(coords: np.ndarray) -> float:
     return min(dists)
 
 
-def _register_dense_observables(
-    observables: ObservableRegistry,
-    basis: BasisSpec,
+def _physical_model_for(level_name: str, param_set: str | None) -> str | None:
+    if level_name == "ger" and param_set in {"analog", "analog_3"}:
+        return "analog_3"
+    if level_name == "rb87_7" and param_set in {"our", "lukin"}:
+        return param_set
+    return None
+
+
+def _default_interaction_for_physical_model(physical_model: str | None) -> InteractionSpec:
+    if physical_model == "lukin":
+        return InteractionSpec(C6=_rb87_default_c6("lukin"))
+    return InteractionSpec(C6=DEFAULT_C6)
+
+
+def _rb87_default_c6(param_set: str) -> float:
+    if param_set == "lukin":
+        return 2 * np.pi * 450e6 * 3.0**6
+    return DEFAULT_C6
+
+
+def _register_local_matrix_block(
+    blocks: BlockRegistry,
+    name: str,
+    matrix: np.ndarray,
     *,
-    include_joint: bool = False,
+    hermitian: bool = True,
+    description: str = "",
 ) -> None:
-    d = basis.local_dim
-    for i, level in enumerate(basis.local_levels):
-        per_site_ops = []
-        for site_i, site in enumerate(basis.site_labels):
-            op = _dense_site_projector(site_i, i, basis.n_sites, d)
-            per_site_ops.append(op)
-            observables.register(
-                f"pop_{site}_{level}",
-                op,
-                description=f"site {site} in |{level}>",
-                per_site=True,
-            )
-        observables.register(f"pop_{level}", sum(per_site_ops), description=f"total |{level}> population")
-
-    if include_joint and basis.n_sites == 2:
-        for i, a in enumerate(basis.local_levels):
-            va = np.zeros(d, dtype=complex)
-            va[i] = 1.0
-            for j, b in enumerate(basis.local_levels):
-                vb = np.zeros(d, dtype=complex)
-                vb[j] = 1.0
-                vec = np.kron(va, vb)
-                observables.register(f"pop_{a}{b}", np.outer(vec, vec.conj()), description=f"joint |{a}{b}> population")
-
-
-def _dense_site_projector(site_idx: int, level_idx: int, n_sites: int, local_dim: int) -> np.ndarray:
-    local = np.zeros((local_dim, local_dim), dtype=np.complex128)
-    local[level_idx, level_idx] = 1.0
-    op = np.eye(1, dtype=np.complex128)
-    for i in range(n_sites):
-        op = np.kron(op, local if i == site_idx else np.eye(local_dim, dtype=np.complex128))
-    return op
-
-
-def _analog_3level_model(protocol: "Protocol | None" = None, **kwargs) -> RydbergSystem:
-    from ryd_gate.legacy.atomic_system import create_analog_system
-
-    system = create_analog_system(**kwargs)
-    basis = BasisSpec(site_labels=tuple(str(i) for i in range(system.n_atoms)), local_levels=("g", "e", "r"), local_dim=3, total_dim=3 ** system.n_atoms)
-    blocks = BlockRegistry()
-    blocks.register("H_const", system.tq_ham_const)
-    blocks.register("H_1013", system.tq_ham_1013, hermitian=False)
-    blocks.register("H_1013_conj", system.tq_ham_1013_conj, hermitian=False)
-    blocks.register("drive_420", system.tq_ham_420, hermitian=False)
-    blocks.register("drive_420_dag", system.tq_ham_420_conj, hermitian=False)
-    blocks.register("lightshift_zero", system.tq_ham_lightshift_zero)
-    observables = ObservableRegistry()
-    _register_dense_observables(observables, basis, include_joint=system.n_atoms == 2)
-    return RydbergSystem(
-        param_set="analog",
-        basis=basis,
-        blocks=blocks,
-        observables=observables,
-        protocol=protocol,
-        metadata=_metadata_from_atomic(system),
-        is_sparse=False,
+    blocks.register(
+        name,
+        LocalMatrixSumSpec(np.asarray(matrix, dtype=np.complex128)),
+        description=description,
+        hermitian=hermitian,
     )
 
 
-def _rb87_7level_model(
-    param_set: str = "our",
-    protocol: "Protocol | None" = None,
-    **kwargs,
-) -> RydbergSystem:
-    from ryd_gate.legacy.atomic_system import create_lukin_system, create_our_system
+def _apply_analog_3_lattice_blocks(
+    model: RydbergSystem,
+    *,
+    detuning_sign: int = 1,
+    blackmanflag: bool = True,
+    enable_rydberg_decay: bool = False,
+    enable_intermediate_decay: bool = False,
+    Delta_Hz: float | None = None,
+    rabi_420_Hz: float | None = None,
+    rabi_1013_Hz: float | None = None,
+    **unused,
+) -> None:
+    _reject_unused(unused)
+    ryd_level = 70
+    Delta = detuning_sign * 2 * np.pi * (Delta_Hz if Delta_Hz is not None else 9.1e9)
+    rabi_420 = 2 * np.pi * (rabi_420_Hz if rabi_420_Hz is not None else 491e6)
+    rabi_1013 = 2 * np.pi * (rabi_1013_Hz if rabi_1013_Hz is not None else 491e6)
+    rabi_eff = rabi_420 * rabi_1013 / (2 * abs(Delta))
+    time_scale = 2 * np.pi / rabi_eff
+    mid_state_decay_rate = 1 / 110.7e-9
+    ryd_state_decay_rate = 1 / 151.55e-6
+    ryd_RD_rate = 1 / 410.41e-6
+    ryd_BBR_rate = ryd_state_decay_rate - ryd_RD_rate
 
-    factory = create_lukin_system if param_set == "lukin" else create_our_system
-    system = factory(**kwargs)
-    levels = level_structure("rb87_7").levels
-    basis = BasisSpec(site_labels=("A", "B"), local_levels=levels, local_dim=7, total_dim=49)
-    blocks = BlockRegistry()
-    blocks.register("H_const", system.tq_ham_const)
-    blocks.register("H_1013", system.tq_ham_1013, hermitian=False)
-    blocks.register("H_1013_conj", system.tq_ham_1013_conj, hermitian=False)
-    blocks.register("drive_420", system.tq_ham_420, hermitian=False)
-    blocks.register("drive_420_dag", system.tq_ham_420_conj, hermitian=False)
-    blocks.register("lightshift_zero", system.tq_ham_lightshift_zero)
-    observables = ObservableRegistry()
-    _register_dense_observables(observables, basis)
-    return RydbergSystem(
+    mid_decay = mid_state_decay_rate if enable_intermediate_decay else 0.0
+    ryd_decay = ryd_state_decay_rate if enable_rydberg_decay else 0.0
+
+    h_const = np.zeros((3, 3), dtype=np.complex128)
+    h_const[1, 1] = Delta - 1j * mid_decay / 2
+    h_const[2, 2] = -1j * ryd_decay / 2
+
+    h1013 = np.zeros((3, 3), dtype=np.complex128)
+    h1013[2, 1] = rabi_1013 / 2
+    h420 = np.zeros((3, 3), dtype=np.complex128)
+    h420[1, 0] = rabi_420 / 2
+    lightshift_zero = np.zeros((3, 3), dtype=np.complex128)
+
+    _register_local_matrix_block(model.blocks, "H_const", h_const, description="single-atom ger energies")
+    _register_local_matrix_block(model.blocks, "H_1013", h1013, hermitian=False, description="static e-r coupling")
+    _register_local_matrix_block(model.blocks, "H_1013_conj", h1013.conj().T, hermitian=False)
+    _register_local_matrix_block(model.blocks, "drive_420", h420, hermitian=False, description="g-e drive")
+    _register_local_matrix_block(model.blocks, "drive_420_dag", h420.conj().T, hermitian=False)
+    _register_local_matrix_block(model.blocks, "lightshift_zero", lightshift_zero)
+
+    model.metadata.update(
+        {
+            "physical_model": "analog_3",
+            "rabi_eff": rabi_eff,
+            "time_scale": time_scale,
+            "t_rise": 20e-9,
+            "blackmanflag": blackmanflag,
+            "n_atoms": model.N,
+            "n_levels": 3,
+            "rabi_420": rabi_420,
+            "rabi_1013": rabi_1013,
+            "rabi_420_garbage": 0.0,
+            "rabi_1013_garbage": 0.0,
+            "Delta": Delta,
+            "v_ryd": _nearest_pair_strength(model.metadata.get("interaction_pairs", ())),
+            "v_ryd_garb": 0.0,
+            "ryd_level": ryd_level,
+            "ryd_state_decay_rate": ryd_state_decay_rate,
+            "ryd_RD_rate": ryd_RD_rate,
+            "ryd_BBR_rate": ryd_BBR_rate,
+            "mid_state_decay_rate": mid_state_decay_rate,
+            "ryd_branch": {},
+            "mid_branch": {},
+            "rydberg_indices": (2,),
+            "enable_rydberg_decay": enable_rydberg_decay,
+            "enable_intermediate_decay": enable_intermediate_decay,
+            "enable_0_scattering": False,
+            "enable_polarization_leakage": False,
+        }
+    )
+
+
+def _apply_rb87_7_lattice_blocks(
+    model: RydbergSystem,
+    param_set: str,
+    *,
+    detuning_sign: int = 1,
+    blackmanflag: bool = True,
+    enable_rydberg_decay: bool = False,
+    enable_intermediate_decay: bool = False,
+    enable_0_scattering: bool = True,
+    enable_polarization_leakage: bool = False,
+    **unused,
+) -> None:
+    _reject_unused(unused)
+    physical = _rb87_physical_params(
+        param_set,
+        detuning_sign=detuning_sign,
+        blackmanflag=blackmanflag,
+        enable_rydberg_decay=enable_rydberg_decay,
+        enable_intermediate_decay=enable_intermediate_decay,
+        enable_0_scattering=enable_0_scattering,
+        enable_polarization_leakage=enable_polarization_leakage,
+    )
+
+    h_const = _rb87_local_h_const(
+        physical.Delta,
+        physical.ryd_zeeman_shift,
+        physical.mid_state_decay_rate if enable_intermediate_decay else 0.0,
+        physical.ryd_state_decay_rate if enable_rydberg_decay else 0.0,
+    )
+    h420 = _rb87_local_h420(param_set, physical.rabi_420, physical.rabi_420_garbage)
+    h1013 = _rb87_local_h1013(param_set, physical.rabi_1013, physical.rabi_1013_garbage)
+    lightshift_zero = _rb87_local_zero_lightshift(
+        param_set,
+        physical.Delta,
+        physical.rabi_420,
+        physical.rabi_420_garbage,
+        physical.mid_state_decay_rate,
+        enable_intermediate_decay,
+        enable_0_scattering,
+    )
+
+    _register_local_matrix_block(model.blocks, "H_const", h_const, description="single-atom rb87_7 energies")
+    _register_local_matrix_block(model.blocks, "H_1013", h1013, hermitian=False, description="static 1013nm coupling")
+    _register_local_matrix_block(model.blocks, "H_1013_conj", h1013.conj().T, hermitian=False)
+    _register_local_matrix_block(model.blocks, "drive_420", h420, hermitian=False, description="420nm drive")
+    _register_local_matrix_block(model.blocks, "drive_420_dag", h420.conj().T, hermitian=False)
+    _register_local_matrix_block(model.blocks, "lightshift_zero", lightshift_zero)
+
+    model.metadata.update(_metadata_from_rb87_params(physical))
+    model.metadata.update(
+        {
+            "physical_model": param_set,
+            "n_atoms": model.N,
+            "n_sites": model.N,
+            "level_structure": "rb87_7",
+            "level_spec": level_structure("rb87_7"),
+            "v_ryd": _nearest_pair_strength(model.metadata.get("interaction_pairs", ())),
+            "ryd_level": physical.ryd_level,
+        }
+    )
+
+
+def _rb87_physical_params(
+    param_set: str,
+    *,
+    detuning_sign: int,
+    blackmanflag: bool,
+    enable_rydberg_decay: bool,
+    enable_intermediate_decay: bool,
+    enable_0_scattering: bool,
+    enable_polarization_leakage: bool,
+) -> _RB87PhysicalParams:
+    from arc import Rubidium87
+    from ryd_gate.physics.branching import _mid_branching_ratios, _rydberg_branching_ratios
+
+    atom = Rubidium87()
+    if param_set == "our":
+        ryd_level = 70
+        Delta = detuning_sign * 2 * np.pi * 9.1e9
+        rabi_420 = 2 * np.pi * 491e6
+        rabi_1013 = 2 * np.pi * 185e6
+        d_mid_ratio = atom.getDipoleMatrixElement(
+            5, 0, 0.5, 0.5, 6, 1, 1.5, -0.5, -1
+        ) / atom.getDipoleMatrixElement(5, 0, 0.5, -0.5, 6, 1, 1.5, -1.5, -1)
+        d_ryd_ratio = atom.getDipoleMatrixElement(
+            6, 1, 1.5, -0.5, ryd_level, 0, 0.5, 0.5, 1
+        ) / atom.getDipoleMatrixElement(
+            6, 1, 1.5, -1.5, ryd_level, 0, 0.5, -0.5, 1
+        )
+        v_ryd = 2 * np.pi * 874e9 / 3**6
+        v_ryd_garb = v_ryd
+        ryd_zeeman_shift = 2 * np.pi * 56e6 if enable_polarization_leakage else 2 * np.pi * 56e9
+        mid_state_decay_rate = 1 / 110.7e-9
+        ryd_state_decay_rate = 1 / 151.55e-6
+        ryd_RD_rate = 1 / 410.41e-6
+        ryd_branch = _rydberg_branching_ratios(atom, ryd_level, "our")
+        mid_branch = {F: _mid_branching_ratios(atom, F, mF=-1) for F in (1, 2, 3)}
+    elif param_set == "lukin":
+        ryd_level = 53
+        Delta = detuning_sign * 2 * np.pi * 7.8e9
+        rabi_420 = 2 * np.pi * 237e6
+        rabi_1013 = 2 * np.pi * 303e6
+        d_mid_ratio = atom.getDipoleMatrixElement(
+            5, 0, 0.5, -0.5, 6, 1, 1.5, 0.5, 1
+        ) / atom.getDipoleMatrixElement(5, 0, 0.5, 0.5, 6, 1, 1.5, 1.5, 1)
+        d_ryd_ratio = atom.getDipoleMatrixElement(
+            6, 1, 1.5, 0.5, ryd_level, 0, 0.5, -0.5, -1
+        ) / atom.getDipoleMatrixElement(
+            6, 1, 1.5, 1.5, ryd_level, 0, 0.5, 0.5, -1
+        )
+        v_ryd = 2 * np.pi * 450e6
+        v_ryd_garb = v_ryd
+        ryd_zeeman_shift = 2 * np.pi * 2.4e9 if enable_polarization_leakage else 2 * np.pi * 2.4e12
+        mid_state_decay_rate = 1 / 110e-9
+        ryd_state_decay_rate = 1 / 88e-6
+        ryd_RD_rate = 1 / 147.64e-6
+        ryd_branch = _rydberg_branching_ratios(atom, ryd_level, "lukin")
+        mid_branch = {F: _mid_branching_ratios(atom, F, mF=1) for F in (1, 2, 3)}
+    else:
+        raise ValueError(f"Unknown rb87_7 parameter set '{param_set}'.")
+
+    rabi_420_garbage = rabi_420 * d_mid_ratio
+    rabi_1013_garbage = rabi_1013 * d_ryd_ratio
+    rabi_eff = rabi_420 * rabi_1013 / (2 * abs(Delta))
+    time_scale = 2 * np.pi / rabi_eff
+    ryd_BBR_rate = ryd_state_decay_rate - ryd_RD_rate
+
+    return _RB87PhysicalParams(
         param_set=param_set,
-        basis=basis,
-        blocks=blocks,
-        observables=observables,
-        protocol=protocol,
-        metadata=_metadata_from_atomic(system),
-        is_sparse=False,
+        ryd_level=ryd_level,
+        Delta=Delta,
+        rabi_420=rabi_420,
+        rabi_1013=rabi_1013,
+        rabi_eff=rabi_eff,
+        time_scale=time_scale,
+        rabi_420_garbage=rabi_420_garbage,
+        rabi_1013_garbage=rabi_1013_garbage,
+        d_mid_ratio=d_mid_ratio,
+        d_ryd_ratio=d_ryd_ratio,
+        v_ryd=v_ryd,
+        v_ryd_garb=v_ryd_garb,
+        ryd_zeeman_shift=ryd_zeeman_shift,
+        detuning_sign=detuning_sign,
+        mid_state_decay_rate=mid_state_decay_rate,
+        mid_garb_decay_rate=mid_state_decay_rate,
+        ryd_state_decay_rate=ryd_state_decay_rate,
+        ryd_RD_rate=ryd_RD_rate,
+        ryd_BBR_rate=ryd_BBR_rate,
+        ryd_garb_decay_rate=ryd_state_decay_rate,
+        ryd_branch=ryd_branch,
+        mid_branch=mid_branch,
+        t_rise=20e-9,
+        blackmanflag=blackmanflag,
+        enable_rydberg_decay=enable_rydberg_decay,
+        enable_intermediate_decay=enable_intermediate_decay,
+        enable_0_scattering=enable_0_scattering,
+        enable_polarization_leakage=enable_polarization_leakage,
     )
 
 
-def _metadata_from_atomic(system) -> dict[str, Any]:
+def _rb87_local_h_const(
+    Delta: float,
+    ryd_zeeman_shift: float,
+    middecay: float,
+    ryddecay: float,
+) -> np.ndarray:
+    h = np.zeros((7, 7), dtype=np.complex128)
+    h[2, 2] = Delta - 2 * np.pi * 51e6 - 1j * middecay / 2
+    h[3, 3] = Delta - 1j * middecay / 2
+    h[4, 4] = Delta + 2 * np.pi * 87e6 - 1j * middecay / 2
+    h[5, 5] = -1j * ryddecay / 2
+    h[6, 6] = ryd_zeeman_shift - 1j * ryddecay / 2
+    return h
+
+
+def _rb87_local_h420(param_set: str, rabi_420: float, rabi_420_garbage: float) -> np.ndarray:
+    from arc.wigner import CG
+
+    h = np.zeros((7, 7), dtype=np.complex128)
+    if param_set == "our":
+        for row, F in zip((2, 3, 4), (1, 2, 3)):
+            h[row, 1] = (
+                rabi_420 * CG(3 / 2, -3 / 2, 3 / 2, 1 / 2, F, -1)
+                + rabi_420_garbage * CG(3 / 2, -1 / 2, 3 / 2, -1 / 2, F, -1)
+            ) / 2
+    else:
+        for row, F in zip((2, 3, 4), (1, 2, 3)):
+            h[row, 1] = (
+                rabi_420 * CG(3 / 2, 3 / 2, 3 / 2, -1 / 2, F, 1)
+                + rabi_420_garbage * CG(3 / 2, 1 / 2, 3 / 2, 1 / 2, F, 1)
+            ) / 2
+    return h
+
+
+def _rb87_local_h1013(param_set: str, rabi_1013: float, rabi_1013_garbage: float) -> np.ndarray:
+    from arc.wigner import CG
+
+    h = np.zeros((7, 7), dtype=np.complex128)
+    if param_set == "our":
+        for col, F in zip((2, 3, 4), (1, 2, 3)):
+            h[5, col] = (rabi_1013 / 2) * CG(3 / 2, -3 / 2, 3 / 2, 1 / 2, F, -1)
+            h[6, col] = (rabi_1013_garbage / 2) * CG(3 / 2, -1 / 2, 3 / 2, -1 / 2, F, -1)
+    else:
+        for col, F in zip((2, 3, 4), (1, 2, 3)):
+            h[5, col] = (rabi_1013 / 2) * CG(3 / 2, 3 / 2, 3 / 2, -1 / 2, F, 1)
+            h[6, col] = (rabi_1013_garbage / 2) * CG(3 / 2, 1 / 2, 3 / 2, 1 / 2, F, 1)
+    return h
+
+
+def _rb87_local_zero_lightshift(
+    param_set: str,
+    Delta: float,
+    rabi_420: float,
+    rabi_420_garbage: float,
+    mid_state_decay_rate: float,
+    enable_intermediate_decay: bool,
+    enable_0_scattering: bool,
+) -> np.ndarray:
+    from arc.wigner import CG
+
+    E_0 = -2 * np.pi * 6.835e9
+    mid_energies = np.array([
+        Delta - 2 * np.pi * 51e6,
+        Delta,
+        Delta + 2 * np.pi * 87e6,
+    ], dtype=np.float64)
+    if param_set == "our":
+        cg_ratio_main = CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 1, 0) / CG(
+            1 / 2, -1 / 2, 3 / 2, 1 / 2, 2, 0
+        )
+        cg_ratio_garb = CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 1, 0) / CG(
+            1 / 2, 1 / 2, 3 / 2, -1 / 2, 2, 0
+        )
+        couplings = [
+            (
+                cg_ratio_main * rabi_420 * CG(3 / 2, -3 / 2, 3 / 2, 1 / 2, F, -1)
+                + cg_ratio_garb * rabi_420_garbage * CG(3 / 2, -1 / 2, 3 / 2, -1 / 2, F, -1)
+            ) / 2
+            for F in (1, 2, 3)
+        ]
+    else:
+        cg_ratio_main = CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 1, 0) / CG(
+            1 / 2, 1 / 2, 3 / 2, -1 / 2, 2, 0
+        )
+        cg_ratio_garb = CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 1, 0) / CG(
+            1 / 2, -1 / 2, 3 / 2, 1 / 2, 2, 0
+        )
+        couplings = [
+            (
+                cg_ratio_main * rabi_420 * CG(3 / 2, 3 / 2, 3 / 2, -1 / 2, F, 1)
+                + cg_ratio_garb * rabi_420_garbage * CG(3 / 2, 1 / 2, 3 / 2, 1 / 2, F, 1)
+            ) / 2
+            for F in (1, 2, 3)
+        ]
+
+    local = np.zeros((7, 7), dtype=np.complex128)
+    total_shift = 0.0
+    scatter_rate = 0.0
+    gamma = mid_state_decay_rate if enable_intermediate_decay else 0.0
+    for idx, (g_i, E_e) in enumerate(zip(couplings, mid_energies), start=2):
+        detuning = E_e - E_0
+        shift = (np.abs(g_i) ** 2) / detuning
+        local[idx, idx] = shift
+        total_shift += shift
+        scatter_rate += (np.abs(g_i) ** 2) * gamma / (detuning ** 2)
+    local[0, 0] = -total_shift - 1j * scatter_rate / 2 if enable_0_scattering else -total_shift
+    return local
+
+
+def _nearest_pair_strength(pairs: tuple) -> float:
+    if not pairs:
+        return 0.0
+    return float(max(abs(strength) for _, _, strength in pairs))
+
+
+def _reject_unused(unused: dict) -> None:
+    if unused:
+        names = ", ".join(sorted(unused))
+        raise TypeError(f"Unused physical parameter(s): {names}")
+
+
+def _metadata_from_rb87_params(system: _RB87PhysicalParams) -> dict[str, Any]:
     return {
         "rabi_eff": system.rabi_eff,
         "time_scale": system.time_scale,

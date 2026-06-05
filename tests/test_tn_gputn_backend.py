@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
-from ryd_gate.backends.base import EvolutionResult
+from ryd_gate.ir.evolution import EvolutionResult
 from ryd_gate.protocols.sweep import SweepProtocol
-from ryd_gate.tn import gpu_backends
-from ryd_gate.tn.lattice_spec import create_tn_lattice_spec
-from ryd_gate.tn.simulate import simulate_tn
+from gputn import backend as gpu_backends
+from tn_common.lattice_spec import create_tn_lattice_spec
+from tn_common.simulate import simulate_tn
 
 
 @pytest.fixture
@@ -82,3 +83,92 @@ def test_gputn_dispatches_to_configured_engine(monkeypatch, spec_1x1):
     assert result.psi_final == "all_ground"
     assert result.metadata["backend"] == "gputn"
     assert result.metadata["accelerator"] == "cuda"
+
+
+def test_gputn_builtin_statevector_kernel_runs_with_dependency_injection(monkeypatch, spec_1x1):
+    monkeypatch.setattr(
+        gpu_backends,
+        "_require_gputn_dependencies",
+        lambda **_: SimpleNamespace(cupy=np, cuquantum=SimpleNamespace(), n_devices=None),
+    )
+
+    result = simulate_tn(
+        spec_1x1,
+        SweepProtocol(omega_ramp_frac=0.0),
+        [0.0, 0.0, 0.2],
+        initial_state="all_ground",
+        backend="gputn",
+        t_eval=np.array([0.0, 0.2]),
+        observables=["n_mean", "sigma_z"],
+        backend_options={
+            "kernel": "statevector",
+            "require_gpu": False,
+            "dt": 0.1,
+        },
+    )
+
+    assert result.metadata["backend"] == "gputn"
+    assert result.metadata["accelerator"] == "cuda"
+    assert result.metadata["engine_package"] == "gputn"
+    assert result.metadata["kernel"] == "statevector_trotter"
+    assert result.metadata["obs"]["n_mean"].shape == (2,)
+    assert result.metadata["obs"]["sigma_z"].shape == (2, 1)
+    np.testing.assert_allclose(np.linalg.norm(result.psi_final.reshape(-1)), 1.0, atol=1e-12)
+
+
+def test_gputn_builtin_cutensornet_kernel_uses_network_state_api(monkeypatch, spec_1x1):
+    class FakeNetworkState:
+        def __init__(self, extents, **kwargs):
+            del kwargs
+            self.psi = np.zeros(int(np.prod(extents)), dtype=complex)
+            self.psi[0] = 1.0
+
+        def apply_tensor_operator(self, modes, tensor, unitary=True):
+            del unitary
+            assert tuple(modes) == (0,)
+            self.psi = np.asarray(tensor) @ self.psi
+
+        def compute_reduced_density_matrix(self, modes):
+            assert tuple(modes) == (0,)
+            return np.outer(self.psi, self.psi.conjugate())
+
+        def compute_state_vector(self):
+            return self.psi
+
+    class FakeMPSConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    fake_cuquantum = SimpleNamespace(
+        tensornet=SimpleNamespace(
+            experimental=SimpleNamespace(
+                NetworkState=FakeNetworkState,
+                MPSConfig=FakeMPSConfig,
+            )
+        )
+    )
+    monkeypatch.setattr(
+        gpu_backends,
+        "_require_gputn_dependencies",
+        lambda **_: SimpleNamespace(cupy=np, cuquantum=fake_cuquantum, n_devices=None),
+    )
+
+    result = simulate_tn(
+        spec_1x1,
+        SweepProtocol(omega_ramp_frac=0.0),
+        [0.0, 0.0, 0.2],
+        initial_state="all_ground",
+        backend="gputn",
+        t_eval=np.array([0.2]),
+        observables=["n_mean"],
+        backend_options={
+            "kernel": "cutensornet_mps",
+            "require_gpu": False,
+            "return_state_vector": True,
+            "dt": 0.1,
+        },
+    )
+
+    assert result.metadata["kernel"] == "cutensornet_mps_trotter"
+    assert result.psi_final.shape == (2,)
+    assert result.metadata["obs"]["n_mean"].shape == (1,)

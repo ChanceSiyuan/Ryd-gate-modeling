@@ -24,12 +24,19 @@ uv pip install -e ".[dev,tn]"
 
 ```python
 import ryd_gate as rg
+from exact import simulate
+from ryd_gate.lattice import make_chain
 
 # 1. Choose protocol
 protocol = rg.TOProtocol()
 
 # 2. Create system with the protocol bound
-system = rg.RydbergSystem.from_preset("our", protocol=protocol)
+system = rg.RydbergSystem.from_lattice(
+    make_chain(2, spacing_um=3.0),
+    "rb87_7",
+    param_set="our",
+    protocol=protocol,
+)
 
 # 3. Run simulation
 import numpy as np
@@ -37,7 +44,7 @@ psi0 = np.zeros(49, dtype=complex)
 psi0[8] = 1.0  # |11> state
 
 X_TO = [0.1122, 1.0431, -0.72565603, 0.0, 0.452, 1.219096]
-result = rg.simulate(system, X_TO, psi0)
+result = simulate(system, X_TO, psi0)
 
 # 4. Analyze
 print(f"Final state norm: {np.linalg.norm(result.psi_final):.6f}")
@@ -47,64 +54,44 @@ print(f"Final state norm: {np.linalg.norm(result.psi_final):.6f}")
 
 ```python
 import ryd_gate as rg
+from exact import simulate
 import numpy as np
+from ryd_gate.lattice import make_chain
 
 # 1. Sweep protocol
 protocol = rg.SweepProtocol()
 
 # 2. Create lattice system with the protocol bound
-system = rg.RydbergSystem.from_preset("1r", protocol=protocol, N=4, spacing_um=5.0)
+system = rg.RydbergSystem.from_lattice(
+    make_chain(4, spacing_um=5.0),
+    "1r",
+    protocol=protocol,
+)
 
 # 3. Simulate (psi0 = ground state |gggg>)
 psi0 = system.ground_state()
 params = [2 * np.pi * -40e6, 2 * np.pi * 40e6, 10e-6]  # [delta_start, delta_end, t_sweep]
-result = rg.simulate(system, params, psi0)
+result = simulate(system, params, psi0)
 ```
 
 ## Package Layout
 
 ```
-src/ryd_gate/
-├── __init__.py          # Public API (import everything from here)
-├── pulse.py             # Pulse shaping: blackman_window, blackman_pulse, blackman_pulse_sqrt
-├── model/               # Symbolic system layer
-│   ├── system.py            # RydbergSystem and presets
-│   ├── basis.py             # BasisSpec: Hilbert space structure
-│   ├── blocks.py            # BlockRegistry: matrix or symbolic Hamiltonian blocks
-│   ├── operator_spec.py     # Symbolic local/sum/pair operator descriptions
-│   ├── observables.py       # ObservableRegistry: measurement matrices or specs
-│   ├── lattice.py           # Lattice geometry helpers
-│   ├── interactions.py      # InteractionSpec and VdW helper exports
-│   └── states.py            # Product/AF/domain state helpers
-├── core/                # Internal model implementation details
-├── protocols/           # Pulse protocols
-│   ├── gate_cz_to.py        # TOProtocol: time-optimal CZ gate (6 params)
-│   ├── gate_cz_ar.py        # ARProtocol: amplitude-robust CZ gate (8 params)
-│   ├── sweep.py             # SweepProtocol: adiabatic detuning sweep (3 params)
-│   ├── base.py              # Protocol abstract base class
-│   └── channels.py          # Drive channel name constants
-├── compilers/           # Backend-specific compilation from symbolic systems
-│   └── exact_sparse.py      # Symbolic blocks -> exact matrix IR
-├── ir/                  # Intermediate representations
-│   └── matrix.py            # HamiltonianIR, HamiltonianTerm
-├── backends/            # Simulation backends consuming compiled IR
-│   ├── base.py              # SolverBackend ABC, EvolutionResult
-│   ├── dense_ode.py         # DenseODEBackend: adaptive ODE
-│   ├── sparse_expm.py       # SparseExpmBackend: expm_multiply
-│   └── monte_carlo_runner.py # MonteCarloRunner for compiled systems
-├── simulate.py          # High-level compile + evolve dispatch
-├── lattice/             # Pure lattice geometry and plotting helpers
-├── analysis/            # Post-processing and metrics
-│   ├── gate_metrics.py      # average_gate_infidelity, error_budget, sss_infidelity
-│   ├── observable_metrics.py # measure_observables, measure_trajectory
-│   ├── addressing_metrics.py # AddressingEvaluator: pinning, crosstalk, leakage
-│   ├── local_addressing.py  # Default sweep parameters, evaluate_addressing()
-│   └── coarsening.py        # Domain identification, boundary masks
-├── tn/                  # Optional tensor-network path (requires tenpy)
-│   ├── lattice_spec.py      # TNLatticeSpec: MPS lattice specification
-│   ├── simulate.py          # simulate_tn(): MPS time evolution
-│   └── ...
-└── legacy/              # Historical CZGateSimulator and MC implementations
+src/
+├── ryd_gate/            # Core physics layer only
+│   ├── core/                # RydbergSystem, basis, blocks, observables
+│   ├── protocols/           # Pulse/control protocols
+│   ├── ir/                  # Unified Hamiltonian/result representations
+│   ├── lattice/             # Geometry helpers
+│   └── physics/             # Atomic physics helpers
+├── exact/               # HamiltonianIR -> exact matrices; ODE/expm backends
+├── tn_common/           # HamiltonianIR -> TN lattice specs; TN dispatch
+├── tenpy_mps/           # TeNPy MPS DMRG/TDVP implementation
+├── ttn/                 # PyTreeNet TTN-TDVP implementation and vendor
+├── gputn/               # CUDA/cuTensorNet implementation and compiler entry
+├── itensor/             # Julia ITensors/TNQS bridges and Julia project
+├── peps2d/              # 2D PEPS/BP external-solver boundary
+└── nqs/                 # NQS/tVMC external-solver boundary
 ```
 
 ## API Reference
@@ -113,17 +100,17 @@ All commonly used symbols are available from the top-level package:
 
 ```python
 import ryd_gate as rg
+from exact import simulate
 ```
 
 ### Systems
 
 | Symbol | Description |
 |--------|-------------|
-| `rg.RydbergSystem.from_preset("our", protocol=...)` | Two-atom 87Rb, 7-level model ("our" params) |
-| `rg.RydbergSystem.from_preset("lukin", protocol=...)` | Two-atom 87Rb, 7-level model (Lukin group params) |
-| `rg.RydbergSystem.from_preset("analog_3", protocol=...)` | Two-atom 3-level analog model |
-| `rg.RydbergSystem.from_preset("1r", protocol=..., N=...)` | N-atom 2-level lattice |
-| `rg.RydbergSystem.from_lattice(geometry, ..., protocol=...)` | Geometry-driven lattice model |
+| `rg.RydbergSystem.from_lattice(geometry, "rb87_7", param_set="our", protocol=...)` | 87Rb 7-level model with "our" parameters |
+| `rg.RydbergSystem.from_lattice(geometry, "rb87_7", param_set="lukin", protocol=...)` | 87Rb 7-level model with Lukin parameters |
+| `rg.RydbergSystem.from_lattice(geometry, "ger", param_set="analog_3", protocol=...)` | 3-level analog ger model |
+| `rg.RydbergSystem.from_lattice(geometry, "1r", protocol=...)` | N-atom 2-level lattice |
 
 ### Protocols
 
@@ -137,7 +124,8 @@ import ryd_gate as rg
 
 | Symbol | Description |
 |--------|-------------|
-| `rg.simulate(system, x, psi0)` | Compile + evolve (auto-selects backend) |
+| `exact.simulate(system, x, psi0)` | Exact compile + evolve |
+| `rg.compile_hamiltonian_ir(system, params)` | Core unified Hamiltonian output |
 | `rg.EvolutionResult` | Result dataclass: psi_final, times, states |
 | `rg.HamiltonianIR` | Solver-agnostic Hamiltonian IR |
 

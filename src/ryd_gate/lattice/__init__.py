@@ -9,7 +9,7 @@ observables, interactions, or evolution; for those see:
                                               and observables for lattice models
 - ``ryd_gate.core.states``                 — product/AF/domain/ground state constructors
 - ``ryd_gate.analysis.lattice_observables``— bit/trit-mask occupation measurement
-- ``ryd_gate.simulate``                    — time evolution (drives in
+- ``exact.simulate``                    — time evolution (drives in
                                               ``ryd_gate.protocols``)
 
 Contents

@@ -5,8 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ryd_gate import RydbergSystem, simulate
-from ryd_gate.compilers.exact_sparse import compile_expm_ir
+from exact import simulate
+from ryd_gate import RydbergSystem, compile_hamiltonian_ir
+from exact.compiler import compile_expm_ir
 from ryd_gate.core.channel_lowering import (
     three_level_profiles_from_coeffs,
     two_level_drive_and_detuning_from_coeffs,
@@ -20,8 +21,8 @@ from ryd_gate.protocols.digital_analog import (
     is_scalar_profile,
 )
 from ryd_gate.protocols.sweep import SweepProtocol
-from ryd_gate.tn.backends import _TNProtocolContext
-from ryd_gate.tn.lattice_spec import create_tn_lattice_spec
+from tenpy_mps.backends import _TNProtocolContext
+from tn_common.lattice_spec import create_tn_lattice_spec
 
 
 def test_is_scalar_profile():
@@ -191,7 +192,8 @@ def test_compile_expm_ir_includes_per_site_drive_terms():
         make_chain(2), "01r", interaction=InteractionSpec(C6=0.0), protocol=proto,
     )
     params = system.unpack_params([])
-    ir = compile_expm_ir(system, params)
+    ham = compile_hamiltonian_ir(system, params)
+    ir = compile_expm_ir(ham)
     names = {term.name for term in ir.drive_terms}
     assert "drive_R_0" in names
     assert "drive_R_1" in names

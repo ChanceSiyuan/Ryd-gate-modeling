@@ -3,14 +3,15 @@
 import numpy as np
 import pytest
 
-from ryd_gate import RydbergSystem, simulate
+from ryd_gate import RydbergSystem
 from ryd_gate.core.rydberg_system import InteractionSpec
 from ryd_gate.lattice import make_square_lattice
 from ryd_gate.protocols.sweep import SweepProtocol
-from ryd_gate.tn.backends import TenpyTDVPBackend
-from ryd_gate.tn.lattice_spec import create_tn_lattice_spec
-from ryd_gate.tn.simulate import simulate_tn
-from ryd_gate.tn.state import product_state_mps
+from tenpy_mps.backends import TenpyTDVPBackend
+from tn_common.compiler import TNCompiler
+from tn_common.lattice_spec import create_tn_lattice_spec
+from tn_common.simulate import simulate_tn, simulate_tn_ir
+from tenpy_mps.state import product_state_mps
 
 tenpy = pytest.importorskip("tenpy")
 
@@ -117,9 +118,10 @@ class TestSimulateTN:
             Omega=1.0,
         )
 
-        result = simulate(
-            system,
-            [2.0, 2.0, 1.0],
+        params = system.unpack_params([2.0, 2.0, 1.0])
+        ir = TNCompiler(method="tdvp").compile(system, params)
+        result = simulate_tn_ir(
+            ir,
             "all_1",
             backend="tenpy",
             backend_options={"chi_max": 16, "dt": 0.5},

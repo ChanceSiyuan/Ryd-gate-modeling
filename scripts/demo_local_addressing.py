@@ -25,7 +25,8 @@ import time as _time
 import numpy as np
 import matplotlib.pyplot as plt
 
-from ryd_gate import RydbergSystem, SweepProtocol, simulate
+from exact import simulate
+from ryd_gate import RydbergSystem, SweepProtocol
 from ryd_gate.analysis.coarsening import (
     build_neighbor_lists,
     coarsegrained_boundary_mask,
