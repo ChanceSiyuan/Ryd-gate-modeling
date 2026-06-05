@@ -12,12 +12,14 @@ from ryd_gate.backends.tn_common.compiler import (
 )
 
 from .backend import GPUTNDependencyError, GPUTNTDVPBackend, gputn_available
+from .options import GPUTNOptions
 from .rydberg_engine import CuTensorNetRydbergEngine, GPUTNKernelError
 
 __all__ = [
     "CuTensorNetRydbergEngine",
     "GPUTNDependencyError",
     "GPUTNKernelError",
+    "GPUTNOptions",
     "GPUTNTDVPBackend",
     "TNCompiler",
     "TNEvolutionIR",

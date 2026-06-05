@@ -6,9 +6,12 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ryd_gate.backends._options import as_backend_options
 from ryd_gate.ir.evolution import EvolutionResult
 
 if TYPE_CHECKING:
+    from ryd_gate.backends.gputn.options import GPUTNOptions
+    from ryd_gate.backends.tenpy_mps.options import TenpyOptions
     from ryd_gate.protocols.base import Protocol
 
     from .compiler import TNEvolutionIR
@@ -23,7 +26,7 @@ def simulate_tn(
     backend: str = "tenpy",
     t_eval: np.ndarray | None = None,
     observables: list[str] | None = None,
-    backend_options: dict | None = None,
+    backend_options: "dict | TenpyOptions | GPUTNOptions | None" = None,
 ) -> EvolutionResult:
     """High-level TN simulation entry point.
 
@@ -75,7 +78,7 @@ def simulate_tn(
     if not isinstance(spec, TNLatticeSpec):
         raise TypeError("simulate_tn() requires a TNLatticeSpec.")
 
-    opts = backend_options or {}
+    opts = as_backend_options(backend_options)
     backend = backend.lower()
 
     backend = _normalize_backend(backend)
@@ -203,10 +206,10 @@ def simulate_tn_ir(
     backend: str = "tenpy",
     t_eval: np.ndarray | None = None,
     observables: list[str] | None = None,
-    backend_options: dict | None = None,
+    backend_options: "dict | TenpyOptions | GPUTNOptions | None" = None,
 ) -> EvolutionResult:
     """Run a compiled TN IR with the requested TN backend."""
-    opts = backend_options or {}
+    opts = as_backend_options(backend_options)
     backend = backend.lower()
 
     backend = _normalize_backend(backend)

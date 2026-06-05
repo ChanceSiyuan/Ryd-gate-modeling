@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ryd_gate.backends._options import as_backend_options
+from ryd_gate.backends.exact.options import ExactOptions
 from ryd_gate.ir.evolution import EvolutionResult
 
 if TYPE_CHECKING:
@@ -19,13 +21,15 @@ def simulate(
     t_eval: np.ndarray | bool | None = None,
     backend: "SolverBackend | str | None" = None,
     compiler=None,
-    backend_options: dict | None = None,
+    backend_options: "dict | ExactOptions | None" = None,
 ) -> EvolutionResult:
     """Compile a protocol-bound Rydberg system and evolve exactly.
 
     ``system`` must have a protocol bound. The default backend is sparse
     piecewise-exponential exact state-vector evolution. Tensor-network and
-    external algorithms live in their own top-level packages.
+    external algorithms live in their own backend packages under
+    ``ryd_gate.backends``. ``backend_options`` accepts a dict or an
+    :class:`ExactOptions`.
     """
     from ryd_gate.backends.exact.compiler import ExactSparseCompiler
     from ryd_gate.backends.exact.dense_ode import DenseODEBackend
@@ -40,7 +44,7 @@ def simulate(
         )
 
     params = system.unpack_params(x)
-    opts = backend_options or {}
+    opts = as_backend_options(backend_options)
 
     if isinstance(backend, str):
         backend_key = backend.lower()

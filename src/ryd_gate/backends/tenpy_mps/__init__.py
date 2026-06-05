@@ -17,6 +17,7 @@ from .observables import (
     measure_site_occupations,
     measure_staggered_magnetization,
 )
+from .options import TenpyOptions
 from .state import (
     domain_state_mps,
     mps_fidelity,
@@ -27,6 +28,7 @@ from .state import (
 __all__ = [
     "TenpyDMRGBackend",
     "TenpyTDVPBackend",
+    "TenpyOptions",
     "TNCompiler",
     "TNEvolutionIR",
     "build_tenpy_model",
