@@ -37,6 +37,8 @@ class TestPackageImports:
             "EvolutionResult", "HamiltonianIR", "HamiltonianTerm", "compile_hamiltonian_ir",
             # Analysis
             "average_gate_infidelity", "error_budget", "AddressingEvaluator",
+            # Simulation
+            "simulate",
             # Pulse utilities
             "blackman_pulse", "blackman_pulse_sqrt", "blackman_window",
             # Advanced primitives
