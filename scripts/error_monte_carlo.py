@@ -13,7 +13,8 @@ os.environ["JAX_PLATFORMS"] = "cpu"
 import numpy as np
 
 from ryd_gate import RydbergSystem
-from ryd_gate.backends import MonteCarloResult, MonteCarloRunner
+from system_builders import make_analog_3_system, make_our_system
+from exact import MonteCarloResult, MonteCarloRunner
 from ryd_gate.protocols.gate_cz_to import TOProtocol
 
 X_TO_OUR_DARK = [
@@ -72,7 +73,7 @@ def main():
 
     # ==================== Dephasing with branching ====================
 
-    system_dephasing = RydbergSystem.from_preset("our", blackmanflag=True, detuning_sign=1)
+    system_dephasing = make_our_system( blackmanflag=True, detuning_sign=1)
     engine_dephasing = MonteCarloRunner(system_dephasing.with_protocol(protocol), X_TO_OUR_DARK)
     engine_dephasing.setup_detuning_noise(130e3)
 
@@ -88,7 +89,7 @@ def main():
 
     sigma_pos = (70e-9, 70e-9, 130e-9)  # meters
 
-    system_position = RydbergSystem.from_preset("our", blackmanflag=True, detuning_sign=1)
+    system_position = make_our_system( blackmanflag=True, detuning_sign=1)
     engine_position = MonteCarloRunner(system_position.with_protocol(protocol), X_TO_OUR_DARK)
     engine_position.setup_position_noise(sigma_pos)
 
@@ -102,8 +103,7 @@ def main():
 
     # ==================== All errors with branching ====================
 
-    system_all = RydbergSystem.from_preset(
-        "our",
+    system_all = make_our_system(
         blackmanflag=True, detuning_sign=1,
         enable_rydberg_decay=True, enable_intermediate_decay=True,
         enable_polarization_leakage=True,

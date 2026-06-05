@@ -1,5 +1,11 @@
-"""Intermediate representations consumed by simulation backends."""
+"""Unified Hamiltonian and evolution data representations."""
 
-from .matrix import HamiltonianIR, HamiltonianTerm
+from .evolution import EvolutionResult
+from .hamiltonian import HamiltonianIR, HamiltonianTerm, compile_hamiltonian_ir
 
-__all__ = ["HamiltonianIR", "HamiltonianTerm"]
+__all__ = [
+    "EvolutionResult",
+    "HamiltonianIR",
+    "HamiltonianTerm",
+    "compile_hamiltonian_ir",
+]

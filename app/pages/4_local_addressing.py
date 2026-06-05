@@ -18,9 +18,11 @@ from ryd_gate.physics.ac_stark import (
     POWER_REF_UW,
     compute_shift_scatter,
 )
-from ryd_gate import RydbergSystem, simulate
+from exact import simulate
+from ryd_gate import RydbergSystem
 from ryd_gate.analysis.observable_metrics import measure_trajectory, norm_squared
 from ryd_gate.core.operators import build_product_state_map
+from ryd_gate.lattice import make_chain
 from ryd_gate.protocols.sweep import SweepProtocol
 
 # Sweep constants (matching scripts/run_local_sweep.py)
@@ -44,7 +46,12 @@ shift and ~35 Hz scattering.
 
 @st.cache_resource
 def _setup_model_cached(distance_um: float = 3.0):
-    model = RydbergSystem.from_preset("analog_3", detuning_sign=1, distance_um=distance_um)
+    model = RydbergSystem.from_lattice(
+        make_chain(2, spacing_um=distance_um),
+        "ger",
+        param_set="analog_3",
+        detuning_sign=1,
+    )
     initial_state = build_product_state_map(n_levels=3)["gg"]
     return model, initial_state
 

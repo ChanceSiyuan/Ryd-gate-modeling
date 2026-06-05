@@ -4,7 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
-from ryd_gate.legacy.ideal_cz import CZGateSimulator
+from exact.legacy.ideal_cz import CZGateSimulator
 from ryd_gate.blackman import blackman_pulse
 
 st.set_page_config(page_title="CZ Gate Simulator", layout="wide", page_icon="\u269b")

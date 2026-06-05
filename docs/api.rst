@@ -11,7 +11,7 @@ Facade (backward-compatible)
 Core
 ----
 
-.. automodule:: ryd_gate.core.atomic_system
+.. automodule:: exact.legacy.atomic_system
    :members:
    :undoc-members:
 

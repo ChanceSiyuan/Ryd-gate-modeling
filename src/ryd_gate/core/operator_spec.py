@@ -49,6 +49,13 @@ class TransitionOperatorSpec:
 
 
 @dataclass(frozen=True)
+class LocalMatrixSumSpec:
+    """Sum of the same local matrix over all sites."""
+
+    matrix: np.ndarray
+
+
+@dataclass(frozen=True)
 class RydbergPairInteractionSpec:
     """Pair interaction ``sum_ij V_ij n_i^R n_j^R``."""
 
@@ -61,6 +68,7 @@ OperatorSpec = (
     | SumProjectorSpec
     | WeightedProjectorSumSpec
     | TransitionOperatorSpec
+    | LocalMatrixSumSpec
     | RydbergPairInteractionSpec
 )
 
@@ -74,6 +82,7 @@ def is_operator_spec(value) -> bool:
             SumProjectorSpec,
             WeightedProjectorSumSpec,
             TransitionOperatorSpec,
+            LocalMatrixSumSpec,
             RydbergPairInteractionSpec,
         ),
     )
@@ -95,6 +104,8 @@ def materialize_sparse_operator(
         return _weighted_projector_sum(spec.level, spec.weights, basis)
     if isinstance(spec, TransitionOperatorSpec):
         return _transition_operator(spec.lower, spec.upper, spec.site, basis)
+    if isinstance(spec, LocalMatrixSumSpec):
+        return _local_matrix_sum(spec.matrix, basis)
     if isinstance(spec, RydbergPairInteractionSpec):
         return _rydberg_pair_interaction(spec, basis)
     raise TypeError(f"Unsupported operator spec: {type(spec).__name__}")
@@ -164,6 +175,18 @@ def _transition_operator(lower: str, upper: str, site: int | None, basis: BasisS
     if site is not None:
         return embed_site_op(csc_matrix(local), site, basis.n_sites, d=d).tocsc()
     ops = [embed_site_op(csc_matrix(local), i, basis.n_sites, d=d).tocsc() for i in range(basis.n_sites)]
+    return _sum_sparse(ops, basis.total_dim)
+
+
+def _local_matrix_sum(matrix: np.ndarray, basis: BasisSpec):
+    matrix = np.asarray(matrix, dtype=complex)
+    if matrix.shape != (basis.local_dim, basis.local_dim):
+        raise ValueError(
+            "LocalMatrixSumSpec matrix shape must match basis.local_dim; "
+            f"got {matrix.shape}, expected {(basis.local_dim, basis.local_dim)}."
+        )
+    local = csc_matrix(matrix)
+    ops = [embed_site_op(local, i, basis.n_sites, d=basis.local_dim).tocsc() for i in range(basis.n_sites)]
     return _sum_sparse(ops, basis.total_dim)
 
 

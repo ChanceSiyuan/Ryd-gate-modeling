@@ -8,7 +8,8 @@ a Rydberg checkerboard phase on a 3x3 square lattice.
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ryd_gate import DigitalAnalogProtocol, RydbergSystem, Segment, simulate
+from exact import simulate
+from ryd_gate import DigitalAnalogProtocol, RydbergSystem, Segment
 from ryd_gate.analysis.lattice_observables import (
     measure_rydberg_occupation,
     precompute_trit_masks,

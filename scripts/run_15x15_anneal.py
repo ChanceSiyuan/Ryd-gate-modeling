@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from ryd_gate.protocols.lattice_dynamics import TFIMAnnealProtocol
-from ryd_gate.tn import create_tn_lattice_spec, simulate_tn
+from tn_common import create_tn_lattice_spec, simulate_tn
 
 
 def parse_args() -> argparse.Namespace:
@@ -39,6 +39,12 @@ def parse_args() -> argparse.Namespace:
         help="optional Python package target, e.g. yastn/quimb/pytreenet/netket/jvmc",
     )
     parser.add_argument("--V-nn", type=float, default=24.0, help="nearest-neighbor interaction strength")
+    parser.add_argument(
+        "--interaction-mode",
+        default="nn",
+        choices=("nn", "nnn"),
+        help="interaction graph for paper TFIM runs; use nn for main.tex and nnn for Rydberg tails",
+    )
     parser.add_argument("--hx-peak", type=float, default=1.0, help="peak TFIM transverse field")
     parser.add_argument("--hx-initial", type=float, default=0.0, help="initial TFIM transverse field")
     parser.add_argument("--hx-final", type=float, default=0.0, help="final TFIM transverse field")
@@ -55,6 +61,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--chi-max", type=int, default=256, help="MPS/TN bond-dimension cap")
     parser.add_argument("--chi-2d", type=int, default=None, help="2D-TN simple-update bond-dimension cap")
+    parser.add_argument("--chi-2d-prime", type=int, default=None, help="2D-TN measurement pre-truncation cap")
     parser.add_argument("--dt", type=float, default=0.1, help="time step for TDVP-style backends")
     parser.add_argument("--svd-min", type=float, default=1e-10, help="singular-value cutoff")
     parser.add_argument(
@@ -119,7 +126,7 @@ def main() -> None:
         V_nn=args.V_nn,
         Omega=2.0 * args.hx_peak,
         level_structure="1r",
-        interaction_mode="nnn",
+        interaction_mode=args.interaction_mode,
         ordering="snake",
     )
     if args.backend in {"tenpy", "mps", "itensors", "gputn"} and spec.N < 2:
@@ -144,6 +151,7 @@ def main() -> None:
         "Ly": spec.Ly,
         "N": spec.N,
         "backend": args.backend,
+        "interaction_mode": args.interaction_mode,
         "backend_options": _jsonable_options(backend_options),
         "protocol": {
             "hx_peak": args.hx_peak,
@@ -188,6 +196,8 @@ def _backend_options(args: argparse.Namespace) -> dict:
     }
     if args.chi_2d is not None:
         options["chi_2d"] = args.chi_2d
+    if args.chi_2d_prime is not None:
+        options["chi_2d_prime"] = args.chi_2d_prime
     if args.engine_package:
         options["engine_package"] = args.engine_package
     if args.backend in {"itensors", "2dtn"}:

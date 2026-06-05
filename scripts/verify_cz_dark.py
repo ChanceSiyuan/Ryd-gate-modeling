@@ -10,7 +10,9 @@ os.environ["JAX_PLATFORMS"] = "cpu"
 
 import numpy as np
 
-from ryd_gate import RydbergSystem, simulate
+from exact import simulate
+from ryd_gate import RydbergSystem
+from system_builders import make_analog_3_system, make_our_system
 from ryd_gate.protocols.gate_cz_to import TOProtocol
 from ryd_gate.analysis.gate_metrics import average_gate_infidelity, sss_infidelity, bell_infidelity
 
@@ -19,7 +21,7 @@ X_TO_OUR_DARK = [
     1.5710180991068543, 1.4454279613697887, 1.3406239758422793,
 ]
 
-system = RydbergSystem.from_preset("our", blackmanflag=True, detuning_sign=1)
+system = make_our_system( blackmanflag=True, detuning_sign=1)
 protocol = TOProtocol()
 
 theta = X_TO_OUR_DARK[4]
@@ -95,7 +97,7 @@ X_TO_OUR_BRIGHT = [
     -1.7370398295694707, 0.7988774460188806, 2.3116588890406224,
     0.5186261498956248, 0.900066116155231, 1.2415235064066774,
 ]
-system_bright = RydbergSystem.from_preset("our", blackmanflag=True, detuning_sign=-1)
+system_bright = make_our_system( blackmanflag=True, detuning_sign=-1)
 print(f"  {'metric':<12s} {'dark':>12s} {'bright':>12s}")
 print(f"  {'-'*12} {'-'*12} {'-'*12}")
 for ft, fn in _fid_funcs.items():

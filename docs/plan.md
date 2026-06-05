@@ -21,9 +21,9 @@ Implement a specific "Local Addressing" simulation using this new modular archit
 Please implement this across the following **4 distinct phases**. Write the complete Python code for each file mentioned.
 
 #### **Phase 1: Core Physics & The Sweep Protocol**
-**Files to create/update:** `core/atomic_system.py` and `protocols/local_sweep.py`.
+**Files to create/update:** `exact/legacy/atomic_system.py` and `protocols/local_sweep.py`.
 
-1.  **`core/atomic_system.py`**:
+1.  **`exact/legacy/atomic_system.py`**:
     * Create a `TwoAtomRydbergSystem` class.
     * It should contain the static Hamiltonians ($H_{\text{static}}$, $H_{420}$, $H_{1013}$, $H_{\text{vdW}}$) without any time-dependent logic.
     * Include a method `build_single_atom_operator(index)` that returns a 7x7 matrix with `1` at `[index, index]`.

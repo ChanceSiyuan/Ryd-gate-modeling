@@ -29,7 +29,9 @@ import numpy as np
 
 from scipy.constants import pi
 
-from ryd_gate import RydbergSystem, simulate
+from exact import simulate
+from ryd_gate import RydbergSystem
+from system_builders import make_analog_3_system, make_our_system
 from ryd_gate.analysis.observable_metrics import measure_trajectory, norm_squared
 from ryd_gate.pulse import blackman_pulse
 from ryd_gate.core.operators import build_product_state_map
@@ -532,13 +534,13 @@ def figure_landau_zener(model, initial_state):
 def main():
     initial_state = PRODUCT_STATES["gg"]
 
-    model_no_decay = RydbergSystem.from_preset("analog_3", detuning_sign=1)
+    model_no_decay = make_analog_3_system( detuning_sign=1)
     figure_rabi_dynamics(model_no_decay, initial_state)
     figure_final_populations(model_no_decay, initial_state)
     figure_stark_compensation(model_no_decay, initial_state)
     figure_420_phase_diagnostics(model_no_decay)
 
-    model_sq = RydbergSystem.from_preset("analog_3", detuning_sign=1, blackmanflag=False)
+    model_sq = make_analog_3_system( detuning_sign=1, blackmanflag=False)
     figure_landau_zener(model_sq, initial_state)
     plt.show()
 

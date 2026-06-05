@@ -27,6 +27,7 @@ import matplotlib.pyplot as plt
 from scipy.constants import pi
 
 from ryd_gate import RydbergSystem
+from system_builders import make_analog_3_system, make_our_system
 from ryd_gate.physics.ac_stark import (
     POWER_REF_UW,
     compute_shift_scatter,
@@ -40,15 +41,14 @@ from ryd_gate.protocols.sweep import SweepProtocol
 
 def _run_optimize_scan(args):
     """Run the 2D grid scan with two 1-atom sims per point."""
-    from ryd_gate import simulate
+    from exact import simulate
 
     print("=" * 60)
     print("  Single-Qubit Local Addressing: Wavelength x Power Scan")
     print("=" * 60)
 
     rabi_420_hz = 135e6
-    system = RydbergSystem.from_preset(
-        "analog_3",
+    system = make_analog_3_system(
         detuning_sign=1, blackmanflag=True, n_atoms=1,
         Delta_Hz=2.4e9,
         rabi_420_Hz=rabi_420_hz,
@@ -590,8 +590,7 @@ def cmd_optimize_plot(args):
     args.n_power = len(powers)
 
     rabi_420_hz = 135e6
-    system = RydbergSystem.from_preset(
-        "analog_3",
+    system = make_analog_3_system(
         detuning_sign=1, blackmanflag=True, n_atoms=1,
         Delta_Hz=2.4e9, rabi_420_Hz=rabi_420_hz, rabi_1013_Hz=135e6,
     )

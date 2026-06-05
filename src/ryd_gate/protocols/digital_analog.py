@@ -22,7 +22,7 @@ Typical MVP use (single constant segment)::
         delta_hf=0,
         t_gate=1e-6,
     )
-    system = RydbergSystem.from_preset("01r", protocol=protocol, N=2)
+    system = RydbergSystem.from_lattice(make_chain(2), "01r", protocol=protocol)
     result = simulate(system, [], psi0)
 
 Multi-segment echo / IQP-style sequence::

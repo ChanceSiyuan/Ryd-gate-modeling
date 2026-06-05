@@ -1,6 +1,6 @@
 # Schrodinger Solver for CZ Gate Simulation
 
-This document describes the historical Schrodinger equation path now kept under `ryd_gate.legacy`, plus the current compiler/backend API.
+This document describes the historical Schrodinger equation path now kept under `exact.legacy`, plus the current compiler/backend API.
 
 ## Overview
 
@@ -8,27 +8,24 @@ This document describes the historical Schrodinger equation path now kept under 
 
 | Use Case | Function | Module |
 |----------|----------|--------|
-| CZ gate fidelity (TO/AR) | `CZGateSimulator` | `ryd_gate.legacy.ideal_cz` |
-| Generic time-dependent H(t) | `simulate()` | `ryd_gate.simulate` |
-| Exact state-vector backend | `DenseODEBackend` / `SparseExpmBackend` | `ryd_gate.backends` |
-| Local addressing sweep | `SweepProtocol` + `simulate()` | `ryd_gate.protocols` + `ryd_gate.simulate` |
+| CZ gate fidelity (TO/AR) | `CZGateSimulator` | `exact.legacy.ideal_cz` |
+| Generic time-dependent H(t) | `simulate()` | `exact.simulate` |
+| Exact state-vector backend | `DenseODEBackend` / `SparseExpmBackend` | `exact` |
+| Local addressing sweep | `SweepProtocol` + `simulate()` | `ryd_gate.protocols` + `exact.simulate` |
 
 ## Modular Architecture
 
 The solver has been decomposed from the original monolithic `CZGateSimulator` into focused modules:
 
 ```
-core/atomic_system.py      -- AtomicSystem dataclass + factory functions
-protocols/base.py           -- Protocol ABC + SweepProtocol ABC
-protocols/gate_cz_to.py     -- TOProtocol (cos phase, 6 params)
-protocols/gate_cz_ar.py     -- ARProtocol (dual-sine phase, 8 params)
-protocols/local_sweep.py    -- SweepAddressingProtocol
-simulate.py                 -- high-level compile + evolve
-backends/                   -- DenseODEBackend, SparseExpmBackend, MonteCarloRunner
-compilers/                  -- ExactSparseCompiler and future compiler targets
-analysis/gate_metrics.py    -- Fidelity, error budget, diagnostics
-analysis/addressing_metrics.py -- Pinning error, crosstalk, leakage
-legacy/ideal_cz.py          -- historical CZGateSimulator facade
+ryd_gate/core/rydberg_system.py -- lattice + level structure + symbolic blocks
+ryd_gate/protocols/             -- pulse/control protocols
+ryd_gate/ir/                    -- unified Hamiltonian IR
+exact/compiler.py               -- HamiltonianIR -> exact sparse matrices
+exact/sparse_expm.py            -- piecewise exponential exact backend
+exact/dense_ode.py              -- dense ODE exact backend
+exact/legacy/ideal_cz.py        -- historical CZGateSimulator facade
+ryd_gate/analysis/              -- fidelity, error budget, diagnostics
 ```
 
 ### CZ Gate Solver: `solve_gate()`
@@ -36,7 +33,7 @@ legacy/ideal_cz.py          -- historical CZGateSimulator facade
 For CZ gate protocols (TO/AR), the Hamiltonian has a fixed structure where time-dependence comes only from 420nm laser phase modulation:
 
 ```python
-from ryd_gate.legacy.ideal_cz import CZGateSimulator
+from exact.legacy.ideal_cz import CZGateSimulator
 
 final_state = solve_gate(system, protocol, x, initial_state)
 ```
@@ -46,7 +43,7 @@ final_state = solve_gate(system, protocol, x, initial_state)
 For arbitrary time-dependent Hamiltonians (e.g., sweep protocols):
 
 ```python
-from ryd_gate import simulate
+from exact import simulate
 
 final_state = evolve(hamiltonian_fn, t_gate, initial_state)
 ```

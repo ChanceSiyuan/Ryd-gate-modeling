@@ -1,11 +1,11 @@
-from ryd_gate.backends.base import EvolutionResult
-from ryd_gate.protocols.lattice_dynamics import TFIMQuenchProtocol
-from ryd_gate.tn.external_backends import (
+from ryd_gate.ir.evolution import EvolutionResult
+from ryd_gate.protocols.lattice_dynamics import TFIMAnnealProtocol, TFIMQuenchProtocol
+from tn_common.external_backends import (
     ExternalSolverDependencyError,
     available_external_solver_packages,
 )
-from ryd_gate.tn.lattice_spec import create_tn_lattice_spec
-from ryd_gate.tn.simulate import simulate_tn
+from tn_common.lattice_spec import create_tn_lattice_spec
+from tn_common.simulate import simulate_tn
 
 
 def test_external_ttn_backend_dispatches_to_engine():
@@ -42,7 +42,7 @@ def test_external_2dtn_backend_can_still_select_python_package(monkeypatch):
     proto = TFIMQuenchProtocol(hx=1.0, t_gate=0.25)
 
     monkeypatch.setattr(
-        "ryd_gate.tn.external_backends.importlib.util.find_spec",
+        "tn_common.external_backends.importlib.util.find_spec",
         lambda name: None,
     )
 
@@ -85,3 +85,72 @@ def test_available_external_solver_packages_lists_expected_roles():
 
     assert set(packages) == {"netket", "jvmc"}
     assert packages["netket"].extra == "nqs"
+
+
+def test_default_ttn_backend_runs_vendored_pytreenet_kernel():
+    import numpy as np
+
+    spec = create_tn_lattice_spec(1, 2, V_nn=4.0, interaction_mode="nn")
+    proto = TFIMQuenchProtocol(hx=0.1, hz=0.0, t_gate=0.05)
+
+    result = simulate_tn(
+        spec,
+        proto,
+        [],
+        backend="ttn",
+        t_eval=np.array([0.0, 0.05]),
+        observables=["sigma_z", "n_mean"],
+        backend_options={"chi_max": 2, "dt": 0.05, "initial_noise": 1e-12},
+    )
+
+    assert result.metadata["backend"] == "ttn"
+    assert result.metadata["engine_package"] == "pytreenet"
+    assert result.metadata["engine_source"] == "vendored"
+    assert result.metadata["gpu"] is False
+    assert result.metadata["obs"]["sigma_z"].shape == (2, 2)
+    assert result.metadata["obs"]["n_mean"].shape == (2,)
+
+
+def test_ttn_backend_supports_time_dependent_anneal_smoke():
+    import numpy as np
+
+    spec = create_tn_lattice_spec(1, 2, V_nn=4.0, interaction_mode="nn")
+    proto = TFIMAnnealProtocol(
+        hx_peak=0.2,
+        hz_initial=-1.0,
+        hz_final=0.0,
+        t_rise=0.02,
+        t_sweep=0.02,
+        t_fall=0.02,
+    )
+
+    result = simulate_tn(
+        spec,
+        proto,
+        [],
+        backend="ttn",
+        t_eval=np.array([0.0, 0.06]),
+        observables=["sigma_z"],
+        backend_options={"chi_max": 2, "dt": 0.02, "initial_noise": 1e-12},
+    )
+
+    assert result.metadata["n_steps"] == 3
+    assert result.metadata["obs"]["sigma_z"].shape == (2, 2)
+
+
+def test_ttn_backend_rejects_gpu_options():
+    spec = create_tn_lattice_spec(1, 1)
+    proto = TFIMQuenchProtocol(hx=0.0, t_gate=0.1)
+
+    try:
+        simulate_tn(
+            spec,
+            proto,
+            [],
+            backend="ttn",
+            backend_options={"use_cuda": True},
+        )
+    except ValueError as exc:
+        assert "CPU-only" in str(exc)
+    else:
+        raise AssertionError("vendored PyTreeNet TTN backend should reject CUDA options")

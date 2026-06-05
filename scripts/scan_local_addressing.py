@@ -35,6 +35,7 @@ from ryd_gate.analysis.local_addressing import (
     evaluate_addressing,
 )
 from ryd_gate import RydbergSystem
+from system_builders import make_analog_3_system, make_our_system
 from ryd_gate.core.operators import build_product_state_map
 from ryd_gate.physics.ac_stark import (
     LAMBDA_D2,
@@ -54,7 +55,7 @@ def cmd_noise(args):
     print("  Addressing Noise Sensitivity Scan")
     print("=" * 60)
 
-    system = RydbergSystem.from_preset("analog_3", detuning_sign=1)
+    system = make_analog_3_system( detuning_sign=1)
     initial_state = build_product_state_map(n_levels=3)["gg"]
     protocol = SweepProtocol(
         addressing={0: DEFAULT_LOCAL_DETUNING},
@@ -172,7 +173,7 @@ def _simulate_grid_point(task):
     (``t_gate_us``) per task so the same scan loop can iterate over either
     axis (legacy ``optimize`` collapses them to a single value).
     """
-    from ryd_gate import simulate
+    from exact import simulate
 
     idx, wl, power_uw, delta_half_mhz, t_gate_us = task
     model = _OPT_WORKER["model"]
@@ -230,14 +231,13 @@ def _simulate_grid_point(task):
 
 def _run_optimize_scan(args):
     """Run the 2D grid scan and return (grid, metadata dict)."""
-    from ryd_gate import simulate
+    from exact import simulate
 
     print("=" * 60)
     print("  Local Addressing: Wavelength x Power Optimization")
     print("=" * 60)
 
-    model = RydbergSystem.from_preset(
-        "analog_3",
+    model = make_analog_3_system(
         detuning_sign=1, blackmanflag=True,
         distance_um=args.distance_um,
         Delta_Hz=2.4e9,       # paper: ~2.4 GHz intermediate detuning
@@ -931,8 +931,7 @@ def cmd_optimize_plot(args):
     args.n_power = len(powers)
 
     # Rebuild model for adiabatic-boundary overlay and meta consistency
-    model = RydbergSystem.from_preset(
-        "analog_3",
+    model = make_analog_3_system(
         detuning_sign=1, blackmanflag=True,
         distance_um=args.distance_um,
         Delta_Hz=2.4e9,

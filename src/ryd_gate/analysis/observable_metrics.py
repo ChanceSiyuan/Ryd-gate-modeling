@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from ryd_gate.backends.base import EvolutionResult
+    from ryd_gate.ir.evolution import EvolutionResult
     from ryd_gate.core.system_model import SystemModel
 
 

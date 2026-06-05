@@ -29,13 +29,13 @@ from ryd_gate.analysis.coarsening import (
 from ryd_gate.core.states import domain_config
 from ryd_gate.lattice import is_in_domain
 from ryd_gate.protocols.sweep import SweepProtocol
-from ryd_gate.tn import TNLatticeSpec, create_tn_lattice_spec, simulate_tn
-from ryd_gate.tn.observables import (
+from tn_common import TNLatticeSpec, create_tn_lattice_spec, simulate_tn
+from tenpy_mps.observables import (
     measure_site_occupations,
     measure_staggered_magnetization,
     measure_mean_rydberg,
 )
-from ryd_gate.tn.state import product_state_mps, domain_state_mps
+from tenpy_mps.state import product_state_mps, domain_state_mps
 
 # ---------------------------------------------------------------------------
 # Physics constants (in units of Omega = 1)
