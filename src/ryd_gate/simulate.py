@@ -42,10 +42,15 @@ def simulate(system, x, psi0="all_ground", *, backend: str = "exact", **kwargs) 
     """
     key = backend.lower()
     if key in _EXACT_BACKENDS:
+        # Exact dispatch is terminal: the exact engine has a single solver path,
+        # so the name is consumed here rather than forwarded. (Its own ``backend``
+        # arg is a SolverBackend object / auto-select, not a routing key.)
         from ryd_gate.backends.exact import simulate as simulate_exact
 
         return simulate_exact(system, x, psi0, **kwargs)
 
+    # TN dispatch is not terminal: ``key`` selects the engine inside simulate_tn,
+    # so the name is forwarded for downstream routing/normalization.
     from ryd_gate.backends.tn_common import simulate_tn
     from ryd_gate.backends.tn_common.compiler import tn_lattice_spec_from_system
 
