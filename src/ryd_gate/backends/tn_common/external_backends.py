@@ -59,7 +59,7 @@ _PACKAGE_SPECS: dict[str, SolverPackageSpec] = {
     ),
     "pytreenet": SolverPackageSpec(
         package="pytreenet",
-        import_names=("ttn.vendor.pytreenet", "pytreenet"),
+        import_names=("ryd_gate._vendor.pytreenet", "pytreenet"),
         extra="tn-ttn",
         role="tree tensor networks and TTN time evolution",
         docs_url="https://pytreenet.readthedocs.io/",

@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ryd_gate._vendor import import_pytreenet
 from ryd_gate.backends.tenpy_mps.backends import _merge_pin_deltas, _pin_deltas_from_params
-from ryd_gate.backends.ttn.vendor import import_pytreenet
 from ryd_gate.core.channel_lowering import (
     three_level_profiles_from_coeffs,
     two_level_drive_and_detuning_from_coeffs,
