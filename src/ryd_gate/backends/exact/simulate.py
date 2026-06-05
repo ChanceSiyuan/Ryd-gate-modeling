@@ -19,17 +19,19 @@ def simulate(
     x,
     psi0,
     t_eval: np.ndarray | bool | None = None,
-    backend: "SolverBackend | str | None" = None,
+    backend: "SolverBackend | None" = None,
     compiler=None,
     backend_options: "dict | ExactOptions | None" = None,
 ) -> EvolutionResult:
     """Compile a protocol-bound Rydberg system and evolve exactly.
 
-    ``system`` must have a protocol bound. The default backend is sparse
-    piecewise-exponential exact state-vector evolution. Tensor-network and
-    external algorithms live in their own backend packages under
-    ``ryd_gate.backends``. ``backend_options`` accepts a dict or an
-    :class:`ExactOptions`.
+    ``system`` must have a protocol bound. With ``backend=None`` the solver is
+    selected automatically: sparse piecewise-exponential evolution for a sparse
+    Hamiltonian IR, otherwise a dense ODE integrator. Pass a concrete
+    :class:`~ryd_gate.backends.exact.base.SolverBackend` to override. Backend
+    dispatch by name lives in :func:`ryd_gate.simulate`; tensor-network and
+    external algorithms live under ``ryd_gate.backends``. ``backend_options``
+    accepts a dict or an :class:`ExactOptions`.
     """
     from ryd_gate.backends.exact.compiler import ExactSparseCompiler
     from ryd_gate.backends.exact.dense_ode import DenseODEBackend
@@ -46,27 +48,13 @@ def simulate(
     params = system.unpack_params(x)
     opts = as_backend_options(backend_options)
 
-    if isinstance(backend, str):
-        backend_key = backend.lower()
-        if backend_key in {"sparse", "sparse_expm", "exact"}:
-            compiler = compiler or ExactSparseCompiler()
-            ir = compiler.compile(system, params)
-            n = getattr(system.protocol, "n_steps", 200)
-            solver = SparseExpmBackend(n_steps=opts.get("n_steps", n))
-            return solver.evolve(ir, _exact_initial_state(system, psi0), params["t_gate"], t_eval)
-
-        raise ValueError(
-            f"Unknown exact backend {backend!r}. Use 'sparse_expm'/'exact', "
-            "or call tn_common.simulate_tn(...) for tensor-network algorithms."
-        )
-
     compiler = compiler or ExactSparseCompiler()
     ir = compiler.compile(system, params)
 
     if backend is None:
         if ir.is_sparse:
             n = getattr(system.protocol, "n_steps", 200)
-            backend = SparseExpmBackend(n_steps=n)
+            backend = SparseExpmBackend(n_steps=opts.get("n_steps", n))
         else:
             backend = DenseODEBackend()
 
