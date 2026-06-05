@@ -11,7 +11,6 @@ from ryd_gate.analysis.coarsening import (
     identify_domains,
 )
 
-
 # --- Fixtures ---
 
 @pytest.fixture
