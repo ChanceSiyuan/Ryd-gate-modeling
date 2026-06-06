@@ -4,7 +4,7 @@ Contents
 --------
 - ``gate_cz_to`` — TOProtocol: time-optimal CZ gate (cosine phase, 6 params)
 - ``gate_cz_ar`` — ARProtocol: amplitude-robust CZ gate (dual-sine phase, 8 params)
-- ``sweep``      — SweepProtocol: adiabatic detuning sweep for lattice systems (3 params)
+- ``sweep``      — SweepProtocol: function-defined global Rydberg sweep
 - ``lattice_dynamics`` — TFIMQuenchProtocol / TFIMAnnealProtocol for 2D lattice dynamics
 - ``base``       — Protocol abstract base class
 - ``channels``   — Drive channel name constants (e.g. ``"drive_420"``, ``"global_n"``)

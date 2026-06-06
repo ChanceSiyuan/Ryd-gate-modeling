@@ -56,8 +56,17 @@ import ryd_gate as rg
 import numpy as np
 from ryd_gate.lattice import make_chain
 
-# 1. Sweep protocol
-protocol = rg.SweepProtocol()
+delta_start = 2 * np.pi * -40e6
+delta_end = 2 * np.pi * 40e6
+t_sweep = 10e-6
+Omega = 2 * np.pi * 4e6
+
+# 1. Function-defined sweep protocol
+protocol = rg.SweepProtocol(
+    t_gate=t_sweep,
+    omega_half_fn=lambda t: 0.5 * Omega,
+    delta_fn=lambda t: delta_start + (delta_end - delta_start) * t / t_sweep,
+)
 
 # 2. Create lattice system with the protocol bound
 system = rg.RydbergSystem.from_lattice(
@@ -68,8 +77,7 @@ system = rg.RydbergSystem.from_lattice(
 
 # 3. Simulate (psi0 = ground state |gggg>)
 psi0 = system.ground_state()
-params = [2 * np.pi * -40e6, 2 * np.pi * 40e6, 10e-6]  # [delta_start, delta_end, t_sweep]
-result = rg.simulate(system, params, psi0)
+result = rg.simulate(system, [], psi0)
 ```
 
 ### 全流程示例：2D g–r 晶格演化（exact + ttn）
@@ -88,17 +96,23 @@ from ryd_gate.lattice import make_square_lattice
 geom = make_square_lattice(3, 3, spacing_um=1.0)          # 无量纲间距
 
 # 2. 失谐扫描协议（detuning 从 -8 扫到 +8，用时 6）
-protocol = rg.SweepProtocol(n_steps=60)
+delta_start, delta_end, t_sweep = -8.0, 8.0, 6.0
+Omega = 1.0
+protocol = rg.SweepProtocol(
+    t_gate=t_sweep,
+    omega_half_fn=lambda t: 0.5 * Omega,
+    delta_fn=lambda t: delta_start + (delta_end - delta_start) * t / t_sweep,
+    n_steps=60,
+)
 system = rg.RydbergSystem.from_lattice(
     geom, "1r",
-    interaction=InteractionSpec(C6=6.0),                  # 近邻阻塞 ~6（无量纲）
+    interaction=InteractionSpec(C6=6.0, mode="nn"),       # 近邻 VdW ~6；TN 勿用默认 all（全连接极慢）
     protocol=protocol,
 )
-x = [-8.0, 8.0, 6.0]                                      # [delta_start, delta_end, t_sweep]
 t_eval = np.linspace(0.0, 6.0, 7)
 
 # 3a. 精确后端：states 是态矢量，用 system.expectation 读 Rydberg 均值
-res = rg.simulate(system, x, "all_ground", backend="exact", t_eval=t_eval)
+res = rg.simulate(system, [], "all_ground", backend="exact", t_eval=t_eval)
 for t, psi in zip(res.times, res.states):
     print(f"t={t:.1f}  <n_r>={system.expectation('sum_nr', psi) / system.N:.4f}")
 
@@ -107,7 +121,7 @@ for t, psi in zip(res.times, res.states):
 res_ttn = rg.simulate(
     system, x, "all_ground",
     backend="ttn", t_eval=t_eval, observables=["n_mean"],
-    backend_options={"chi_max": 32, "dt": 0.1},
+    backend_options={"chi_max": 12, "dt": 0.2},
 )
 print("TTN <n_r>:", np.round(np.asarray(res_ttn.metadata["obs"]["n_mean"]), 4))
 ```
@@ -116,16 +130,20 @@ print("TTN <n_r>:", np.round(np.asarray(res_ttn.metadata["obs"]["n_mean"]), 4))
 
 ```
 t=0.0  <n_r>=0.0000
-t=1.0  <n_r>=0.0099
-t=2.0  <n_r>=0.0303
-t=3.0  <n_r>=0.0934
-t=4.0  <n_r>=0.3007
-t=5.0  <n_r>=0.3233
-t=6.0  <n_r>=0.3970
+t=1.0  <n_r>=0.0100
+t=2.0  <n_r>=0.0305
+t=3.0  <n_r>=0.0992
+t=4.0  <n_r>=0.3209
+t=5.0  <n_r>=0.2977
+t=6.0  <n_r>=0.4123
 ```
 
-`<n_r>` 随失谐扫描从 0 升到约 0.40——原子被驱动进 Rydberg 态，而近邻阻塞把均值压在
-0.5 以下。把 `backend` 换成 `"tenpy"`/`"gputn"`/`"2dtn"` 即可切到其它张量网络后端。
+`<n_r>` 随失谐扫描从 0 升到约 0.41——原子被驱动进 Rydberg 态，而近邻阻塞把均值压在
+0.5 以下。TTN 后端请用 `mode="nn"` 并适当减小 `chi_max`、增大 `dt`（上例 `chi_max=12`,
+`dt=0.2`）；默认 `mode="all"` 全连接相互作用会让 TTN 慢 orders of magnitude。把
+`backend` 换成 `"tenpy"`/`"gputn"`/`"gputtn"`/`"2dtn"` 即可切到其它张量网络后端；
+`"gputtn"` 使用 Julia ITensorNetworks.jl 的 GPU TTN-TDVP，需要本仓库 Julia project
+已实例化且 `CUDA.functional()` 为 true。
 
 ## 项目结构 (Project structure)
 
@@ -174,7 +192,7 @@ src/ryd_gate/
 │   ├── tn_common/             # 所有 TN 后端共享：TN IR / lattice_spec / simulate_tn 分发
 │   ├── tenpy_mps/             # TeNPy MPS DMRG/TDVP（最完整的 TN 后端）   [extra: tn]
 │   ├── gputn/                 # CUDA / cuQuantum 张量网络                 [extra: gputn-cu12]
-│   ├── itensor/               # Julia ITensors 桥接
+│   ├── itensor/               # Julia ITensors / ITensorNetworks / TNQS 桥接
 │   ├── ttn/                   # 树张量网络（用 _vendor/pytreenet）        [extra: tn-ttn]
 │   ├── nqs/                   # NQS/tVMC 外部求解器边界                   [extra: nqs]
 │   └── peps2d/                # 2D PEPS/BP 外部求解器边界                 [extra: tn-2d]
@@ -209,7 +227,7 @@ import ryd_gate as rg
 |--------|-------------|
 | `rg.TOProtocol()` | Time-optimal CZ gate — cosine phase, 6 params |
 | `rg.ARProtocol()` | Amplitude-robust CZ gate — dual-sine phase, 8 params |
-| `rg.SweepProtocol()` | Adiabatic detuning sweep — 3 params |
+| `rg.SweepProtocol(...)` | Function-defined global Rydberg sweep |
 
 ### Simulation
 
@@ -264,26 +282,15 @@ Self-contained, runnable demos live in `examples/` (a good place to start):
 uv run python examples/demo_local_addressing.py --Lx 2 --Ly 2 --experiment domain
 ```
 
-## Scripts
+## Notebooks
 
-Experimental / batch / plotting scripts live in `scripts/`:
+Experimental, batch, and plotting workflows live in `scripts/notebooks/`:
 
-| Script | Description |
-|--------|-------------|
-| `error_deterministic.py` | Deterministic error budget for TO/AR protocols |
-| `error_monte_carlo.py` | Monte Carlo noise analysis (dephasing, amplitude) |
-| `generate_si_tables.py` | Generate supplemental tables for publication |
-| `verify_cz_dark.py` | Verify CZ gate with dark-detuning parameters |
-| `run_cz_simulation.py` | CZ gate simulation with TO/AR protocols |
-| `plot_population_evolution_sch.py` | Plot Schrödinger population evolution |
-| `sensitivity_gaussian_iso.py` | Sensitivity analysis for Gaussian position errors |
-| `run_local_sweep.py` | Local addressing sweep visualization (3-level model) |
-| `scan_local_addressing.py` | 2D grid scan over addressing parameters |
-| `scan_local_addressing_singlequbit.py` | Single-qubit addressing scan |
-| `diagnose_adiabaticity.py` | Diagnose adiabaticity quality for sweep protocols |
-| `plot_ac_stark_landscape.py` | AC Stark shift landscape visualization |
-| `run_3level_lattice.py` | 3-level lattice simulation |
-| `addressing_enlevel.py` | Energy level diagram for local addressing |
+| Notebook | Description |
+|----------|-------------|
+| `01_cz_gate_validation_and_errors.ipynb` | CZ gate validation, population evolution, deterministic/MC error budgets, and sensitivity analysis |
+| `02_ac_stark_local_addressing.ipynb` | AC Stark landscapes, local-addressing dynamics, addressing scans, noise sensitivity, and adiabaticity diagnostics |
+| `03_lattice_dynamics_and_annealing.ipynb` | Route-2 pulse cells, exact 3-level lattice dynamics, and tensor-network annealing configurations |
 
 ## Testing
 

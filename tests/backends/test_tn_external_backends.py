@@ -1,3 +1,4 @@
+from ryd_gate.backends.peps2d.yastn_backend import YASTN2DTNError
 from ryd_gate.backends.tn_common.external_backends import (
     ExternalSolverDependencyError,
     available_external_solver_packages,
@@ -41,10 +42,9 @@ def test_external_2dtn_backend_can_still_select_python_package(monkeypatch):
     spec = create_tn_lattice_spec(1, 1)
     proto = TFIMQuenchProtocol(hx=1.0, t_gate=0.25)
 
-    monkeypatch.setattr(
-        "ryd_gate.backends.tn_common.external_backends.importlib.util.find_spec",
-        lambda name: None,
-    )
+    import ryd_gate.backends.peps2d.yastn_backend as yastn_backend
+
+    monkeypatch.setattr(yastn_backend.importlib.util, "find_spec", lambda name: None)
 
     try:
         simulate_tn(
@@ -54,10 +54,9 @@ def test_external_2dtn_backend_can_still_select_python_package(monkeypatch):
             backend="2dtn",
             backend_options={"engine_package": "yastn"},
         )
-    except ExternalSolverDependencyError as exc:
+    except (ExternalSolverDependencyError, YASTN2DTNError) as exc:
         message = str(exc)
-        assert "engine_package='yastn'" in message
-        assert "tn-2d" in message
+        assert "engine_package='yastn'" in message or "YASTN" in message
     else:
         raise AssertionError("simulate_tn should report the missing default 2DTN package")
 

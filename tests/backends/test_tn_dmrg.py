@@ -79,7 +79,11 @@ class TestDMRG:
         from ryd_gate.protocols.sweep import SweepProtocol
 
         Delta = 2.0
-        proto = SweepProtocol(omega_ramp_frac=0.0)
+        proto = SweepProtocol(
+            t_gate=1.0,
+            omega_half_fn=lambda t: 0.5,
+            delta_fn=lambda t: Delta,
+        )
         system = RydbergSystem.from_lattice(
             make_square_lattice(2, 2, spacing_um=1.0),
             "1r",
@@ -87,7 +91,7 @@ class TestDMRG:
             protocol=proto,
             Omega=1.0,
         )
-        params = system.unpack_params([Delta, Delta, 1.0])
+        params = system.unpack_params([])
         ham = compile_hamiltonian_ir(system, params)
         ir = compile_expm_ir(ham)
 

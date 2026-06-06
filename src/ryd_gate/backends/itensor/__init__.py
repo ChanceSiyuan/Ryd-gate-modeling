@@ -8,9 +8,12 @@ from ryd_gate.backends.tn_common.compiler import (
 )
 
 from .backend import ITensorsJuliaBackend, ITensorsJuliaError
+from .gputtn_backend import GPUITensorNetworksTTNBackend, GPUITensorNetworksTTNError
 from .tnqs_backend import TNQSJulia2DTNBackend, TNQSJuliaError
 
 __all__ = [
+    "GPUITensorNetworksTTNBackend",
+    "GPUITensorNetworksTTNError",
     "ITensorsJuliaBackend",
     "ITensorsJuliaError",
     "TNCompiler",
