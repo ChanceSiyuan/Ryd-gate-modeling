@@ -9,4 +9,13 @@ is re-exported here for discovery; shared TN IR/compiler types live in
 
 from ryd_gate.backends.tn_common.external_backends import External2DTNBPBackend
 
-__all__ = ["External2DTNBPBackend"]
+from .quimb_backend import Quimb2DTNBackend, Quimb2DTNError
+from .yastn_backend import YASTN2DTNBackend, YASTN2DTNError
+
+__all__ = [
+    "External2DTNBPBackend",
+    "Quimb2DTNBackend",
+    "Quimb2DTNError",
+    "YASTN2DTNBackend",
+    "YASTN2DTNError",
+]

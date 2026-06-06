@@ -31,10 +31,8 @@ from ryd_gate.backends.tenpy_mps.observables import (
     measure_site_occupations,
     measure_staggered_magnetization,
 )
-from ryd_gate.backends.tenpy_mps.state import domain_state_mps, product_state_mps
-from ryd_gate.backends.tn_common import TNLatticeSpec, create_tn_lattice_spec, simulate_tn
+from ryd_gate.backends.tn_common import create_tn_lattice_spec, simulate_tn
 from ryd_gate.core.states import domain_config
-from ryd_gate.lattice import is_in_domain
 from ryd_gate.protocols.sweep import SweepProtocol
 
 # ---------------------------------------------------------------------------
@@ -45,6 +43,31 @@ DELTA_START = -3.0
 DELTA_PIN = -4.0
 T_SWEEP = 55.0
 OMEGA_RAMP_FRAC = 0.1
+
+
+def _make_sweep_protocol(delta_start, delta_end, t_gate, *, addressing=None):
+    addressing = addressing or {}
+
+    def omega_half_t(t):
+        ramp_time = OMEGA_RAMP_FRAC * t_gate
+        if ramp_time == 0:
+            return 0.5
+        return 0.5 * min(1.0, max(0.0, t / ramp_time))
+
+    def delta_t(t):
+        ramp_time = OMEGA_RAMP_FRAC * t_gate
+        if t <= ramp_time:
+            return delta_start
+        chirp_time = max(t_gate - ramp_time, np.finfo(float).eps)
+        frac = np.clip((t - ramp_time) / chirp_time, 0.0, 1.0)
+        return delta_start + (delta_end - delta_start) * frac
+
+    return SweepProtocol(
+        t_gate=t_gate,
+        omega_half_fn=omega_half_t,
+        delta_fn=delta_t,
+        address_fn=(lambda t, i: addressing.get(i, 0.0)) if addressing else None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -68,16 +91,13 @@ def run_domain_shrinking_tn(spec, args):
     target = domain_config(spec.coords, spec.sublattice, (cx, cy), domain_radius)
     addressing = {i: DELTA_PIN for i in range(spec.N) if target[i] == 0}
 
-    sweep_proto = SweepProtocol(
-        addressing=addressing,
-        omega_ramp_frac=OMEGA_RAMP_FRAC,
-    )
+    sweep_proto = _make_sweep_protocol(DELTA_START, Delta_f, T_SWEEP, addressing=addressing)
 
     t0 = _time.time()
     sweep_result = simulate_tn(
         spec,
         sweep_proto,
-        [DELTA_START, Delta_f, T_SWEEP],
+        [],
         initial_state="all_ground",
         method="tdvp",
         backend_options={"chi_max": args.chi_max, "dt": args.dt},
@@ -93,7 +113,7 @@ def run_domain_shrinking_tn(spec, args):
     # --- Phase 2: Free evolution (hold) ---
     print("  Phase 2: Free evolution (pinning off)...")
     t_hold = 6.0
-    hold_proto = SweepProtocol()
+    hold_proto = _make_sweep_protocol(Delta_f, Delta_f, t_hold)
     n_eval = min(args.n_eval, 50)
     t_eval = np.linspace(0, t_hold, n_eval)
 
@@ -101,7 +121,7 @@ def run_domain_shrinking_tn(spec, args):
     hold_result = simulate_tn(
         spec,
         hold_proto,
-        [Delta_f, Delta_f, t_hold],
+        [],
         initial_state=psi_after_sweep,
         method="tdvp",
         t_eval=t_eval,
@@ -187,15 +207,12 @@ def run_higgs_mode_tn(spec, args):
     for Delta_f in Delta_values:
         print(f"\n  --- Delta/Omega = {Delta_f:.1f} ---")
 
-        sweep_proto = SweepProtocol(
-            addressing=addressing,
-            omega_ramp_frac=OMEGA_RAMP_FRAC,
-        )
+        sweep_proto = _make_sweep_protocol(DELTA_START, Delta_f, T_SWEEP, addressing=addressing)
         t0 = _time.time()
         sweep_result = simulate_tn(
             spec,
             sweep_proto,
-            [DELTA_START, Delta_f, T_SWEEP],
+            [],
             initial_state="all_ground",
             method="tdvp",
             backend_options={"chi_max": args.chi_max, "dt": args.dt},
@@ -204,8 +221,8 @@ def run_higgs_mode_tn(spec, args):
         ms_sw = measure_staggered_magnetization(psi, spec)
         print(f"    Sweep: {_time.time() - t0:.1f}s, m_s = {ms_sw:.4f}")
 
-        hold_proto = SweepProtocol()
         t_hold = 10.0
+        hold_proto = _make_sweep_protocol(Delta_f, Delta_f, t_hold)
         n_eval = min(args.n_eval, 50)
         t_eval = np.linspace(0, t_hold, n_eval)
 
@@ -213,7 +230,7 @@ def run_higgs_mode_tn(spec, args):
         hold_result = simulate_tn(
             spec,
             hold_proto,
-            [Delta_f, Delta_f, t_hold],
+            [],
             initial_state=psi,
             method="tdvp",
             t_eval=t_eval,
@@ -288,7 +305,7 @@ def main():
     parser.add_argument("--figdir", type=str, default="docs/figures")
     args = parser.parse_args()
 
-    print(f"Rydberg Array Local Addressing Demo (TN)")
+    print("Rydberg Array Local Addressing Demo (TN)")
     print(f"Lattice: {args.Lx} x {args.Ly} ({args.Lx * args.Ly} atoms)")
     print(f"Backend: TDVP, chi_max={args.chi_max}, dt={args.dt}")
     print()

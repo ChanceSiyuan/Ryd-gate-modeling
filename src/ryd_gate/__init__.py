@@ -6,7 +6,7 @@ Typical workflow
 
        protocol = TOProtocol()               # time-optimal CZ gate (6 params)
        protocol = ARProtocol()               # amplitude-robust CZ gate (8 params)
-       protocol = SweepProtocol()            # adiabatic detuning sweep (lattice)
+       protocol = SweepProtocol(...)         # function-defined Rydberg sweep
        protocol = TFIMQuenchProtocol(...)     # 2D TFIM / g-r lattice quench
 
 2. **Create a quantum system with the protocol bound**::

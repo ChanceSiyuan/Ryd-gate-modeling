@@ -89,9 +89,14 @@ from ryd_gate import RydbergSystem, SweepProtocol, compile_hamiltonian_ir
 from ryd_gate.backends.exact import compile_expm_ir
 from ryd_gate.lattice import make_chain
 
-protocol = SweepProtocol()
+delta_start, delta_end, t_sweep = -3.0, 3.0, 10.0
+protocol = SweepProtocol(
+    t_gate=t_sweep,
+    omega_half_fn=lambda t: 0.5,
+    delta_fn=lambda t: delta_start + (delta_end - delta_start) * t / t_sweep,
+)
 system = RydbergSystem.from_lattice(make_chain(4), "1r", protocol=protocol)
-params = system.unpack_params([-3.0, 3.0, 10.0])
+params = system.unpack_params([])
 hamiltonian = compile_hamiltonian_ir(system, params)
 exact_ir = compile_expm_ir(hamiltonian)
 ```
@@ -101,7 +106,7 @@ exact_ir = compile_expm_ir(hamiltonian)
 ```python
 from ryd_gate.backends.exact import MonteCarloRunner
 
-runner = MonteCarloRunner(system, [-3.0, 3.0, 10.0])
+runner = MonteCarloRunner(system, [])
 runner.setup_detuning_noise(50e3)
 shots = runner.run_states([system.ground_state()], n_shots=50, seed=42)
 ```
@@ -112,22 +117,23 @@ shots = runner.run_states([system.ground_state()], n_shots=50, seed=42)
 import numpy as np
 from ryd_gate.backends.exact import simulate
 from ryd_gate import RydbergSystem, SweepProtocol
-from ryd_gate.core.operators import build_product_state_map
 from ryd_gate.lattice import make_chain
+
+delta_start = -2 * np.pi * 15e6
+delta_end = 2 * np.pi * 15e6
+t_sweep = 1.5e-6
 
 system = RydbergSystem.from_lattice(
     make_chain(2, spacing_um=3.0),
-    "ger",
-    param_set="analog_3",
+    "1r",
 )
-protocol = SweepProtocol(addressing={0: -2 * np.pi * 12e6})
-psi0 = build_product_state_map(n_levels=3)["gg"]
-x = [
-    -2 * np.pi * 15e6 / system.meta("rabi_eff"),
-     2 * np.pi * 15e6 / system.meta("rabi_eff"),
-     1.5e-6 / system.meta("time_scale"),
-]
-result = simulate(system.with_protocol(protocol), x, psi0)
+protocol = SweepProtocol(
+    t_gate=t_sweep,
+    omega_half_fn=lambda t: np.pi * 4e6,
+    delta_fn=lambda t: delta_start + (delta_end - delta_start) * t / t_sweep,
+    address_fn=lambda t, i: -2 * np.pi * 12e6 if i == 0 else 0.0,
+)
+result = simulate(system.with_protocol(protocol), [], "all_ground")
 ```
 
 ### 5. Including Decay Effects

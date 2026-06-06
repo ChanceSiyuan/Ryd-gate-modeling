@@ -19,17 +19,25 @@ def spec_1x1():
     return create_tn_lattice_spec(Lx=1, Ly=1)
 
 
+def _sweep(t_gate=1.0, omega=1.0, delta=0.0):
+    return SweepProtocol(
+        t_gate=t_gate,
+        omega_half_fn=lambda t: 0.5 * omega,
+        delta_fn=lambda t: delta,
+    )
+
+
 def test_invalid_tn_backend_raises(spec_1x1):
     with pytest.raises(ValueError, match="Unknown TN backend"):
-        simulate_tn(spec_1x1, SweepProtocol(), [0.0, 0.0, 1.0], backend="bad")
+        simulate_tn(spec_1x1, _sweep(), [], backend="bad")
 
 
 def test_gputn_rejects_dmrg_before_dependency_check(spec_1x1):
     with pytest.raises(ValueError, match="method='tdvp'"):
         simulate_tn(
             spec_1x1,
-            SweepProtocol(),
-            [0.0, 0.0, 1.0],
+            _sweep(),
+            [],
             method="dmrg",
             backend="gputn",
         )
@@ -46,8 +54,8 @@ def test_gputn_dependency_error_names_missing_module(monkeypatch, spec_1x1):
     with pytest.raises(gpu_backends.GPUTNDependencyError, match="cupy"):
         simulate_tn(
             spec_1x1,
-            SweepProtocol(),
-            [0.0, 0.0, 1.0],
+            _sweep(),
+            [],
             backend="gputn",
         )
 
@@ -73,8 +81,8 @@ def test_gputn_dispatches_to_configured_engine(monkeypatch, spec_1x1):
 
     result = simulate_tn(
         spec_1x1,
-        SweepProtocol(),
-        [0.0, 0.0, 1.0],
+        _sweep(),
+        [],
         initial_state="all_ground",
         backend="gputn",
         backend_options={"engine": FakeEngine(), "chi_max": 7, "dt": 0.25},
@@ -94,8 +102,8 @@ def test_gputn_builtin_statevector_kernel_runs_with_dependency_injection(monkeyp
 
     result = simulate_tn(
         spec_1x1,
-        SweepProtocol(omega_ramp_frac=0.0),
-        [0.0, 0.0, 0.2],
+        _sweep(t_gate=0.2),
+        [],
         initial_state="all_ground",
         backend="gputn",
         t_eval=np.array([0.0, 0.2]),
@@ -122,14 +130,18 @@ def test_gputn_builtin_cutensornet_kernel_uses_network_state_api(monkeypatch, sp
             del kwargs
             self.psi = np.zeros(int(np.prod(extents)), dtype=complex)
             self.psi[0] = 1.0
+            self.applied = False
 
         def apply_tensor_operator(self, modes, tensor, unitary=True):
             del unitary
             assert tuple(modes) == (0,)
             self.psi = np.asarray(tensor) @ self.psi
+            self.applied = True
 
         def compute_reduced_density_matrix(self, modes):
             assert tuple(modes) == (0,)
+            if not self.applied:
+                raise RuntimeError("RDM cannot be computed before an operator has been applied.")
             return np.outer(self.psi, self.psi.conjugate())
 
         def compute_state_vector(self):
@@ -155,11 +167,11 @@ def test_gputn_builtin_cutensornet_kernel_uses_network_state_api(monkeypatch, sp
 
     result = simulate_tn(
         spec_1x1,
-        SweepProtocol(omega_ramp_frac=0.0),
-        [0.0, 0.0, 0.2],
+        _sweep(t_gate=0.2),
+        [],
         initial_state="all_ground",
         backend="gputn",
-        t_eval=np.array([0.2]),
+        t_eval=np.array([0.0, 0.2]),
         observables=["n_mean"],
         backend_options={
             "kernel": "cutensornet_mps",
@@ -171,4 +183,5 @@ def test_gputn_builtin_cutensornet_kernel_uses_network_state_api(monkeypatch, sp
 
     assert result.metadata["kernel"] == "cutensornet_mps_trotter"
     assert result.psi_final.shape == (2,)
-    assert result.metadata["obs"]["n_mean"].shape == (1,)
+    assert result.metadata["obs"]["n_mean"].shape == (2,)
+    assert result.metadata["obs"]["n_mean"][0] == 0.0

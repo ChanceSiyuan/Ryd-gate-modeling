@@ -131,9 +131,10 @@ def channel_profile_from_coeffs(
 ) -> np.ndarray:
     """Return a per-site profile from either global or site-specific coeffs."""
     site_profile = site_profile_from_coeffs(coeffs, channel, n_sites, scale=scale)
+    global_value = scale * float(np.real(coeffs.get(channel, 0.0)))
     if site_profile is not None:
-        return site_profile
-    return np.full(n_sites, scale * float(np.real(coeffs.get(channel, 0.0))))
+        return global_value + site_profile
+    return np.full(n_sites, global_value)
 
 
 def profile_for_optional_channel(
@@ -174,10 +175,11 @@ def three_level_profiles_from_coeffs(
 
 
 def split_uniform_profile(profile: np.ndarray) -> tuple[float, np.ndarray | None]:
-    """Return ``(uniform_value, None)`` or ``(0, nonuniform_profile)``."""
+    """Return ``(uniform_value, None)`` or ``(mean, nonuniform_offsets)``."""
     if np.allclose(profile, profile[0]):
         return float(profile[0]), None
-    return 0.0, profile
+    mean = float(np.mean(profile))
+    return mean, profile - mean
 
 
 def two_level_drive_and_detuning_from_coeffs(

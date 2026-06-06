@@ -14,6 +14,15 @@ from ryd_gate.lattice import make_chain, make_square_lattice
 from ryd_gate.protocols.digital_analog import DigitalAnalogProtocol
 
 
+def _sweep(t_gate=0.1, omega=1.0, delta=0.0, n_steps=10):
+    return SweepProtocol(
+        t_gate=t_gate,
+        omega_half_fn=lambda t: 0.5 * omega,
+        delta_fn=lambda t: delta,
+        n_steps=n_steps,
+    )
+
+
 class _GerProtocol:
     n_params = 0
 
@@ -90,9 +99,9 @@ def test_exact_sparse_compiler_rejects_too_large_hilbert_space():
         make_chain(8),
         "1r",
         interaction=InteractionSpec(C6=0.0),
-        protocol=SweepProtocol(n_steps=2),
+        protocol=_sweep(n_steps=2),
     )
-    params = model.unpack_params([-1.0, 1.0, 0.1])
+    params = model.unpack_params([])
 
     with pytest.raises(ValueError, match="Exact sparse compilation"):
         ExactSparseCompiler(max_dim=16).compile(model, params)
@@ -103,10 +112,10 @@ def test_sweep_simulation_with_unified_model():
         make_square_lattice(2, 2),
         "1r",
         interaction=InteractionSpec(C6=0.0),
-        protocol=SweepProtocol(n_steps=10),
+        protocol=_sweep(delta=0.0, n_steps=10),
     )
     psi0 = model.ground_state()
-    result = simulate(model, [-1.0, 1.0, 0.1], psi0)
+    result = simulate(model, [], psi0)
 
     assert np.isclose(np.linalg.norm(result.psi_final), 1.0)
 
@@ -116,12 +125,12 @@ def test_sparse_expm_t_eval_array_records_requested_steps_only():
         make_chain(1),
         "1r",
         interaction=InteractionSpec(C6=0.0),
-        protocol=SweepProtocol(n_steps=10),
+        protocol=_sweep(n_steps=10),
     )
     psi0 = model.ground_state()
     t_eval = np.array([0.0, 0.05, 0.1])
 
-    result = simulate(model, [-1.0, 1.0, 0.1], psi0, t_eval=t_eval)
+    result = simulate(model, [], psi0, t_eval=t_eval)
 
     np.testing.assert_allclose(result.times, t_eval)
     assert result.states.shape == (len(t_eval), model.dim)
@@ -132,11 +141,11 @@ def test_sparse_expm_t_eval_true_records_internal_steps_for_compatibility():
         make_chain(1),
         "1r",
         interaction=InteractionSpec(C6=0.0),
-        protocol=SweepProtocol(n_steps=4),
+        protocol=_sweep(n_steps=4),
     )
     psi0 = model.ground_state()
 
-    result = simulate(model, [-1.0, 1.0, 0.1], psi0, t_eval=True)
+    result = simulate(model, [], psi0, t_eval=True)
 
     assert result.times.shape == (4,)
     assert result.states.shape == (4, model.dim)

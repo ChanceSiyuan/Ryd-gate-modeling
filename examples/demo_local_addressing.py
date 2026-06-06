@@ -55,6 +55,32 @@ T_SWEEP = 55.0  # adiabatic sweep duration
 OMEGA_RAMP_FRAC = 0.1  # fraction of sweep for Omega ramp-up
 
 
+def _make_sweep_protocol(delta_start, delta_end, t_gate, *, addressing=None, n_steps=200):
+    addressing = addressing or {}
+
+    def omega_half_t(t):
+        ramp_time = OMEGA_RAMP_FRAC * t_gate
+        if ramp_time == 0:
+            return 0.5
+        return 0.5 * min(1.0, max(0.0, t / ramp_time))
+
+    def delta_t(t):
+        ramp_time = OMEGA_RAMP_FRAC * t_gate
+        if t <= ramp_time:
+            return delta_start
+        chirp_time = max(t_gate - ramp_time, np.finfo(float).eps)
+        frac = np.clip((t - ramp_time) / chirp_time, 0.0, 1.0)
+        return delta_start + (delta_end - delta_start) * frac
+
+    return SweepProtocol(
+        t_gate=t_gate,
+        omega_half_fn=omega_half_t,
+        delta_fn=delta_t,
+        address_fn=(lambda t, i: addressing.get(i, 0.0)) if addressing else None,
+        n_steps=n_steps,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Shared setup
 # ---------------------------------------------------------------------------
@@ -100,16 +126,18 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
     target = domain_config(coords, sublattice, (cx, cy), domain_radius)
     addressing = {i: DELTA_PIN for i in range(N) if target[i] == 0}
 
-    sweep_proto = SweepProtocol(
+    sweep_proto = _make_sweep_protocol(
+        DELTA_START,
+        Delta_f,
+        T_SWEEP,
         addressing=addressing,
-        omega_ramp_frac=OMEGA_RAMP_FRAC,
         n_steps=min(n_steps, 40),
     )
 
     t0 = _time.time()
     sweep_result = simulate(
         system.with_protocol(sweep_proto),
-        [DELTA_START, Delta_f, T_SWEEP],
+        [],
         psi0,
     )
     psi_after_sweep = sweep_result.psi_final
@@ -123,11 +151,11 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
     print("  Phase 2: Free evolution (pinning off)...")
     t_hold = 6.0
 
-    hold_proto = SweepProtocol(n_steps=n_steps)
+    hold_proto = _make_sweep_protocol(Delta_f, Delta_f, t_hold, n_steps=n_steps)
     t0 = _time.time()
     hold_result = simulate(
         system.with_protocol(hold_proto),
-        [Delta_f, Delta_f, t_hold],
+        [],
         psi_after_sweep,
         t_eval=np.linspace(0, t_hold, n_steps),
     )
@@ -246,8 +274,6 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
     import matplotlib.colors as mcolors
 
     cmap_class = mcolors.ListedColormap(["#2196F3", "#FF9800", "#E53935"])
-    bounds = [-0.5, 0.5, 1.5, 2.5]
-    norm_class = mcolors.BoundaryNorm(bounds, cmap_class.N)
     _draw_lattice(
         axes[1, 1],
         coords,
@@ -334,15 +360,17 @@ def run_higgs_mode(Lx, Ly, n_steps, figdir, setup=None):
         psi0 = product_state([0] * N, N)
 
         # Sweep phase with sublattice pinning
-        sweep_proto = SweepProtocol(
+        sweep_proto = _make_sweep_protocol(
+            DELTA_START,
+            Delta_f,
+            T_SWEEP,
             addressing=addressing,
-            omega_ramp_frac=OMEGA_RAMP_FRAC,
             n_steps=min(n_steps // 2, 40),
         )
         t0 = _time.time()
         sweep_result = simulate(
             system.with_protocol(sweep_proto),
-            [DELTA_START, Delta_f, T_SWEEP],
+            [],
             psi0,
         )
         psi = sweep_result.psi_final
@@ -350,11 +378,11 @@ def run_higgs_mode(Lx, Ly, n_steps, figdir, setup=None):
         print(f"    Sweep: {_time.time() - t0:.1f}s, m_s = {ms_sw:.4f}")
 
         # Hold phase (pinning off)
-        hold_proto = SweepProtocol(n_steps=n_steps)
+        hold_proto = _make_sweep_protocol(Delta_f, Delta_f, 10.0, n_steps=n_steps)
         t0 = _time.time()
         hold_result = simulate(
             system.with_protocol(hold_proto),
-            [Delta_f, Delta_f, 10.0],
+            [],
             psi,
             t_eval=np.linspace(0, 10.0, n_steps),
         )
@@ -422,7 +450,7 @@ def main():
     parser.add_argument("--figdir", type=str, default="docs/figures", help="Output directory for figures")
     args = parser.parse_args()
 
-    print(f"Rydberg Array Local Addressing Demo")
+    print("Rydberg Array Local Addressing Demo")
     print(f"Lattice: {args.Lx} x {args.Ly} ({args.Lx * args.Ly} atoms, dim = {2 ** (args.Lx * args.Ly)})")
     print()
 

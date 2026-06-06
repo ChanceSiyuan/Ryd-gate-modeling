@@ -40,20 +40,20 @@ def simulate_tn(
         either the effective ``1r`` TN subspace or explicit ``01r`` TN
         local levels.
     x : list
-        Protocol parameters. ``SweepProtocol`` uses
-        ``[delta_start, delta_end, t_sweep]``; ``DigitalAnalogProtocol``
-        stores its schedule internally and expects ``[]``.
+        Protocol parameters. ``SweepProtocol`` and ``DigitalAnalogProtocol``
+        store their schedules internally and expect ``[]``.
     initial_state : str, ndarray, or tenpy MPS
         Initial state. Strings: ``"all_ground"``, ``"af1"``,
         ``"af2"``. Arrays: per-site occupation (0/1).
     method : str
         ``"tdvp"``/``"mps_tdvp"`` for MPS time evolution, ``"dmrg"``
         for ground state, or a delegated method such as ``"itensors_tebd"``,
-        ``"ttn_tdvp"``, ``"2dtn_bp"``, or ``"nqs_tvmc"``.
+        ``"gputtn_tdvp"``, ``"ttn_tdvp"``, ``"2dtn_bp"``, or ``"nqs_tvmc"``.
     backend : str
         Tensor-network engine backend. ``"tenpy"``/``"mps"`` selects the
         CPU MPS path, ``"itensors"`` selects the Julia ITensors adapter,
-        ``"gputn"`` selects the CUDA adapter, ``"2dtn"`` selects the Julia
+        ``"gputn"`` selects the CUDA MPS/TN adapter, ``"gputtn"`` selects the
+        Julia ITensorNetworks TTN-TDVP adapter, ``"2dtn"`` selects the Julia
         TensorNetworkQuantumSimulator.jl adapter by default, and ``"ttn"`` or
         ``"nqs"`` select external adapter paths.
     t_eval : ndarray or None
@@ -116,6 +116,58 @@ def simulate_tn(
         )
         backend_obj = ITensorsJuliaBackend(**opts)
         return backend_obj.evolve_ir(
+            ir,
+            initial_state=initial_state,
+            t_eval=t_eval,
+            observables=observables,
+        )
+
+    if backend == "gputtn":
+        from ryd_gate.backends.itensor.gputtn_backend import GPUITensorNetworksTTNBackend
+
+        from .compiler import TNEvolutionIR
+
+        params = protocol.unpack_params(x, _protocol_context(spec))
+        ir = TNEvolutionIR(
+            spec=spec,
+            protocol=protocol,
+            params=params,
+            method="gputtn_tdvp",
+            metadata={
+                "compiler": "tn",
+                "tn_spec": spec,
+                "backend": backend,
+                "n_sites": spec.N,
+                "local_dim": spec.level_spec.local_dim,
+            },
+        )
+        return GPUITensorNetworksTTNBackend(**opts).evolve_ir(
+            ir,
+            initial_state=initial_state,
+            t_eval=t_eval,
+            observables=observables,
+        )
+
+    if backend == "yastn_mps":
+        from ryd_gate.backends.yastn_mps import YASTNMPSBackend
+
+        from .compiler import TNEvolutionIR
+
+        params = protocol.unpack_params(x, _protocol_context(spec))
+        ir = TNEvolutionIR(
+            spec=spec,
+            protocol=protocol,
+            params=params,
+            method="mps_tdvp",
+            metadata={
+                "compiler": "tn",
+                "tn_spec": spec,
+                "backend": backend,
+                "n_sites": spec.N,
+                "local_dim": spec.level_spec.local_dim,
+            },
+        )
+        return YASTNMPSBackend(**opts).evolve_ir(
             ir,
             initial_state=initial_state,
             t_eval=t_eval,
@@ -195,8 +247,8 @@ def simulate_tn(
 
     else:
         raise ValueError(
-            f"Unknown method: {method!r}. Use 'dmrg', 'tdvp', 'mps_tdvp', "
-            "'itensors_tebd', 'ttn_tdvp', '2dtn_bp', or 'nqs_tvmc'."
+        f"Unknown method: {method!r}. Use 'dmrg', 'tdvp', 'mps_tdvp', "
+            "'itensors_tebd', 'gputtn_tdvp', 'ttn_tdvp', '2dtn_bp', or 'nqs_tvmc'."
         )
 
 
@@ -241,10 +293,32 @@ def simulate_tn_ir(
             observables=observables,
         )
 
+    if backend == "yastn_mps":
+        from ryd_gate.backends.yastn_mps import YASTNMPSBackend
+
+        backend_obj = YASTNMPSBackend(**opts)
+        return backend_obj.evolve_ir(
+            ir,
+            initial_state=initial_state,
+            t_eval=t_eval,
+            observables=observables,
+        )
+
     if backend == "itensors":
         from ryd_gate.backends.itensor.backend import ITensorsJuliaBackend
 
         backend_obj = ITensorsJuliaBackend(**opts)
+        return backend_obj.evolve_ir(
+            ir,
+            initial_state=initial_state,
+            t_eval=t_eval,
+            observables=observables,
+        )
+
+    if backend == "gputtn":
+        from ryd_gate.backends.itensor.gputtn_backend import GPUITensorNetworksTTNBackend
+
+        backend_obj = GPUITensorNetworksTTNBackend(**opts)
         return backend_obj.evolve_ir(
             ir,
             initial_state=initial_state,
@@ -271,8 +345,8 @@ def simulate_tn_ir(
         )
 
     raise ValueError(
-        f"Unknown TN backend: {backend!r}. Use 'tenpy', 'mps', 'gputn', "
-        "'itensors', 'ttn', '2dtn', or 'nqs'."
+        f"Unknown TN backend: {backend!r}. Use 'tenpy', 'mps', 'mps_gpu', 'gputn', "
+        "'itensors', 'gputtn', 'ttn', '2dtn', or 'nqs'."
     )
 
 
@@ -282,8 +356,12 @@ def _normalize_backend(backend: str) -> str:
         return "tenpy"
     if key in {"gputn", "gpu"}:
         return "gputn"
+    if key in {"yastn_mps", "mps_yastn", "mps_gpu", "gpu_mps"}:
+        return "yastn_mps"
     if key in {"itensors", "itensors_tebd", "itensor", "itensor_mps"}:
         return "itensors"
+    if key in {"gputtn", "gpu_ttn", "itensornetworks_ttn", "itensornetworks"}:
+        return "gputtn"
     if key in {"ttn", "ttn_tdvp"}:
         return "ttn"
     if key in {"2dtn", "2dtn_bp", "peps", "peps_bp"}:
@@ -291,8 +369,8 @@ def _normalize_backend(backend: str) -> str:
     if key in {"nqs", "nqs_tvmc", "tvmc"}:
         return "nqs"
     raise ValueError(
-        f"Unknown TN backend: {backend!r}. Use 'tenpy', 'mps', 'gputn', "
-        "'itensors', 'ttn', '2dtn', or 'nqs'."
+        f"Unknown TN backend: {backend!r}. Use 'tenpy', 'mps', 'mps_gpu', 'gputn', "
+        "'itensors', 'gputtn', 'ttn', '2dtn', or 'nqs'."
     )
 
 
@@ -301,6 +379,7 @@ def _default_method_for_backend(backend: str, method: str) -> str:
         return method
     return {
         "itensors": "itensors_tebd",
+        "gputtn": "gputtn_tdvp",
         "ttn": "ttn_tdvp",
         "2dtn": "2dtn_bp",
         "nqs": "nqs_tvmc",

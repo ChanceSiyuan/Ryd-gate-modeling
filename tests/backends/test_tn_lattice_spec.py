@@ -13,6 +13,15 @@ from ryd_gate.core.level_structures import InteractionSpec, level_structure
 from ryd_gate.lattice import make_square_lattice
 
 
+def _sweep(t_gate=1.0, omega=1.0, delta=0.0, n_steps=200):
+    return SweepProtocol(
+        t_gate=t_gate,
+        omega_half_fn=lambda t: 0.5 * omega,
+        delta_fn=lambda t: delta,
+        n_steps=n_steps,
+    )
+
+
 class TestSnakeOrderMapping:
     def test_roundtrip(self):
         """inv_snake[snake_to_2d[i]] == i for all i."""
@@ -110,7 +119,7 @@ class TestCreateTNLatticeSpec:
 
 
 def test_tn_compiler_uses_system_level_spec_and_interactions():
-    proto = SweepProtocol(omega_ramp_frac=0.0)
+    proto = _sweep(omega=2.0)
     system = RydbergSystem.from_lattice(
         make_square_lattice(2, 2, spacing_um=10.0),
         level_structure="1r",
@@ -119,7 +128,7 @@ def test_tn_compiler_uses_system_level_spec_and_interactions():
         Omega=2.0,
     )
 
-    params = system.unpack_params([0.0, 0.0, 1.0])
+    params = system.unpack_params([])
     ir = TNCompiler().compile(system, params)
 
     assert ir.spec.level_spec == system.meta("level_spec")
@@ -134,17 +143,17 @@ def test_incompatible_protocol_level_structure_is_rejected():
         make_square_lattice(2, 2, spacing_um=10.0),
         level_structure="01r",
         interaction=InteractionSpec(C6=DEFAULT_C6, mode="nn"),
-        protocol=SweepProtocol(omega_ramp_frac=0.0),
+        protocol=_sweep(omega=2.0),
         Omega=2.0,
     )
-    params = system.unpack_params([0.0, 0.0, 1.0])
+    params = system.unpack_params([])
 
     with pytest.raises(ValueError, match="channel mismatch"):
         compile_hamiltonian_ir(system, params)
 
 
 def test_unified_hamiltonian_ir_lowers_to_exact_and_tn():
-    proto = SweepProtocol(omega_ramp_frac=0.0)
+    proto = _sweep(omega=2.0)
     system = RydbergSystem.from_lattice(
         make_square_lattice(2, 2, spacing_um=10.0),
         level_structure="1r",
@@ -152,7 +161,7 @@ def test_unified_hamiltonian_ir_lowers_to_exact_and_tn():
         protocol=proto,
         Omega=2.0,
     )
-    params = system.unpack_params([0.0, 0.0, 1.0])
+    params = system.unpack_params([])
 
     hamiltonian = compile_hamiltonian_ir(system, params)
     tn_ir = TNCompiler().compile(hamiltonian)
@@ -175,7 +184,7 @@ def test_tn_lattice_spec_from_system_rejects_non_rectangular_geometry():
         make_triangular_lattice(2, 2),
         level_structure="1r",
         interaction=InteractionSpec(mode="nn"),
-        protocol=SweepProtocol(),
+        protocol=_sweep(),
     )
     with pytest.raises(ValueError, match="rectangular"):
         tn_lattice_spec_from_system(system)

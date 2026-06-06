@@ -2,19 +2,25 @@ name = "RydGateITensors"
 uuid = "b4f01ce7-c8b1-4c6d-9dd9-3e90a7b63a2f"
 version = "0.1.0"
 
-[compat]
-ITensorMPS = "0.3"
-TensorNetworkQuantumSimulator = "0.3.7"
-julia = "1.10"
-
 [deps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
 ITensorMPS = "0d1a4710-d33b-49a5-8f18-73bdf49b47e2"
+ITensorNetworks = "2919e153-833c-4bdc-8836-1ea460a35fc7"
 ITensors = "9136182c-28ba-11e9-034c-db9fb085ebd5"
 JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 NPZ = "15e1cf62-19b3-5cfa-8e77-841668bca605"
+NamedGraphs = "678767b0-92e7-4007-89e4-4527a8725b19"
 TensorNetworkQuantumSimulator = "4de3b72a-362e-43dd-83ff-3f381eda9f9c"
+TensorOperations = "6aa20fa7-93e2-5fca-9bc0-fbd0db3c71a2"
+
+[compat]
+ITensorMPS = "0.3"
+ITensorNetworks = "0.15.2"
+NamedGraphs = "0.7.4"
+TensorNetworkQuantumSimulator = "0.3.7"
+TensorOperations = "5.5.2"
+julia = "1.10"
 
 [extras]
 CUDA_Runtime_jll = "76a88914-d11a-5bdc-97e0-2f5a05c973a2"

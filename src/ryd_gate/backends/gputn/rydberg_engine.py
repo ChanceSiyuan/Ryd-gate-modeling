@@ -79,21 +79,38 @@ class CuTensorNetRydbergEngine:
             raise ValueError("trotter_order must be 1 or 2.")
 
         selected_kernel = self._select_kernel(cuquantum)
+        auto_kernel = self.kernel.strip().lower() == "auto"
         if selected_kernel == "cutensornet_mps":
-            runner = _CuTensorNetMPSRunner(
-                spec=spec,
-                protocol=protocol,
-                params=params,
-                psi0=psi0,
-                xp=xp,
-                cuquantum=cuquantum,
-                chi_max=chi_max,
-                dt=dt,
-                svd_min=svd_min,
-                device_id=device_id,
-                trotter_order=self.trotter_order,
-                return_state_vector=self.return_state_vector,
-            )
+            try:
+                runner = _CuTensorNetMPSRunner(
+                    spec=spec,
+                    protocol=protocol,
+                    params=params,
+                    psi0=psi0,
+                    xp=xp,
+                    cuquantum=cuquantum,
+                    chi_max=chi_max,
+                    dt=dt,
+                    svd_min=svd_min,
+                    device_id=device_id,
+                    trotter_order=self.trotter_order,
+                    return_state_vector=self.return_state_vector,
+                )
+            except Exception as exc:
+                if not auto_kernel or not _is_cutensornet_not_supported(exc):
+                    raise
+                runner = _StateVectorRunner(
+                    spec=spec,
+                    protocol=protocol,
+                    params=params,
+                    psi0=psi0,
+                    xp=xp,
+                    chi_max=chi_max,
+                    dt=dt,
+                    svd_min=svd_min,
+                    trotter_order=self.trotter_order,
+                    statevector_max_sites=self.statevector_max_sites,
+                )
         else:
             runner = _StateVectorRunner(
                 spec=spec,
@@ -333,6 +350,8 @@ class _CuTensorNetMPSRunner:
         self.levels = tuple(spec.level_spec.levels)
         self.local_dim = int(spec.level_spec.local_dim)
         self.r_index = self.levels.index("r")
+        self._initial_labels = _state_labels_2d(self.spec, self.psi0)
+        self._operators_applied = False
         self._api = _network_state_api(cuquantum)
         self.state = self._build_state()
 
@@ -390,13 +409,14 @@ class _CuTensorNetMPSRunner:
         extents = (self.local_dim,) * self.spec.N
         config = self._mps_config()
         options = self._options()
+        dtype = "complex128"
         try:
-            state = NetworkState(extents, dtype=np.complex128, config=config, options=options)
+            state = NetworkState(extents, dtype=dtype, config=config, options=options)
         except TypeError:
             try:
-                state = NetworkState(extents, dtype=np.complex128, config=config)
+                state = NetworkState(extents, dtype=dtype, config=config)
             except TypeError:
-                state = NetworkState(extents, dtype=np.complex128)
+                state = NetworkState(extents, dtype=dtype)
 
         self.state = state
         labels = _state_labels_2d(self.spec, self.psi0)
@@ -456,6 +476,7 @@ class _CuTensorNetMPSRunner:
             self.state.apply_tensor_operator(modes, tensor, unitary=True)
         except TypeError:
             self.state.apply_tensor_operator(modes, tensor)
+        self._operators_applied = True
 
     def _record_observables(
         self,
@@ -488,6 +509,8 @@ class _CuTensorNetMPSRunner:
     def _level_occupations(self, level: str) -> np.ndarray:
         if level not in self.levels:
             return np.zeros(self.spec.N, dtype=float)
+        if not self._operators_applied:
+            return np.asarray([1.0 if label == level else 0.0 for label in self._initial_labels], dtype=float)
         level_index = self.levels.index(level)
         occ = np.empty(self.spec.N, dtype=float)
         for site in range(self.spec.N):
@@ -498,8 +521,12 @@ class _CuTensorNetMPSRunner:
     def _centerline_connected_zz(self, occ_r: np.ndarray) -> np.ndarray:
         from ryd_gate.analysis.spin_observables import line_pairs_from_reference
 
+        pairs = line_pairs_from_reference(self.spec.Lx, self.spec.Ly, axis="horizontal")
+        if not self._operators_applied:
+            return np.zeros(len(pairs), dtype=float)
+
         values = []
-        for i, j in line_pairs_from_reference(self.spec.Lx, self.spec.Ly, axis="horizontal"):
+        for i, j in pairs:
             rdm = _as_numpy(self._pair_rdm(int(i), int(j)), self.xp)
             rdm_mat = rdm.reshape(self.local_dim * self.local_dim, self.local_dim * self.local_dim)
             rr_index = self.r_index * self.local_dim + self.r_index
@@ -768,7 +795,22 @@ def _network_state_api_available(cuquantum) -> bool:
     return True
 
 
+def _is_cutensornet_not_supported(exc: Exception) -> bool:
+    return exc.__class__.__name__ == "cuTensorNetError" and "NOT_SUPPORTED" in str(exc)
+
+
 def _network_state_api(cuquantum):
+    for attr in ("tensornet", "cutensornet"):
+        namespace = getattr(cuquantum, attr, None)
+        experimental = getattr(namespace, "experimental", None)
+        NetworkState = getattr(experimental, "NetworkState", None)
+        if NetworkState is not None:
+            return _NetworkStateAPI(
+                NetworkState=NetworkState,
+                MPSConfig=getattr(experimental, "MPSConfig", None),
+                NetworkOptions=getattr(experimental, "NetworkOptions", None),
+            )
+
     candidates = (
         "cuquantum.tensornet.experimental",
         "cuquantum.cutensornet.experimental",
@@ -786,17 +828,6 @@ def _network_state_api(cuquantum):
             MPSConfig=getattr(module, "MPSConfig", None),
             NetworkOptions=getattr(module, "NetworkOptions", None),
         )
-
-    for attr in ("tensornet", "cutensornet"):
-        namespace = getattr(cuquantum, attr, None)
-        experimental = getattr(namespace, "experimental", None)
-        NetworkState = getattr(experimental, "NetworkState", None)
-        if NetworkState is not None:
-            return _NetworkStateAPI(
-                NetworkState=NetworkState,
-                MPSConfig=getattr(experimental, "MPSConfig", None),
-                NetworkOptions=getattr(experimental, "NetworkOptions", None),
-            )
 
     raise GPUTNKernelError("cuQuantum NetworkState API is unavailable.")
 

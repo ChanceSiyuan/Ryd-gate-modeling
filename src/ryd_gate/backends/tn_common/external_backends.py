@@ -47,7 +47,10 @@ _PACKAGE_SPECS: dict[str, SolverPackageSpec] = {
         extra="tn-2d",
         role="2D PEPS/fPEPS with BP-style environments",
         docs_url="https://yastn.github.io/yastn/",
-        gpu_note="backend-dependent; configure YASTN with its supported array backend",
+        gpu_note=(
+            "install from GitHub; GPU runs use YASTN's PyTorch backend with "
+            "default_device='cuda'"
+        ),
     ),
     "quimb": SolverPackageSpec(
         package="quimb",
@@ -55,7 +58,7 @@ _PACKAGE_SPECS: dict[str, SolverPackageSpec] = {
         extra="tn-2d",
         role="general Python tensor networks, 2D TN, and PEPS/TEBD tooling",
         docs_url="https://quimb.readthedocs.io/",
-        gpu_note="backend-dependent through autoray/CuPy/JAX-compatible arrays",
+        gpu_note="CuPy/JAX-style acceleration through array backends; this adapter supports NumPy/CuPy",
     ),
     "pytreenet": SolverPackageSpec(
         package="pytreenet",
@@ -324,6 +327,42 @@ class External2DTNBPBackend(ExternalSolverBackend):
             options=options,
         )
 
+    def evolve_ir(
+        self,
+        ir,
+        initial_state: str | np.ndarray | object = "all_ground",
+        t_eval: np.ndarray | None = None,
+        observables: list[str] | None = None,
+    ) -> EvolutionResult:
+        if self.engine is None:
+            package_name = _canonical_package_name(
+                self.engine_package or _DEFAULT_BACKEND_PACKAGE["2dtn"]
+            )
+            if package_name == "yastn":
+                from ryd_gate.backends.peps2d.yastn_backend import YASTN2DTNBackend
+
+                return YASTN2DTNBackend(**(self.options or {})).evolve_ir(
+                    ir,
+                    initial_state=initial_state,
+                    t_eval=t_eval,
+                    observables=observables,
+                )
+            if package_name == "quimb":
+                from ryd_gate.backends.peps2d.quimb_backend import Quimb2DTNBackend
+
+                return Quimb2DTNBackend(**(self.options or {})).evolve_ir(
+                    ir,
+                    initial_state=initial_state,
+                    t_eval=t_eval,
+                    observables=observables,
+                )
+        return super().evolve_ir(
+            ir,
+            initial_state=initial_state,
+            t_eval=t_eval,
+            observables=observables,
+        )
+
 
 class ExternalNQSTVMCBackend(ExternalSolverBackend):
     def __init__(
@@ -338,6 +377,33 @@ class ExternalNQSTVMCBackend(ExternalSolverBackend):
             engine=engine,
             engine_package=engine_package,
             options=options,
+        )
+
+    def evolve_ir(
+        self,
+        ir,
+        initial_state: str | np.ndarray | object = "all_ground",
+        t_eval: np.ndarray | None = None,
+        observables: list[str] | None = None,
+    ) -> EvolutionResult:
+        if self.engine is None:
+            package_name = _canonical_package_name(
+                self.engine_package or _DEFAULT_BACKEND_PACKAGE["nqs"]
+            )
+            if package_name == "netket":
+                from ryd_gate.backends.nqs.netket_backend import NetKetNQSTVMCBackend
+
+                return NetKetNQSTVMCBackend(**(self.options or {})).evolve_ir(
+                    ir,
+                    initial_state=initial_state,
+                    t_eval=t_eval,
+                    observables=observables,
+                )
+        return super().evolve_ir(
+            ir,
+            initial_state=initial_state,
+            t_eval=t_eval,
+            observables=observables,
         )
 
 

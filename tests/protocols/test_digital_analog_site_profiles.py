@@ -53,8 +53,12 @@ def test_unpack_params_accepts_tn_context():
 
 def test_tn_channel_mapping_for_sweep_protocol_on_1r_spec():
     spec = create_tn_lattice_spec(2, 2)
-    proto = SweepProtocol(omega_ramp_frac=0.0)
-    params = proto.unpack_params([3.0, 3.0, 0.1], _TNProtocolContext(spec))
+    proto = SweepProtocol(
+        t_gate=0.1,
+        omega_half_fn=lambda t: 0.5 * spec.Omega,
+        delta_fn=lambda t: 3.0,
+    )
+    params = proto.unpack_params([], _TNProtocolContext(spec))
     coeffs = proto.get_drive_coefficients(0.05, params)
 
     Omega, Delta, pin = two_level_drive_and_detuning_from_coeffs(coeffs, spec)
@@ -62,6 +66,24 @@ def test_tn_channel_mapping_for_sweep_protocol_on_1r_spec():
     assert np.isclose(Omega, spec.Omega)
     assert np.isclose(Delta, 3.0)
     assert pin is None
+
+
+def test_tn_channel_mapping_combines_global_and_site_detuning_terms():
+    spec = create_tn_lattice_spec(1, 2)
+    proto = SweepProtocol(
+        t_gate=0.1,
+        omega_half_fn=lambda t: 0.5 * spec.Omega,
+        delta_fn=lambda t: 3.0,
+        address_fn=lambda t, i: [-1.0, 1.0][i],
+    )
+    params = proto.unpack_params([], _TNProtocolContext(spec))
+    coeffs = proto.get_drive_coefficients(0.05, params)
+
+    Omega, Delta, pin = two_level_drive_and_detuning_from_coeffs(coeffs, spec)
+
+    assert np.isclose(Omega, spec.Omega)
+    assert np.isclose(Delta, 3.0)
+    np.testing.assert_allclose(pin, [-1.0, 1.0])
 
 
 def test_digital_analog_channels_rejected_on_1r_tn_spec():
