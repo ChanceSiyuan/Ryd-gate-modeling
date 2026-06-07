@@ -137,6 +137,42 @@ def test_ttn_backend_supports_time_dependent_anneal_smoke():
     assert result.metadata["obs"]["sigma_z"].shape == (2, 2)
 
 
+def test_ttn_ttno_state_diagram_cache_reuses_structure_for_time_dependence():
+    import numpy as np
+
+    from ryd_gate._vendor import import_pytreenet
+    from ryd_gate.backends.ttn import backend as ttn_backend
+
+    ptn = import_pytreenet()
+    spec = create_tn_lattice_spec(1, 2, V_nn=4.0, interaction_mode="nn")
+    site_ids = [f"site_{i}" for i in range(spec.N)]
+    proto = TFIMAnnealProtocol(
+        hx_peak=0.2,
+        hz_initial=-1.0,
+        hz_final=0.0,
+        t_rise=0.02,
+        t_sweep=0.02,
+        t_fall=0.02,
+    )
+    params = {"shift_reference": 0.0, "pin_deltas": {}, "t_gate": proto.t_gate}
+
+    ttn_backend._TTNO_CONTEXT_CACHE.clear()
+    ttn_backend._TREE_CACHE.clear()
+    ttno_early = ttn_backend._build_ttno_for_time(ptn, spec, proto, params, site_ids, 0.01)
+    assert ttno_early is not None
+    assert len(ttn_backend._TTNO_CONTEXT_CACHE) == 1
+    cached_context = next(iter(ttn_backend._TTNO_CONTEXT_CACHE.values()))
+
+    conversion_early, _ = ttn_backend._ttno_conversion_for_time(spec, proto, params, 0.01, cached_context)
+    ttno_late = ttn_backend._build_ttno_for_time(ptn, spec, proto, params, site_ids, 0.03)
+    conversion_late, _ = ttn_backend._ttno_conversion_for_time(spec, proto, params, 0.03, cached_context)
+
+    assert ttno_late is not None
+    assert len(ttn_backend._TTNO_CONTEXT_CACHE) == 1
+    assert next(iter(ttn_backend._TTNO_CONTEXT_CACHE.values())) is cached_context
+    assert not np.allclose(conversion_early["ryd_ttn_omega_0"], conversion_late["ryd_ttn_omega_0"])
+
+
 def test_ttn_backend_rejects_gpu_options():
     spec = create_tn_lattice_spec(1, 1)
     proto = TFIMQuenchProtocol(hx=0.0, t_gate=0.1)
