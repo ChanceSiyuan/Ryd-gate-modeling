@@ -93,9 +93,10 @@ class Quimb2DTNBackend:
                 compute_energy_final=bool(self.compute_energy_final),
                 progbar=bool(self.progbar),
             )
-            evolver.presweep()
+            sweep_index = int(getattr(evolver, "_n", 0))
+            evolver.presweep(sweep_index)
             evolver.sweep(1j * float(payload["runtime"]["dt"]))
-            evolver.postsweep()
+            evolver.postsweep(sweep_index)
             evolver._n += 1
             psi = evolver.state
 
