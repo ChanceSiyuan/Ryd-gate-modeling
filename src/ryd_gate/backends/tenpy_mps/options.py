@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class TenpyOptions:
-    """Options for ``backend="tenpy"`` TDVP/DMRG evolution.
+    """Options for ``backend="mps"`` TDVP/DMRG evolution.
 
     ``None`` means "use the backend default". ``dt`` and ``chi_max`` apply to
     TDVP; ``n_sweeps`` and ``mixer`` apply to DMRG ground-state search.

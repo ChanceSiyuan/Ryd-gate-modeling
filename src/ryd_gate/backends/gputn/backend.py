@@ -32,7 +32,7 @@ def _missing_dependency_message(missing: list[str]) -> str:
         "For CUDA 12, install the optional extra with "
         "`pip install -e '.[gputn-cu12]'` or install NVIDIA cuQuantum Python "
         "manually for your CUDA version. The CPU TeNPy backend remains available "
-        "with `backend='tenpy'`."
+        "with `backend='mps'`."
     )
 
 
@@ -87,7 +87,7 @@ class GPUTNTDVPBackend:
     """GPU tensor-network lattice-evolution backend adapter.
 
     The public adapter is wired into :func:`tn_common.simulate_tn` so callers
-    can switch from ``backend="tenpy"`` to ``backend="gputn"`` without changing
+    can switch from ``backend="mps"`` to ``backend="gputn"`` without changing
     protocol/notebook code.  When ``engine`` is omitted, the built-in
     :mod:`gputn` package runs a cuTensorNet MPS Trotter kernel when available,
     with a small-system CuPy state-vector fallback.  Custom engines can still be

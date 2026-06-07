@@ -149,6 +149,8 @@ class TenpyDMRGBackend:
         return EvolutionResult(
             psi_final=psi,
             metadata={
+                "backend": "mps",
+                "engine_package": "tenpy",
                 "energy": E0,
                 "chi": max(psi.chi),
                 "n_sweeps": eng.sweeps,
@@ -372,8 +374,9 @@ class TenpyTDVPBackend:
             psi_final=psi,
             metadata={
                 **(metadata or {}),
-                "method": "tdvp",
-                "backend": "tenpy",
+                "method": "mps_tdvp",
+                "backend": "mps",
+                "engine_package": "tenpy",
                 "chi_max": self.chi_max,
                 "dt": dt_actual,
                 "n_steps": n_steps,

@@ -6,8 +6,7 @@ two real engines:
 - exact state-vector — :func:`ryd_gate.backends.exact.simulate`
   (``backend`` in ``{"exact", "sparse", "sparse_expm"}``)
 - tensor-network — :func:`ryd_gate.backends.tn_common.simulate_tn`
-  (``backend`` in ``{"tn", "tenpy", "mps", "gputn", "itensors", "ttn", "2dtn",
-  "peps", "nqs"}``)
+  (``backend`` in ``{"mps", "peps", "gputn"}``)
 
 For tensor-network backends the system's geometry and bound protocol are lowered
 to a TN lattice spec automatically; ``backend_options`` and other engine kwargs

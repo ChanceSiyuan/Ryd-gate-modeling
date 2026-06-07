@@ -39,18 +39,8 @@ tn = [
 tn-2d = [
     "physics-tenpy>=1.0",
     "yastn @ git+https://github.com/yastn/yastn.git",
-    "quimb",
     "cotengra",
     "autoray",
-    "networkx",
-]
-tn-ttn = [
-    "h5py>=3.10.0",
-    "tqdm>=4.65.0",
-]
-nqs = [
-    "netket",
-    "jVMC",
 ]
 gputn-cu12 = [
     "cupy-cuda12x[ctk]>=13.0",
@@ -64,10 +54,6 @@ gputn-cu12 = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools.package-data]
-"ryd_gate._vendor.pytreenet" = ["LICENSE"]
-"ryd_gate.backends.itensor" = ["julia/*.jl", "julia/*.toml", "julia/src/*.jl"]
 
 [tool.ruff]
 target-version = "py310"

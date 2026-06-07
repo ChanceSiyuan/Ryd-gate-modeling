@@ -1,7 +1,7 @@
 """Shared tensor-network IR, lattice specs, and dispatch helpers.
 
-Concrete numerical kernels live in sibling packages such as ``tenpy_mps``,
-``ttn``, ``gputn``, and ``itensor``.
+Concrete numerical kernels live in sibling packages: ``tenpy_mps``, ``peps2d``,
+and ``gputn``.
 """
 
 from .compiler import (
@@ -9,14 +9,6 @@ from .compiler import (
     TNEvolutionIR,
     tn_lattice_spec_from_hamiltonian_ir,
     tn_lattice_spec_from_system,
-)
-from .external_backends import (
-    External2DTNBPBackend,
-    ExternalNQSTVMCBackend,
-    ExternalSolverDependencyError,
-    ExternalTTNTDVPBackend,
-    available_external_solver_packages,
-    build_external_solver_payload,
 )
 from .lattice_spec import (
     TNLatticeSpec,
@@ -29,15 +21,9 @@ from .simulate import simulate_tn, simulate_tn_ir
 from .sites import local_levels, resolve_level_structure
 
 __all__ = [
-    "External2DTNBPBackend",
-    "ExternalNQSTVMCBackend",
-    "ExternalSolverDependencyError",
-    "ExternalTTNTDVPBackend",
     "TNCompiler",
     "TNEvolutionIR",
     "TNLatticeSpec",
-    "available_external_solver_packages",
-    "build_external_solver_payload",
     "create_tn_lattice_spec",
     "diagonal_order_mapping",
     "local_levels",

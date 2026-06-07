@@ -94,13 +94,13 @@ class TestSimulateTN:
             t_eval=np.array([0.5, 1.0]),
             backend_options={"chi_max": 16, "dt": 0.5},
         )
-        assert result.metadata["method"] == "tdvp"
+        assert result.metadata["method"] == "mps_tdvp"
         assert result.psi_final is not None
 
     def test_invalid_method(self, spec_2x2):
         """Unknown method raises ValueError."""
         proto = _sweep()
-        with pytest.raises(ValueError, match="Unknown method"):
+        with pytest.raises(ValueError, match="supports method"):
             simulate_tn(spec_2x2, proto, [], method="invalid")
 
     @pytest.mark.slow
@@ -116,7 +116,7 @@ class TestSimulateTN:
         assert result.metadata["method"] == "dmrg"
 
     @pytest.mark.slow
-    def test_unified_simulate_tenpy_backend(self):
+    def test_unified_simulate_mps_backend(self):
         proto = _sweep(t_gate=1.0, omega=1.0)
         system = RydbergSystem.from_lattice(
             make_square_lattice(2, 2, spacing_um=1.0),
@@ -131,13 +131,13 @@ class TestSimulateTN:
         result = simulate_tn_ir(
             ir,
             "all_1",
-            backend="tenpy",
+            backend="mps",
             backend_options={"chi_max": 16, "dt": 0.5},
             t_eval=np.array([0.5, 1.0]),
             observables=["n_mean"],
         )
 
         assert result.metadata["compiler"] == "tn"
-        assert result.metadata["backend"] == "tenpy"
+        assert result.metadata["backend"] == "mps"
         assert result.psi_final is not None
         assert "n_mean" in result.metadata["obs"]
