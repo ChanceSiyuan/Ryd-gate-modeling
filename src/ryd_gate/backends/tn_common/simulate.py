@@ -208,6 +208,32 @@ def simulate_tn(
             observables=observables,
         )
 
+    if backend == "pepskit":
+        from ryd_gate.backends.pepskit.backend import PEPSKitIPEPSBackend
+
+        from .compiler import TNEvolutionIR
+
+        params = protocol.unpack_params(x, _protocol_context(spec))
+        ir = TNEvolutionIR(
+            spec=spec,
+            protocol=protocol,
+            params=params,
+            method=_default_method_for_backend(backend, method),
+            metadata={
+                "compiler": "tn",
+                "tn_spec": spec,
+                "backend": backend,
+                "n_sites": spec.N,
+                "local_dim": spec.level_spec.local_dim,
+            },
+        )
+        return PEPSKitIPEPSBackend(**opts).evolve_ir(
+            ir,
+            initial_state=initial_state,
+            t_eval=t_eval,
+            observables=observables,
+        )
+
     if method == "dmrg":
         from ryd_gate.backends.tenpy_mps.backends import (
             TenpyDMRGBackend,
@@ -344,9 +370,19 @@ def simulate_tn_ir(
             observables=observables,
         )
 
+    if backend == "pepskit":
+        from ryd_gate.backends.pepskit.backend import PEPSKitIPEPSBackend
+
+        return PEPSKitIPEPSBackend(**opts).evolve_ir(
+            ir,
+            initial_state=initial_state,
+            t_eval=t_eval,
+            observables=observables,
+        )
+
     raise ValueError(
         f"Unknown TN backend: {backend!r}. Use 'tenpy', 'mps', 'mps_gpu', 'gputn', "
-        "'itensors', 'gputtn', 'ttn', '2dtn', or 'nqs'."
+        "'itensors', 'gputtn', 'ttn', '2dtn', 'pepskit', or 'nqs'."
     )
 
 
@@ -366,11 +402,13 @@ def _normalize_backend(backend: str) -> str:
         return "ttn"
     if key in {"2dtn", "2dtn_bp", "peps", "peps_bp"}:
         return "2dtn"
+    if key in {"pepskit", "ipeps", "pepskit_su", "pepskit_ipeps"}:
+        return "pepskit"
     if key in {"nqs", "nqs_tvmc", "tvmc"}:
         return "nqs"
     raise ValueError(
         f"Unknown TN backend: {backend!r}. Use 'tenpy', 'mps', 'mps_gpu', 'gputn', "
-        "'itensors', 'gputtn', 'ttn', '2dtn', or 'nqs'."
+        "'itensors', 'gputtn', 'ttn', '2dtn', 'pepskit', or 'nqs'."
     )
 
 
@@ -382,6 +420,7 @@ def _default_method_for_backend(backend: str, method: str) -> str:
         "gputtn": "gputtn_tdvp",
         "ttn": "ttn_tdvp",
         "2dtn": "2dtn_bp",
+        "pepskit": "pepskit_ipeps_su",
         "nqs": "nqs_tvmc",
     }[backend]
 
