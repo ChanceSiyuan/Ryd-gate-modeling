@@ -17,12 +17,12 @@ from ryd_gate.core.channel_lowering import (
 from ryd_gate.ir.evolution import EvolutionResult
 
 
-class YASTN2DTNError(RuntimeError):
-    """Raised when the YASTN 2D-TN adapter cannot run."""
+class YASTNPEPSError(RuntimeError):
+    """Raised when the YASTN PEPS adapter cannot run."""
 
 
 @dataclass
-class YASTN2DTNBackend:
+class YASTNPEPSBackend:
     """2D fPEPS real-time evolution through YASTN.
 
     The evolution kernel uses YASTN's finite PEPS ``evolution_step_`` with an
@@ -126,8 +126,8 @@ class YASTN2DTNBackend:
             psi_final=psi,
             metadata={
                 **(ir.metadata or {}),
-                "backend": "2dtn",
-                "method": "2dtn_yastn",
+                "backend": "peps",
+                "method": "peps_yastn",
                 "engine_package": "yastn",
                 "algorithm": f"fpeps_{self.update_environment}",
                 "level_structure": payload["lattice"]["level_structure"],
@@ -153,7 +153,7 @@ class YASTN2DTNBackend:
 
     def _load_yastn(self):
         if importlib.util.find_spec("yastn") is None:
-            raise YASTN2DTNError(
+            raise YASTNPEPSError(
                 "engine_package='yastn' requires yastn. Install it from GitHub with "
                 "`pip install git+https://github.com/yastn/yastn.git`."
             )
@@ -165,16 +165,16 @@ class YASTN2DTNBackend:
         device = self.device or ("cuda" if self.use_cuda else "cpu")
         if self.require_gpu or self.use_cuda:
             if backend != "torch":
-                raise YASTN2DTNError("YASTN CUDA runs require yastn_backend='torch'.")
+                raise YASTNPEPSError("YASTN CUDA runs require yastn_backend='torch'.")
             if importlib.util.find_spec("torch") is None:
-                raise YASTN2DTNError(
+                raise YASTNPEPSError(
                     "YASTN CUDA runs require PyTorch with CUDA support. Install torch, "
                     "or set use_cuda=False for CPU smoke tests."
                 )
             import torch
 
             if not torch.cuda.is_available():
-                raise YASTN2DTNError("use_cuda=True but torch.cuda.is_available() is false.")
+                raise YASTNPEPSError("use_cuda=True but torch.cuda.is_available() is false.")
 
         cfg = yastn.make_config(
             backend=backend,
@@ -217,7 +217,7 @@ def build_yastn_peps_payload(
 
     schedule = _drive_schedule(ir, dt_actual=dt_actual, n_steps=n_steps)
     return {
-        "method": "2dtn_yastn",
+        "method": "peps_yastn",
         "metadata": ir.metadata or {},
         "lattice": {
             "Lx": int(spec.Lx),

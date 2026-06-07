@@ -16,12 +16,8 @@ from .sites import resolve_level_structure
 SUPPORTED_TN_METHODS = frozenset({
     "tdvp",
     "mps_tdvp",
-    "itensors_tebd",
-    "gputtn_tdvp",
-    "ttn_tdvp",
-    "2dtn_bp",
-    "peps_bp",
-    "nqs_tvmc",
+    "peps_yastn",
+    "gputn_tebd",
 })
 
 
