@@ -1,0 +1,195 @@
+{
+  "initial_occupations_1d": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "lattice": {
+    "Lx": 2,
+    "Ly": 2,
+    "N": 4,
+    "coords": [
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0
+      ],
+      [
+        1.0,
+        0.0
+      ],
+      [
+        1.0,
+        1.0
+      ]
+    ],
+    "inv_snake": [
+      0,
+      1,
+      3,
+      2
+    ],
+    "level_structure": "1r",
+    "ordering": "snake",
+    "snake_to_2d": [
+      0,
+      1,
+      3,
+      2
+    ],
+    "sublattice": [
+      1.0,
+      -1.0,
+      -1.0,
+      1.0
+    ],
+    "vdw_pairs": [
+      [
+        0,
+        1,
+        4.0
+      ],
+      [
+        0,
+        2,
+        4.0
+      ],
+      [
+        1,
+        3,
+        4.0
+      ],
+      [
+        2,
+        3,
+        4.0
+      ]
+    ],
+    "vdw_pairs_1d": [
+      [
+        1,
+        2,
+        4.0
+      ],
+      [
+        1,
+        4,
+        4.0
+      ],
+      [
+        2,
+        3,
+        4.0
+      ],
+      [
+        4,
+        3,
+        4.0
+      ]
+    ]
+  },
+  "metadata": {
+    "backend": "2dtn",
+    "compiler": "tn",
+    "n_sites": 4,
+    "tn_spec": "TNLatticeSpec(Lx=2, Ly=2, N=4, coords=array([[0., 0.],\n       [0., 1.],\n       [1., 0.],\n       [1., 1.]]), sublattice=array([ 1, -1, -1,  1]), vdw_pairs=((0, 1, 1.0), (0, 2, 1.0), (1, 3, 1.0), (2, 3, 1.0)), V_nn=4.0, Omega=1.0, level_spec=LevelStructureSpec(name='1r', levels=('1', 'r'), rydberg_levels=('r',), transitions=(TransitionSpec(name='1_r', lower='1', upper='r', channel='global_X'),), detuning_levels={'global_n': 'r'}), snake_to_2d=array([0, 1, 3, 2]), inv_snake=array([0, 1, 3, 2]), bc='open', interaction_mode='nn', ordering='snake')"
+  },
+  "method": "2dtn_bp",
+  "observables": [
+    "sigma_z",
+    "czz_centerline"
+  ],
+  "protocol": {
+    "class": "TFIMQuenchProtocol",
+    "params": {
+      "Delta": 4.0,
+      "Omega": 2.0,
+      "_system_type": "lattice",
+      "pin_deltas": {},
+      "scatter_rates": {},
+      "static_overlays": [],
+      "t_gate": 0.2,
+      "tfim": {
+        "hx": 1.0,
+        "hz": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "interaction_shifts": [
+          2.0,
+          2.0,
+          2.0,
+          2.0
+        ],
+        "protocol": "quench"
+      }
+    },
+    "required_channels": [
+      "global_X",
+      "global_n"
+    ]
+  },
+  "record_steps": [
+    0,
+    1,
+    2
+  ],
+  "runtime": {
+    "chi_2d_prime": 4,
+    "chi_max": 4,
+    "dt": 0.1,
+    "eltype": "ComplexF64",
+    "measurement_alg": "bp",
+    "measurement_bond_dim": 4,
+    "n_steps": 2,
+    "normalize_tensors": false,
+    "requested_dt": 0.1,
+    "svd_min": 1e-10,
+    "use_cuda": false
+  },
+  "schedule": [
+    {
+      "delta_1d": [
+        4.0,
+        4.0,
+        4.0,
+        4.0
+      ],
+      "omega_1d": [
+        2.0,
+        2.0,
+        2.0,
+        2.0
+      ],
+      "step": 1,
+      "t_mid": 0.05
+    },
+    {
+      "delta_1d": [
+        4.0,
+        4.0,
+        4.0,
+        4.0
+      ],
+      "omega_1d": [
+        2.0,
+        2.0,
+        2.0,
+        2.0
+      ],
+      "step": 2,
+      "t_mid": 0.15000000000000002
+    }
+  ],
+  "t_eval": [
+    0.0,
+    0.1,
+    0.2
+  ]
+}
