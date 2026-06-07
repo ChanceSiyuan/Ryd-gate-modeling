@@ -31,21 +31,27 @@ class NetKetNQSTVMCBackend:
     """
 
     dt: float = 0.01
-    n_samples: int = 1024
+    # tVMC needs a coherent profile to be even qualitatively correct on a quench:
+    # enough MC samples for a usable QGT, an adaptive RK step (euler freezes/diverges),
+    # and stronger QGT regularization (a strong product initial state makes S singular).
+    n_samples: int = 4096
     n_chains: int = 16
     n_discard_per_chain: int | None = None
     sampler: str = "metropolis"
     ansatz: str = "rbm"
-    alpha: float = 1.0
+    alpha: float = 2.0
     seed: int = 1234
     sampler_seed: int | None = None
-    integrator: str = "euler"
+    integrator: str = "rk23"
     qgt: str = "dense"
     holomorphic: bool = True
-    diag_shift: float = 1e-6
+    diag_shift: float = 1e-4
     pinv_rtol: float = 1e-10
     pinv_rtol_smooth: float = 1e-10
-    initial_bias_strength: float = 1.0
+    # Visible-bias magnitude for the product initial state. The single-site
+    # marginal is ~sigmoid(-2*strength), so strength=1.0 leaves ~12% leakage
+    # (wrong t=0 occupation); >=6 gives a clean product state (sigmoid(-12)~1e-6).
+    initial_bias_strength: float = 6.0
     use_cuda: bool = False
     require_gpu: bool = False
     progress: bool = False
@@ -155,6 +161,12 @@ class NetKetNQSTVMCBackend:
         cache_dir = Path(os.environ.get("MPLCONFIGDIR", "/tmp/ryd_gate_matplotlib"))
         cache_dir.mkdir(parents=True, exist_ok=True)
         os.environ.setdefault("MPLCONFIGDIR", str(cache_dir))
+
+        # When not explicitly requesting a GPU, pin jax to CPU before importing it.
+        # Otherwise a mismatched jax_cuda12_plugin/jaxlib can abort at import even
+        # though we never wanted the GPU (use_cuda=False is the default).
+        if not (self.use_cuda or self.require_gpu):
+            os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
         import jax
         import jax.numpy as jnp
