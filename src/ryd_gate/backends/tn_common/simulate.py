@@ -59,6 +59,11 @@ def simulate_tn(
             spec, protocol, x, initial_state, method,
             t_eval=t_eval, observables=observables, opts=opts,
         )
+    if backend == "pepskit":
+        return _simulate_pepskit(
+            spec, protocol, x, initial_state, method,
+            t_eval=t_eval, observables=observables, opts=opts,
+        )
     raise AssertionError(f"Unhandled normalized TN backend {backend!r}.")
 
 
@@ -98,6 +103,16 @@ def simulate_tn_ir(
         return GPUTNTDVPBackend(**opts).evolve_ir(
             ir,
             initial_state,
+            t_eval=t_eval,
+            observables=observables,
+        )
+
+    if backend == "pepskit":
+        from ryd_gate.backends.pepskit.backend import PEPSKitIPEPSBackend
+
+        return PEPSKitIPEPSBackend(**opts).evolve_ir(
+            ir,
+            initial_state=initial_state,
             t_eval=t_eval,
             observables=observables,
         )
@@ -216,11 +231,47 @@ def _simulate_gputn(
     )
 
 
+def _simulate_pepskit(
+    spec,
+    protocol: Protocol,
+    x: list[float],
+    initial_state: str | np.ndarray | object,
+    method: str,
+    *,
+    t_eval: np.ndarray | None,
+    observables: list[str] | None,
+    opts: dict,
+) -> EvolutionResult:
+    if method not in {"tdvp", "mps_tdvp"}:
+        raise ValueError("backend='pepskit' supports method='tdvp'/'mps_tdvp' only.")
+
+    from ryd_gate.backends.pepskit.backend import PEPSKitIPEPSBackend
+
+    from .compiler import TNEvolutionIR
+
+    params = protocol.unpack_params(x, _protocol_context(spec))
+    ir = TNEvolutionIR(
+        spec=spec,
+        protocol=protocol,
+        params=params,
+        method="pepskit_ipeps_su",
+        metadata=_metadata(spec, "pepskit"),
+    )
+    return PEPSKitIPEPSBackend(**opts).evolve_ir(
+        ir,
+        initial_state=initial_state,
+        t_eval=t_eval,
+        observables=observables,
+    )
+
+
 def _normalize_backend(backend: str) -> str:
     key = str(backend).lower()
     if key in {"mps", "peps", "gputn"}:
         return key
-    raise ValueError(f"Unknown TN backend: {backend!r}. Use 'mps', 'peps', or 'gputn'.")
+    if key in {"pepskit", "ipeps", "pepskit_su", "pepskit_ipeps"}:
+        return "pepskit"
+    raise ValueError(f"Unknown TN backend: {backend!r}. Use 'mps', 'peps', 'gputn', or 'pepskit'.")
 
 
 def _peps_options(opts: dict) -> dict:
