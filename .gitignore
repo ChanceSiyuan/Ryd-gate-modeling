@@ -41,3 +41,7 @@ coverage.xml
 
 # Lock files
 uv.lock
+
+# Julia TNQS sysimage (large, machine/Julia-version specific; build locally)
+src/ryd_gate/backends/itensor/julia/sysimages/
+src/ryd_gate/backends/itensor/julia/sysimage_build/Manifest.toml

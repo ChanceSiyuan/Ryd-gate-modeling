@@ -1,10 +1,14 @@
+import os
 import stat
 import sys
 import textwrap
+from pathlib import Path
 
 import numpy as np
+import pytest
 
-from ryd_gate.backends.itensor.tnqs_backend import build_tnqs_payload
+from ryd_gate.backends.itensor import tnqs_backend as tnqs_mod
+from ryd_gate.backends.itensor.tnqs_backend import TNQSJulia2DTNBackend, build_tnqs_payload
 from ryd_gate.backends.tn_common.compiler import TNEvolutionIR
 from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
 from ryd_gate.backends.tn_common.simulate import simulate_tn
@@ -53,7 +57,7 @@ def test_simulate_tn_2dtn_dispatches_to_tnqs_subprocess(tmp_path):
             import sys
             import numpy as np
 
-            args = [arg for arg in sys.argv[1:] if not arg.startswith("--project=")]
+            args = [arg for arg in sys.argv[1:] if not arg.startswith(("--project=", "--sysimage="))]
             _script, input_json, output_npz, output_json = args
             payload = json.load(open(input_json))
             n = payload["lattice"]["N"]
@@ -128,3 +132,91 @@ class _Context:
         if name == "n_sites":
             return self._spec.N
         return default
+
+
+def _command(backend):
+    return backend._subprocess_command(Path("in.json"), Path("o.npz"), Path("o.json"))
+
+
+def _backend(tmp_path, **kwargs):
+    kernel = tmp_path / "kernel.jl"
+    kernel.write_text("# fake kernel\n")
+    kwargs.setdefault("julia_cmd", "/bin/true")
+    kwargs.setdefault("script_path", str(kernel))
+    kwargs.setdefault("project_dir", str(tmp_path))
+    return TNQSJulia2DTNBackend(**kwargs)
+
+
+def test_subprocess_command_injects_explicit_sysimage(tmp_path):
+    img = tmp_path / "ryd_tnqs.so"
+    img.write_bytes(b"")
+    cmd = _command(_backend(tmp_path, sysimage=str(img)))
+    assert f"--sysimage={img}" in cmd
+    # --sysimage must be a julia flag, i.e. precede --project and the script
+    project_idx = next(i for i, c in enumerate(cmd) if c.startswith("--project="))
+    assert cmd.index(f"--sysimage={img}") < project_idx
+
+
+def test_subprocess_command_uses_env_sysimage(tmp_path, monkeypatch):
+    img = tmp_path / "env.so"
+    img.write_bytes(b"")
+    monkeypatch.setenv("RYD_TNQS_SYSIMAGE", str(img))
+    assert f"--sysimage={img}" in _command(_backend(tmp_path))
+
+
+def test_subprocess_command_omits_sysimage_when_absent(tmp_path, monkeypatch):
+    # No default sysimage built, no env, no explicit path -> zero-config fallback.
+    monkeypatch.delenv("RYD_TNQS_SYSIMAGE", raising=False)
+    monkeypatch.setattr(tnqs_mod, "_default_project_dir", lambda: tmp_path)
+    assert not any(c.startswith("--sysimage=") for c in _command(_backend(tmp_path)))
+    # Explicit but missing path is silently skipped, not an error.
+    cmd = _command(_backend(tmp_path, sysimage=str(tmp_path / "missing.so")))
+    assert not any(c.startswith("--sysimage=") for c in cmd)
+
+
+# ---------------------------------------------------------------------------
+# Opt-in real-Julia smoke tests. The TNQS kernel pays full cold JIT (tens of
+# seconds), so these only run when RYD_RUN_JULIA_TESTS=1 (and RYD_TEST_GPU=1 for
+# the CUDA path). Following the repo convention, the default suite never spawns a
+# real Julia process.
+# ---------------------------------------------------------------------------
+def _quench_2x2():
+    spec = create_tn_lattice_spec(2, 2, V_nn=4.0, interaction_mode="nn")
+    proto = TFIMQuenchProtocol(hx=1.0, t_gate=0.2)
+    return spec, proto
+
+
+@pytest.mark.skipif(
+    os.environ.get("RYD_RUN_JULIA_TESTS") != "1",
+    reason="set RYD_RUN_JULIA_TESTS=1 to run the real TNQS Julia kernel (slow cold JIT)",
+)
+def test_tnqs_2dtn_kernel_runs_and_is_physical():
+    spec, proto = _quench_2x2()
+    t_eval = np.array([0.0, 0.1, 0.2])
+    res = simulate_tn(
+        spec, proto, [], backend="2dtn", t_eval=t_eval,
+        observables=["sigma_z", "czz_centerline"],
+        backend_options={"chi_max": 16, "dt": 0.02, "measurement_alg": "bp",
+                         "measurement_bond_dim": 16, "chi_2d_prime": 16, "timeout": 1800},
+    )
+    sigma_z = np.asarray(res.metadata["obs"]["sigma_z"])
+    assert sigma_z.shape == (3, 4)
+    occ = 0.5 * (sigma_z + 1.0)
+    assert np.all(occ >= -1e-6) and np.all(occ <= 1.0 + 1e-6)
+    # all_ground (|Dn>) has zero Rydberg occupation at t=0
+    assert abs(float(occ[0].mean())) < 1e-6
+
+
+@pytest.mark.skipif(
+    os.environ.get("RYD_RUN_JULIA_TESTS") != "1" or os.environ.get("RYD_TEST_GPU") != "1",
+    reason="set RYD_RUN_JULIA_TESTS=1 and RYD_TEST_GPU=1 to run the CUDA TNQS path",
+)
+def test_tnqs_2dtn_gpu_smoke():
+    spec, proto = _quench_2x2()
+    t_eval = np.array([0.0, 0.2])
+    res = simulate_tn(
+        spec, proto, [], backend="2dtn", t_eval=t_eval, observables=["sigma_z"],
+        backend_options={"chi_max": 8, "dt": 0.05, "use_cuda": True, "timeout": 1800},
+    )
+    assert np.asarray(res.metadata["obs"]["sigma_z"]).shape == (2, 4)
+    assert res.metadata["use_cuda"] is True

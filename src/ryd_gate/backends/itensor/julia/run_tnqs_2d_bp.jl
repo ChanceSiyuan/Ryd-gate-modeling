@@ -9,17 +9,21 @@ using TensorNetworkQuantumSimulator
 
 const TNQS = TensorNetworkQuantumSimulator
 
-function main()
-    if length(ARGS) != 3
-        error("Usage: run_tnqs_2d_bp.jl payload.json result.npz result.json")
-    end
-    input_json, output_npz, output_json = ARGS
+function run_from_files(input_json, output_npz, output_json)
     payload = JSON3.read(read(input_json, String))
     result = run_2dtn_bp(payload)
     NPZ.npzwrite(output_npz, result["arrays"])
     open(output_json, "w") do io
         JSON3.write(io, result["metadata"])
     end
+end
+
+function main()
+    if length(ARGS) != 3
+        error("Usage: run_tnqs_2d_bp.jl payload.json result.npz result.json")
+    end
+    input_json, output_npz, output_json = ARGS
+    run_from_files(input_json, output_npz, output_json)
 end
 
 function run_2dtn_bp(payload)
@@ -52,6 +56,14 @@ function run_2dtn_bp(payload)
     observables = Set(String(x) for x in payload.observables)
     apply_kwargs = (; maxdim = chi_max, cutoff = cutoff, normalize_tensors = normalize_tensors)
 
+    # Site indices are invariant across apply_gates, so the per-site index lookups
+    # and the time-independent pair (vdW) gates are built once and reused every step.
+    snake_to_2d = Int.(collect(lattice.snake_to_2d))
+    Ly = Int(lattice.Ly)
+    site_dict = siteinds(network(psi_bpc))
+    local_sites, local_vertices = local_site_plan(lattice, site_dict, snake_to_2d, Ly)
+    pair_gates, pair_vertices = pair_gate_layer(lattice, site_dict, snake_to_2d, Ly, dt)
+
     obs_sigma_z = Vector{Vector{Float64}}()
     obs_czz_centerline = Vector{Vector{Float64}}()
     recorded_times = Float64[]
@@ -80,10 +92,9 @@ function run_2dtn_bp(payload)
         step = Int(step_data.step)
         step_errors = Float64[]
 
-        local_gates, local_vertices = local_gate_layer(psi_bpc, lattice, omega, delta, dt / 2)
+        local_gates = local_gate_layer(local_sites, omega, delta, dt / 2)
         psi_bpc = apply_gate_layer(psi_bpc, local_gates, local_vertices, apply_kwargs, step_errors)
 
-        pair_gates, pair_vertices = pair_gate_layer(psi_bpc, lattice, dt)
         psi_bpc = apply_gate_layer(psi_bpc, pair_gates, pair_vertices, apply_kwargs, step_errors)
 
         psi_bpc = apply_gate_layer(psi_bpc, local_gates, local_vertices, apply_kwargs, step_errors)
@@ -175,26 +186,27 @@ function initial_state_function(lattice, payload)
     return v -> occ_2d[row_major_index0(v, Ly) + 1] == 1 ? "Up" : "Dn"
 end
 
-function local_gate_layer(psi_bpc, lattice, omega, delta, dt::Float64)
-    Ly = Int(lattice.Ly)
+function local_site_plan(lattice, site_dict, snake_to_2d, Ly::Int)
     n_sites = Int(lattice.N)
-    snake_to_2d = Int.(collect(lattice.snake_to_2d))
-    site_dict = siteinds(network(psi_bpc))
-    gates = ITensor[]
+    sites = Index[]
     gate_vertices = Vector{Vector{Tuple{Int, Int}}}()
     for pos in 1:n_sites
         v = vertex_from_snake(pos, snake_to_2d, Ly)
-        site = only(site_dict[v])
-        push!(gates, local_gate(site, Float64(omega[pos]), Float64(delta[pos]), dt))
+        push!(sites, only(site_dict[v]))
         push!(gate_vertices, [v])
     end
-    return gates, gate_vertices
+    return sites, gate_vertices
 end
 
-function pair_gate_layer(psi_bpc, lattice, dt::Float64)
-    Ly = Int(lattice.Ly)
-    snake_to_2d = Int.(collect(lattice.snake_to_2d))
-    site_dict = siteinds(network(psi_bpc))
+function local_gate_layer(local_sites, omega, delta, dt::Float64)
+    gates = ITensor[]
+    for pos in eachindex(local_sites)
+        push!(gates, local_gate(local_sites[pos], Float64(omega[pos]), Float64(delta[pos]), dt))
+    end
+    return gates
+end
+
+function pair_gate_layer(lattice, site_dict, snake_to_2d, Ly::Int, dt::Float64)
     gates = ITensor[]
     gate_vertices = Vector{Vector{Tuple{Int, Int}}}()
     for pair in lattice.vdw_pairs_1d
@@ -368,4 +380,6 @@ function _state_eltype(runtime, use_cuda::Bool)
     error("Unsupported runtime.eltype: $value")
 end
 
-main()
+if abspath(PROGRAM_FILE) == @__FILE__
+    main()
+end

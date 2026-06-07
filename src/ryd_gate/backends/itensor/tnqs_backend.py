@@ -57,6 +57,7 @@ class TNQSJulia2DTNBackend:
     threads: int | None = None
     use_cuda: bool = False
     eltype: str | None = None
+    sysimage: str | os.PathLike | None = None
 
     def evolve_ir(
         self,
@@ -145,7 +146,11 @@ class TNQSJulia2DTNBackend:
         if not script_path.exists():
             raise TNQSJuliaError(f"TensorNetworkQuantumSimulator.jl kernel script not found: {script_path}")
 
-        julia_args = [
+        julia_args: list[str] = []
+        sysimage = self._resolve_sysimage()
+        if sysimage is not None:
+            julia_args.append(f"--sysimage={sysimage}")
+        julia_args += [
             f"--project={project_dir}",
             str(script_path),
             str(input_json),
@@ -166,6 +171,22 @@ class TNQSJulia2DTNBackend:
             "-lc",
             "source ~/.bashrc && exec " + " ".join(shlex.quote(part) for part in cmd),
         ]
+
+    def _resolve_sysimage(self) -> Path | None:
+        """Locate a PackageCompiler sysimage to pass via ``--sysimage``.
+
+        Resolution order: explicit ``sysimage`` option, then ``RYD_TNQS_SYSIMAGE``,
+        then the conventional ``julia/sysimages/ryd_tnqs.so`` build output. Returns
+        the path only if it exists, so the backend stays zero-config when no sysimage
+        has been built.
+        """
+        if self.sysimage is not None:
+            candidate = Path(self.sysimage)
+        elif os.environ.get("RYD_TNQS_SYSIMAGE"):
+            candidate = Path(os.environ["RYD_TNQS_SYSIMAGE"])
+        else:
+            candidate = _default_project_dir() / "sysimages" / "ryd_tnqs.so"
+        return candidate if candidate.exists() else None
 
 
 def build_tnqs_payload(
