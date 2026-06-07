@@ -61,6 +61,7 @@ class _TTNOContext:
     identity_conversion: dict[str, np.ndarray]
     local_terms: dict[str, _LocalTermTemplate]
     pair_terms: tuple[_PairTermTemplate, ...]
+    pair_has_nonzero: bool
 
 
 _TREE_CACHE_MAXSIZE = 32
@@ -138,7 +139,7 @@ class PyTreeNetTTNTDVPBackend:
         ptn = import_pytreenet()
         tree = _cached_balanced_tree(spec.N)
         site_ids = [f"site_{i}" for i in range(spec.N)]
-        ttno_context = _cached_ttno_context(ptn, spec, site_ids, tree)
+        ttno_context = _cached_ttno_context(ptn, spec, site_ids)
         state_indices = _state_indices_2d(spec, initial_state)
         psi = _product_ttns(
             ptn,
@@ -429,21 +430,6 @@ def _build_ttno_for_time(
     return ptn.TreeTensorNetworkOperator.from_state_diagram(context.state_diagram, conversion)
 
 
-def _build_hamiltonian_for_time(
-    ptn,
-    spec: "TNLatticeSpec",
-    protocol,
-    params: dict,
-    site_ids: Sequence[str],
-    t_mid: float,
-):
-    context = _cached_ttno_context(ptn, spec, site_ids)
-    conversion, has_nonzero = _ttno_conversion_for_time(spec, protocol, params, t_mid, context)
-    if not has_nonzero:
-        return ptn.Hamiltonian([], conversion_dictionary=conversion)
-    return ptn.Hamiltonian(_structural_hamiltonian_terms(ptn, spec, site_ids, context), conversion_dictionary=conversion)
-
-
 def _ttno_conversion_for_time(
     spec: "TNLatticeSpec",
     protocol,
@@ -453,14 +439,14 @@ def _ttno_conversion_for_time(
 ) -> tuple[dict[str, np.ndarray], bool]:
     coeffs = protocol.get_drive_coefficients(float(t_mid), params)
     conversion: dict[str, np.ndarray] = dict(context.identity_conversion)
-    has_nonzero = False
+    has_nonzero = context.pair_has_nonzero
 
     def add_local(term_name: str, site: int, matrix: np.ndarray) -> None:
         nonlocal has_nonzero
         template = context.local_terms[term_name]
         value = np.asarray(matrix, dtype=complex)
         conversion[template.labels[int(site)]] = value
-        if not np.allclose(value, 0.0):
+        if not has_nonzero and not np.allclose(value, 0.0):
             has_nonzero = True
 
     if spec.level_structure == "01r":
@@ -491,8 +477,6 @@ def _ttno_conversion_for_time(
     for term in context.pair_terms:
         conversion[term.left_label] = term.left_matrix
         conversion[term.right_label] = term.right_matrix
-        if not np.allclose(term.left_matrix, 0.0) and not np.allclose(term.right_matrix, 0.0):
-            has_nonzero = True
 
     return conversion, has_nonzero
 
@@ -501,14 +485,13 @@ def _cached_ttno_context(
     ptn,
     spec: "TNLatticeSpec",
     site_ids: Sequence[str],
-    tree: _BinaryNode | None = None,
 ) -> _TTNOContext:
     key = _ttno_context_cache_key(ptn, spec, site_ids)
     context = _TTNO_CONTEXT_CACHE.get(key)
     if context is not None:
         _TTNO_CONTEXT_CACHE.move_to_end(key)
         return context
-    context = _build_ttno_context(ptn, spec, site_ids, tree)
+    context = _build_ttno_context(ptn, spec, site_ids)
     _TTNO_CONTEXT_CACHE[key] = context
     if len(_TTNO_CONTEXT_CACHE) > _TTNO_CONTEXT_CACHE_MAXSIZE:
         _TTNO_CONTEXT_CACHE.popitem(last=False)
@@ -537,10 +520,8 @@ def _build_ttno_context(
     ptn,
     spec: "TNLatticeSpec",
     site_ids: Sequence[str],
-    tree: _BinaryNode | None = None,
 ) -> _TTNOContext:
-    if tree is None:
-        tree = _cached_balanced_tree(spec.N)
+    tree = _cached_balanced_tree(spec.N)
     ops = _local_ops(spec)
     identity_conversion = {
         f"I{spec.level_spec.local_dim}": np.eye(spec.level_spec.local_dim, dtype=complex),
@@ -562,6 +543,10 @@ def _build_ttno_context(
         for label in template.labels:
             shape_conversion[label] = ops[template.op_key]
     pair_terms = _pair_term_templates(spec, ops)
+    pair_has_nonzero = any(
+        not np.allclose(term.left_matrix, 0.0) and not np.allclose(term.right_matrix, 0.0)
+        for term in pair_terms
+    )
     for term in pair_terms:
         shape_conversion[term.left_label] = term.left_matrix
         shape_conversion[term.right_label] = term.right_matrix
@@ -580,6 +565,7 @@ def _build_ttno_context(
         identity_conversion=identity_conversion,
         local_terms=local_terms,
         pair_terms=pair_terms,
+        pair_has_nonzero=pair_has_nonzero,
     )
 
 
@@ -621,15 +607,8 @@ def _structural_hamiltonian_terms(
     ptn,
     spec: "TNLatticeSpec",
     site_ids: Sequence[str],
-    context: _TTNOContext | None = None,
-    *,
-    local_terms: dict[str, _LocalTermTemplate] | None = None,
+    local_terms: dict[str, _LocalTermTemplate],
 ) -> list[Any]:
-    if local_terms is None:
-        if context is None:
-            local_terms = _local_term_templates(spec)
-        else:
-            local_terms = context.local_terms
     terms = []
     for template in local_terms.values():
         for i, label in enumerate(template.labels):
