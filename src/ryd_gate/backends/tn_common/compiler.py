@@ -18,6 +18,7 @@ SUPPORTED_TN_METHODS = frozenset({
     "mps_tdvp",
     "peps_yastn",
     "gputn_tebd",
+    "pepskit_ipeps_su",
 })
 
 
