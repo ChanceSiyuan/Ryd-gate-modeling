@@ -47,14 +47,26 @@ class SparseExpmBackend(SolverBackend):
             stored_times.append(0.0)
             stored_states.append(psi.copy())
 
+        # Pre-bind drive terms once: (operator, coefficient, op_dag). The operators
+        # and their Hermitian conjugates are constant, so the transpose is computed
+        # here rather than rebuilt at every step.
+        drive = [
+            (
+                term.operator,
+                term.coefficient,
+                term.operator.conj().T if term.add_hermitian_conjugate else None,
+            )
+            for term in ir.drive_terms
+        ]
+
         for k in range(self.n_steps):
             t_mid = (k + 0.5) * dt
             H = H_static.copy() if hasattr(H_static, "copy") else H_static
-            for term in ir.drive_terms:
-                coeff = term.coefficient(t_mid) if callable(term.coefficient) else term.coefficient
-                H = H + coeff * term.operator
-                if term.add_hermitian_conjugate:
-                    H = H + np.conj(coeff) * term.operator.conj().T
+            for operator, coefficient, op_dag in drive:
+                coeff = coefficient(t_mid) if callable(coefficient) else coefficient
+                H = H + coeff * operator
+                if op_dag is not None:
+                    H = H + np.conj(coeff) * op_dag
             psi = expm_multiply(-1j * dt * H, psi)
             psi /= np.linalg.norm(psi)
 

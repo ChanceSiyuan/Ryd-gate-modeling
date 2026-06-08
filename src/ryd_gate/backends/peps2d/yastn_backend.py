@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 
 from ryd_gate.analysis.spin_observables import line_pairs_from_reference
-from ryd_gate.backends.tenpy_mps.backends import _merge_pin_deltas, _pin_deltas_from_params
+from ryd_gate.backends.tn_common.protocol_context import merge_pin_deltas, pin_deltas_from_params
 from ryd_gate.core.channel_lowering import (
     three_level_profiles_from_coeffs,
     two_level_drive_and_detuning_from_coeffs,
@@ -255,7 +255,7 @@ def build_yastn_peps_payload(
 
 def _drive_schedule(ir, *, dt_actual: float, n_steps: int) -> list[dict[str, Any]]:
     spec = ir.spec
-    static_pin = _pin_deltas_from_params(ir.params, spec.N)
+    static_pin = pin_deltas_from_params(ir.params, spec.N)
     schedule = []
     for step in range(n_steps):
         t_mid = (step + 0.5) * dt_actual
@@ -266,7 +266,7 @@ def _drive_schedule(ir, *, dt_actual: float, n_steps: int) -> list[dict[str, Any
                 profiles["delta_R"] = profiles["delta_R"] + static_pin
         else:
             omega_t, delta_t, channel_pin = two_level_drive_and_detuning_from_coeffs(coeffs, spec)
-            pin = _merge_pin_deltas(static_pin, channel_pin, n_sites=spec.N)
+            pin = merge_pin_deltas(static_pin, channel_pin, n_sites=spec.N)
             profiles = {
                 "omega_R": _profile(omega_t, spec.N),
                 "omega_hf": np.zeros(spec.N, dtype=float),

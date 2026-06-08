@@ -8,8 +8,8 @@ import pytest
 from ryd_gate import RydbergSystem, compile_hamiltonian_ir
 from ryd_gate.backends.exact import simulate
 from ryd_gate.backends.exact.compiler import compile_expm_ir
-from ryd_gate.backends.tenpy_mps.backends import _TNProtocolContext
 from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
+from ryd_gate.backends.tn_common.protocol_context import TNProtocolContext
 from ryd_gate.core.channel_lowering import (
     three_level_profiles_from_coeffs,
     two_level_drive_and_detuning_from_coeffs,
@@ -46,7 +46,7 @@ def test_unpack_params_accepts_tn_context():
     proto = DigitalAnalogProtocol.constant(omega_R=1.0, t_gate=0.1)
     spec = create_tn_lattice_spec(2, 2)
 
-    params = proto.unpack_params([], _TNProtocolContext(spec))
+    params = proto.unpack_params([], TNProtocolContext(spec))
 
     assert params == {"t_gate": 0.1, "n_sites": 4}
 
@@ -58,7 +58,7 @@ def test_tn_channel_mapping_for_sweep_protocol_on_1r_spec():
         omega_half_fn=lambda t: 0.5 * spec.Omega,
         delta_fn=lambda t: 3.0,
     )
-    params = proto.unpack_params([], _TNProtocolContext(spec))
+    params = proto.unpack_params([], TNProtocolContext(spec))
     coeffs = proto.get_drive_coefficients(0.05, params)
 
     Omega, Delta, pin = two_level_drive_and_detuning_from_coeffs(coeffs, spec)
@@ -76,7 +76,7 @@ def test_tn_channel_mapping_combines_global_and_site_detuning_terms():
         delta_fn=lambda t: 3.0,
         address_fn=lambda t, i: [-1.0, 1.0][i],
     )
-    params = proto.unpack_params([], _TNProtocolContext(spec))
+    params = proto.unpack_params([], TNProtocolContext(spec))
     coeffs = proto.get_drive_coefficients(0.05, params)
 
     Omega, Delta, pin = two_level_drive_and_detuning_from_coeffs(coeffs, spec)
@@ -93,7 +93,7 @@ def test_digital_analog_channels_rejected_on_1r_tn_spec():
             Segment(duration=0.1, omega_R=1.0),
         ]
     )
-    params = proto.unpack_params([], _TNProtocolContext(spec))
+    params = proto.unpack_params([], TNProtocolContext(spec))
     coeffs = proto.get_drive_coefficients(0.05, params)
 
     with pytest.raises(ValueError, match="not declared"):
@@ -107,7 +107,7 @@ def test_tn_channel_mapping_rejects_hyperfine_drive():
             Segment(duration=0.1, omega_R=1.0, omega_hf=1.0),
         ]
     )
-    params = proto.unpack_params([], _TNProtocolContext(spec))
+    params = proto.unpack_params([], TNProtocolContext(spec))
     coeffs = proto.get_drive_coefficients(0.05, params)
 
     with pytest.raises(ValueError, match="omega_hf"):
@@ -127,7 +127,7 @@ def test_three_level_tn_profiles_for_digital_analog_segment():
             ),
         ]
     )
-    params = proto.unpack_params([], _TNProtocolContext(spec))
+    params = proto.unpack_params([], TNProtocolContext(spec))
     coeffs = proto.get_drive_coefficients(0.05, params)
 
     profiles = three_level_profiles_from_coeffs(coeffs, spec)

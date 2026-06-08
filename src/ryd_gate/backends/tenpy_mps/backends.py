@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from ryd_gate.backends.tn_common.lattice_spec import TNLatticeSpec
+from ryd_gate.backends.tn_common.protocol_context import (
+    merge_pin_deltas,
+    pin_deltas_from_params,
+)
 from ryd_gate.core.channel_lowering import (
     three_level_profiles_from_coeffs,
     two_level_drive_and_detuning_from_coeffs,
@@ -16,45 +19,6 @@ from ryd_gate.ir.evolution import EvolutionResult
 
 if TYPE_CHECKING:
     from ryd_gate.protocols.base import Protocol
-
-
-class _TNProtocolContext:
-    def __init__(self, spec: TNLatticeSpec) -> None:
-        self._spec = spec
-        self.basis = SimpleNamespace(n_sites=spec.N)
-
-    @property
-    def N(self) -> int:
-        return self._spec.N
-
-    def meta(self, name: str, default=None):
-        if name == "Omega":
-            return self._spec.Omega
-        if name == "n_sites":
-            return self._spec.N
-        return default
-
-
-def _pin_deltas_from_params(params: dict, n_sites: int) -> np.ndarray | None:
-    pin_map = params.get("pin_deltas") or {}
-    if not pin_map:
-        return None
-    pin = np.zeros(n_sites)
-    for idx, value in pin_map.items():
-        if idx < n_sites:
-            pin[idx] = value
-    return pin
-
-
-def _merge_pin_deltas(*profiles: np.ndarray | None, n_sites: int) -> np.ndarray | None:
-    merged = np.zeros(n_sites)
-    any_profile = False
-    for profile in profiles:
-        if profile is None:
-            continue
-        merged += profile
-        any_profile = True
-    return merged if any_profile else None
 
 
 def _require_tenpy():
@@ -182,67 +146,49 @@ class TenpyTDVPBackend:
         self.dt = dt
         self.svd_min = svd_min
 
-    def evolve(
+    def evolve_ir(
         self,
-        spec: TNLatticeSpec,
-        protocol: Protocol,
-        x: list[float],
-        psi0: object,
+        ir,
+        initial_state: str | np.ndarray | object = "all_ground",
         t_eval: np.ndarray | None = None,
         observables: list[str] | None = None,
     ) -> EvolutionResult:
-        """Evolve MPS under a TN lattice protocol.
+        """Evolve a compiled TN IR with TeNPy two-site TDVP.
 
-        Uses piecewise-constant Hamiltonian updates: at each TDVP step
-        the protocol coefficients are evaluated at the midpoint and the
-        MPO is rebuilt.
+        Uses piecewise-constant Hamiltonian updates: at each TDVP step the protocol
+        coefficients are evaluated at the interval midpoint and the MPO is rebuilt.
 
         Parameters
         ----------
-        spec : TNLatticeSpec
-        protocol : Protocol
-            Supports ``SweepProtocol`` plus ``DigitalAnalogProtocol`` on
-            either the effective ``1r`` TN subspace or explicit ``01r``
-            TN local levels.
-        x : list
-            Protocol parameter vector. ``DigitalAnalogProtocol`` expects
-            ``[]`` because its schedule is stored on the protocol.
-        psi0 : tenpy.networks.mps.MPS
-            Initial state.
+        ir : TNEvolutionIR
+            Carries the lattice spec, bound protocol, and unpacked params. The
+            protocol supports ``SweepProtocol`` plus ``DigitalAnalogProtocol`` on
+            either the effective ``1r`` TN subspace or explicit ``01r`` levels.
+        initial_state : str, ndarray, or tenpy MPS
+            Initial state; a string/array is built into a product-state MPS via
+            :func:`product_state_mps`, while an existing MPS is used as-is.
         t_eval : ndarray or None
-            Times at which to record observables. If None, only
-            the final state is returned.
+            Times at which to record observables. If None, only the final state is
+            returned.
         observables : list of str or None
-            Observable names to stream: ``"m_s"``, ``"n_mean"``,
-            ``"n_i"``/``"n_r"`` (per-site Rydberg occupations),
-            ``"sigma_z"``/``"z_i"`` (per-site TFIM magnetization),
-            ``"czz_centerline"``, ``"n_0"``, and ``"n_1"``. If None,
+            Observable names to stream: ``"m_s"``, ``"n_mean"``, ``"n_i"``/``"n_r"``
+            (per-site Rydberg occupations), ``"sigma_z"``/``"z_i"`` (per-site TFIM
+            magnetization), ``"czz_centerline"``, ``"n_0"``, and ``"n_1"``. If None,
             stores ``"m_s"`` and ``"n_mean"`` when ``t_eval`` is given.
 
         Returns
         -------
         EvolutionResult
-            ``psi_final`` is the final MPS. ``metadata["obs"]`` contains
-            time-series of requested observables.
+            ``psi_final`` is the final MPS. ``metadata["obs"]`` contains time-series
+            of requested observables.
         """
-        params = protocol.unpack_params(x, _TNProtocolContext(spec))
-        return self.evolve_compiled(
-            spec,
-            protocol,
-            params,
-            psi0,
-            t_eval=t_eval,
-            observables=observables,
-        )
+        from .state import product_state_mps
 
-    def evolve_ir(
-        self,
-        ir,
-        psi0: object,
-        t_eval: np.ndarray | None = None,
-        observables: list[str] | None = None,
-    ) -> EvolutionResult:
-        """Evolve a compiled TN IR."""
+        psi0 = (
+            initial_state
+            if hasattr(initial_state, "expectation_value")
+            else product_state_mps(ir.spec, initial_state)
+        )
         return self.evolve_compiled(
             ir.spec,
             ir.protocol,
@@ -333,7 +279,7 @@ class TenpyTDVPBackend:
             coeffs = protocol.get_drive_coefficients(t_mid, params)
             if spec.level_structure == "01r":
                 profiles = three_level_profiles_from_coeffs(coeffs, spec)
-                pin = _pin_deltas_from_params(params, spec.N)
+                pin = pin_deltas_from_params(params, spec.N)
                 if pin is not None:
                     profiles["delta_R"] = profiles["delta_R"] + pin
                 model = build_tenpy_model(spec, Delta=0.0, **profiles)
@@ -342,8 +288,8 @@ class TenpyTDVPBackend:
                     two_level_drive_and_detuning_from_coeffs(coeffs, spec)
                 )
 
-                pin_deltas = _merge_pin_deltas(
-                    _pin_deltas_from_params(params, spec.N),
+                pin_deltas = merge_pin_deltas(
+                    pin_deltas_from_params(params, spec.N),
                     channel_pin_deltas,
                     n_sites=spec.N,
                 )

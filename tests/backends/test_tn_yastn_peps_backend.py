@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 
 from ryd_gate.backends.peps2d.yastn_backend import build_yastn_peps_payload
-from ryd_gate.backends.tenpy_mps.backends import _TNProtocolContext
 from ryd_gate.backends.tn_common.compiler import TNEvolutionIR
 from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
+from ryd_gate.backends.tn_common.protocol_context import TNProtocolContext
 from ryd_gate.backends.tn_common.simulate import simulate_tn
 from ryd_gate.protocols.digital_analog import DigitalAnalogProtocol
 from ryd_gate.protocols.lattice_dynamics import TFIMQuenchProtocol
@@ -47,7 +47,7 @@ def test_peps_yastn_payload_supports_01r_qutrit_profiles():
         delta_hf=[0.03, 0.04],
         t_gate=0.1,
     )
-    params = proto.unpack_params([], _TNProtocolContext(spec))
+    params = proto.unpack_params([], TNProtocolContext(spec))
     ir = TNEvolutionIR(spec=spec, protocol=proto, params=params, method="peps_yastn")
 
     payload = build_yastn_peps_payload(

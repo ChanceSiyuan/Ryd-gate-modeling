@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ryd_gate.backends.tenpy_mps.backends import _TNProtocolContext
 from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
+from ryd_gate.backends.tn_common.protocol_context import TNProtocolContext
 from ryd_gate.protocols.sweep import SweepProtocol
 
 
@@ -18,13 +18,13 @@ def test_sweep_protocol_takes_no_x_parameters():
     )
     spec = create_tn_lattice_spec(1, 1)
 
-    params = proto.unpack_params([], _TNProtocolContext(spec))
+    params = proto.unpack_params([], TNProtocolContext(spec))
 
     assert params["t_gate"] == 2.0
     assert np.isclose(params["Omega"], 2.0)
     assert np.isclose(params["Delta"], 3.0)
     with pytest.raises(ValueError, match="no x parameters"):
-        proto.unpack_params([0.0], _TNProtocolContext(spec))
+        proto.unpack_params([0.0], TNProtocolContext(spec))
 
 
 def test_lattice_coefficients_use_user_functions():
