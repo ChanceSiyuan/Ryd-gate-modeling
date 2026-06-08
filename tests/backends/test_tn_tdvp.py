@@ -4,8 +4,6 @@ import numpy as np
 import pytest
 
 from ryd_gate import RydbergSystem
-from ryd_gate.backends.tenpy_mps.backends import TenpyTDVPBackend
-from ryd_gate.backends.tenpy_mps.state import product_state_mps
 from ryd_gate.backends.tn_common.compiler import TNCompiler
 from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
 from ryd_gate.backends.tn_common.simulate import simulate_tn, simulate_tn_ir
@@ -33,14 +31,13 @@ class TestTDVPBackend:
     @pytest.mark.slow
     def test_short_evolution_norm_preserved(self, spec_2x2):
         """MPS norm is approximately preserved after short TDVP evolution."""
-        psi0 = product_state_mps(spec_2x2, "all_ground")
         proto = _sweep(t_gate=2.0)
-        backend = TenpyTDVPBackend(chi_max=16, dt=0.5)
 
-        result = backend.evolve(
-            spec_2x2, proto,
-            x=[],
-            psi0=psi0,
+        result = simulate_tn(
+            spec_2x2, proto, [],
+            initial_state="all_ground",
+            method="tdvp",
+            backend_options={"chi_max": 16, "dt": 0.5},
         )
         # MPS norm should be ~1
         norm = result.psi_final.norm
@@ -49,17 +46,16 @@ class TestTDVPBackend:
     @pytest.mark.slow
     def test_observable_streaming(self, spec_2x2):
         """TDVP records observables at requested times."""
-        psi0 = product_state_mps(spec_2x2, "all_ground")
         proto = _sweep(t_gate=2.0)
         t_eval = np.linspace(0, 2.0, 5)
 
-        backend = TenpyTDVPBackend(chi_max=16, dt=0.5)
-        result = backend.evolve(
-            spec_2x2, proto,
-            x=[],
-            psi0=psi0,
+        result = simulate_tn(
+            spec_2x2, proto, [],
+            initial_state="all_ground",
+            method="tdvp",
             t_eval=t_eval,
             observables=["m_s", "n_mean"],
+            backend_options={"chi_max": 16, "dt": 0.5},
         )
 
         obs = result.metadata["obs"]

@@ -22,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ryd_gate.backends.tenpy_mps.backends import _merge_pin_deltas, _pin_deltas_from_params
+from ryd_gate.backends.tn_common.protocol_context import merge_pin_deltas, pin_deltas_from_params
 from ryd_gate.core.channel_lowering import (
     three_level_profiles_from_coeffs,
     two_level_drive_and_detuning_from_coeffs,
@@ -214,7 +214,7 @@ def build_pepskit_payload(
     dt_actual = t_gate / n_steps
     record_steps = _record_steps(t_eval, dt_actual, n_steps) or [n_steps]
 
-    static_pin = _pin_deltas_from_params(ir.params, spec.N)
+    static_pin = pin_deltas_from_params(ir.params, spec.N)
     schedule = [
         _schedule_entry(ir, spec, level_structure, step, dt_actual, static_pin, unit_cell)
         for step in range(n_steps)
@@ -266,7 +266,7 @@ def _schedule_entry(ir, spec, level_structure, step, dt_actual, static_pin, unit
         omega_t, delta_t, channel_pin = two_level_drive_and_detuning_from_coeffs(coeffs, spec)
         omega_R = _profile(omega_t, spec.N)
         omega_hf = np.zeros(spec.N)
-        pin = _merge_pin_deltas(static_pin, channel_pin, n_sites=spec.N)
+        pin = merge_pin_deltas(static_pin, channel_pin, n_sites=spec.N)
         delta_R = np.full(spec.N, float(delta_t), dtype=float)
         if pin is not None:
             delta_R = delta_R + pin

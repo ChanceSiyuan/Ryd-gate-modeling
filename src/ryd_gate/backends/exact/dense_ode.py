@@ -33,13 +33,24 @@ class DenseODEBackend(SolverBackend):
             coeff = term.coefficient(0) if callable(term.coefficient) else term.coefficient
             H_static += coeff * np.asarray(term.operator)
 
+        # Pre-bind drive terms once: (dense operator, coefficient, op_dag), so the
+        # rhs (called many times by solve_ivp) never re-densifies or re-transposes.
+        drive = [
+            (
+                np.asarray(term.operator),
+                term.coefficient,
+                np.asarray(term.operator).conj().T if term.add_hermitian_conjugate else None,
+            )
+            for term in ir.drive_terms
+        ]
+
         def rhs(t, y):
             H = H_static.copy()
-            for term in ir.drive_terms:
-                coeff = term.coefficient(t) if callable(term.coefficient) else term.coefficient
-                H += coeff * np.asarray(term.operator)
-                if term.add_hermitian_conjugate:
-                    H += np.conj(coeff) * np.asarray(term.operator).conj().T
+            for operator, coefficient, op_dag in drive:
+                coeff = coefficient(t) if callable(coefficient) else coefficient
+                H += coeff * operator
+                if op_dag is not None:
+                    H += np.conj(coeff) * op_dag
             return -1j * H @ y
 
         solve_kwargs = dict(method="DOP853", rtol=self.rtol, atol=self.atol)

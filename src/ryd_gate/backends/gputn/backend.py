@@ -105,30 +105,10 @@ class GPUTNTDVPBackend:
     statevector_max_sites: int | None = 24
     return_state_vector: bool = False
 
-    def evolve(
-        self,
-        spec: TNLatticeSpec,
-        protocol: Protocol,
-        x: list[float],
-        psi0: object,
-        t_eval: np.ndarray | None = None,
-        observables: list[str] | None = None,
-    ) -> EvolutionResult:
-        """Evolve with the configured GPU TN engine."""
-        params = protocol.unpack_params(x, _TNProtocolContextShim(spec))
-        return self.evolve_compiled(
-            spec,
-            protocol,
-            params,
-            psi0,
-            t_eval=t_eval,
-            observables=observables,
-        )
-
     def evolve_ir(
         self,
         ir,
-        psi0: object,
+        initial_state: str | np.ndarray | object = "all_ground",
         t_eval: np.ndarray | None = None,
         observables: list[str] | None = None,
     ) -> EvolutionResult:
@@ -137,7 +117,7 @@ class GPUTNTDVPBackend:
             ir.spec,
             ir.protocol,
             ir.params,
-            psi0,
+            initial_state,
             t_eval=t_eval,
             observables=observables,
         )
@@ -186,20 +166,3 @@ class GPUTNTDVPBackend:
         if self.engine is None:
             result.metadata.setdefault("engine_package", "gputn")
         return result
-
-
-class _TNProtocolContextShim:
-    def __init__(self, spec: TNLatticeSpec) -> None:
-        self._spec = spec
-        self.basis = SimpleNamespace(n_sites=spec.N)
-
-    @property
-    def N(self) -> int:
-        return self._spec.N
-
-    def meta(self, name: str, default=None):
-        if name == "Omega":
-            return self._spec.Omega
-        if name == "n_sites":
-            return self._spec.N
-        return default

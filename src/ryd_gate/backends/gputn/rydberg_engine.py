@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 from scipy.linalg import expm
 
+from ryd_gate.backends.tn_common.protocol_context import pin_deltas_from_params
 from ryd_gate.core.channel_lowering import (
     three_level_profiles_from_coeffs,
     two_level_drive_and_detuning_from_coeffs,
@@ -190,6 +191,7 @@ class _StateVectorRunner:
                 "use kernel='cutensornet_mps' for larger lattices."
             )
         self.psi = _product_or_dense_state_tensor(spec, psi0, xp, dtype=np.complex128)
+        self._gate_cache: dict[float, list] = {}
 
     def run(self, *, t_eval: np.ndarray | None, observables: list[str] | None) -> EvolutionResult:
         if observables is None and t_eval is not None:
@@ -245,16 +247,26 @@ class _StateVectorRunner:
             self.psi = _apply_single_site_gate(self.psi, gate, site, self.xp)
 
     def _apply_interactions(self, dt_piece: float) -> None:
-        for i, j, v_rel in self.spec.vdw_pairs:
-            strength = float(self.spec.V_nn) * float(v_rel)
-            gate = _two_body_rydberg_phase_gate(
-                self.local_dim,
-                self.r_index,
-                strength,
-                dt_piece,
-                self.xp,
-            )
-            self.psi = _apply_two_site_gate(self.psi, gate, int(i), int(j), self.xp)
+        for i, j, gate in self._interaction_gates(dt_piece):
+            self.psi = _apply_two_site_gate(self.psi, gate, i, j, self.xp)
+
+    def _interaction_gates(self, dt_piece: float) -> list:
+        """Constant two-body phase gates for a Trotter slice, built once per dt_piece."""
+        gates = self._gate_cache.get(dt_piece)
+        if gates is None:
+            gates = [
+                (
+                    int(i),
+                    int(j),
+                    _two_body_rydberg_phase_gate(
+                        self.local_dim, self.r_index,
+                        float(self.spec.V_nn) * float(v_rel), dt_piece, self.xp,
+                    ),
+                )
+                for i, j, v_rel in self.spec.vdw_pairs
+            ]
+            self._gate_cache[dt_piece] = gates
+        return gates
 
     def _record_observables(
         self,
@@ -354,6 +366,7 @@ class _CuTensorNetMPSRunner:
         self._operators_applied = False
         self._api = _network_state_api(cuquantum)
         self.state = self._build_state()
+        self._gate_cache: dict[float, list] = {}
 
     def run(self, *, t_eval: np.ndarray | None, observables: list[str] | None) -> EvolutionResult:
         if observables is None and t_eval is not None:
@@ -460,16 +473,26 @@ class _CuTensorNetMPSRunner:
             self._apply_tensor_operator((site,), gate)
 
     def _apply_interactions(self, dt_piece: float) -> None:
-        for i, j, v_rel in self.spec.vdw_pairs:
-            strength = float(self.spec.V_nn) * float(v_rel)
-            gate = _two_body_rydberg_phase_gate(
-                self.local_dim,
-                self.r_index,
-                strength,
-                dt_piece,
-                self.xp,
-            )
-            self._apply_tensor_operator((int(i), int(j)), gate.reshape((self.local_dim,) * 4))
+        for i, j, gate in self._interaction_gates(dt_piece):
+            self._apply_tensor_operator((i, j), gate)
+
+    def _interaction_gates(self, dt_piece: float) -> list:
+        """Constant rank-4 two-body phase gates for a Trotter slice, built once per dt_piece."""
+        gates = self._gate_cache.get(dt_piece)
+        if gates is None:
+            d = self.local_dim
+            gates = [
+                (
+                    int(i),
+                    int(j),
+                    _two_body_rydberg_phase_gate(
+                        d, self.r_index, float(self.spec.V_nn) * float(v_rel), dt_piece, self.xp,
+                    ).reshape((d,) * 4),
+                )
+                for i, j, v_rel in self.spec.vdw_pairs
+            ]
+            self._gate_cache[dt_piece] = gates
+        return gates
 
     def _apply_tensor_operator(self, modes: tuple[int, ...], tensor) -> None:
         try:
@@ -565,7 +588,7 @@ class _CuTensorNetMPSRunner:
 
 def _onsite_hamiltonians(spec, protocol, params: dict, t_mid: float) -> list[np.ndarray]:
     coeffs = protocol.get_drive_coefficients(t_mid, params)
-    pin = _pin_deltas_from_params(params, spec.N)
+    pin = pin_deltas_from_params(params, spec.N)
     levels = tuple(spec.level_spec.levels)
     dim = int(spec.level_spec.local_dim)
 
@@ -610,17 +633,6 @@ def _onsite_hamiltonians(spec, protocol, params: dict, t_mid: float) -> list[np.
             h[idx["1"], idx["1"]] += -float(profiles["delta_hf"][site])
         hamiltonians.append(h)
     return hamiltonians
-
-
-def _pin_deltas_from_params(params: dict, n_sites: int) -> np.ndarray | None:
-    pin_map = params.get("pin_deltas") or {}
-    if not pin_map:
-        return None
-    pin = np.zeros(n_sites, dtype=float)
-    for idx, value in pin_map.items():
-        if int(idx) < n_sites:
-            pin[int(idx)] += float(value)
-    return pin
 
 
 def _as_profile(value, n_sites: int) -> np.ndarray:

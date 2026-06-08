@@ -21,7 +21,8 @@ from ryd_gate.backends.pepskit.backend import (
 )
 from ryd_gate.backends.tn_common.compiler import SUPPORTED_TN_METHODS, TNEvolutionIR
 from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
-from ryd_gate.backends.tn_common.simulate import _normalize_backend, _protocol_context
+from ryd_gate.backends.tn_common.protocol_context import TNProtocolContext
+from ryd_gate.backends.tn_common.simulate import _normalize_backend
 from ryd_gate.protocols.digital_analog import DigitalAnalogProtocol
 from ryd_gate.protocols.lattice_dynamics import TFIMQuenchProtocol
 
@@ -33,7 +34,7 @@ julia_only = pytest.mark.skipif(
 
 def _make_ir(level_structure, V_nn, proto):
     spec = create_tn_lattice_spec(2, 2, level_structure=level_structure, V_nn=V_nn, interaction_mode="nn")
-    params = proto.unpack_params([], _protocol_context(spec))
+    params = proto.unpack_params([], TNProtocolContext(spec))
     return TNEvolutionIR(
         spec=spec, protocol=proto, params=params, method="pepskit_ipeps_su",
         metadata={"compiler": "tn", "tn_spec": spec, "backend": "pepskit", "n_sites": spec.N},
