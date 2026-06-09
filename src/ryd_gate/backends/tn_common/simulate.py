@@ -34,9 +34,6 @@ if TYPE_CHECKING:
     from .compiler import TNEvolutionIR
 
 _TDVP_METHODS = frozenset({"tdvp", "mps_tdvp"})
-# TNEvolutionIR.method label recorded per backend. Informational only: every backend
-# evolves from spec/protocol/params, so nothing on the evolve_ir path reads it.
-_IR_METHOD = {"peps": "peps_yastn", "pepskit": "pepskit_ipeps_su"}
 
 
 def simulate_tn(
@@ -73,7 +70,6 @@ def simulate_tn(
         spec=spec,
         protocol=protocol,
         params=params,
-        method=_IR_METHOD.get(backend, "tdvp"),
         metadata=_metadata(spec, backend),
     )
     return simulate_tn_ir(

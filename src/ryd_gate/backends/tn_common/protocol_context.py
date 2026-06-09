@@ -21,8 +21,10 @@ from ryd_gate.backends.tn_common.lattice_spec import TNLatticeSpec
 class TNProtocolContext:
     """Minimal ``RydbergSystem``-like adapter over a :class:`TNLatticeSpec`.
 
-    Exposes only what ``Protocol.unpack_params`` reads: ``N``, ``basis.n_sites``,
-    and ``meta("Omega"|"n_sites")``.
+    A ``Protocol`` unpacks its parameters against a spec instead of a full system.
+    This exposes the system attributes ``unpack_params`` may consult — ``N`` /
+    ``basis.n_sites`` (to size per-site profiles) — plus ``meta("n_sites")`` and
+    ``meta("Omega")`` for protocols that look them up.
     """
 
     def __init__(self, spec: TNLatticeSpec) -> None:
