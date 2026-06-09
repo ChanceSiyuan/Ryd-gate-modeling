@@ -1,0 +1,186 @@
+Running 15 notebook code cells from scripts/notebooks/run_quench_benchmark.ipynb
+Artifacts: results/quench_benchmark_rerun_20260607_043304.json, results/quench_benchmark_rerun_20260607_043304.csv, results/quench_benchmark_rerun_20260607_043304.log
+
+===== START CELL 1: import importlib =====
+===== END CELL 1: ok in 0.292s =====
+
+===== START CELL 2: # No local-addressing detuning shift for this run. =====
+===== END CELL 2: ok in 0.082s =====
+
+===== START CELL 3: # Benchmark 公共量：只放数据容器和几何尺寸，不放算法开关。 =====
+TN pairs: 12 bonds; nearest-neighbor only = True
+===== END CELL 3: ok in 0.000s =====
+
+===== START CELL 5: # 3a. 精确后端：states 是态矢量，用 system.expectation 读 Rydberg 均值和逐格点 occupation。 =====
+Exact elapsed: 0.280 s
+time(us)  exact <n_r>
+  0.000       0.0000
+  0.250       0.0395
+  0.500       0.0843
+  0.750       0.1922
+  1.000       0.3609
+  1.250       0.4629
+  1.500       0.5373
+===== END CELL 5: ok in 0.282s =====
+
+===== START CELL 8: # 4a. TeNPy MPS-TDVP：TN 后端把 <n_r> 和每个格点 <n_i> 记录在 metadata["obs"] 里。 =====
+/home/chance/Ryd-gate-modeling/.venv/lib/python3.12/site-packages/tenpy/networks/mps.py:1629: UserWarning: unit_cell_width is a new argument for MPS and similar classes. It is optional for now, but will become mandatory in a future release. The default value (unit_cell_width=len(sites)) is correct, iff the lattice is a Chain. For other lattices, it is incorrect. It is used for dipolar charges and correlation_function2.
+  super().__init__(sites, bc, unit_cell_width)
+TeNPy elapsed: 34.390 s
+time(us)  exact <n_r>  TeNPy <n_r>
+  0.000       0.0000      0.0000
+  0.250       0.0395      0.0393
+  0.500       0.0843      0.0840
+  0.750       0.1922      0.1923
+  1.000       0.3609      0.3609
+  1.250       0.4629      0.4627
+  1.500       0.5373      0.5374
+max |delta <n_r>| = 2.498e-04; max |delta <n_i>| = 1.156e-03
+===== END CELL 8: ok in 34.391s =====
+
+===== START CELL 11: # 5a. GPU-capable MPS-TDVP 后端（YASTN；CUDA 机器上把 use_cuda=True）。 =====
+YASTN MPS elapsed: 35.398 s
+time(us)  exact <n_r>  MPS-GPU <n_r>
+  0.000       0.0000     0.0000
+  0.250       0.0395     0.0393
+  0.500       0.0843     0.0840
+  0.750       0.1922     0.1923
+  1.000       0.3609     0.3609
+  1.250       0.4629     0.4627
+  1.500       0.5373     0.5374
+max |delta <n_r>| = 2.499e-04; max |delta <n_i>| = 1.158e-03
+===== END CELL 11: ok in 35.398s =====
+
+===== START CELL 14: # 6a. PyTreeNet TTN-TDVP：CPU-only one-site TTN TDVP。 =====
+TTN elapsed: 149.384 s
+time(us)  exact <n_r>  TTN <n_r>
+  0.000       0.0000      0.0000
+  0.250       0.0395      0.0393
+  0.500       0.0843      0.0840
+  0.750       0.1922      0.1923
+  1.000       0.3609      0.3609
+  1.250       0.4629      0.4626
+  1.500       0.5373      0.5373
+max |delta <n_r>| = 3.193e-04; max |delta <n_i>| = 1.488e-03
+===== END CELL 14: ok in 149.384s =====
+
+===== START CELL 17: # 7a. cuTensorNet/CuPy GPUTN：真正 CUDA tensor-network kernel，可用时计入同一 benchmark。 =====
+GPUTN elapsed: 344.286 s
+time(us)  exact <n_r>  GPUTN <n_r>
+  0.000       0.0000      0.0000
+  0.250       0.0395      0.0393
+  0.500       0.0843      0.0842
+  0.750       0.1922      0.1909
+  1.000       0.3609      0.3598
+  1.250       0.4629      0.4624
+  1.500       0.5373      0.5377
+max |delta <n_r>| = 1.338e-03; max |delta <n_i>| = 5.537e-03
+===== END CELL 17: ok in 344.286s =====
+
+===== START CELL 20: # 8a. Julia ITensors MPS-TEBD：从 metadata["obs"]["sigma_z"] 换算 <n_i>。 =====
+ITensors elapsed: 38.408 s
+time(us)  exact <n_r>  ITensors <n_r>
+  0.000       0.0000        0.0000
+  0.250       0.0395        0.0391
+  0.500       0.0843        0.0837
+  0.750       0.1922        0.1897
+  1.000       0.3609        0.3582
+  1.250       0.4629        0.4607
+  1.500       0.5373        0.5362
+max |delta <n_r>| = 2.768e-03; max |delta <n_i>| = 6.702e-03
+===== END CELL 20: ok in 38.409s =====
+
+===== START CELL 23: # 9a. Julia ITensorNetworks GPU TTN-TDVP。 =====
+GPUTTN elapsed: 239.658 s
+time(us)  exact <n_r>  GPUTTN <n_r>
+  0.000       0.0000      0.0000
+  0.250       0.0395      0.9957
+  0.500       0.0843      0.9946
+  0.750       0.1922      0.9930
+  1.000       0.3609      0.6108
+  1.250       0.4629      0.5891
+  1.500       0.5373      0.5232
+max |delta <n_r>| = 9.562e-01; max |delta <n_i>| = 9.606e-01
+===== END CELL 23: ok in 239.658s =====
+
+===== START CELL 26: # 10a. Julia TNQS 2D-TN/BP：从 sigma_z 换算 Rydberg occupation。 =====
+TNQS 2D-TN elapsed: 85.860 s
+time(us)  exact <n_r>  TNQS <n_r>
+  0.000       0.0000      0.0000
+  0.250       0.0395      0.0391
+  0.500       0.0843      0.0839
+  0.750       0.1922      0.1829
+  1.000       0.3609      0.3449
+  1.250       0.4629      0.4731
+  1.500       0.5373      0.5076
+max |delta <n_r>| = 2.976e-02; max |delta <n_i>| = 7.945e-02
+===== END CELL 26: ok in 85.861s =====
+
+===== START CELL 29: # 11a. YASTN finite-PEPS 2D-TN。 =====
+YASTN 2D-TN failed after 900.249 s
+CellTimeout: cell exceeded 900s timeout
+===== END CELL 29: ok in 900.249s =====
+
+===== START CELL 32: # 12a. quimb PEPS 2D-TN。 =====
+/home/chance/Ryd-gate-modeling/.venv/lib/python3.12/site-packages/cotengra/hyperoptimizers/hyper.py:36: UserWarning: Couldn't import `kahypar` - skipping from default hyper optimizer and using basic `labels` method instead. `kahypar` is highly recommended for the best quality contraction paths.
+  warnings.warn(
+quimb 2D-TN elapsed: 115.727 s
+time(us)  exact <n_r>  quimb-2D <n_r>
+  0.000       0.0000      0.0000
+  0.250       0.0395      0.0404
+  0.500       0.0843      0.0879
+  0.750       0.1922      0.1935
+  1.000       0.3609      0.3625
+  1.250       0.4629      0.3934
+  1.500       0.5373      0.5117
+max |delta <n_r>| = 6.951e-02; max |delta <n_i>| = 1.793e-01
+===== END CELL 32: ok in 115.728s =====
+
+===== START CELL 35: # 13a. NetKet NQS-tVMC。 =====
+NetKet NQS elapsed: 609.953 s
+time(us)  exact <n_r>  NQS <n_r>
+  0.000       0.0000      0.0000
+  0.250       0.0395      0.0147
+  0.500       0.0843      0.3336
+  0.750       0.1922      0.4080
+  1.000       0.3609      0.4872
+  1.250       0.4629      0.5377
+  1.500       0.5373      0.5757
+max |delta <n_r>| = 2.493e-01; max |delta <n_i>| = 9.347e-01
+===== END CELL 35: ok in 609.954s =====
+
+===== START CELL 38: print("full benchmark table:") =====
+full benchmark table:
+method         status      time(s)   max|dn_mean|    max|dn_i|
+exact          ok            0.280      0.000e+00    0.000e+00
+tenpy          ok           34.390      2.498e-04    1.156e-03
+mps_gpu        ok           35.398      2.499e-04    1.158e-03
+ttn            ok          149.384      3.193e-04    1.488e-03
+gputn          ok          344.286      1.338e-03    5.537e-03
+itensors       ok           38.408      2.768e-03    6.702e-03
+gputtn         ok          239.658      9.562e-01    9.606e-01
+2dtn_tnqs      ok           85.860      2.976e-02    7.945e-02
+2dtn_yastn     failed      900.249            nan          nan
+  error: CellTimeout: cell exceeded 900s timeout
+2dtn_quimb     ok          115.727      6.951e-02    1.793e-01
+nqs_netket     ok          609.953      2.493e-01    9.347e-01
+fastest successful backend: exact (0.280 s)
+most consistent mean occupation: tenpy (2.498e-04)
+largest mean-occupation deviation: gputtn (9.562e-01)
+===== END CELL 38: ok in 0.030s =====
+
+===== FINAL ROWS =====
+{"elapsed_s": 0.2799223209731281, "error": "", "max_abs_diff_n_i": 0.0, "max_abs_diff_n_mean": 0.0, "method": "exact", "status": "ok"}
+{"elapsed_s": 34.3901743888855, "error": "", "max_abs_diff_n_i": 0.001155700690921413, "max_abs_diff_n_mean": 0.0002498461474570862, "method": "tenpy", "status": "ok"}
+{"elapsed_s": 35.397570389090106, "error": "", "max_abs_diff_n_i": 0.0011576565931614713, "max_abs_diff_n_mean": 0.00024987025022309844, "method": "mps_gpu", "status": "ok"}
+{"elapsed_s": 149.38357299705967, "error": "", "max_abs_diff_n_i": 0.0014879603164075217, "max_abs_diff_n_mean": 0.0003193228677458304, "method": "ttn", "status": "ok"}
+{"elapsed_s": 344.2855003338773, "error": "", "max_abs_diff_n_i": 0.005536649008512862, "max_abs_diff_n_mean": 0.0013382828032192096, "method": "gputn", "status": "ok"}
+{"elapsed_s": 38.408113189041615, "error": "", "max_abs_diff_n_i": 0.0067020332616790634, "max_abs_diff_n_mean": 0.0027677889462559002, "method": "itensors", "status": "ok"}
+{"elapsed_s": 239.65777602000162, "error": "", "max_abs_diff_n_i": 0.9605969317393818, "max_abs_diff_n_mean": 0.9561902098375089, "method": "gputtn", "status": "ok"}
+{"elapsed_s": 85.8600952681154, "error": "", "max_abs_diff_n_i": 0.07944622913959232, "max_abs_diff_n_mean": 0.029759382930760636, "method": "2dtn_tnqs", "status": "ok"}
+{"elapsed_s": 900.248666617088, "error": "CellTimeout: cell exceeded 900s timeout", "max_abs_diff_n_i": NaN, "max_abs_diff_n_mean": NaN, "method": "2dtn_yastn", "status": "failed"}
+{"elapsed_s": 115.7269600010477, "error": "", "max_abs_diff_n_i": 0.17934162368470252, "max_abs_diff_n_mean": 0.06950733346720844, "method": "2dtn_quimb", "status": "ok"}
+{"elapsed_s": 609.9531524430495, "error": "", "max_abs_diff_n_i": 0.9347101998739386, "max_abs_diff_n_mean": 0.24934439092765565, "method": "nqs_netket", "status": "ok"}
+WROTE_JSON=results/quench_benchmark_rerun_20260607_043304.json
+WROTE_CSV=results/quench_benchmark_rerun_20260607_043304.csv
+WROTE_LOG=results/quench_benchmark_rerun_20260607_043304.log
