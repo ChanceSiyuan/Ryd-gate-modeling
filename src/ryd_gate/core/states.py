@@ -22,7 +22,6 @@ import numpy as np
 
 from ryd_gate.lattice.geometry import is_in_domain
 
-
 # ─────────────────────────────────────────────────────────────────────
 # 2-level
 # ─────────────────────────────────────────────────────────────────────
@@ -111,3 +110,48 @@ def checkerboard_rydberg(sublattice, which=1):
     else:
         config = np.where(sublattice < 0, 2, 0)
     return product_state_3level(config, N)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Product superpositions (uniform per-site superposition states)
+# ─────────────────────────────────────────────────────────────────────
+
+
+def product_superposition_state(local_amps, N):
+    """Create a uniform product-superposition state vector ``⊗ᵢ local_amps``.
+
+    Parameters
+    ----------
+    local_amps : array-like of complex, shape (d,)
+        Single-site amplitudes in level order, placed identically on every site.
+    N : int
+        Number of sites.
+
+    The index convention matches :func:`product_state_3level` and
+    :meth:`ryd_gate.core.system.RydbergSystem.product_state`
+    (``idx = Σ level_index · d^(N-1-i)``; site 0 is most significant), so the
+    returned dense vector is consistent with the exact backend's basis ordering.
+    """
+    v = np.asarray(local_amps, dtype=complex)
+    psi = v
+    for _ in range(int(N) - 1):
+        psi = np.kron(psi, v)
+    norm = np.linalg.norm(psi)
+    if norm == 0:
+        raise ValueError("local_amps must have nonzero norm.")
+    return psi / norm
+
+
+def plus_local_amplitudes(levels):
+    """Single-site ``|+> = (|0>+|1>)/√2`` amplitudes for the given level labels.
+
+    Requires both ``"0"`` and ``"1"`` levels (e.g. the ``01r`` structure); the
+    Rydberg level (and any others) get zero amplitude.
+    """
+    labels = tuple(str(level) for level in levels)
+    if "0" not in labels or "1" not in labels:
+        raise ValueError(f"'plus' state requires '0' and '1' levels; got {labels}.")
+    v = np.zeros(len(labels), dtype=complex)
+    v[labels.index("0")] = 1.0 / np.sqrt(2.0)
+    v[labels.index("1")] = 1.0 / np.sqrt(2.0)
+    return v

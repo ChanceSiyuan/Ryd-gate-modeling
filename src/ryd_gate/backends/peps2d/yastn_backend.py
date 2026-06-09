@@ -216,6 +216,7 @@ def build_yastn_peps_payload(
     dt_actual = t_gate / n_steps
 
     schedule = _drive_schedule(ir, dt_actual=dt_actual, n_steps=n_steps)
+    initial_labels_1d, initial_superposition = _initial_state_payload_entries(spec, initial_state)
     return {
         "method": "peps_yastn",
         "metadata": ir.metadata or {},
@@ -238,7 +239,8 @@ def build_yastn_peps_payload(
                 for i, j, v_rel in spec.vdw_pairs
             ],
         },
-        "initial_labels_1d": _initial_labels_1d(spec, initial_state),
+        "initial_labels_1d": initial_labels_1d,
+        "initial_superposition": initial_superposition,
         "record_steps": _record_steps(t_eval, dt_actual, n_steps),
         "observables": list(observables or []),
         "schedule": schedule,
@@ -357,6 +359,20 @@ def _validate_labels(spec, labels: list[str]) -> None:
         raise ValueError(f"Unknown level label(s) for {spec.level_structure}: {unknown}.")
 
 
+def _initial_state_payload_entries(spec, initial_state):
+    """Return ``(initial_labels_1d, initial_superposition)`` for the payload.
+
+    For ``initial_state="plus"`` the PEPS is built from a uniform per-site
+    superposition (|0>+|1>)/√2 instead of basis labels.
+    """
+    if isinstance(initial_state, str) and initial_state == "plus":
+        from ryd_gate.core.states import plus_local_amplitudes
+
+        amps = [complex(a) for a in plus_local_amplitudes(spec.level_spec.levels)]
+        return None, amps
+    return _initial_labels_1d(spec, initial_state), None
+
+
 class _YASTNPEPSOps:
     def __init__(self, yastn, config, levels) -> None:
         self.yastn = yastn
@@ -372,6 +388,14 @@ class _YASTNPEPSOps:
     def vector(self, label: str):
         values = np.zeros(self.dim, dtype=complex)
         values[self.index(label)] = 1.0
+        tensor = self.yastn.Tensor(config=self.config, s=(1,))
+        tensor.set_block(ts=(), Ds=(self.dim,), val=values)
+        return tensor
+
+    def superposition_vector(self, amps):
+        values = np.asarray(amps, dtype=complex)
+        if values.shape != (self.dim,):
+            raise ValueError(f"superposition amps must have shape ({self.dim},); got {values.shape}.")
         tensor = self.yastn.Tensor(config=self.config, s=(1,))
         tensor.set_block(ts=(), Ds=(self.dim,), val=values)
         return tensor
@@ -429,12 +453,17 @@ class _YASTNPEPSOps:
 
 def _yastn_product_peps(fpeps, geom, ops: _YASTNPEPSOps, payload: dict):
     lattice = payload["lattice"]
-    labels_1d = [str(label) for label in payload["initial_labels_1d"]]
     snake_to_2d = np.asarray(lattice["snake_to_2d"], dtype=int)
+    superposition = payload.get("initial_superposition")
+    Ly = int(lattice["Ly"])
     vectors = {}
-    for pos, label in enumerate(labels_1d):
+    for pos in range(len(snake_to_2d)):
         site_2d = int(snake_to_2d[pos])
-        vectors[(site_2d // int(lattice["Ly"]), site_2d % int(lattice["Ly"]))] = ops.vector(label)
+        coord = (site_2d // Ly, site_2d % Ly)
+        if superposition is not None:
+            vectors[coord] = ops.superposition_vector(superposition)
+        else:
+            vectors[coord] = ops.vector(str(payload["initial_labels_1d"][pos]))
     return fpeps.product_peps(geom, vectors)
 
 

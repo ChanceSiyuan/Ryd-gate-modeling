@@ -47,6 +47,10 @@ def product_state_mps(
 
     from .sites import build_tenpy_site
 
+    if isinstance(config, str) and config == "plus":
+        amp = 1.0 / np.sqrt(2.0)
+        return product_superposition_mps(spec, ground_amp=amp, zero_amp=amp, rydberg_amp=0.0)
+
     labels_2d = _state_labels_2d(spec, config)
     labels_1d = [labels_2d[i] for i in spec.snake_to_2d]
 

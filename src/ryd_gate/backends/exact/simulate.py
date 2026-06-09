@@ -74,6 +74,12 @@ def _exact_initial_state(system, psi0):
             return system.product_state(["0"] * system.N)
         if psi0 == "all_r":
             return system.product_state(["r"] * system.N)
+        if psi0 == "plus":
+            from ryd_gate.core.states import plus_local_amplitudes, product_superposition_state
+
+            return product_superposition_state(
+                plus_local_amplitudes(system.basis.local_levels), system.N
+            )
     if isinstance(psi0, (list, tuple)):
         return system.product_state(list(psi0))
     return psi0
