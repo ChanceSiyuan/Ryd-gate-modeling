@@ -35,14 +35,11 @@ class DenseODEBackend(SolverBackend):
 
         # Pre-bind drive terms once: (dense operator, coefficient, op_dag), so the
         # rhs (called many times by solve_ivp) never re-densifies or re-transposes.
-        drive = [
-            (
-                np.asarray(term.operator),
-                term.coefficient,
-                np.asarray(term.operator).conj().T if term.add_hermitian_conjugate else None,
-            )
-            for term in ir.drive_terms
-        ]
+        drive = []
+        for term in ir.drive_terms:
+            op = np.asarray(term.operator)
+            op_dag = op.conj().T if term.add_hermitian_conjugate else None
+            drive.append((op, term.coefficient, op_dag))
 
         def rhs(t, y):
             H = H_static.copy()
@@ -63,7 +60,9 @@ class DenseODEBackend(SolverBackend):
             return EvolutionResult(
                 psi_final=result.y[:, -1],
                 times=result.t,
-                states=result.y,
+                # ``solve_ivp`` returns y as (dim, n_times); transpose to the row-major
+                # (n_times, dim) convention used by SparseExpmBackend and asserted by tests.
+                states=result.y.T,
                 metadata=ir.metadata,
             )
         return EvolutionResult(psi_final=result.y[:, -1], metadata=ir.metadata)

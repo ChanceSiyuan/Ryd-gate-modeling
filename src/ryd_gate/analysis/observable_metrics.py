@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from ryd_gate.ir.evolution import EvolutionResult
     from ryd_gate.core.system_model import SystemModel
+    from ryd_gate.ir.evolution import EvolutionResult
 
 
 def measure_observables(
@@ -69,11 +69,15 @@ def measure_trajectory(
         get_psi = lambda k: states[k]
         n_t = states.shape[0]
 
+    # ``RydbergSystem.expectation`` resolves both symbolic operator specs and
+    # materialized matrices; fall back to the registry for plain models.
+    measure = getattr(model, "expectation", None) or model.observables.measure
+
     result = {name: np.empty(n_t) for name in observable_names}
     for k in range(n_t):
         psi = get_psi(k)
         for name in observable_names:
-            result[name][k] = model.observables.measure(name, psi)
+            result[name][k] = measure(name, psi)
     return result
 
 
