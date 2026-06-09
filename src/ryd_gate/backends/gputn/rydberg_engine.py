@@ -645,6 +645,13 @@ def _as_profile(value, n_sites: int) -> np.ndarray:
 
 
 def _product_or_dense_state_tensor(spec, psi0: object, xp, *, dtype) -> Any:
+    if isinstance(psi0, str) and psi0 == "plus":
+        from ryd_gate.core.states import plus_local_amplitudes, product_superposition_state
+
+        dim = int(spec.level_spec.local_dim)
+        dense = product_superposition_state(plus_local_amplitudes(spec.level_spec.levels), spec.N)
+        return _to_xp(dense.astype(dtype, copy=False).reshape((dim,) * spec.N), xp)
+
     labels = None
     if isinstance(psi0, str):
         labels = _state_labels_2d(spec, psi0)
