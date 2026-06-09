@@ -72,6 +72,24 @@ def _observable_population(system, name: str, psi: np.ndarray, fallback_op) -> f
     return float(np.real(np.vdot(psi, fallback_op @ psi)))
 
 
+def _solve_trajectory(system, protocol, x, state, t_eval):
+    """Return ``(state_seq, times)`` for a trajectory as a list of state vectors.
+
+    Normalizes the two backend conventions onto row-major iteration: the new
+    RydbergSystem exact backend returns states as ``(n_t, dim)`` and reports the
+    times it actually recorded (a piecewise backend may record fewer points than
+    requested); the legacy AtomicSystem path returns column-major ``(dim, n_t)``
+    interpolated to ``t_eval``.
+    """
+    if _is_rydberg_system(system):
+        from ryd_gate.backends.exact import simulate
+
+        res = simulate(system.with_protocol(protocol), x, state, t_eval=t_eval)
+        return list(np.asarray(res.states)), np.asarray(res.times)
+    res_list = np.asarray(_solve_state(system, protocol, x, state, t_eval=t_eval))
+    return [res_list[:, k] for k in range(res_list.shape[1])], np.asarray(t_eval)
+
+
 def average_gate_infidelity(
     system,
     protocol: "Protocol",
@@ -271,7 +289,7 @@ def population_evolution(
     t_gate = params["t_gate"]
     t_eval = np.linspace(0, t_gate, 1000)
 
-    res_list = _solve_state(system, protocol, x, ini_state, t_eval=t_eval)
+    states, t_list = _solve_trajectory(system, protocol, x, ini_state, t_eval)
 
     occ_specs = {
         "e1": ("pop_e1", build_occ_operator(2)),
@@ -281,13 +299,11 @@ def population_evolution(
         "ryd_garb": ("pop_r_garb", build_occ_operator(6)),
     }
 
-    result = {"t_list": t_eval}
+    result = {"t_list": np.asarray(t_list)}
     for key, (obs_name, op) in occ_specs.items():
-        pop = np.array([
-            _observable_population(system, obs_name, res_list[:, col], op)
-            for col in range(res_list.shape[1])
+        result[key] = np.array([
+            _observable_population(system, obs_name, psi, op) for psi in states
         ])
-        result[key] = pop
 
     return result
 
