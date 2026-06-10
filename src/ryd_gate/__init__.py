@@ -51,7 +51,7 @@ from .ir import EvolutionResult, HamiltonianIR, HamiltonianTerm, compile_hamilto
 
 # --- Protocols ---
 from .protocols.base import Protocol
-from .protocols.digital_analog import DigitalAnalogProtocol, Segment
+from .protocols.digital_analog import DigitalAnalogProtocol
 from .protocols.gate_cz_ar import ARProtocol
 from .protocols.gate_cz_double_arp import DoubleARPProtocol
 from .protocols.gate_cz_to import TOProtocol
@@ -110,7 +110,6 @@ __all__ = [
     "tfim_to_rydberg_controls",
     "interaction_longitudinal_shifts",
     "DigitalAnalogProtocol",
-    "Segment",
     # IR
     "EvolutionResult",
     "HamiltonianIR",
