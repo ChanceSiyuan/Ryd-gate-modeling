@@ -153,3 +153,29 @@ def nn_nnn_relative_pairs(Lx: int, Ly: int) -> tuple:
             if dist_sq <= 2.01:
                 pairs.append((i, j, 1.0 / dist_sq ** 3))
     return tuple(pairs)
+
+
+def cylinder_nn_nnn_pairs(Lx: int, Ly: int) -> tuple:
+    """NN + NNN pair list for an ``Lx`` × ``Ly`` cylinder (open x, periodic y).
+
+    Same convention as :func:`nn_nnn_relative_pairs` (upper-triangular
+    ``(i, j, V_ij / V_nn)`` with NN strength 1 and NNN strength 1/8), but the
+    y-direction wraps: distances use the minimum-image convention in y so that
+    sites at ``iy = Ly-1`` and ``iy = 0`` are nearest neighbours. Intended for
+    ``Ly >= 4`` (and even ``Ly`` for a frustration-free checkerboard), matching
+    the cylinder geometry used for 2D DMRG finite-size scaling.
+    """
+    coords = [(ix, iy) for ix in range(Lx) for iy in range(Ly)]
+    N = len(coords)
+    pairs = []
+    for i in range(N):
+        xi, yi = coords[i]
+        for j in range(i + 1, N):
+            xj, yj = coords[j]
+            dx = xi - xj
+            dy = yi - yj
+            dy -= Ly * round(dy / Ly)  # minimum image along the periodic y-axis
+            dist_sq = dx * dx + dy * dy
+            if dist_sq <= 2.01:
+                pairs.append((i, j, 1.0 / dist_sq ** 3))
+    return tuple(pairs)
