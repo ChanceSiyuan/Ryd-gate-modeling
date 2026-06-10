@@ -169,6 +169,9 @@ class TFIMQuenchProtocol(Protocol):
             "global_n": -params["Delta"],
         }
 
+    def pulse_traces(self, t: float, params: dict) -> dict[str, float]:
+        return _tfim_pulse_traces(self.get_drive_coefficients(t, params))
+
 
 class TFIMAnnealProtocol(Protocol):
     """Piecewise annealing schedule for square-lattice TFIM benchmarks.
@@ -264,6 +267,9 @@ class TFIMAnnealProtocol(Protocol):
             "global_n": -Delta_t,
         }
 
+    def pulse_traces(self, t: float, params: dict) -> dict[str, float]:
+        return _tfim_pulse_traces(self.get_drive_coefficients(t, params))
+
     def hx_at(self, t: float) -> float:
         t = float(np.clip(t, 0.0, self.t_gate))
         if self.t_rise > 0 and t < self.t_rise:
@@ -288,6 +294,14 @@ class TFIMAnnealProtocol(Protocol):
 def _lerp(start: float, end: float, frac: float) -> float:
     frac = float(np.clip(frac, 0.0, 1.0))
     return (1.0 - frac) * start + frac * end
+
+
+def _tfim_pulse_traces(coeffs: dict) -> dict[str, float]:
+    """Physical TFIM fields from drive coefficients: h_x = Omega/2, Delta = -global_n."""
+    return {
+        r"$h_x=\Omega/2$": float(np.real(coeffs["global_X"])),
+        r"$\Delta$": float(np.real(-coeffs["global_n"])),
+    }
 
 
 def _n_sites(system) -> int:

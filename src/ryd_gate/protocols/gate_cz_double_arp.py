@@ -128,6 +128,13 @@ class DoubleARPProtocol(Protocol):
         u = self.local_time(t)
         return float(delta_max) * np.sin(np.pi * (u / self.t_pulse - 0.5)) + float(delta_offset)
 
+    def pulse_traces(self, t: float, params: dict) -> dict[str, float]:
+        """Physical effective Rabi and ARP detuning sweep at time *t*."""
+        return {
+            r"$\Omega_{\rm eff}$": self.effective_omega(t, params),
+            r"$\Delta$": self.detuning(t, params),
+        }
+
     def stark_shift(self, t: float, params: dict) -> float:
         """Second-order differential Stark shift ``E_r - E_1``."""
         amplitude = self.effective_omega(t, params) / float(params["rabi_eff"])
