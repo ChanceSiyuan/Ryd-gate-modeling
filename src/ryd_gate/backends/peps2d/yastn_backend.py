@@ -151,6 +151,86 @@ class YASTNPEPSBackend:
             result.times = np.asarray(recorded_times, dtype=float)
         return result
 
+    def find_ground_state(
+        self,
+        ir,
+        *,
+        dtau_schedule: tuple[tuple[float, int], ...] = ((0.1, 50), (0.03, 50), (0.01, 80)),
+        observables: list[str] | None = None,
+        initial_state: str | np.ndarray | object = "af1",
+    ) -> EvolutionResult:
+        """Imaginary-time (NTU) ground state of a *static* Rydberg/TFIM Hamiltonian.
+
+        ``ir`` must carry a constant-in-time protocol (e.g.
+        :class:`~ryd_gate.protocols.lattice_dynamics.TFIMQuenchProtocol`); the
+        Hamiltonian is read from the first schedule step and applied as
+        imaginary-time gates ``exp(-dtau H)`` over the ``(dtau, n_steps)``
+        schedule (decreasing ``dtau`` cools toward the ground state). Returns the
+        converged finite PEPS with ``metadata["obs"]`` holding the requested
+        measurements (default: spontaneous staggered magnetization ``m_s`` and
+        mean Rydberg density). Use a checkerboard seed (``"af1"``) so the
+        symmetry-broken antiferromagnetic sector is selected.
+        """
+        yastn, fpeps, gates, cfg = self._load_yastn()
+        if observables is None:
+            observables = ["m_s", "n_mean"]
+        payload = build_yastn_peps_payload(
+            ir, initial_state=initial_state, t_eval=None, observables=observables,
+            dt=self.dt, chi_max=self.chi_max, svd_min=self.svd_min, use_cuda=self.use_cuda,
+        )
+        if not payload["schedule"]:
+            raise YASTNPEPSError("find_ground_state requires a non-empty protocol schedule.")
+        step0 = payload["schedule"][0]
+
+        ops = _YASTNPEPSOps(yastn, cfg, payload["lattice"]["levels"])
+        geom = fpeps.SquareLattice(
+            dims=(int(payload["lattice"]["Lx"]), int(payload["lattice"]["Ly"])),
+            boundary="obc",
+        )
+        psi = _yastn_product_peps(fpeps, geom, ops, payload)
+        env = _make_update_env(fpeps, psi, self.update_environment)
+        opts_svd = {"D_total": int(self.chi_max), "tol": float(self.svd_min)}
+        opts_post_truncation = None
+        if self.update_environment.lower() in {"ctm", "envctm"}:
+            env.update_(dict(opts_svd))
+            opts_post_truncation = {"opts_svd": dict(opts_svd)}
+
+        truncation_error: list[float] = []
+        n_steps = 0
+        for dtau, nsteps in dtau_schedule:
+            step_gates = _yastn_imag_gates(gates, ops, payload, step0, float(dtau))
+            for _ in range(int(nsteps)):
+                infos = fpeps.evolution_step_(
+                    env, step_gates, opts_svd,
+                    initialization=self.initialization,
+                    max_iter=int(self.max_iter),
+                    tol_iter=float(self.tol_iter),
+                    opts_post_truncation=opts_post_truncation,
+                )
+                psi = env.psi
+                truncation_error.append(
+                    max((float(getattr(info, "truncation_error", 0.0)) for info in infos), default=0.0))
+                n_steps += 1
+
+        measured = _measure_yastn(fpeps, psi, ops, payload, observables, self.measurement_environment)
+        return EvolutionResult(
+            psi_final=psi,
+            metadata={
+                **(ir.metadata or {}),
+                "backend": "peps",
+                "method": "peps_yastn_imag",
+                "engine_package": "yastn",
+                "algorithm": f"fpeps_imag_{self.update_environment}",
+                "level_structure": payload["lattice"]["level_structure"],
+                "local_dim": int(payload["lattice"]["local_dim"]),
+                "chi_max": int(self.chi_max),
+                "dtau_schedule": [list(s) for s in dtau_schedule],
+                "n_steps": int(n_steps),
+                "max_truncation_error": max(truncation_error, default=0.0),
+                "obs": measured,
+            },
+        )
+
     def _load_yastn(self):
         if importlib.util.find_spec("yastn") is None:
             raise YASTNPEPSError(
@@ -509,6 +589,47 @@ def _yastn_gates(gates, ops: _YASTNPEPSOps, payload: dict, step_data: dict, dt: 
         coord = (site_2d // Ly, site_2d % Ly)
         H = _local_hamiltonian(ops, omega_R[pos], omega_hf[pos], delta_R[pos], delta_hf[pos])
         out.append(gates.gate_local_exp(0.5j * dt, ops.I, H, site=coord))
+    return out
+
+
+def _yastn_imag_gates(gates, ops: _YASTNPEPSOps, payload: dict, step_data: dict, dtau: float):
+    """Imaginary-time Trotter gates ``exp(-dtau H)`` for ground-state NTU evolution.
+
+    Mirrors :func:`_yastn_gates` but uses a *real* coefficient, so ``gate_*_exp``
+    produces ``exp(-dtau H)`` instead of the real-time ``exp(-i dt H)``. The local
+    field is split into two half-steps around the nearest-neighbour interaction
+    (second-order Trotter).
+    """
+    lattice = payload["lattice"]
+    Ly = int(lattice["Ly"])
+    inv_snake = np.asarray(lattice["inv_snake"], dtype=int)
+    omega_R = np.asarray(step_data["omega_R_1d"], dtype=float)
+    omega_hf = np.asarray(step_data["omega_hf_1d"], dtype=float)
+    delta_R = np.asarray(step_data["delta_R_1d"], dtype=float)
+    delta_hf = np.asarray(step_data["delta_hf_1d"], dtype=float)
+    out = []
+
+    for site_2d in range(int(lattice["N"])):
+        pos = int(inv_snake[site_2d])
+        coord = (site_2d // Ly, site_2d % Ly)
+        H = _local_hamiltonian(ops, omega_R[pos], omega_hf[pos], delta_R[pos], delta_hf[pos])
+        out.append(gates.gate_local_exp(0.5 * dtau, ops.I, H, site=coord))
+
+    Hnn = gates.fkron(ops.n_r, ops.n_r)
+    for i_pos, j_pos, strength in lattice["vdw_pairs_1d"]:
+        i_2d = int(lattice["snake_to_2d"][int(i_pos) - 1])
+        j_2d = int(lattice["snake_to_2d"][int(j_pos) - 1])
+        if i_2d == j_2d or abs(float(strength)) == 0:
+            continue
+        ci = (i_2d // Ly, i_2d % Ly)
+        cj = (j_2d // Ly, j_2d % Ly)
+        out.append(gates.gate_nn_exp(dtau, ops.I, float(strength) * Hnn, bond=(ci, cj)))
+
+    for site_2d in range(int(lattice["N"])):
+        pos = int(inv_snake[site_2d])
+        coord = (site_2d // Ly, site_2d % Ly)
+        H = _local_hamiltonian(ops, omega_R[pos], omega_hf[pos], delta_R[pos], delta_hf[pos])
+        out.append(gates.gate_local_exp(0.5 * dtau, ops.I, H, site=coord))
     return out
 
 

@@ -124,6 +124,7 @@ class TNLatticeSpec:
     bc: str = "open"
     interaction_mode: str = "nnn"
     ordering: str = "snake"
+    bc_y: str = "open"
 
     @property
     def level_structure(self) -> str:
@@ -140,6 +141,7 @@ def create_tn_lattice_spec(
     level_structure: str | LevelStructureSpec = "1r",
     interaction_mode: str = "nnn",
     ordering: str = "snake",
+    bc_y: str = "open",
 ) -> TNLatticeSpec:
     """Build a TN-friendly lattice spec reusing geometry conventions.
 
@@ -150,14 +152,23 @@ def create_tn_lattice_spec(
     addressing indices and interactions stay consistent across the
     exact and TN paths.
     """
-    from ryd_gate.lattice.geometry import make_square_lattice, nn_nnn_relative_pairs
+    from ryd_gate.lattice.geometry import (
+        cylinder_nn_nnn_pairs,
+        make_square_lattice,
+        nn_nnn_relative_pairs,
+    )
 
     level_spec = resolve_level_structure(level_structure)
     if interaction_mode not in {"nn", "nnn"}:
         raise ValueError("TN lattice interaction_mode must be 'nn' or 'nnn'.")
+    if bc_y not in {"open", "periodic"}:
+        raise ValueError("TN lattice bc_y must be 'open' or 'periodic'.")
 
     geom = make_square_lattice(Lx, Ly, spacing_um=1.0)
-    vdw_pairs = nn_nnn_relative_pairs(Lx, Ly)
+    if bc_y == "periodic":
+        vdw_pairs = cylinder_nn_nnn_pairs(Lx, Ly)  # open x, periodic y (cylinder)
+    else:
+        vdw_pairs = nn_nnn_relative_pairs(Lx, Ly)
     if interaction_mode == "nn":
         vdw_pairs = tuple(pair for pair in vdw_pairs if np.isclose(pair[2], 1.0))
     snake_to_2d, inv_snake = ordering_mapping(Lx, Ly, ordering)
@@ -175,4 +186,5 @@ def create_tn_lattice_spec(
         bc=bc,
         interaction_mode=interaction_mode,
         ordering=ordering,
+        bc_y=bc_y,
     )
