@@ -89,7 +89,7 @@ class YASTNPEPSBackend:
             record(0.0)
 
         opts_svd = {"D_total": int(self.chi_max), "tol": float(self.svd_min)}
-        env = _make_update_env(fpeps, psi, self.update_environment)
+        env = _make_update_env(fpeps, psi, self.update_environment, opts_svd=opts_svd)
         opts_post_truncation = None
         if self.update_environment.lower() in {"ctm", "envctm"}:
             env.update_(dict(opts_svd))
@@ -150,6 +150,118 @@ class YASTNPEPSBackend:
         if recorded_times:
             result.times = np.asarray(recorded_times, dtype=float)
         return result
+
+    def find_ground_state(
+        self,
+        ir,
+        *,
+        dtau_schedule: tuple[tuple[float, int], ...] = ((0.1, 30), (0.03, 30), (0.01, 40)),
+        warmup_env: str | None = None,
+        step_max_iter: int = 8,
+        step_tol_iter: float = 1e-8,
+        energy_convergence: bool = True,
+        energy_tol: float = 1e-5,
+        ctm_chi: int = 16,
+        ctm_iters: int = 3,
+        observables: list[str] | None = None,
+        initial_state: str | np.ndarray | object = "af1",
+    ) -> EvolutionResult:
+        """Imaginary-time ground state of a *static* Rydberg/TFIM Hamiltonian.
+
+        ``ir`` must carry a constant-in-time protocol (e.g.
+        :class:`~ryd_gate.protocols.lattice_dynamics.TFIMQuenchProtocol`). The
+        Hamiltonian is read from the first schedule step and applied as
+        imaginary-time gates ``exp(-dtau H)`` over the ``(dtau, n_steps)`` schedule.
+
+        Accelerations over a plain fixed NTU sweep:
+
+        * **optional Simple-Update warmup** -- ``warmup_env="approximate"`` cools the
+          first ``dtau`` stage with ``EnvApproximate`` before refining with
+          ``self.update_environment`` (default NTU). Off by default: its boundary-MPS
+          compression costs more than NTU on small clusters and only pays off on
+          larger lattices.
+        * **looser per-step bond optimisation** -- ``step_max_iter``/``step_tol_iter``
+          (the Trotter+truncation error dwarfs a 1e-12 bond tolerance).
+        * **energy-based early stop** -- a light CTM energy after each stage halts
+          cooling once ``|dE| <= energy_tol * max(1, |E|)``.
+
+        ``metadata["energy"]`` is the O(N) ground-state energy (1-site fields plus
+        nearest-neighbour ``<n_r n_r>``) -- the cheap, robust cross-check quantity.
+        Use a checkerboard seed (``"af1"``) to select the antiferromagnetic sector.
+        """
+        yastn, fpeps, gates, cfg = self._load_yastn()
+        if observables is None:
+            observables = ["m_s", "n_mean"]
+        payload = build_yastn_peps_payload(
+            ir, initial_state=initial_state, t_eval=None, observables=observables,
+            dt=self.dt, chi_max=self.chi_max, svd_min=self.svd_min, use_cuda=self.use_cuda,
+        )
+        if not payload["schedule"]:
+            raise YASTNPEPSError("find_ground_state requires a non-empty protocol schedule.")
+        step0 = payload["schedule"][0]
+
+        ops = _YASTNPEPSOps(yastn, cfg, payload["lattice"]["levels"])
+        geom = fpeps.SquareLattice(
+            dims=(int(payload["lattice"]["Lx"]), int(payload["lattice"]["Ly"])),
+            boundary="obc",
+        )
+        psi = _yastn_product_peps(fpeps, geom, ops, payload)
+        opts_svd = {"D_total": int(self.chi_max), "tol": float(self.svd_min)}
+
+        truncation_error: list[float] = []
+        n_steps = 0
+        energy = float("nan")
+        prev_E = None
+        stopped_early = False
+        for stage, (dtau, nsteps) in enumerate(dtau_schedule):
+            env_name = warmup_env if (warmup_env and stage == 0) else self.update_environment
+            env = _make_update_env(fpeps, psi, env_name, opts_svd=opts_svd)
+            opts_post_truncation = None
+            if env_name.lower() in {"ctm", "envctm"}:
+                env.update_(dict(opts_svd))
+                opts_post_truncation = {"opts_svd": dict(opts_svd)}
+            step_gates = _yastn_imag_gates(gates, ops, payload, step0, float(dtau))
+            for _ in range(int(nsteps)):
+                infos = fpeps.evolution_step_(
+                    env, step_gates, opts_svd,
+                    initialization=self.initialization,
+                    max_iter=int(step_max_iter),
+                    tol_iter=float(step_tol_iter),
+                    opts_post_truncation=opts_post_truncation,
+                )
+                psi = env.psi
+                truncation_error.append(
+                    max((float(getattr(info, "truncation_error", 0.0)) for info in infos), default=0.0))
+                n_steps += 1
+            if energy_convergence:
+                energy, _ = _peps_energy_ctm(fpeps, psi, ops, payload, step0, ctm_chi, ctm_iters)
+                if prev_E is not None and abs(energy - prev_E) <= energy_tol * max(1.0, abs(energy)):
+                    stopped_early = True
+                    break
+                prev_E = energy
+
+        measured = _measure_yastn(fpeps, psi, ops, payload, observables, self.measurement_environment)
+        if not np.isfinite(energy):
+            energy, _ = _peps_energy_ctm(fpeps, psi, ops, payload, step0, ctm_chi, ctm_iters)
+        return EvolutionResult(
+            psi_final=psi,
+            metadata={
+                **(ir.metadata or {}),
+                "backend": "peps",
+                "method": "peps_yastn_imag",
+                "engine_package": "yastn",
+                "algorithm": f"fpeps_imag_warmup-{warmup_env}_refine-{self.update_environment}",
+                "level_structure": payload["lattice"]["level_structure"],
+                "local_dim": int(payload["lattice"]["local_dim"]),
+                "chi_max": int(self.chi_max),
+                "dtau_schedule": [list(s) for s in dtau_schedule],
+                "n_steps": int(n_steps),
+                "stopped_early": stopped_early,
+                "energy": float(energy),
+                "max_truncation_error": max(truncation_error, default=0.0),
+                "obs": measured,
+            },
+        )
 
     def _load_yastn(self):
         if importlib.util.find_spec("yastn") is None:
@@ -467,12 +579,13 @@ def _yastn_product_peps(fpeps, geom, ops: _YASTNPEPSOps, payload: dict):
     return fpeps.product_peps(geom, vectors)
 
 
-def _make_update_env(fpeps, psi, name: str):
+def _make_update_env(fpeps, psi, name: str, opts_svd=None):
     key = name.lower()
     if key in {"ntu", "envntu"}:
         return fpeps.EnvNTU(psi)
     if key in {"approx", "approximate"}:
-        return fpeps.EnvApproximate(psi)
+        # EnvApproximate compresses a boundary MPS, so it needs the SVD options.
+        return fpeps.EnvApproximate(psi, opts_svd=opts_svd)
     if key in {"ctm", "envctm"}:
         return fpeps.EnvCTM(psi)
     raise ValueError("update_environment must be 'ntu', 'approximate', or 'ctm'.")
@@ -510,6 +623,94 @@ def _yastn_gates(gates, ops: _YASTNPEPSOps, payload: dict, step_data: dict, dt: 
         H = _local_hamiltonian(ops, omega_R[pos], omega_hf[pos], delta_R[pos], delta_hf[pos])
         out.append(gates.gate_local_exp(0.5j * dt, ops.I, H, site=coord))
     return out
+
+
+def _yastn_imag_gates(gates, ops: _YASTNPEPSOps, payload: dict, step_data: dict, dtau: float):
+    """Imaginary-time Trotter gates ``exp(-dtau H)`` for ground-state NTU evolution.
+
+    Mirrors :func:`_yastn_gates` but uses a *real* coefficient, so ``gate_*_exp``
+    produces ``exp(-dtau H)`` instead of the real-time ``exp(-i dt H)``. The local
+    field is split into two half-steps around the nearest-neighbour interaction
+    (second-order Trotter).
+    """
+    lattice = payload["lattice"]
+    Ly = int(lattice["Ly"])
+    inv_snake = np.asarray(lattice["inv_snake"], dtype=int)
+    omega_R = np.asarray(step_data["omega_R_1d"], dtype=float)
+    omega_hf = np.asarray(step_data["omega_hf_1d"], dtype=float)
+    delta_R = np.asarray(step_data["delta_R_1d"], dtype=float)
+    delta_hf = np.asarray(step_data["delta_hf_1d"], dtype=float)
+    out = []
+
+    for site_2d in range(int(lattice["N"])):
+        pos = int(inv_snake[site_2d])
+        coord = (site_2d // Ly, site_2d % Ly)
+        H = _local_hamiltonian(ops, omega_R[pos], omega_hf[pos], delta_R[pos], delta_hf[pos])
+        out.append(gates.gate_local_exp(0.5 * dtau, ops.I, H, site=coord))
+
+    Hnn = gates.fkron(ops.n_r, ops.n_r)
+    for i_pos, j_pos, strength in lattice["vdw_pairs_1d"]:
+        i_2d = int(lattice["snake_to_2d"][int(i_pos) - 1])
+        j_2d = int(lattice["snake_to_2d"][int(j_pos) - 1])
+        if i_2d == j_2d or abs(float(strength)) == 0:
+            continue
+        ci = (i_2d // Ly, i_2d % Ly)
+        cj = (j_2d // Ly, j_2d % Ly)
+        out.append(gates.gate_nn_exp(dtau, ops.I, float(strength) * Hnn, bond=(ci, cj)))
+
+    for site_2d in range(int(lattice["N"])):
+        pos = int(inv_snake[site_2d])
+        coord = (site_2d // Ly, site_2d % Ly)
+        H = _local_hamiltonian(ops, omega_R[pos], omega_hf[pos], delta_R[pos], delta_hf[pos])
+        out.append(gates.gate_local_exp(0.5 * dtau, ops.I, H, site=coord))
+    return out
+
+
+def _peps_energy_ctm(fpeps, psi, ops, payload, step0, ctm_chi, ctm_iters):
+    """Total ground-state energy <H> from a light CTM environment.
+
+    O(N): one CTM convergence, four 1-site measurements (X_1r, X_01, n_r, n_1)
+    combined with the per-site fields, plus nearest-neighbour ``<n_r n_r>`` over the
+    ~2N interaction bonds. Far cheaper than the O(N^2) staggered structure factor and
+    a robust, symmetry-agnostic cross-check quantity. Returns ``(energy, env)``.
+    """
+    lat = payload["lattice"]
+    Ly = int(lat["Ly"])
+    N = int(lat["N"])
+    inv = np.asarray(lat["inv_snake"], dtype=int)
+    oR = np.asarray(step0["omega_R_1d"], dtype=float)
+    oh = np.asarray(step0["omega_hf_1d"], dtype=float)
+    dR = np.asarray(step0["delta_R_1d"], dtype=float)
+    dh = np.asarray(step0["delta_hf_1d"], dtype=float)
+
+    env = fpeps.EnvCTM(psi)
+    for _ in range(int(ctm_iters)):
+        env.update_({"D_total": int(ctm_chi), "tol": 1e-8})
+
+    xr = env.measure_1site(ops.X_1r)
+    nr = env.measure_1site(ops.n_r)
+    x01 = env.measure_1site(ops.X_01) if np.any(oh) else None
+    n1 = env.measure_1site(ops.n_1) if np.any(dh) else None
+
+    E = 0.0
+    for s2 in range(N):
+        pos = int(inv[s2])
+        coord = (s2 // Ly, s2 % Ly)
+        E += 0.5 * oR[pos] * float(np.real(xr[coord])) - dR[pos] * float(np.real(nr[coord]))
+        if x01 is not None:
+            E += 0.5 * oh[pos] * float(np.real(x01[coord]))
+        if n1 is not None:
+            E += -dh[pos] * float(np.real(n1[coord]))
+
+    for i_pos, j_pos, strength in lat["vdw_pairs_1d"]:
+        i2 = int(lat["snake_to_2d"][int(i_pos) - 1])
+        j2 = int(lat["snake_to_2d"][int(j_pos) - 1])
+        if i2 == j2 or abs(float(strength)) == 0:
+            continue
+        ci = (i2 // Ly, i2 % Ly)
+        cj = (j2 // Ly, j2 % Ly)
+        E += float(strength) * float(np.real(env.measure_nsite(ops.n_r, ops.n_r, sites=(ci, cj))))
+    return E, env
 
 
 def _local_hamiltonian(
