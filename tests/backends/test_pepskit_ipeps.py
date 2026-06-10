@@ -74,7 +74,14 @@ def test_build_payload_1r():
 
 
 def test_build_payload_01r_carries_hyperfine():
-    proto = DigitalAnalogProtocol.constant(omega_R=1.0, omega_hf=0.5, delta_R=0.3, delta_hf=0.2, t_gate=0.2, n_steps=4)
+    proto = DigitalAnalogProtocol(
+        t_gate=0.2,
+        omega_R_fn=lambda t: 1.0,
+        omega_hf_fn=lambda t: 0.5,
+        delta_R_fn=lambda t: 0.3,
+        delta_hf_fn=lambda t: 0.2,
+        n_steps=4,
+    )
     ir = _make_ir("01r", 2.0, proto)
     p = _payload(ir)
     assert p["lattice"]["physical_dim"] == 3
@@ -156,7 +163,15 @@ def test_detuned_rabi_1r_matches_generalized():
 def test_hyperfine_rabi_01r_matches_sin2():
     # Only the |0>-|1> hyperfine drive on; population flows |1> -> |0> as cos^2/sin^2.
     Omega_hf = 2 * np.pi
-    ir = _make_ir("01r", 0.0, DigitalAnalogProtocol.constant(omega_hf=Omega_hf, t_gate=0.4, n_steps=8))
+    ir = _make_ir(
+        "01r",
+        0.0,
+        DigitalAnalogProtocol(
+            t_gate=0.4,
+            omega_hf_fn=lambda t: Omega_hf,
+            n_steps=8,
+        ),
+    )
     t_eval = np.array([0.0, 0.1, 0.2, 0.3, 0.4])
     res = _run(ir, t_eval=t_eval, observables=["n_0", "n_1"], unit_cell="uniform", bond_dim=2, env_dim=12, dt=0.05)
     n0 = np.asarray(res.metadata["obs"]["n_0"])
@@ -168,7 +183,15 @@ def test_hyperfine_rabi_01r_matches_sin2():
 def test_rydberg_rabi_01r_matches_sin2():
     # Only the |1>-|r> Rydberg drive on; |1> -> |r| Rabi.
     Omega_R = 2 * np.pi
-    ir = _make_ir("01r", 0.0, DigitalAnalogProtocol.constant(omega_R=Omega_R, t_gate=0.4, n_steps=8))
+    ir = _make_ir(
+        "01r",
+        0.0,
+        DigitalAnalogProtocol(
+            t_gate=0.4,
+            omega_R_fn=lambda t: Omega_R,
+            n_steps=8,
+        ),
+    )
     t_eval = np.array([0.0, 0.1, 0.2, 0.3, 0.4])
     res = _run(ir, t_eval=t_eval, observables=["n_r"], unit_cell="uniform", bond_dim=2, env_dim=12, dt=0.05)
     nr = np.asarray(res.metadata["obs"]["n_r"])

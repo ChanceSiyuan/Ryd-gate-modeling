@@ -40,12 +40,12 @@ def test_peps_yastn_package_runs_concrete_smoke():
 
 def test_peps_yastn_payload_supports_01r_qutrit_profiles():
     spec = create_tn_lattice_spec(1, 2, V_nn=4.0, interaction_mode="nn", level_structure="01r")
-    proto = DigitalAnalogProtocol.constant(
-        omega_R=[0.2, 0.4],
-        omega_hf=[0.6, 0.8],
-        delta_R=[0.1, 0.2],
-        delta_hf=[0.03, 0.04],
+    proto = DigitalAnalogProtocol(
         t_gate=0.1,
+        omega_R_fn=lambda t: [0.2, 0.4],
+        omega_hf_fn=lambda t: [0.6, 0.8],
+        delta_R_fn=lambda t: [0.1, 0.2],
+        delta_hf_fn=lambda t: [0.03, 0.04],
     )
     params = proto.unpack_params([], TNProtocolContext(spec))
     ir = TNEvolutionIR(spec=spec, protocol=proto, params=params, method="peps_yastn")
@@ -77,12 +77,12 @@ def test_peps_yastn_package_runs_01r_qutrit_smoke():
     pytest.importorskip("yastn")
 
     spec = create_tn_lattice_spec(1, 2, V_nn=0.1, interaction_mode="nn", level_structure="01r")
-    proto = DigitalAnalogProtocol.constant(
-        omega_R=0.2,
-        omega_hf=0.1,
-        delta_R=0.03,
-        delta_hf=-0.02,
+    proto = DigitalAnalogProtocol(
         t_gate=0.02,
+        omega_R_fn=lambda t: 0.2,
+        omega_hf_fn=lambda t: 0.1,
+        delta_R_fn=lambda t: 0.03,
+        delta_hf_fn=lambda t: -0.02,
     )
 
     result = simulate_tn(

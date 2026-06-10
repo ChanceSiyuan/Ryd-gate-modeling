@@ -17,7 +17,7 @@ All protocol classes implement:
 """
 
 from ryd_gate.protocols.base import Protocol
-from ryd_gate.protocols.digital_analog import DigitalAnalogProtocol, Segment
+from ryd_gate.protocols.digital_analog import DigitalAnalogProtocol
 from ryd_gate.protocols.gate_cz_ar import ARProtocol
 from ryd_gate.protocols.gate_cz_double_arp import DoubleARPProtocol
 from ryd_gate.protocols.gate_cz_to import TOProtocol
@@ -42,5 +42,4 @@ __all__ = [
     "tfim_to_rydberg_controls",
     "interaction_longitudinal_shifts",
     "DigitalAnalogProtocol",
-    "Segment",
 ]

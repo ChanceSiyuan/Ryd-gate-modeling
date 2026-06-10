@@ -1,50 +1,38 @@
-"""Digital-analog protocol for the 0-1-r Rydberg lattice.
+"""Function-defined digital-analog protocol for the 0-1-r Rydberg lattice.
 
-Piecewise-constant schedule of four channels:
+Continuous schedules for four channels:
 
 - ``drive_R``   — hyperfine→Rydberg Rabi amplitude on |1>↔|r| (per atom, Omega_R)
 - ``drive_hf``  — hyperfine Rabi amplitude on |0>↔|1| (Omega_hf)
 - ``delta_R``   — Rydberg detuning (Delta_R, sign convention: H contains -Delta_R n^r)
 - ``delta_hf``  — hyperfine detuning (Delta_hf)
 
-A schedule is a list of :class:`Segment`\\ s; the protocol holds the schedule
-internally so the parameter vector ``x`` passed to ``simulate()`` is empty.
+The schedule lives on the protocol, so the parameter vector ``x`` passed to
+``simulate()`` is empty.  Each function accepts physical time ``t`` in seconds
+and returns either a scalar uniform value or a length-``N`` site profile.
 
-Each ``Segment`` field accepts either a scalar (uniform on all sites) or a
-length-``N`` sequence giving a site-dependent profile.
+Typical use::
 
-Typical MVP use (single constant segment)::
-
-    protocol = DigitalAnalogProtocol.constant(
-        omega_R=2*pi*1e6,
-        omega_hf=0,
-        delta_R=0,
-        delta_hf=0,
+    protocol = DigitalAnalogProtocol(
         t_gate=1e-6,
+        omega_R_fn=lambda t: 2*pi*1e6,
+        delta_R_fn=lambda t: 0.0,
     )
     system = RydbergSystem.from_lattice(make_chain(2), "01r", protocol=protocol)
     result = simulate(system, [], psi0)
-
-Multi-segment echo / IQP-style sequence::
-
-    protocol = DigitalAnalogProtocol([
-        Segment(duration=t_pi2, omega_R=Omega),
-        Segment(duration=t_int, omega_R=0),
-        Segment(duration=t_pi2, omega_R=-Omega),
-    ])
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Iterable
 
 import numpy as np
 
 from ryd_gate.protocols.base import Protocol
 
 SiteProfile = float | Sequence[float]
+SiteProfileFunction = Callable[[float], SiteProfile]
 
 
 def is_scalar_profile(value: SiteProfile) -> bool:
@@ -65,28 +53,7 @@ def as_site_profile(value: SiteProfile, n_sites: int) -> np.ndarray:
     return arr
 
 
-@dataclass(frozen=True)
-class Segment:
-    """A piecewise-constant slice of the schedule.
-
-    All drive amplitudes and detunings are in rad/s.  Drive amplitudes
-    are the full Rabi frequencies (``Omega_R``, ``Omega_hf``), not their
-    halves -- the protocol divides by 2 internally to match the convention
-
-        H = (Omega/2) (|a><b| + h.c.).
-
-    Each field may be a scalar (same on every site) or a length-``N`` sequence
-    for site-dependent addressing.
-    """
-
-    duration: float
-    omega_R: SiteProfile = 0.0
-    omega_hf: SiteProfile = 0.0
-    delta_R: SiteProfile = 0.0
-    delta_hf: SiteProfile = 0.0
-
-
-# (segment field, global channel, per-site channel prefix, half_factor, negate)
+# (field, global channel, per-site channel prefix, half_factor, negate)
 _CHANNEL_SPECS = (
     ("omega_R", "drive_R", "drive_R", True, False),
     ("omega_hf", "drive_hf", "drive_hf", True, False),
@@ -96,48 +63,49 @@ _CHANNEL_SPECS = (
 
 
 class DigitalAnalogProtocol(Protocol):
-    """Piecewise-constant 0-1-r drive schedule.
+    """Function-defined 0-1-r drive schedule.
+
+    Backends still integrate the Hamiltonian using piecewise-constant time
+    slices, but sampling continuous schedules is handled inside the protocol.
 
     Parameters
     ----------
-    segments : iterable of Segment
-        Ordered list of piecewise-constant segments.  Total gate time is
-        the sum of the segments' durations.
+    t_gate : float
+        Total evolution time.
+    omega_R_fn, omega_hf_fn, delta_R_fn, delta_hf_fn : callable, optional
+        Functions ``t -> value`` returning a scalar or length-``N`` site
+        profile.  Missing functions default to zero.  Drive functions return
+        full Rabi frequencies, not half-Rabi coefficients.
     n_steps : int
         Number of slices that the sparse backend should use to integrate
-        the schedule.  Default 200; for multi-segment schedules pick a
-        value large enough that segment boundaries are well-resolved
-        (e.g. >= 50 × len(segments)).
+        the schedule.
     """
 
-    def __init__(self, segments: Iterable[Segment], n_steps: int = 200) -> None:
-        self.segments: list[Segment] = list(segments)
-        if not self.segments:
-            raise ValueError("DigitalAnalogProtocol requires at least one segment.")
-        self.n_steps = int(n_steps)
-        self._t_gate = float(sum(s.duration for s in self.segments))
-        # Precompute cumulative end times for fast segment lookup
-        cum = 0.0
-        self._end_times: list[float] = []
-        for s in self.segments:
-            cum += s.duration
-            self._end_times.append(cum)
-
-    @classmethod
-    def constant(
-        cls,
-        omega_R: SiteProfile = 0.0,
-        omega_hf: SiteProfile = 0.0,
-        delta_R: SiteProfile = 0.0,
-        delta_hf: SiteProfile = 0.0,
-        t_gate: float = 1.0,
+    def __init__(
+        self,
+        *,
+        t_gate: float,
+        omega_R_fn: SiteProfileFunction | None = None,
+        omega_hf_fn: SiteProfileFunction | None = None,
+        delta_R_fn: SiteProfileFunction | None = None,
+        delta_hf_fn: SiteProfileFunction | None = None,
         n_steps: int = 200,
-    ) -> "DigitalAnalogProtocol":
-        """Single-segment schedule with constant drives over [0, t_gate]."""
-        return cls(
-            [Segment(duration=t_gate, omega_R=omega_R, omega_hf=omega_hf, delta_R=delta_R, delta_hf=delta_hf)],
-            n_steps=n_steps,
-        )
+    ) -> None:
+        if t_gate <= 0:
+            raise ValueError("t_gate must be positive.")
+        if n_steps < 1:
+            raise ValueError("n_steps must be positive.")
+        self._function_fields = {
+            "omega_R": omega_R_fn,
+            "omega_hf": omega_hf_fn,
+            "delta_R": delta_R_fn,
+            "delta_hf": delta_hf_fn,
+        }
+        for name, fn in self._function_fields.items():
+            if fn is not None and not callable(fn):
+                raise TypeError(f"{name}_fn must be callable when provided.")
+        self._t_gate = float(t_gate)
+        self.n_steps = int(n_steps)
 
     # -- Protocol interface ------------------------------------------------
 
@@ -174,28 +142,37 @@ class DigitalAnalogProtocol(Protocol):
         return frozenset({"drive_R", "drive_hf", "delta_R", "delta_hf"})
 
     def drive_channels(self, system) -> frozenset[str]:
-        """All drive/detuning channels used by any segment on this lattice."""
+        """All drive/detuning channels used by this schedule on this lattice."""
         n_sites = system.basis.n_sites
         channels: set[str] = set()
         for field, global_ch, site_prefix, _, _ in _CHANNEL_SPECS:
-            for seg in self.segments:
-                val = getattr(seg, field)
-                if is_scalar_profile(val):
-                    channels.add(global_ch)
-                else:
-                    channels.update(f"{site_prefix}_{i}" for i in range(n_sites))
+            if self._function_field_is_scalar(field, n_sites):
+                channels.add(global_ch)
+            else:
+                channels.update(f"{site_prefix}_{i}" for i in range(n_sites))
         return frozenset(channels)
 
-    def _segment_at(self, t: float) -> Segment:
-        """Return the segment active at time t (clamped to the last segment after t_gate)."""
-        for end, seg in zip(self._end_times, self.segments):
-            if t <= end:
-                return seg
-        return self.segments[-1]
+    def _clamp_time(self, t: float) -> float:
+        return float(np.clip(float(t), 0.0, self._t_gate))
 
-    def _coeffs_for_field(
+    def _function_value(self, field: str, t: float) -> SiteProfile:
+        fn = self._function_fields[field]
+        return 0.0 if fn is None else fn(self._clamp_time(t))
+
+    def _function_field_is_scalar(self, field: str, n_sites: int) -> bool:
+        for t in self._function_probe_times():
+            value = self._function_value(field, t)
+            if not is_scalar_profile(value):
+                as_site_profile(value, n_sites)
+                return False
+        return True
+
+    def _function_probe_times(self) -> tuple[float, ...]:
+        return (0.0, 0.25 * self._t_gate, 0.5 * self._t_gate, 0.75 * self._t_gate, self._t_gate)
+
+    def _coeffs_for_function_field(
         self,
-        seg: Segment,
+        t: float,
         field: str,
         global_ch: str,
         site_prefix: str,
@@ -203,18 +180,18 @@ class DigitalAnalogProtocol(Protocol):
         negate: bool,
         n_sites: int,
     ) -> dict[str, complex]:
-        val = getattr(seg, field)
-        profile = as_site_profile(val, n_sites)
+        value = self._function_value(field, t)
+        profile = as_site_profile(value, n_sites)
         sign = -1.0 if negate else 1.0
         scale = 0.5 if half_factor else 1.0
 
-        if is_scalar_profile(val):
+        if is_scalar_profile(value):
             return {global_ch: complex(sign * scale * profile[0])}
 
         return {f"{site_prefix}_{i}": complex(sign * scale * profile[i]) for i in range(n_sites)}
 
     def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
-        """Return channel coefficients at time *t* for the active segment.
+        """Return channel coefficients at time *t*.
 
         Sign / factor conventions matching the compiler:
 
@@ -223,9 +200,8 @@ class DigitalAnalogProtocol(Protocol):
         - ``delta_R`` / ``delta_R_i``  -> -Delta_R on Rydberg projector
         - ``delta_hf`` / ``delta_hf_i`` -> -Delta_hf on |1> projector
         """
-        seg = self._segment_at(t)
         n_sites = int(params.get("n_sites", 1))
         coeffs: dict[str, complex] = {}
         for spec in _CHANNEL_SPECS:
-            coeffs.update(self._coeffs_for_field(seg, *spec, n_sites))
+            coeffs.update(self._coeffs_for_function_field(t, *spec, n_sites))
         return coeffs

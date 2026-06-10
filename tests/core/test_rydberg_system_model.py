@@ -152,7 +152,11 @@ def test_sparse_expm_t_eval_true_records_internal_steps_for_compatibility():
 
 
 def test_01r_digital_analog_simulation():
-    protocol = DigitalAnalogProtocol.constant(omega_R=1.0, t_gate=0.1, n_steps=10)
+    protocol = DigitalAnalogProtocol(
+        t_gate=0.1,
+        omega_R_fn=lambda t: 1.0,
+        n_steps=10,
+    )
     model = RydbergSystem.from_lattice(
         make_chain(2, spacing_um=4.0),
         "01r",

@@ -29,10 +29,10 @@ class TestPackageImports:
             "InteractionSpec", "DEFAULT_C6", "level_structure",
             "compute_shift_scatter",
             # Protocols
-            "Protocol", "TOProtocol", "ARProtocol", "SweepProtocol",
+            "Protocol", "TOProtocol", "ARProtocol", "DoubleARPProtocol", "SweepProtocol",
             "TFIMAnnealProtocol", "TFIMQuenchProtocol", "TFIMRydbergControls",
             "tfim_to_rydberg_controls", "interaction_longitudinal_shifts",
-            "DigitalAnalogProtocol", "Segment",
+            "DigitalAnalogProtocol",
             # IR
             "EvolutionResult", "HamiltonianIR", "HamiltonianTerm", "compile_hamiltonian_ir",
             # Analysis

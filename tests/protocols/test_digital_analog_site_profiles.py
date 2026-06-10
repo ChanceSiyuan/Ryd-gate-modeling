@@ -18,7 +18,6 @@ from ryd_gate.core.level_structures import InteractionSpec, LevelStructureSpec, 
 from ryd_gate.lattice import make_chain
 from ryd_gate.protocols.digital_analog import (
     DigitalAnalogProtocol,
-    Segment,
     as_site_profile,
     is_scalar_profile,
 )
@@ -43,7 +42,7 @@ def test_as_site_profile_wrong_length_raises():
 
 
 def test_unpack_params_accepts_tn_context():
-    proto = DigitalAnalogProtocol.constant(omega_R=1.0, t_gate=0.1)
+    proto = DigitalAnalogProtocol(t_gate=0.1, omega_R_fn=lambda t: 1.0)
     spec = create_tn_lattice_spec(2, 2)
 
     params = proto.unpack_params([], TNProtocolContext(spec))
@@ -88,11 +87,7 @@ def test_tn_channel_mapping_combines_global_and_site_detuning_terms():
 
 def test_digital_analog_channels_rejected_on_1r_tn_spec():
     spec = create_tn_lattice_spec(1, 2)
-    proto = DigitalAnalogProtocol(
-        [
-            Segment(duration=0.1, omega_R=1.0),
-        ]
-    )
+    proto = DigitalAnalogProtocol(t_gate=0.1, omega_R_fn=lambda t: 1.0)
     params = proto.unpack_params([], TNProtocolContext(spec))
     coeffs = proto.get_drive_coefficients(0.05, params)
 
@@ -103,9 +98,9 @@ def test_digital_analog_channels_rejected_on_1r_tn_spec():
 def test_tn_channel_mapping_rejects_hyperfine_drive():
     spec = create_tn_lattice_spec(1, 2, level_structure="01r")
     proto = DigitalAnalogProtocol(
-        [
-            Segment(duration=0.1, omega_R=1.0, omega_hf=1.0),
-        ]
+        t_gate=0.1,
+        omega_R_fn=lambda t: 1.0,
+        omega_hf_fn=lambda t: 1.0,
     )
     params = proto.unpack_params([], TNProtocolContext(spec))
     coeffs = proto.get_drive_coefficients(0.05, params)
@@ -114,18 +109,14 @@ def test_tn_channel_mapping_rejects_hyperfine_drive():
         two_level_drive_and_detuning_from_coeffs(coeffs, spec)
 
 
-def test_three_level_tn_profiles_for_digital_analog_segment():
+def test_three_level_tn_profiles_for_digital_analog_function_schedule():
     spec = create_tn_lattice_spec(1, 2, level_structure="01r")
     proto = DigitalAnalogProtocol(
-        [
-            Segment(
-                duration=0.1,
-                omega_R=[2.0, 4.0],
-                omega_hf=[6.0, 8.0],
-                delta_R=[1.0, 2.0],
-                delta_hf=[0.25, 0.5],
-            ),
-        ]
+        t_gate=0.1,
+        omega_R_fn=lambda t: [2.0, 4.0],
+        omega_hf_fn=lambda t: [6.0, 8.0],
+        delta_R_fn=lambda t: [1.0, 2.0],
+        delta_hf_fn=lambda t: [0.25, 0.5],
     )
     params = proto.unpack_params([], TNProtocolContext(spec))
     coeffs = proto.get_drive_coefficients(0.05, params)
@@ -168,7 +159,7 @@ def test_three_level_tn_profiles_follow_shared_level_spec_channels():
 
 
 def test_drive_channels_scalar_uses_global():
-    proto = DigitalAnalogProtocol.constant(omega_R=1.0, t_gate=0.1)
+    proto = DigitalAnalogProtocol(t_gate=0.1, omega_R_fn=lambda t: 1.0)
     system = RydbergSystem.from_lattice(
         make_chain(2),
         "01r",
@@ -180,7 +171,8 @@ def test_drive_channels_scalar_uses_global():
 
 def test_drive_channels_site_profile_uses_per_site():
     proto = DigitalAnalogProtocol(
-        [Segment(duration=0.1, omega_R=[1.0, 0.0])],
+        t_gate=0.1,
+        omega_R_fn=lambda t: [1.0, 0.0],
         n_steps=20,
     )
     system = RydbergSystem.from_lattice(
@@ -199,7 +191,8 @@ def test_site_dependent_omega_R_drives_one_site_only():
     omega = 2 * np.pi * 1e6
     t_pi2 = np.pi / (2 * omega)
     proto = DigitalAnalogProtocol(
-        [Segment(duration=t_pi2, omega_R=[omega, 0.0])],
+        t_gate=t_pi2,
+        omega_R_fn=lambda t: [omega, 0.0],
         n_steps=50,
     )
     system = RydbergSystem.from_lattice(
@@ -220,7 +213,8 @@ def test_site_dependent_omega_R_drives_one_site_only():
 
 def test_compile_expm_ir_includes_per_site_drive_terms():
     proto = DigitalAnalogProtocol(
-        [Segment(duration=0.1, omega_R=[1.0, 0.0])],
+        t_gate=0.1,
+        omega_R_fn=lambda t: [1.0, 0.0],
         n_steps=10,
     )
     system = RydbergSystem.from_lattice(
