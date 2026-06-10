@@ -24,8 +24,7 @@ Typical use::
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 
@@ -205,3 +204,28 @@ class DigitalAnalogProtocol(Protocol):
         for spec in _CHANNEL_SPECS:
             coeffs.update(self._coeffs_for_function_field(t, *spec, n_sites))
         return coeffs
+
+    def pulse_traces(self, t: float, params: dict) -> dict[str, float]:
+        """Physical full-amplitude pulse traces (Omega_R, Delta_R, ...) at time *t*.
+
+        Returns the schedule's *full* Rabi frequencies and detunings (not the
+        Hamiltonian-coefficient halves), site-averaged when site-dependent. Omits
+        channels whose schedule function is absent or identically zero.
+        """
+        n_sites = int(params.get("n_sites", 1))
+        labels = {
+            "omega_R": r"$\Omega_R$", "omega_hf": r"$\Omega_{hf}$",
+            "delta_R": r"$\Delta_R$", "delta_hf": r"$\Delta_{hf}$",
+        }
+
+        def mean_at(field: str, t_query: float) -> float:
+            return float(np.mean(as_site_profile(self._function_value(field, t_query), n_sites)))
+
+        active = [
+            field for field in labels
+            if self._function_fields[field] is not None
+            and any(abs(mean_at(field, tp)) > 0.0 for tp in self._function_probe_times())
+        ]
+        if not active:
+            active = [f for f in labels if self._function_fields[f] is not None] or list(labels)
+        return {labels[field]: mean_at(field, t) for field in active}
