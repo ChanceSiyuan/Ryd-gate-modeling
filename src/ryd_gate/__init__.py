@@ -6,6 +6,7 @@ Typical workflow
 
        protocol = TOProtocol()               # time-optimal CZ gate (6 params)
        protocol = ARProtocol()               # amplitude-robust CZ gate (8 params)
+       protocol = DoubleARPProtocol(...)      # double-ARP CZ gate
        protocol = SweepProtocol(...)         # function-defined Rydberg sweep
        protocol = TFIMQuenchProtocol(...)     # 2D TFIM / g-r lattice quench
 
@@ -52,6 +53,7 @@ from .ir import EvolutionResult, HamiltonianIR, HamiltonianTerm, compile_hamilto
 from .protocols.base import Protocol
 from .protocols.digital_analog import DigitalAnalogProtocol, Segment
 from .protocols.gate_cz_ar import ARProtocol
+from .protocols.gate_cz_double_arp import DoubleARPProtocol
 from .protocols.gate_cz_to import TOProtocol
 from .protocols.lattice_dynamics import (
     TFIMAnnealProtocol,
@@ -100,6 +102,7 @@ __all__ = [
     "Protocol",
     "TOProtocol",
     "ARProtocol",
+    "DoubleARPProtocol",
     "SweepProtocol",
     "TFIMAnnealProtocol",
     "TFIMQuenchProtocol",
