@@ -1,0 +1,70 @@
+# How-To: NoiseModel
+
+`NoiseModel` is declarative data: it names the requested noise, validates it,
+and serializes it. The work happens in the existing engines — quasi-static
+sampling in the exact `MonteCarloRunner`, decay in the physical local blocks.
+
+## Declare
+
+```python
+from ryd_gate import NoiseModel
+
+noise = NoiseModel(
+    runs=200,
+    detuning_sigma_rad_per_us=2 * 3.14159e-3 * 130,   # 130 kHz quasi-static detuning
+    amp_sigma=0.01,                                    # 1% fractional Rabi noise
+    rydberg_decay=True,
+)
+noise.noise_types          # ('detuning', 'amplitude', 'rydberg_decay')
+print(noise.summary())
+noise.to_dict()            # "ryd-gate/noise/v1"; accepts runs / n_trajectories on input
+```
+
+Field names align with Pulser where semantics match (`state_prep_error`,
+`p_false_pos`, `p_false_neg`, `amp_sigma`, `runs`), plus the microscopic
+extensions Pulser lacks (`rydberg_decay`, `intermediate_decay`,
+`position_sigma_um`, `local_rin_sigma`). Fields without runtime machinery
+(`state_prep_error`, readout, `temperature_uK`, `laser_waist_um`) are
+accepted as data but raise `noise.runtime_not_stage4` when applied to a
+runtime path.
+
+## Apply: Monte Carlo (quasi-static noise)
+
+```python
+from ryd_gate import Register, RydbergSystem, configure_monte_carlo_runner
+from ryd_gate.backends.exact import MonteCarloRunner
+from ryd_gate.gates import TOProtocol
+
+system = RydbergSystem.from_lattice(
+    Register.chain(2, spacing_um=3.0), "rb87_7", param_set="our",
+    blackmanflag=True, detuning_sign=1,
+)
+runner = MonteCarloRunner(system.with_protocol(TOProtocol()), X_TO_DARK)
+configure_monte_carlo_runner(runner, noise)            # exact unit conversions
+mc = runner.run_gate_fidelity(n_shots=noise.runs, seed=123)
+print(mc.mean_infidelity, mc.std_infidelity)
+```
+
+Unit mapping is exact: `detuning_sigma_rad_per_us` → Hz for
+`setup_detuning_noise`, `position_sigma_um` (scalar or 3-tuple, µm) → meters
+for `setup_position_noise`. Position noise uses the two-atom VdW perturbation
+path and refuses other atom counts (`noise.position_two_atom_only`).
+
+## Apply: decay (construction time)
+
+Non-Hermitian decay must exist when the local blocks are built — pass the
+flags into `RydbergSystem.from_lattice`:
+
+```python
+from ryd_gate import level_structure
+
+spec = level_structure("rb87_7")
+system = RydbergSystem.from_lattice(
+    Register.chain(2, spacing_um=3.0), spec,
+    **spec.physical_kwargs(), **noise.physical_kwargs(),
+)
+```
+
+`validate_for(backend=..., level_structure=..., n_atoms=...)` reports
+capability errors per backend (decay needs `analog_3` or `rb87_7`; no TN
+noise support — see the [Capability Matrix](capability_matrix.md)).

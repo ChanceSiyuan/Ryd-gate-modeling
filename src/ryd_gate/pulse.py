@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 __all__ = ["Pulse", "Waveform"]
 
-_trapezoid = getattr(np, "trapezoid", None) or np.trapz
+_trapezoid = getattr(np, "trapezoid", None) or getattr(np, "trapz")
 
 WaveformKind = Literal["constant", "ramp", "blackman", "interpolated", "custom"]
 
@@ -250,6 +250,7 @@ class Waveform:
         if self.kind == "interpolated":
             return float(np.interp(t, self.params["times_ns"], self.params["values"]))
         # custom
+        assert self.samples is not None  # guaranteed by Waveform.custom
         dt = self.params["dt_ns"]
         grid = np.arange(len(self.samples)) * dt
         return float(np.interp(t, grid, self.samples))
@@ -295,7 +296,7 @@ class Waveform:
     def from_dict(cls, data: Mapping[str, Any]) -> "Waveform":
         check_schema(data, "waveform")
         kind = data.get("kind")
-        duration = data.get("duration_ns")
+        duration = int(data["duration_ns"])
         params = data.get("params", {})
         if kind == "constant":
             return cls.constant(duration, params["value"])

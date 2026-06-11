@@ -161,6 +161,7 @@ class NoiseModel:
 
     def _validate_position_sigma(self) -> list[ValidationIssue]:
         value = self.position_sigma_um
+        entries: tuple[float, ...]
         if isinstance(value, tuple):
             if len(value) != 3:
                 return [ValidationIssue(
@@ -308,7 +309,8 @@ def configure_monte_carlo_runner(runner: "MonteCarloRunner", noise: NoiseModel) 
     if noise._position_active():
         sigma = noise.position_sigma_um
         sigma3 = sigma if isinstance(sigma, tuple) else (sigma, sigma, sigma)
-        runner.setup_position_noise(tuple(float(s) * 1e-6 for s in sigma3))
+        sx, sy, sz = (float(s) * 1e-6 for s in sigma3)
+        runner.setup_position_noise((sx, sy, sz))
     return runner
 
 
