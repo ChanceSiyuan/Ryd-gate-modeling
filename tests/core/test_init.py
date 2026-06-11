@@ -71,6 +71,8 @@ class TestPackageImports:
             "simulate_sequence", "SimulationResult", "ExactStateHandle",
             # Noise layer (Stage 4)
             "NoiseModel", "configure_monte_carlo_runner",
+            # Gate library (Stage 5)
+            "CZGateReport", "cz_gate_report",
             # Advanced primitives
             "SystemModel", "BasisSpec", "BlockRegistry",
             "ObservableRegistry", "Observable",
