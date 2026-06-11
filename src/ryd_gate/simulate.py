@@ -68,6 +68,7 @@ def simulate_sequence(
     backend: str = "exact",
     psi0=None,
     interaction=None,
+    observables=None,
     **kwargs,
 ):
     """Compile a :class:`~ryd_gate.sequence.Sequence` and run it.
@@ -85,6 +86,13 @@ def simulate_sequence(
         forwarded to the engine unchanged.
     interaction
         Optional :class:`~ryd_gate.core.level_structures.InteractionSpec`.
+    observables
+        Optional :class:`~ryd_gate.observables.ObservableConfig`. On
+        ``backend="mps"`` the names/times are lowered onto the existing
+        TeNPy streaming measurement path (recorded values land in
+        ``result.raw.metadata["obs"]``). The exact backend ignores the
+        streaming schedule (Stage 6 rule: final-state handle semantics
+        are unchanged).
     **kwargs
         Engine options forwarded verbatim to :func:`simulate`
         (e.g. ``t_eval``, ``n_steps``).
@@ -111,6 +119,19 @@ def simulate_sequence(
         )
     if not sequence.level_structure.supports_backend(key):
         raise ValueError("level_structure.backend_unsupported")
+    if observables is not None:
+        from ryd_gate.core.validation import raise_for_errors
+
+        raise_for_errors(observables.validate())
+        if key == "mps":
+            import numpy as np
+
+            kwargs.setdefault("observables", list(observables.names))
+            schedule = observables.schedule_times_ns(sequence.duration_ns)
+            if schedule is not None:
+                kwargs.setdefault(
+                    "t_eval", np.asarray([t * 1e-9 for t in schedule], dtype=float)
+                )
     system = compile_sequence_to_system(sequence, interaction=interaction)
     if psi0 is None:
         level = sequence.level_structure.initial_level_or_default()

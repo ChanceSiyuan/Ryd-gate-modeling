@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ryd-gate.dev/schemas/cz-gate-report.v1.schema.json",
+  "title": "ryd-gate/cz-gate-report/v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "ryd-gate/cz-gate-report/v1"
+    },
+    "protocol": {
+      "type": "string"
+    },
+    "parameters": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "infidelity": {
+      "type": "number"
+    },
+    "phase_error_rad": {
+      "type": "number"
+    },
+    "theta_rad": {
+      "type": "number"
+    },
+    "residuals": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "error_budget": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "number"
+        }
+      }
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema",
+    "protocol",
+    "parameters",
+    "infidelity",
+    "phase_error_rad",
+    "theta_rad"
+  ]
+}

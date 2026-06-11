@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ryd-gate.dev/schemas/sequence.v1.schema.json",
+  "title": "ryd-gate/sequence/v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "ryd-gate/sequence/v1"
+    },
+    "register": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "ryd-gate/register/v1"
+        }
+      },
+      "required": [
+        "schema"
+      ]
+    },
+    "device": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "ryd-gate/device/v1"
+        }
+      },
+      "required": [
+        "schema"
+      ]
+    },
+    "level_structure": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "ryd-gate/level-structure/v1"
+        }
+      },
+      "required": [
+        "schema"
+      ]
+    },
+    "channels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "enum": [
+              "pulse",
+              "delay",
+              "measure"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "pulse"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "channel",
+                "pulse",
+                "t_start_ns"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "delay"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "channel",
+                "duration_ns",
+                "t_start_ns"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "measure"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "basis",
+                "t_start_ns"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "register",
+    "device",
+    "level_structure",
+    "channels",
+    "operations"
+  ]
+}

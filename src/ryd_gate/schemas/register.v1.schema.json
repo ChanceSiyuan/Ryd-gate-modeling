@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ryd-gate.dev/schemas/register.v1.schema.json",
+  "title": "ryd-gate/register/v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "ryd-gate/register/v1"
+    },
+    "ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "coords_um": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        },
+        "minItems": 2,
+        "maxItems": 3
+      },
+      "minItems": 1
+    },
+    "sublattice": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "spacing_um": {
+      "type": "number"
+    },
+    "layout": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schema": {
+              "const": "ryd-gate/register-layout/v1"
+            }
+          },
+          "required": [
+            "schema"
+          ]
+        }
+      ]
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema",
+    "ids",
+    "coords_um",
+    "sublattice",
+    "spacing_um"
+  ]
+}

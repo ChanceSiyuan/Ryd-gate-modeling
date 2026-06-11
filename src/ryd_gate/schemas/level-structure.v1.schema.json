@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ryd-gate.dev/schemas/level-structure.v1.schema.json",
+  "title": "ryd-gate/level-structure/v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "ryd-gate/level-structure/v1"
+    },
+    "name": {
+      "type": "string"
+    },
+    "levels": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "rydberg_levels": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "transitions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "lower": {
+            "type": "string"
+          },
+          "upper": {
+            "type": "string"
+          },
+          "channel": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "lower",
+          "upper",
+          "channel"
+        ]
+      }
+    },
+    "detuning_levels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "initial_level": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "species": {
+      "type": "string"
+    },
+    "interaction_kind": {
+      "enum": [
+        "none",
+        "ising_c6",
+        "xy_c3",
+        "custom"
+      ]
+    },
+    "params": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema",
+    "name",
+    "levels",
+    "rydberg_levels"
+  ]
+}

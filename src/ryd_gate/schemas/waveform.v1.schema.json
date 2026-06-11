@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ryd-gate.dev/schemas/waveform.v1.schema.json",
+  "title": "ryd-gate/waveform/v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "ryd-gate/waveform/v1"
+    },
+    "kind": {
+      "enum": [
+        "constant",
+        "ramp",
+        "blackman",
+        "interpolated",
+        "custom"
+      ]
+    },
+    "duration_ns": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "params": {
+      "type": "object"
+    },
+    "samples": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema",
+    "kind",
+    "duration_ns",
+    "params"
+  ]
+}
