@@ -5,19 +5,9 @@ Simulation and optimization of Rydberg-atom entangling gates for neutral-atom qu
 
 .. toctree::
    :maxdepth: 2
-   :caption: User Guide:
-
-   getting_started
-   schrodinger_solver
-   error_budget_methodology
-   validation
-
-.. toctree::
-   :maxdepth: 2
    :caption: Reference:
 
-   theory
-   api
+   stage1_api
 
 Indices and tables
 ==================
