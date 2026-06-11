@@ -63,6 +63,48 @@ class RegisterLayout:
             raise ValueError("RegisterLayout.trap_coords_um must be finite.")
         object.__setattr__(self, "trap_coords_um", coords)
 
+    def define_register(
+        self,
+        trap_ids: Sequence[int],
+        qubit_ids: Sequence[str] | None = None,
+        *,
+        center: bool = False,
+    ) -> "Register":
+        """Fill a subset of traps with atoms and return the resulting register.
+
+        Interop provenance entry point (Decision Log D10): Pulser layouts
+        carry a trap → qubit mapping, and this is where it lands. ``center``
+        defaults to ``False`` so layout coordinates are preserved exactly.
+        The returned register has ``layout=self`` attached and records the
+        trap indices in its metadata.
+        """
+        traps = [int(t) for t in trap_ids]
+        if not traps:
+            raise ValueError("trap_ids must not be empty.")
+        if len(set(traps)) != len(traps):
+            raise ValueError(f"trap_ids must be unique, got {traps}.")
+        n_traps = len(self.trap_coords_um)
+        for trap in traps:
+            if trap < 0 or trap >= n_traps:
+                raise ValueError(
+                    f"trap id {trap} out of range for layout with {n_traps} traps."
+                )
+        if qubit_ids is not None and len(qubit_ids) != len(traps):
+            raise ValueError(
+                f"qubit_ids length {len(qubit_ids)} != trap_ids length {len(traps)}."
+            )
+        coords = [self.trap_coords_um[trap] for trap in traps]
+        base = Register.from_coordinates(coords, ids=qubit_ids, center=center)
+        return Register(
+            N=base.N,
+            coords=base.coords,
+            sublattice=base.sublattice,
+            spacing_um=base.spacing_um,
+            ids=base.ids,
+            layout=self,
+            metadata={"trap_ids": traps},
+        )
+
     def to_dict(self) -> dict:
         return {
             "schema": schema_tag("register-layout"),

@@ -55,6 +55,9 @@ from .lattice import Register, RegisterLayout
 # --- Noise layer (Stage 4) ---
 from .noise import NoiseModel, configure_monte_carlo_runner
 
+# --- Observable schedules (Stage 6) ---
+from .observables import ObservableConfig
+
 # --- Protocols ---
 from .protocols.base import Protocol
 from .protocols.channels import ChannelSpec
@@ -132,6 +135,8 @@ __all__ = [
     # Noise layer (Stage 4)
     "NoiseModel",
     "configure_monte_carlo_runner",
+    # Observable schedules (Stage 6)
+    "ObservableConfig",
     # Protocols
     "Protocol",
     "TOProtocol",

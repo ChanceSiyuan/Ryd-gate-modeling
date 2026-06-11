@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ryd-gate.dev/schemas/noise.v1.schema.json",
+  "title": "ryd-gate/noise/v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "ryd-gate/noise/v1"
+    },
+    "runs": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "n_trajectories": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "detuning_sigma_rad_per_us": {
+      "type": "number"
+    },
+    "amp_sigma": {
+      "type": "number"
+    },
+    "local_rin_sigma": {
+      "type": "number"
+    },
+    "position_sigma_um": {
+      "oneOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        }
+      ]
+    },
+    "rydberg_decay": {
+      "type": "boolean"
+    },
+    "intermediate_decay": {
+      "type": "boolean"
+    },
+    "state_prep_error": {
+      "type": "number"
+    },
+    "p_false_pos": {
+      "type": "number"
+    },
+    "p_false_neg": {
+      "type": "number"
+    },
+    "temperature_uK": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "laser_waist_um": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema"
+  ]
+}

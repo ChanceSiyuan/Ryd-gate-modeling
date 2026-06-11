@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ryd-gate.dev/schemas/channel.v1.schema.json",
+  "title": "ryd-gate/channel/v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "ryd-gate/channel/v1"
+    },
+    "channel_id": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "transition": {
+      "type": "string"
+    },
+    "addressing": {
+      "enum": [
+        "global",
+        "local"
+      ]
+    },
+    "amplitude_channels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "detuning_channels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "max_abs_amplitude_rad_per_us": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "max_abs_detuning_rad_per_us": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "min_duration_ns": {
+      "type": "integer"
+    },
+    "max_duration_ns": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "clock_period_ns": {
+      "type": "integer"
+    },
+    "max_targets": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "retarget_time_ns": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "schema",
+    "channel_id",
+    "kind",
+    "transition",
+    "addressing"
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ryd-gate.dev/schemas/register-layout.v1.schema.json",
+  "title": "ryd-gate/register-layout/v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "ryd-gate/register-layout/v1"
+    },
+    "name": {
+      "type": "string"
+    },
+    "trap_coords_um": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        },
+        "minItems": 2,
+        "maxItems": 3
+      },
+      "minItems": 1
+    },
+    "kind": {
+      "enum": [
+        "chain",
+        "square",
+        "rectangle",
+        "triangular",
+        "custom"
+      ]
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema",
+    "name",
+    "trap_coords_um",
+    "kind"
+  ]
+}

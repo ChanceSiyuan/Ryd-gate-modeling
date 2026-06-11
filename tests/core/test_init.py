@@ -73,6 +73,8 @@ class TestPackageImports:
             "NoiseModel", "configure_monte_carlo_runner",
             # Gate library (Stage 5)
             "CZGateReport", "cz_gate_report",
+            # Observable schedules (Stage 6)
+            "ObservableConfig",
             # Advanced primitives
             "SystemModel", "BasisSpec", "BlockRegistry",
             "ObservableRegistry", "Observable",

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ryd-gate.dev/schemas/pulse.v1.schema.json",
+  "title": "ryd-gate/pulse/v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "ryd-gate/pulse/v1"
+    },
+    "amplitude": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "ryd-gate/waveform/v1"
+        }
+      },
+      "required": [
+        "schema"
+      ]
+    },
+    "detuning": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "ryd-gate/waveform/v1"
+        }
+      },
+      "required": [
+        "schema"
+      ]
+    },
+    "phase_rad": {
+      "type": "number"
+    },
+    "post_phase_shift_rad": {
+      "type": "number"
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema",
+    "amplitude",
+    "detuning"
+  ]
+}
