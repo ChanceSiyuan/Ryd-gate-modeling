@@ -66,6 +66,9 @@ class TestPackageImports:
             # Product data layer (Stage 1)
             "Register", "RegisterLayout", "DeviceSpec", "ChannelSpec",
             "ValidationIssue", "raise_for_errors", "Waveform", "Pulse",
+            # Sequence layer (Stage 2)
+            "Sequence", "PulseOp", "DelayOp", "MeasureOp", "SequenceProtocol",
+            "simulate_sequence", "SimulationResult", "ExactStateHandle",
             # Advanced primitives
             "SystemModel", "BasisSpec", "BlockRegistry",
             "ObservableRegistry", "Observable",

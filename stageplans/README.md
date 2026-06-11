@@ -69,7 +69,7 @@ The data flow `RydbergSystem + Protocol → compile_hamiltonian_ir → backend �
 
 A stage starts only after the previous stage's acceptance (including the full fast test suite) is green.
 
-**Status (2026-06-11):** Stage 1 implemented and accepted — 117 new tests, full fast suite green (309 passed), import contract and call-site greps clean, examples/scripts smoke-tested. Known pre-existing issue surfaced during migration (not Stage 1 scope): `app/pages/2_lattice_simulator.py` imports several names from `ryd_gate.lattice` that no longer exist there (`build_hamiltonian`, `evolve_sweep`, …) — broken since the May 2026 refactor; only its `make_square_lattice` usage was migrated. Stages 2+ not started.
+**Status (2026-06-11):** Stages 1 and 2 implemented and accepted. Stage 1: 117 new tests, in-place data layer, committed (`6f762b3`, with a dedup pass: `blackman_pulse_sqrt`→`blackman_pulse`, `Waveform`→`blackman_window`, factories→`Register.distance_pairs`). Stage 2: `Sequence`/`SequenceProtocol`/`results.py`/`simulate_sequence`, 45 new tests including a π-pulse physics check through the exact solver; full fast suite 354 passed; `backends/` and `ir/` diffs empty. Known pre-existing issue (not stage scope): `app/pages/2_lattice_simulator.py` imports several names from `ryd_gate.lattice` that died in the May 2026 refactor (`build_hamiltonian`, `evolve_sweep`, …); only its `make_square_lattice` usage was migrated. Stage 3 not started.
 
 ## Future Stage Outlines
 
