@@ -2,289 +2,223 @@
 
 ## Purpose
 
-Stage 3 introduces backend-native result handles so users can call:
+Stage 3 lets `simulate_sequence(...)` run on tensor-network backends and makes the result layer capability-aware, so users can call
 
 ```python
-result.expectation(...)
-result.sample(...)
-result.statevector(...)
+result.expectation("sum_nr")
+result.sample(1000)
+result.statevector(max_dim=4096)
 ```
 
-without requiring every backend to materialize a dense statevector.
+and get either an answer computed natively (MPS expectation values without densification) or a precise, typed refusal — never a silent dense materialization of a 2^N vector.
 
-This is the first stage where MPS/TN result behavior may be touched.
+This is the first stage allowed to touch TN backend files, and the changes are confined to *result plumbing* (what comes back), never to evolution algorithms.
 
-## Why This Is Not Stage 1
+## Why This Is Not Stage 1/2
 
-`MPSStateHandle` and related objects are not obvious API data structures. They require:
-
-- deciding whether a backend returns final native state;
-- deciding how long backend-native states remain valid;
-- defining capabilities per backend;
-- implementing MPS contraction or sampling;
-- defining failure behavior for unsupported queries.
-
-These are algorithm-interface decisions, not Stage 1 product API construction.
+State handles require algorithm-interface decisions: whether a backend retains its final native state, how expectations are computed without densifying, what sampling is safe without mutating the stored state, and how failures are typed. Those are backend contract changes, deliberately isolated here.
 
 ## Stage 3 Dependency
 
-Stage 3 starts only after Stage 2 passes its acceptance command.
+Stage 3 starts only after Stage 2 passes its acceptance (including the full fast suite).
+
+## No-Wrapper / No-Fake Rules
+
+1. The handle interface is a `typing.Protocol` (structural), so `ExactStateHandle` keeps working unchanged and backend handles implement it without a common base class. **Naming caution:** the repo already has `protocols.base.Protocol` (the physics scheduling ABC); in `results.py` import as `from typing import Protocol as TypingProtocol` and never re-export it.
+2. MPS expectations must reuse the measurement code the TeNPy backend already has for its evolution-time `observables=[...]` feature — extract it into one shared function; do not write a second observable-measurement path.
+3. No faked support: a backend without native-state retention returns a handle with empty capabilities whose every query raises `UnsupportedResultQuery` with a backend-specific code. Partial support may only be added together with tests in the same stage.
+4. No silent densification: dense statevectors from TN states require an explicit `max_dim` and raise typed errors otherwise.
 
 ## Allowed File Operations
 
 Create:
 
 ```text
-src/ryd_gate/api/state_handle.py
-tests/api/test_state_handle_capabilities.py
+tests/sequence/test_state_handle_capabilities.py
 tests/backends/test_mps_result_handle.py
 ```
 
 Modify:
 
 ```text
-src/ryd_gate/api/result.py
-src/ryd_gate/api/simulate.py
-src/ryd_gate/backends/tenpy_mps/backends.py
-src/ryd_gate/backends/tn_common/simulate.py
-src/ryd_gate/backends/gputn/backend.py
-src/ryd_gate/backends/peps2d/yastn_backend.py
+src/ryd_gate/results.py                       (handle protocol, errors, MPSStateHandle, SimulationResult.state typing)
+src/ryd_gate/simulate.py                      (simulate_sequence backend expansion only)
+src/ryd_gate/backends/tenpy_mps/backends.py   (native-state retention + shared observable function)
+src/ryd_gate/backends/tn_common/simulate.py   (state_handle_kind metadata passthrough)
+src/ryd_gate/backends/gputn/backend.py        (metadata: state_handle_kind="unsupported")
+src/ryd_gate/backends/peps2d/yastn_backend.py (metadata: state_handle_kind="unsupported")
 ```
 
 Do not modify:
 
 ```text
-src/ryd_gate/core/system.py
-src/ryd_gate/core/factories.py
-src/ryd_gate/core/level_structures.py
+src/ryd_gate/core/*
 src/ryd_gate/ir/hamiltonian.py
-scripts/notebooks/*
+src/ryd_gate/protocols/*
+src/ryd_gate/sequence.py
+src/ryd_gate/devices.py
+src/ryd_gate/pulse.py
+scripts/notebooks/* and all *.ipynb
 ```
 
-## Module: `api/state_handle.py`
+`ir/evolution.py` is not modified: `EvolutionResult.psi_final` is already typed `Any` and `metadata` is an open dict — the Stage 3 contract fits the existing container.
 
-Implement:
+## Module Plan: `src/ryd_gate/results.py` (extended)
 
-```python
-class UnsupportedResultQuery(RuntimeError):
-    pass
-
-class StateMaterializationError(RuntimeError):
-    pass
-```
-
-Implement protocol:
+### Errors and interface
 
 ```python
-class QuantumStateHandle(Protocol):
-    kind: str
+class UnsupportedResultQuery(RuntimeError): ...
+class StateMaterializationError(RuntimeError): ...
+
+class QuantumStateHandle(TypingProtocol):
+    kind: str                         # "statevector" | "mps" | "unsupported"
     n_atoms: int
     local_levels: tuple[str, ...]
     atom_ids: tuple[str, ...]
 
     @property
     def capabilities(self) -> frozenset[str]: ...
-
-    def expectation(self, observable, *, cache: bool = True): ...
-
+    def expectation(self, observable: str): ...
     def sample(self, n_shots: int, basis: str = "rydberg", seed: int | None = None): ...
-
     def statevector(self, *, max_dim: int | None = None, copy: bool = True): ...
 ```
 
 Capability strings are fixed:
 
 ```text
-expectation
-sampling
-statevector
-statevector_materialization
+expectation                  # native expectation values
+sampling                     # bitstring sampling
+statevector                  # dense state is native and cheap
+statevector_materialization  # dense state producible on explicit, size-guarded request
 ```
 
-Rules:
+Purpose: callers branch on `capabilities` instead of try/except; codes in raised errors make refusals scriptable.
 
-- `statevector` means dense statevector is already native and cheap to return.
-- `statevector_materialization` means dense statevector can be produced only on explicit request and size guard.
-- If a method is unsupported, raise `UnsupportedResultQuery`.
-- If dense statevector would be too large, raise `StateMaterializationError`.
+### ExactStateHandle migration
 
-## Exact Handle Migration
+Add `kind = "statevector"`, `n_atoms`/`local_levels`/`atom_ids` properties (from system/register), and `capabilities == frozenset({"expectation", "sampling", "statevector"})`. No Stage 2 behavior may regress (existing tests stay green unmodified).
 
-Move or adapt Stage 2 `ExactStateHandle` to satisfy `QuantumStateHandle`.
-
-Exact capabilities:
-
-```python
-frozenset({"expectation", "sampling", "statevector"})
-```
-
-No exact behavior may regress from Stage 2.
-
-## MPS Handle
-
-Implement:
+### MPSStateHandle
 
 ```python
 @dataclass
 class MPSStateHandle:
-    mps: Any
+    mps: Any                          # TeNPy MPS, opaque here
     spec: TNLatticeSpec
     register_ids: tuple[str, ...]
     metadata: dict = field(default_factory=dict)
 ```
 
-Properties:
+- `kind = "mps"`; `n_atoms = spec.N`; `local_levels = spec.level_spec.levels`; `atom_ids = register_ids`;
+- `capabilities = frozenset({"expectation", "statevector_materialization"})`, plus `"sampling"` only if the sampling rule below is actually implemented.
 
-```python
-kind = "mps"
-n_atoms = spec.N
-local_levels = spec.level_spec.levels
-atom_ids = register_ids
-capabilities = frozenset({"expectation", "sampling", "statevector_materialization"})
-```
-
-### MPS expectation support
-
-Stage 3 supports exactly these observables:
+**Expectation** — supported observable names (resolved against `spec`):
 
 ```text
-sum_n_<level>
-n_<level>_<site_index>
-n_<level>_<atom_id>
-sum_nr
+sum_n_<level> | n_<level>_<site_index> | n_<level>_<atom_id> | sum_nr
 ```
 
-Rules:
+`sum_nr` sums the levels in `spec.level_spec.rydberg_levels`; atom ids resolve through `register_ids`. Anything else raises `UnsupportedResultQuery("mps.observable_unsupported: <name>")`. Implementation must call the shared `measure_mps_observable` function (see backend plan below) — never densify.
 
-- `sum_nr` sums all levels in `spec.level_spec.rydberg_levels`.
-- `n_<level>_<atom_id>` resolves `atom_id` through `register_ids`.
-- Unsupported observable raises `UnsupportedResultQuery`.
-- Use backend-native MPS local expectation APIs. Do not convert to dense vector to compute expectation.
+**Sampling** — implement sequential MPS sampling only if it can be done without mutating the stored state (operate on a copy / use TeNPy's non-destructive sampling if available). Otherwise `sample(...)` raises `UnsupportedResultQuery("mps.sampling_not_implemented")`. No approximate or mutating sampling, silently or otherwise.
 
-### MPS sampling support
-
-Implement sequential MPS sampling only if the current TeNPy MPS object supports the required local projection/copy operations without mutating the stored final state.
-
-If safe non-mutating sequential sampling is not implemented, `sample(...)` must raise:
+**Statevector materialization**:
 
 ```text
-UnsupportedResultQuery("mps.sampling_not_implemented")
+max_dim is None                  -> StateMaterializationError("mps.statevector_requires_max_dim")
+local_dim ** N > max_dim         -> StateMaterializationError("mps.statevector_too_large")
+otherwise                        -> contract to a dense vector in register site order
 ```
 
-Do not implement approximate or mutating sampling silently.
-
-### MPS statevector materialization
-
-Implement:
+### Unsupported handle
 
 ```python
-def statevector(self, *, max_dim: int | None = None, copy: bool = True):
+@dataclass
+class UnsupportedStateHandle:
+    kind = "unsupported"
+    backend: str
+    reason_code: str                  # e.g. "peps.state_handle_not_implemented"
 ```
 
-Rules:
+`capabilities = frozenset()`; every query raises `UnsupportedResultQuery(reason_code)`.
 
-- compute `dim = local_dim ** N`;
-- if `max_dim is None`, raise `StateMaterializationError("mps.statevector_requires_max_dim")`;
-- if `dim > max_dim`, raise `StateMaterializationError("mps.statevector_too_large")`;
-- only then contract/materialize dense vector.
+### SimulationResult changes
 
-## PEPS/GPUTN Handles
-
-Stage 3 must not fake support.
-
-If backend-native state is not available or query methods are not implemented, return a handle with limited capabilities:
-
-```python
-capabilities = frozenset()
-```
-
-Every query method raises `UnsupportedResultQuery` with backend-specific code:
-
-```text
-peps.expectation_not_implemented
-peps.sampling_not_implemented
-gputn.state_handle_not_implemented
-```
-
-Partial support can be added only with tests in the same stage.
+- `state: QuantumStateHandle` (was exact-only);
+- add `capabilities` property returning `state.capabilities`;
+- delegation rules from Stage 2 unchanged (one-line delegation + caching); caching keys unchanged.
 
 ## Backend Return Contract
 
-Modify backend result metadata to include native final state only when available.
-
-Required metadata keys:
+Every backend's `EvolutionResult.metadata` gains one key (additive, no existing key changes):
 
 ```python
-{
-    "backend": "...",
-    "state_handle_kind": "statevector" | "mps" | "unsupported",
-}
+metadata["state_handle_kind"] = "statevector" | "mps" | "unsupported"
 ```
 
-For MPS backend, `EvolutionResult.psi_final` may remain backend-native object or current return value, but `simulate_sequence(..., backend="mps")` must wrap it into `MPSStateHandle`.
+Implementation steps per backend:
 
-Do not require all backends to use the same native object type.
+1. **tenpy_mps/backends.py** — the two `EvolutionResult(...)` construction sites (lines ~113 and ~319):
+   - determine what `psi_final` currently holds; if it is already the final TeNPy MPS, just set `state_handle_kind="mps"`; if it is something else (e.g. measured values), attach the final MPS as `metadata["native_state"]` behind a `keep_state: bool = True` backend option and set the kind accordingly (`"unsupported"` when `keep_state=False`);
+   - extract the per-observable measurement logic used by the existing `observables=[...]` evolution feature into a module-level `measure_mps_observable(psi_mps, spec, name) -> float`, and re-route the existing loop through it (behavior-identical refactor; existing TN tests must not change numerically).
+2. **tn_common/simulate.py** — pass `state_handle_kind`/`native_state` through unchanged when wrapping engine results (no recomputation).
+3. **gputn/backend.py**, **peps2d/yastn_backend.py** — set `state_handle_kind="unsupported"` only. Reason codes used by the handle layer: `gputn.state_handle_not_implemented`, `peps.state_handle_not_implemented`.
 
-## `simulate_sequence` Backend Expansion
-
-Stage 3 expands:
+## `simulate_sequence` Backend Expansion (`simulate.py`)
 
 ```python
-simulate_sequence(sequence, backend="mps")
+simulate_sequence(sequence, backend="mps", **kwargs)
 ```
 
-Rules:
+Steps:
 
-- Check `sequence.atom_model.supports_backend(backend)`.
-- If unsupported, raise `ValueError` with text `"atom_model.backend_unsupported"`.
-- For `backend="mps"`, call existing `ryd_gate.simulate.simulate(system, [], psi0, backend="mps", **kwargs)`.
-- Wrap final backend-native result in `MPSStateHandle`.
-- If backend does not return enough native state to create a useful handle, raise `UnsupportedResultQuery("mps.native_state_missing")`.
+1. capability gate first: `sequence.level_structure.supports_backend(backend)` must be `True`, else `ValueError("level_structure.backend_unsupported")` — the API-boundary refusal, instead of a TN-compiler stack trace;
+2. compile via `compile_sequence_to_system` exactly as in Stage 2;
+3. run the existing `simulate(system, [], psi0, backend=backend, **kwargs)` (TN kwargs like `backend_options={"chi_max": ...}` forward verbatim);
+4. wrap by `metadata["state_handle_kind"]`:
+   - `"statevector"` → `ExactStateHandle`;
+   - `"mps"` → `MPSStateHandle(mps=<psi_final or metadata["native_state"]>, spec=<from metadata>, register_ids=sequence.register.ids)`;
+   - `"mps"` requested but no native state present → `UnsupportedResultQuery("mps.native_state_missing")`;
+   - anything else → `UnsupportedStateHandle` with the backend's reason code;
+5. `backend="exact"` path is untouched.
 
-## SimulationResult Changes
-
-Modify `SimulationResult.state` type from exact-only to `QuantumStateHandle`.
-
-Rules:
-
-- `result.expectation(...)` delegates to `state.expectation`.
-- `result.sample(...)` delegates to `state.sample`.
-- `result.statevector(...)` delegates to `state.statevector`.
-- `result.capabilities` returns `state.capabilities`.
-- Existing exact tests from Stage 2 must still pass.
+Backends other than `{"exact", "mps"}` remain `NotImplementedError("simulate_sequence.backend_not_stage3")` for sequence entry (direct `simulate(system, ...)` use of gputn/peps is unaffected).
 
 ## Tests
 
-### `tests/api/test_state_handle_capabilities.py`
+### `tests/sequence/test_state_handle_capabilities.py`
 
-Required tests:
-
-1. exact result capabilities include `statevector`.
-2. exact result sample still works.
-3. unsupported backend handle raises `UnsupportedResultQuery`.
-4. MPS `statevector(max_dim=None)` raises `StateMaterializationError`.
-5. MPS `statevector(max_dim=small)` raises when dimension too large.
+1. exact result: `capabilities ⊇ {"expectation", "sampling", "statevector"}`; Stage 2 sampling/expectation behavior unchanged.
+2. `UnsupportedStateHandle`: empty capabilities; every query raises `UnsupportedResultQuery` carrying the reason code.
+3. MPS handle (constructed with a stub mps object): `statevector(max_dim=None)` → `StateMaterializationError("mps.statevector_requires_max_dim")`; too-small `max_dim` → `"mps.statevector_too_large"`.
+4. unsupported observable name on the MPS handle raises `UnsupportedResultQuery`.
+5. `SimulationResult.capabilities` mirrors `state.capabilities`.
 
 ### `tests/backends/test_mps_result_handle.py`
 
-Required tests:
+All tests `pytest.importorskip("tenpy")` and run with single-thread BLAS (see acceptance).
 
-1. Small `1r` MPS run returns `SimulationResult`.
-2. result state kind is `"mps"`.
-3. capabilities include `"expectation"`.
-4. `result.expectation("sum_nr")` returns finite numeric value.
-5. `result.statevector(max_dim=...)` works only for tiny systems where materialization is allowed.
-6. unsupported observable raises `UnsupportedResultQuery`.
+1. small `1r` chain sequence (e.g. 4 atoms, constant pulse) via `simulate_sequence(..., backend="mps", backend_options={"chi_max": 16, "dt": ...})` returns a `SimulationResult` with `state.kind == "mps"`.
+2. `capabilities` include `"expectation"`.
+3. `result.expectation("sum_nr")` is finite and agrees with the exact backend on the same 4-atom sequence within solver tolerance (cross-backend consistency — the real point of the contract).
+4. `n_<level>_<atom_id>` resolves through register ids; bogus observable raises `UnsupportedResultQuery`.
+5. `result.statevector(max_dim=4096)` materializes for the tiny system and matches the exact statevector up to global phase and truncation tolerance; `max_dim=8` raises.
+6. `ValueError("level_structure.backend_unsupported")` for `rb87_7` + `backend="mps"`.
+7. the refactored `measure_mps_observable` keeps the existing evolution-time `observables=[...]` results identical (regression pin on one existing TN test value).
 
-Tests must skip cleanly if TeNPy dependency is unavailable.
-
-## Acceptance Command
-
-Run exactly:
+## Acceptance
 
 ```bash
-pytest tests/api/test_register.py tests/api/test_atom_model.py tests/api/test_device.py tests/api/test_waveform.py tests/api/test_pulse.py tests/api/test_sequence.py tests/api/test_sequence_compile_exact.py tests/api/test_result_exact.py tests/api/test_state_handle_capabilities.py tests/backends/test_mps_result_handle.py
+uv run pytest tests/sequence -q
+OMP_NUM_THREADS=1 uv run pytest tests/backends/test_mps_result_handle.py -q
+OMP_NUM_THREADS=1 uv run pytest -m "not slow" -q
 ```
 
-Stage 3 is complete only if this command passes in an environment with TeNPy available, and all TeNPy-dependent tests skip cleanly when TeNPy is unavailable.
+(`OMP_NUM_THREADS=1` is the repo convention for TN runs on this machine — unpinned threads slow TeNPy by 10–40×.)
 
+Stage 3 is complete only if all pass with TeNPy installed, the TeNPy-dependent tests skip cleanly without it, and all Stage 2 exact-result tests pass unmodified.
+
+## Non-Goals for Stage 3
+
+PEPS/GPUTN native handles (explicitly `unsupported` this stage), MPS sampling beyond the non-mutating rule, observable streaming configs (`EmulationConfig`-style observables-at-times — roadmap Stage 6), noise, and any evolution-algorithm change.
