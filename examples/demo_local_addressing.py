@@ -43,7 +43,7 @@ from ryd_gate.core.states import (
     domain_config,
     product_state,
 )
-from ryd_gate.lattice import is_in_domain, make_square_lattice
+from ryd_gate.lattice import Register, is_in_domain
 
 # ---------------------------------------------------------------------------
 # Physics constants (in units of Omega = 1)
@@ -88,7 +88,7 @@ def _make_sweep_protocol(delta_start, delta_end, t_gate, *, addressing=None, n_s
 
 def _setup_experiment(Lx, Ly):
     """Build lattice system and bit masks (shared by both experiments)."""
-    geom = make_square_lattice(Lx, Ly, spacing_um=1.0)
+    geom = Register.rectangle(Lx, Ly, spacing_um=1.0)
     system = RydbergSystem.from_lattice(
         geom,
         "1r",

@@ -9,13 +9,13 @@ from ryd_gate import (
     tfim_to_rydberg_controls,
 )
 from ryd_gate.backends.exact.compiler import compile_expm_ir
-from ryd_gate.lattice import make_square_lattice
+from ryd_gate.lattice import Register
 from ryd_gate.protocols.base import Protocol
 
 
 def _nn_square_system(L=2):
     return RydbergSystem.from_lattice(
-        make_square_lattice(L, L, spacing_um=1.0),
+        Register.rectangle(L, L, spacing_um=1.0),
         level_structure="1r",
         interaction=InteractionSpec(C6=4.0, mode="nn"),
         Omega=1.0,
@@ -99,7 +99,7 @@ def test_exact_compiler_accepts_site_dependent_global_n_channels():
             return {"global_n_0": -1.0, "global_n_1": -2.0}
 
     system = RydbergSystem.from_lattice(
-        make_square_lattice(1, 2, spacing_um=1.0),
+        Register.rectangle(1, 2, spacing_um=1.0),
         level_structure="1r",
         interaction=InteractionSpec(C6=0.0, mode="nn"),
         protocol=SiteDetuningProtocol(),

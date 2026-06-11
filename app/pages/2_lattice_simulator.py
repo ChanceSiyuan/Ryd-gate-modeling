@@ -14,7 +14,7 @@ from ryd_gate.lattice import (
     evolve_constant_H,
     evolve_sweep,
     is_in_domain,
-    make_square_lattice,
+    Register,
     measure_from_states,
     precompute_bit_masks,
     product_state,
@@ -48,7 +48,7 @@ delta_pin = st.sidebar.slider("Pinning strength |\u03b4| / \u03a9", 1.0, 10.0, 4
 # ── Cached operators ───────────────────────────────────────────────────
 @st.cache_resource
 def setup(lx, ly, v):
-    lattice = make_square_lattice(lx, ly)
+    lattice = Register.rectangle(lx, ly)
     ops = build_operators(lattice.N, lattice.vdw_pairs, v, verbose=False)
     masks = precompute_bit_masks(lattice.N)
     return lattice, ops, masks

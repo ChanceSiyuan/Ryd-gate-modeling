@@ -8,7 +8,7 @@ import pytest
 import ryd_gate as rg
 from ryd_gate import InteractionSpec, RydbergSystem
 from ryd_gate.core.states import plus_local_amplitudes, product_superposition_state
-from ryd_gate.lattice import make_square_lattice
+from ryd_gate.lattice import Register
 from ryd_gate.protocols.digital_analog import DigitalAnalogProtocol
 
 OMEGA_R = 2 * np.pi * 3.8e6
@@ -21,7 +21,7 @@ def _system_01r(Lx=2, Ly=2):
         delta_R_fn=lambda t: 0.0,
     )
     return RydbergSystem.from_lattice(
-        make_square_lattice(Lx, Ly, spacing_um=6.8),
+        Register.rectangle(Lx, Ly, spacing_um=6.8),
         "01r",
         interaction=InteractionSpec(C6=2 * np.pi * 874e9, mode="nn"),
         protocol=proto,

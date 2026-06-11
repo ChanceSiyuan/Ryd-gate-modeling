@@ -10,7 +10,7 @@ from ryd_gate.backends.tn_common.lattice_spec import (
     snake_order_mapping,
 )
 from ryd_gate.core.level_structures import InteractionSpec, level_structure
-from ryd_gate.lattice import make_square_lattice
+from ryd_gate.lattice import Register
 
 
 def _sweep(t_gate=1.0, omega=1.0, delta=0.0, n_steps=200):
@@ -97,10 +97,9 @@ class TestCreateTNLatticeSpec:
 
     def test_sublattice_consistency(self):
         """Sublattice matches ryd_gate.lattice convention."""
-        from ryd_gate.lattice.geometry import make_square_lattice
 
         spec = create_tn_lattice_spec(Lx=4, Ly=4)
-        sq = make_square_lattice(4, 4, spacing_um=1.0)
+        sq = Register.rectangle(4, 4, spacing_um=1.0)
         np.testing.assert_array_equal(spec.sublattice, sq.sublattice)
         np.testing.assert_array_equal(spec.coords, sq.coords)
 
@@ -121,7 +120,7 @@ class TestCreateTNLatticeSpec:
 def test_tn_compiler_uses_system_level_spec_and_interactions():
     proto = _sweep(omega=2.0)
     system = RydbergSystem.from_lattice(
-        make_square_lattice(2, 2, spacing_um=10.0),
+        Register.rectangle(2, 2, spacing_um=10.0),
         level_structure="1r",
         interaction=InteractionSpec(C6=DEFAULT_C6, mode="nn"),
         protocol=proto,
@@ -140,7 +139,7 @@ def test_tn_compiler_uses_system_level_spec_and_interactions():
 
 def test_incompatible_protocol_level_structure_is_rejected():
     system = RydbergSystem.from_lattice(
-        make_square_lattice(2, 2, spacing_um=10.0),
+        Register.rectangle(2, 2, spacing_um=10.0),
         level_structure="01r",
         interaction=InteractionSpec(C6=DEFAULT_C6, mode="nn"),
         protocol=_sweep(omega=2.0),
@@ -155,7 +154,7 @@ def test_incompatible_protocol_level_structure_is_rejected():
 def test_unified_hamiltonian_ir_lowers_to_exact_and_tn():
     proto = _sweep(omega=2.0)
     system = RydbergSystem.from_lattice(
-        make_square_lattice(2, 2, spacing_um=10.0),
+        Register.rectangle(2, 2, spacing_um=10.0),
         level_structure="1r",
         interaction=InteractionSpec(C6=DEFAULT_C6, mode="nn"),
         protocol=proto,
@@ -178,10 +177,9 @@ def test_unified_hamiltonian_ir_lowers_to_exact_and_tn():
 
 
 def test_tn_lattice_spec_from_system_rejects_non_rectangular_geometry():
-    from ryd_gate.lattice import make_triangular_lattice
 
     system = RydbergSystem.from_lattice(
-        make_triangular_lattice(2, 2),
+        Register.triangular(2, 2),
         level_structure="1r",
         interaction=InteractionSpec(mode="nn"),
         protocol=_sweep(),

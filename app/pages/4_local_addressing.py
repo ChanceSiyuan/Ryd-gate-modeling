@@ -15,7 +15,7 @@ from ryd_gate import RydbergSystem
 from ryd_gate.analysis.observable_metrics import measure_trajectory, norm_squared
 from ryd_gate.backends.exact import simulate
 from ryd_gate.core.operators import build_product_state_map
-from ryd_gate.lattice import make_chain
+from ryd_gate.lattice import Register
 from ryd_gate.physics.ac_stark import (
     LAMBDA_D1,
     LAMBDA_D2,
@@ -48,9 +48,8 @@ shift and ~35 Hz scattering.
 @st.cache_resource
 def _setup_model_cached(distance_um: float = 3.0):
     model = RydbergSystem.from_lattice(
-        make_chain(2, spacing_um=distance_um),
-        "ger",
-        param_set="analog_3",
+        Register.chain(2, spacing_um=distance_um),
+        "analog_3",
         detuning_sign=1,
     )
     initial_state = build_product_state_map(n_levels=3)["gg"]

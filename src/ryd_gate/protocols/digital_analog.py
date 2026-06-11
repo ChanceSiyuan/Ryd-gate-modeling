@@ -18,7 +18,7 @@ Typical use::
         omega_R_fn=lambda t: 2*pi*1e6,
         delta_R_fn=lambda t: 0.0,
     )
-    system = RydbergSystem.from_lattice(make_chain(2), "01r", protocol=protocol)
+    system = RydbergSystem.from_lattice(Register.chain(2), "01r", protocol=protocol)
     result = simulate(system, [], psi0)
 """
 

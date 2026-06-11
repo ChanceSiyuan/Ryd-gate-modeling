@@ -146,15 +146,15 @@ def create_tn_lattice_spec(
     """Build a TN-friendly lattice spec reusing geometry conventions.
 
     Matches the coordinate and sublattice conventions of
-    :func:`ryd_gate.lattice.geometry.make_square_lattice` (with unit
+    :meth:`ryd_gate.lattice.geometry.Register.rectangle` (with unit
     spacing) and the NN/NNN VdW convention of
     :func:`ryd_gate.lattice.geometry.nn_nnn_relative_pairs`, so that
     addressing indices and interactions stay consistent across the
     exact and TN paths.
     """
     from ryd_gate.lattice.geometry import (
+        Register,
         cylinder_nn_nnn_pairs,
-        make_square_lattice,
         nn_nnn_relative_pairs,
     )
 
@@ -164,7 +164,7 @@ def create_tn_lattice_spec(
     if bc_y not in {"open", "periodic"}:
         raise ValueError("TN lattice bc_y must be 'open' or 'periodic'.")
 
-    geom = make_square_lattice(Lx, Ly, spacing_um=1.0)
+    geom = Register.rectangle(Lx, Ly, spacing_um=1.0)
     if bc_y == "periodic":
         vdw_pairs = cylinder_nn_nnn_pairs(Lx, Ly)  # open x, periodic y (cylinder)
     else:

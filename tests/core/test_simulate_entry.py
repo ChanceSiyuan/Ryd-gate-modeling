@@ -6,12 +6,12 @@ import pytest
 import ryd_gate
 from ryd_gate import InteractionSpec, RydbergSystem, SweepProtocol
 from ryd_gate.ir.evolution import EvolutionResult
-from ryd_gate.lattice import make_chain
+from ryd_gate.lattice import Register
 
 
 def _system():
     return RydbergSystem.from_lattice(
-        make_chain(2),
+        Register.chain(2),
         "1r",
         interaction=InteractionSpec(C6=0.0),
         protocol=SweepProtocol(

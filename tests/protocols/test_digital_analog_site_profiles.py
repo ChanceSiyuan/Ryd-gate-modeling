@@ -15,7 +15,7 @@ from ryd_gate.core.channel_lowering import (
     two_level_drive_and_detuning_from_coeffs,
 )
 from ryd_gate.core.level_structures import InteractionSpec, LevelStructureSpec, TransitionSpec
-from ryd_gate.lattice import make_chain
+from ryd_gate.lattice import Register
 from ryd_gate.protocols.digital_analog import (
     DigitalAnalogProtocol,
     as_site_profile,
@@ -161,7 +161,7 @@ def test_three_level_tn_profiles_follow_shared_level_spec_channels():
 def test_drive_channels_scalar_uses_global():
     proto = DigitalAnalogProtocol(t_gate=0.1, omega_R_fn=lambda t: 1.0)
     system = RydbergSystem.from_lattice(
-        make_chain(2),
+        Register.chain(2),
         "01r",
         interaction=InteractionSpec(C6=0.0),
         protocol=proto,
@@ -176,7 +176,7 @@ def test_drive_channels_site_profile_uses_per_site():
         n_steps=20,
     )
     system = RydbergSystem.from_lattice(
-        make_chain(2),
+        Register.chain(2),
         "01r",
         interaction=InteractionSpec(C6=0.0),
         protocol=proto,
@@ -196,7 +196,7 @@ def test_site_dependent_omega_R_drives_one_site_only():
         n_steps=50,
     )
     system = RydbergSystem.from_lattice(
-        make_chain(2),
+        Register.chain(2),
         "01r",
         interaction=InteractionSpec(C6=0.0),
         protocol=proto,
@@ -218,7 +218,7 @@ def test_compile_expm_ir_includes_per_site_drive_terms():
         n_steps=10,
     )
     system = RydbergSystem.from_lattice(
-        make_chain(2),
+        Register.chain(2),
         "01r",
         interaction=InteractionSpec(C6=0.0),
         protocol=proto,

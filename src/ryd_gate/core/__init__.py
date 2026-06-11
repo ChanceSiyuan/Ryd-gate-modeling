@@ -29,6 +29,7 @@ from ryd_gate.core.level_structures import (
 )
 from ryd_gate.core.observables import Observable, ObservableRegistry
 from ryd_gate.core.system import RydbergSystem
+from ryd_gate.core.validation import ValidationIssue, raise_for_errors
 
 __all__ = [
     "RydbergSystem",
@@ -37,6 +38,8 @@ __all__ = [
     "InteractionSpec",
     "DEFAULT_C6",
     "level_structure",
+    "ValidationIssue",
+    "raise_for_errors",
     "BasisSpec",
     "BlockRegistry",
     "Observable",
