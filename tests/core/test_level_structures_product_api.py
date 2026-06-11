@@ -99,17 +99,17 @@ class TestValidate:
 
 
 class TestAnalog3Semantics:
-    def test_analog_3_matches_legacy_ger_param_set(self):
+    def test_analog_3_matches_ger_compat_param_set(self):
         new = RydbergSystem.from_lattice(
             Register.chain(2), level_structure("analog_3"), interaction=InteractionSpec(C6=0.0)
         )
-        old = RydbergSystem.from_lattice(
+        compat = RydbergSystem.from_lattice(
             Register.chain(2), "ger", interaction=InteractionSpec(C6=0.0), param_set="analog_3"
         )
-        assert new.basis.local_levels == old.basis.local_levels == ("g", "e", "r")
-        assert set(new.blocks.list()) == set(old.blocks.list())
-        assert new.metadata["physical_model"] == old.metadata["physical_model"] == "analog_3"
-        assert new.metadata["rabi_eff"] == old.metadata["rabi_eff"]
+        assert new.basis.local_levels == compat.basis.local_levels == ("g", "e", "r")
+        assert set(new.blocks.list()) == set(compat.blocks.list())
+        assert new.metadata["physical_model"] == compat.metadata["physical_model"] == "analog_3"
+        assert new.metadata["rabi_eff"] == compat.metadata["rabi_eff"]
 
     def test_semantic_split_physical_vs_symbolic(self):
         analog = RydbergSystem.from_lattice(

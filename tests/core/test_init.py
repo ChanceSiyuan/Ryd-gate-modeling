@@ -82,21 +82,6 @@ class TestPackageImports:
         for name in ryd_gate.__all__:
             assert hasattr(ryd_gate, name)
 
-    def test_direct_import_ideal_cz(self):
-        """Should be able to import CZGateSimulator directly (with deprecation warning)."""
-        import warnings
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
-
-        assert CZGateSimulator is not None
-
-    def test_legacy_import(self):
-        """Should be able to import from legacy module without deprecation."""
-        from ryd_gate.backends.exact.legacy.ideal_cz import CZGateSimulator
-
-        assert CZGateSimulator is not None
-
     def test_new_architecture_exports(self):
         """New architecture types should be importable from top level."""
         from ryd_gate import (

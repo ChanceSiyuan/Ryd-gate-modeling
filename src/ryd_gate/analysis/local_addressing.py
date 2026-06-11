@@ -1,12 +1,11 @@
 """Monte-Carlo evaluation helpers for local addressing analysis.
 
-Shared between the CLI script (scripts/scan_local_addressing.py) and
-the Streamlit app page (app/pages/4_local_addressing.py).
+Shared helper code for scripts and notebooks that evaluate local-addressing
+error budgets.
 """
 
 from __future__ import annotations
 
-import numpy as np
 from scipy.constants import pi
 
 # ── Baseline noise for combined sweep ────────────────────────────────
