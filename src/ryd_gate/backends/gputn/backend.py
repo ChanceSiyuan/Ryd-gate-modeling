@@ -163,6 +163,7 @@ class GPUTNTDVPBackend:
         )
         result.metadata.setdefault("backend", "gputn")
         result.metadata.setdefault("accelerator", "cuda")
+        result.metadata.setdefault("state_handle_kind", "unsupported")
         if self.engine is None:
             result.metadata.setdefault("engine_package", "gputn")
         return result

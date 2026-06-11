@@ -58,9 +58,9 @@ class TestSimulateSequence:
         expected = [system.expectation(f"n_r_{i}", psi) for i in range(2)]
         np.testing.assert_allclose(result.populations("r"), expected)
 
-    def test_other_backend_not_stage2(self):
-        with pytest.raises(NotImplementedError, match="backend_not_stage2"):
-            simulate_sequence(_pi_pulse_sequence(), backend="mps")
+    def test_other_backend_not_stage3(self):
+        with pytest.raises(NotImplementedError, match="backend_not_stage3"):
+            simulate_sequence(_pi_pulse_sequence(), backend="peps")
 
 
 class TestSampling:

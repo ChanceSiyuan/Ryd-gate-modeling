@@ -70,15 +70,15 @@ def simulate_sequence(
     interaction=None,
     **kwargs,
 ):
-    """Compile a :class:`~ryd_gate.sequence.Sequence` and run it (Stage 2: exact only).
+    """Compile a :class:`~ryd_gate.sequence.Sequence` and run it.
 
     Parameters
     ----------
     sequence
         A built :class:`~ryd_gate.sequence.Sequence`.
     backend
-        Only ``"exact"`` in Stage 2; other names raise ``NotImplementedError``
-        until Stage 3 expands the sequence path.
+        ``"exact"`` or ``"mps"`` in Stage 3. Other backend names still raise
+        ``NotImplementedError`` through the sequence path.
     psi0
         Initial state. ``None`` (default) prepares every atom in the level
         structure's ``initial_level_or_default()``; strings and arrays are
@@ -95,22 +95,72 @@ def simulate_sequence(
         Lazy result wrapper; the kernel ``EvolutionResult`` stays at ``.raw``.
     """
     from ryd_gate.protocols.sequence_protocol import compile_sequence_to_system
-    from ryd_gate.results import ExactStateHandle, SimulationResult
+    from ryd_gate.results import (
+        ExactStateHandle,
+        MPSStateHandle,
+        SimulationResult,
+        UnsupportedResultQuery,
+        UnsupportedStateHandle,
+    )
 
-    if backend.lower() != "exact":
+    key = backend.lower()
+    if key not in {"exact", "mps"}:
         raise NotImplementedError(
-            f"simulate_sequence.backend_not_stage2: backend {backend!r} is not available "
-            "through the sequence path yet; Stage 2 supports backend='exact' only."
+            f"simulate_sequence.backend_not_stage3: backend {backend!r} is not available "
+            "through the sequence path in Stage 3."
         )
+    if not sequence.level_structure.supports_backend(key):
+        raise ValueError("level_structure.backend_unsupported")
     system = compile_sequence_to_system(sequence, interaction=interaction)
     if psi0 is None:
         level = sequence.level_structure.initial_level_or_default()
-        psi0 = system.product_state([level] * sequence.register.n_atoms)
-    raw = simulate(system, [], psi0, backend="exact", **kwargs)
-    state = ExactStateHandle(
-        psi=raw.psi_final,
-        system=system,
-        register=sequence.register,
-        level_structure=sequence.level_structure,
+        psi0 = (
+            system.product_state([level] * sequence.register.n_atoms)
+            if key == "exact"
+            else [level] * sequence.register.n_atoms
+        )
+    raw = simulate(system, [], psi0, backend=key, **kwargs)
+    raw.metadata.setdefault(
+        "state_handle_kind",
+        "statevector" if key == "exact" else "unsupported",
     )
-    return SimulationResult(raw=raw, state=state, backend="exact", sequence=sequence)
+
+    if raw.metadata.get("state_handle_kind") == "statevector":
+        state = ExactStateHandle(
+            psi=raw.psi_final,
+            system=system,
+            register=sequence.register,
+            level_structure=sequence.level_structure,
+        )
+    elif raw.metadata.get("state_handle_kind") == "mps":
+        native_state = raw.metadata.get("native_state", raw.psi_final)
+        if native_state is None:
+            raise UnsupportedResultQuery("mps.native_state_missing")
+        spec = raw.metadata.get("tn_spec")
+        if spec is None:
+            raise UnsupportedResultQuery("mps.spec_missing")
+        state = MPSStateHandle(
+            mps=native_state,
+            spec=spec,
+            register_ids=tuple(sequence.register.ids),
+            metadata=dict(raw.metadata),
+        )
+    else:
+        state = UnsupportedStateHandle(
+            backend=key,
+            reason_code=_unsupported_state_reason(key),
+            n_atoms=sequence.register.n_atoms,
+            local_levels=tuple(sequence.level_structure.levels),
+            atom_ids=tuple(sequence.register.ids),
+        )
+    return SimulationResult(raw=raw, state=state, backend=key, sequence=sequence)
+
+
+def _unsupported_state_reason(backend: str) -> str:
+    if backend == "gputn":
+        return "gputn.state_handle_not_implemented"
+    if backend == "peps":
+        return "peps.state_handle_not_implemented"
+    if backend == "mps":
+        return "mps.state_handle_not_implemented"
+    return f"{backend}.state_handle_not_implemented"

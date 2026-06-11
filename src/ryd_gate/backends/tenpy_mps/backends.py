@@ -21,6 +21,50 @@ if TYPE_CHECKING:
     from ryd_gate.protocols.base import Protocol
 
 
+def measure_mps_observable(psi_mps: object, spec: TNLatticeSpec, name: str):
+    """Measure a TeNPy MPS observable in register/2D site order."""
+    from .observables import (
+        measure_centerline_connected_zz,
+        measure_level_occupations,
+        measure_mean_rydberg,
+        measure_sigma_z,
+        measure_site_occupations,
+        measure_staggered_magnetization,
+    )
+
+    if name == "m_s":
+        return measure_staggered_magnetization(psi_mps, spec)
+    if name == "n_mean":
+        return measure_mean_rydberg(psi_mps, spec)
+    if name in {"n_i", "n_r"}:
+        return measure_site_occupations(psi_mps, spec)
+    if name in {"sigma_z", "z_i"}:
+        return measure_sigma_z(psi_mps, spec)
+    if name == "czz_centerline":
+        return measure_centerline_connected_zz(psi_mps, spec)
+    if name in {"n_0", "n_1"}:
+        return measure_level_occupations(psi_mps, spec, name[-1])
+    if name == "sum_nr":
+        return float(sum(
+            float(np.sum(measure_level_occupations(psi_mps, spec, level)))
+            for level in spec.level_spec.rydberg_levels
+        ))
+    if name.startswith("sum_n_"):
+        level = name[len("sum_n_"):]
+        return float(np.sum(measure_level_occupations(psi_mps, spec, level)))
+    if name.startswith("n_"):
+        try:
+            level, site = name[2:].rsplit("_", 1)
+        except ValueError:
+            raise ValueError(f"mps.observable_unsupported: {name}") from None
+        if site.isdecimal():
+            index = int(site)
+            if not 0 <= index < spec.N:
+                raise ValueError(f"mps.observable_unsupported: {name}")
+            return float(measure_level_occupations(psi_mps, spec, level)[index])
+    raise ValueError(f"mps.observable_unsupported: {name}")
+
+
 def _require_tenpy():
     try:
         import tenpy
@@ -54,11 +98,13 @@ class TenpyDMRGBackend:
         svd_min: float = 1e-10,
         n_sweeps: int = 20,
         mixer: bool = True,
+        keep_state: bool = True,
     ) -> None:
         self.chi_max = chi_max
         self.svd_min = svd_min
         self.n_sweeps = n_sweeps
         self.mixer = mixer
+        self.keep_state = keep_state
 
     def find_ground_state(
         self,
@@ -110,16 +156,20 @@ class TenpyDMRGBackend:
         eng = TwoSiteDMRGEngine(psi, model, dmrg_params)
         E0, _ = eng.run()
 
+        metadata = {
+            "backend": "mps",
+            "engine_package": "tenpy",
+            "energy": E0,
+            "chi": max(psi.chi),
+            "n_sweeps": eng.sweeps,
+            "method": "dmrg",
+            "state_handle_kind": "mps" if self.keep_state else "unsupported",
+        }
+        if self.keep_state:
+            metadata["native_state"] = psi
         return EvolutionResult(
             psi_final=psi,
-            metadata={
-                "backend": "mps",
-                "engine_package": "tenpy",
-                "energy": E0,
-                "chi": max(psi.chi),
-                "n_sweeps": eng.sweeps,
-                "method": "dmrg",
-            },
+            metadata=metadata,
         )
 
 
@@ -141,10 +191,12 @@ class TenpyTDVPBackend:
         chi_max: int = 256,
         dt: float = 0.2,
         svd_min: float = 1e-10,
+        keep_state: bool = True,
     ) -> None:
         self.chi_max = chi_max
         self.dt = dt
         self.svd_min = svd_min
+        self.keep_state = keep_state
 
     def evolve_ir(
         self,
@@ -214,15 +266,6 @@ class TenpyTDVPBackend:
         from tenpy.algorithms.tdvp import TwoSiteTDVPEngine
 
         from .model import build_tenpy_model
-        from .observables import (
-            measure_centerline_connected_zz,
-            measure_level_occupations,
-            measure_mean_rydberg,
-            measure_sigma_z,
-            measure_site_occupations,
-            measure_staggered_magnetization,
-        )
-
         if observables is None and t_eval is not None:
             observables = ["m_s", "n_mean"]
 
@@ -252,24 +295,13 @@ class TenpyTDVPBackend:
         def record_observables(t_value: float) -> None:
             recorded_times.append(t_value)
             for name in observables or []:
-                if name == "m_s":
-                    obs_data[name].append(
-                        measure_staggered_magnetization(psi, spec))
-                elif name == "n_mean":
-                    obs_data[name].append(
-                        measure_mean_rydberg(psi, spec))
-                elif name == "n_i":
-                    obs_data[name].append(
-                        measure_site_occupations(psi, spec).copy())
-                elif name in {"sigma_z", "z_i"}:
-                    obs_data[name].append(
-                        measure_sigma_z(psi, spec).copy())
-                elif name == "czz_centerline":
-                    obs_data[name].append(
-                        measure_centerline_connected_zz(psi, spec).copy())
-                elif name in {"n_0", "n_1", "n_r"}:
-                    obs_data[name].append(
-                        measure_level_occupations(psi, spec, name[-1]).copy())
+                try:
+                    value = measure_mps_observable(psi, spec, name)
+                except ValueError:
+                    continue
+                if isinstance(value, np.ndarray):
+                    value = value.copy()
+                obs_data[name].append(value)
 
         if 0 in record_at and observables:
             record_observables(0.0)
@@ -316,18 +348,22 @@ class TenpyTDVPBackend:
         for name in obs_data:
             obs_data[name] = np.array(obs_data[name])
 
+        metadata_out = {
+            **(metadata or {}),
+            "method": "mps_tdvp",
+            "backend": "mps",
+            "engine_package": "tenpy",
+            "chi_max": self.chi_max,
+            "dt": dt_actual,
+            "n_steps": n_steps,
+            "obs": obs_data,
+            "state_handle_kind": "mps" if self.keep_state else "unsupported",
+        }
+        if self.keep_state:
+            metadata_out["native_state"] = psi
         result = EvolutionResult(
             psi_final=psi,
-            metadata={
-                **(metadata or {}),
-                "method": "mps_tdvp",
-                "backend": "mps",
-                "engine_package": "tenpy",
-                "chi_max": self.chi_max,
-                "dt": dt_actual,
-                "n_steps": n_steps,
-                "obs": obs_data,
-            },
+            metadata=metadata_out,
         )
         if recorded_times:
             result.times = np.array(recorded_times)

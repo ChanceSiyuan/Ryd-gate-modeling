@@ -69,7 +69,7 @@ The data flow `RydbergSystem + Protocol → compile_hamiltonian_ir → backend �
 
 A stage starts only after the previous stage's acceptance (including the full fast test suite) is green.
 
-**Status (2026-06-11):** Stages 1 and 2 implemented and accepted. Stage 1: 117 new tests, in-place data layer, committed (`6f762b3`, with a dedup pass: `blackman_pulse_sqrt`→`blackman_pulse`, `Waveform`→`blackman_window`, factories→`Register.distance_pairs`). Stage 2: `Sequence`/`SequenceProtocol`/`results.py`/`simulate_sequence`, 45 new tests including a π-pulse physics check through the exact solver; full fast suite 354 passed; `backends/` and `ir/` diffs empty. Known pre-existing issue (not stage scope): `app/pages/2_lattice_simulator.py` imports several names from `ryd_gate.lattice` that died in the May 2026 refactor (`build_hamiltonian`, `evolve_sweep`, …); only its `make_square_lattice` usage was migrated. Stage 3 not started.
+**Status (2026-06-11):** Stages 1, 2, and 3 implemented and accepted. Stage 1: 117 new tests, in-place data layer, committed (`6f762b3`, with a dedup pass: `blackman_pulse_sqrt`→`blackman_pulse`, `Waveform`→`blackman_window`, factories→`Register.distance_pairs`). Stage 2: `Sequence`/`SequenceProtocol`/`results.py`/`simulate_sequence`, 45 new tests including a π-pulse physics check through the exact solver; committed (`a6d0398`). Cleanup: exact legacy backend, Streamlit app, and D4 symmetry side branch removed (`24d6a38`). Stage 3: capability-aware result handles, `simulate_sequence(..., backend="mps")`, MPS-native expectations, guarded statevector materialization, and unsupported handles for non-native backends; full fast suite 324 passed.
 
 ## Future Stage Outlines
 
@@ -81,7 +81,7 @@ Declarative `NoiseModel` frozen dataclass in `src/ryd_gate/noise.py`, compiled o
 
 ### Stage 5 — Gate Library and Error Budgets (flagship differentiator)
 
-Productize what already works: a documented `ryd_gate.gates` namespace re-exporting `TOProtocol`/`ARProtocol`/`DoubleARPProtocol` with curated literature-referenced docstrings; promote `analysis.gate_metrics.average_gate_infidelity` and `error_budget` to documented API with stable signatures; a `CZGateReport` result (fidelity, phase error, per-channel error budget, serialization) produced from one call. Optimization *workflows* stay in `scripts/` (repo convention: only truly reusable functions enter `src/`). Acceptance pins: reproduce the published benchmark values currently checked in `tests/protocols/test_cz_gate_phase.py` and the CZ validation notebook through the new entry points. No Pulser equivalent exists for any of this — docs must lead with it.
+Productize what already works: a documented `ryd_gate.gates` namespace re-exporting `TOProtocol`/`ARProtocol`/`DoubleARPProtocol` with curated literature-referenced docstrings; promote `analysis.gate_metrics.average_gate_infidelity` and `error_budget` to documented API with stable signatures; a `CZGateReport` result (fidelity, phase error, per-channel error budget, serialization) produced from one call. Optimization *workflows* stay in `scripts/` (repo convention: only truly reusable functions enter `src/`). Acceptance pins: reproduce the published benchmark values from the CZ validation notebook through the new entry points. No Pulser equivalent exists for any of this — docs must lead with it.
 
 ### Stage 6 — Serialization Freeze and Pulser Interop
 
@@ -89,7 +89,7 @@ Freeze `v1` JSON Schemas for every `ryd-gate/<kind>/v1` payload (schema files sh
 
 ### Stage 7 — Docs, Examples, Packaging
 
-Sphinx site (docs/ already has `conf.py`/`index.rst`): Getting Started, Fundamentals (units/conventions/Hamiltonian), How-Tos per feature, auto-generated API reference, a **capability matrix** page (level structure × backend × noise — generated from `supports_backend` so it cannot rot), and the gate-modeling tutorial as the flagship example. Executed-notebook CI (Pulser's `check-notebooks` pattern) for `examples/`. Notebook migration to the product API happens here, and with it the removal of the legacy `("ger", param_set="analog_3")` inference branch in `factories.py` (D11) — after this stage, bare `ger` is symbolic regardless of `param_set`. Packaging polish: `py.typed`, ruff + mypy gates, SemVer + CHANGELOG, optional-dependency matrix documented (`tn`, `tn-2d`, `gputn-cu12`, `app`), PyPI readiness. README quickstart rewritten around the Stage 2 sequence example plus the Stage 5 gate example.
+Sphinx site (docs/ already has `conf.py`/`index.rst`): Getting Started, Fundamentals (units/conventions/Hamiltonian), How-Tos per feature, auto-generated API reference, a **capability matrix** page (level structure × backend × noise — generated from `supports_backend` so it cannot rot), and the gate-modeling tutorial as the flagship example. Executed-notebook CI (Pulser's `check-notebooks` pattern) for `examples/`. Notebook migration to the product API happens here, and with it the removal of the legacy `("ger", param_set="analog_3")` inference branch in `factories.py` (D11) — after this stage, bare `ger` is symbolic regardless of `param_set`. Packaging polish: `py.typed`, ruff + mypy gates, SemVer + CHANGELOG, optional-dependency matrix documented (`tn`, `tn-2d`, `gputn-cu12`), PyPI readiness. README quickstart rewritten around the Stage 2 sequence example plus the Stage 5 gate example.
 
 ## Global Non-Negotiable Rules
 
@@ -102,7 +102,7 @@ Sphinx site (docs/ already has `conf.py`/`index.rst`): Getting Started, Fundamen
 7. Every new public object ships `to_dict`/`from_dict` with a `ryd-gate/<kind>/v1` tag and a round-trip test, in the same stage it is introduced.
 8. Validation methods return `list[ValidationIssue]` and never raise; `raise_for_errors` is the only raise boundary; issue codes are API and tests assert on them.
 9. The **full fast suite** (`uv run pytest -m "not slow" -q`) must be green at the end of every stage — new-tests-only acceptance is not acceptance. TN-touching test runs use `OMP_NUM_THREADS=1` (repo convention for this machine).
-10. Notebooks (`*.ipynb`) are untouched until Stage 7; `examples/`, `scripts/`, and `app/` are migrated whenever a stage removes a name they import (the stage's call-site table must list them).
+10. Notebooks (`*.ipynb`) are untouched until Stage 7; `examples/` and `scripts/` are migrated whenever a stage removes a name they import (the stage's call-site table must list them).
 11. Removed names are removed — no compatibility aliases, no deprecation shims (pre-1.0 repo, internal call sites are migrated in the same change).
 
 ## How to Execute a Stage
