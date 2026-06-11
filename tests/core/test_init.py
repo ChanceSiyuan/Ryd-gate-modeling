@@ -69,6 +69,8 @@ class TestPackageImports:
             # Sequence layer (Stage 2)
             "Sequence", "PulseOp", "DelayOp", "MeasureOp", "SequenceProtocol",
             "simulate_sequence", "SimulationResult", "ExactStateHandle",
+            # Noise layer (Stage 4)
+            "NoiseModel", "configure_monte_carlo_runner",
             # Advanced primitives
             "SystemModel", "BasisSpec", "BlockRegistry",
             "ObservableRegistry", "Observable",

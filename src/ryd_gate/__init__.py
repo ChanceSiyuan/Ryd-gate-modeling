@@ -52,6 +52,9 @@ from .devices import DeviceSpec
 from .ir import EvolutionResult, HamiltonianIR, HamiltonianTerm, compile_hamiltonian_ir
 from .lattice import Register, RegisterLayout
 
+# --- Noise layer (Stage 4) ---
+from .noise import NoiseModel, configure_monte_carlo_runner
+
 # --- Protocols ---
 from .protocols.base import Protocol
 from .protocols.channels import ChannelSpec
@@ -122,6 +125,9 @@ __all__ = [
     "simulate_sequence",
     "SimulationResult",
     "ExactStateHandle",
+    # Noise layer (Stage 4)
+    "NoiseModel",
+    "configure_monte_carlo_runner",
     # Protocols
     "Protocol",
     "TOProtocol",
