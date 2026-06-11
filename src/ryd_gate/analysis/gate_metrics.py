@@ -79,6 +79,79 @@ def _solve_trajectory(system, protocol, x, state, t_eval):
     return list(np.asarray(res.states)), np.asarray(res.times)
 
 
+def _cz_overlaps(
+    system,
+    protocol: "Protocol",
+    x: list[float],
+    *,
+    amplitude_scale: float = 1.0,
+    ham_const_override: "NDArray[np.complexfloating] | None" = None,
+    collect_residuals: bool = False,
+) -> "tuple[dict[str, complex], float, dict[str, float] | None]":
+    """Evolve |00⟩, |01⟩, |11⟩ once and return phase-corrected CZ overlaps.
+
+    Shared core for :func:`average_gate_infidelity` and the Stage 5 gate
+    report. The corrections ``e^{-iθ}`` (|01⟩) and ``e^{-2iθ-iπ}`` (|11⟩)
+    remove the ideal single-qubit Rz phases, so a perfect CZ gives
+    ``a00 == a01 == a11 == 1``. Returns ``(overlaps, theta, residuals)``;
+    ``residuals`` is the per-level population average over the three
+    trajectories when *collect_residuals*, else ``None``.
+    """
+    params = protocol.unpack_params(x, system)
+    theta = params["theta"]
+    solve_kw = dict(ham_const_override=ham_const_override, amplitude_scale=amplitude_scale)
+
+    basis = {
+        "00": np.kron([1 + 0j, 0, 0, 0, 0, 0, 0], [1 + 0j, 0, 0, 0, 0, 0, 0]),
+        "01": np.kron([1 + 0j, 0, 0, 0, 0, 0, 0], [0, 1 + 0j, 0, 0, 0, 0, 0]),
+        "11": np.kron([0, 1 + 0j, 0, 0, 0, 0, 0], [0, 1 + 0j, 0, 0, 0, 0, 0]),
+    }
+    corrections = {
+        "00": 1.0,
+        "01": np.exp(-1.0j * theta),
+        "11": np.exp(-2.0j * theta - 1.0j * np.pi),
+    }
+
+    occ_ops = (
+        {
+            "e1": build_occ_operator(2),
+            "e2": build_occ_operator(3),
+            "e3": build_occ_operator(4),
+            "ryd": build_occ_operator(5),
+            "ryd_garb": build_occ_operator(6),
+        }
+        if collect_residuals
+        else {}
+    )
+    residuals_accum = {key: 0.0 for key in occ_ops}
+
+    overlaps: dict[str, complex] = {}
+    for label, ini_state in basis.items():
+        res = _solve_state(system, protocol, x, ini_state, **solve_kw)
+        overlaps[f"a{label}"] = corrections[label] * ini_state.conj().dot(res.T)
+        for key, op in occ_ops.items():
+            residuals_accum[key] += np.real(res.conj() @ op @ res)
+
+    residuals = (
+        {key: val / 3.0 for key, val in residuals_accum.items()}
+        if collect_residuals
+        else None
+    )
+    return overlaps, float(theta), residuals
+
+
+def _nielsen_infidelity(overlaps: "dict[str, complex]") -> float:
+    """Nielsen average-gate-infidelity from the phase-corrected CZ overlaps."""
+    a00, a01, a11 = overlaps["a00"], overlaps["a01"], overlaps["a11"]
+    avg_F = (1 / 20) * (
+        abs(a00 + 2 * a01 + a11) ** 2
+        + abs(a00) ** 2
+        + 2 * abs(a01) ** 2
+        + abs(a11) ** 2
+    )
+    return 1 - avg_F
+
+
 def average_gate_infidelity(
     system,
     protocol: "Protocol",
@@ -112,65 +185,17 @@ def average_gate_infidelity(
     float or (float, dict)
         Average gate infidelity, optionally with residual populations.
     """
-    params = protocol.unpack_params(x, system)
-    theta = params["theta"]
-
-    solve_kw = dict(ham_const_override=ham_const_override, amplitude_scale=amplitude_scale)
-
-    if return_residuals:
-        occ_ops = {
-            "e1": build_occ_operator(2),
-            "e2": build_occ_operator(3),
-            "e3": build_occ_operator(4),
-            "ryd": build_occ_operator(5),
-            "ryd_garb": build_occ_operator(6),
-        }
-        residuals_accum = {key: 0.0 for key in occ_ops}
-
-    # |00⟩
-    ini_state_00 = np.kron(
-        [1 + 0j, 0, 0, 0, 0, 0, 0], [1 + 0j, 0, 0, 0, 0, 0, 0]
+    overlaps, _theta, residuals = _cz_overlaps(
+        system,
+        protocol,
+        x,
+        amplitude_scale=amplitude_scale,
+        ham_const_override=ham_const_override,
+        collect_residuals=return_residuals,
     )
-    res = _solve_state(system, protocol, x, ini_state_00, **solve_kw)
-    a00 = ini_state_00.conj().dot(res.T)
+    infidelity = _nielsen_infidelity(overlaps)
 
     if return_residuals:
-        for key, op in occ_ops.items():
-            residuals_accum[key] += np.real(res.conj() @ op @ res)
-
-    # |01⟩
-    ini_state = np.kron(
-        [1 + 0j, 0, 0, 0, 0, 0, 0], [0, 1 + 0j, 0, 0, 0, 0, 0]
-    )
-    res = _solve_state(system, protocol, x, ini_state, **solve_kw)
-    a01 = np.exp(-1.0j * theta) * ini_state.conj().dot(res.T)
-
-    if return_residuals:
-        for key, op in occ_ops.items():
-            residuals_accum[key] += np.real(res.conj() @ op @ res)
-
-    # |11⟩
-    ini_state = np.kron(
-        [0, 1 + 0j, 0, 0, 0, 0, 0], [0, 1 + 0j, 0, 0, 0, 0, 0]
-    )
-    res = _solve_state(system, protocol, x, ini_state, **solve_kw)
-    a11 = np.exp(-2.0j * theta - 1.0j * np.pi) * ini_state.conj().dot(res.T)
-
-    if return_residuals:
-        for key, op in occ_ops.items():
-            residuals_accum[key] += np.real(res.conj() @ op @ res)
-
-    # Nielsen formula
-    avg_F = (1 / 20) * (
-        abs(a00 + 2 * a01 + a11) ** 2
-        + abs(a00) ** 2
-        + 2 * abs(a01) ** 2
-        + abs(a11) ** 2
-    )
-    infidelity = 1 - avg_F
-
-    if return_residuals:
-        residuals = {key: val / 3.0 for key, val in residuals_accum.items()}
         return float(infidelity), residuals
 
     return infidelity

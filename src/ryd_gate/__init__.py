@@ -91,6 +91,10 @@ def __getattr__(name: str):
         from .analysis import gate_metrics
 
         return getattr(gate_metrics, name)
+    if name in {"CZGateReport", "cz_gate_report"}:
+        from .gates import cz
+
+        return getattr(cz, name)
     if name == "AddressingEvaluator":
         from .analysis.addressing_metrics import AddressingEvaluator
 
@@ -149,6 +153,9 @@ __all__ = [
     "average_gate_infidelity",
     "error_budget",
     "AddressingEvaluator",
+    # Gate library (Stage 5)
+    "CZGateReport",
+    "cz_gate_report",
     # Simulation
     "simulate",
     # Advanced primitives
