@@ -99,17 +99,19 @@ class TestValidate:
 
 
 class TestAnalog3Semantics:
-    def test_analog_3_matches_ger_compat_param_set(self):
-        new = RydbergSystem.from_lattice(
+    def test_bare_ger_no_longer_infers_analog_3(self):
+        """D11 cleanup (Stage 7): names carry semantics; param_set is numbers only."""
+        physical = RydbergSystem.from_lattice(
             Register.chain(2), level_structure("analog_3"), interaction=InteractionSpec(C6=0.0)
         )
-        compat = RydbergSystem.from_lattice(
+        symbolic = RydbergSystem.from_lattice(
             Register.chain(2), "ger", interaction=InteractionSpec(C6=0.0), param_set="analog_3"
         )
-        assert new.basis.local_levels == compat.basis.local_levels == ("g", "e", "r")
-        assert set(new.blocks.list()) == set(compat.blocks.list())
-        assert new.metadata["physical_model"] == compat.metadata["physical_model"] == "analog_3"
-        assert new.metadata["rabi_eff"] == compat.metadata["rabi_eff"]
+        assert physical.basis.local_levels == symbolic.basis.local_levels == ("g", "e", "r")
+        assert physical.metadata["physical_model"] == "analog_3"
+        assert "physical_model" not in symbolic.metadata
+        assert physical.blocks.has("H_const")
+        assert not symbolic.blocks.has("H_const")
 
     def test_semantic_split_physical_vs_symbolic(self):
         analog = RydbergSystem.from_lattice(

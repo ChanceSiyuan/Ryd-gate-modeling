@@ -104,6 +104,7 @@ class ExactStateHandle:
 
     @property
     def atom_ids(self) -> tuple[str, ...]:
+        assert self.register.ids is not None  # normalized in Register.__post_init__
         return tuple(self.register.ids)
 
     @property

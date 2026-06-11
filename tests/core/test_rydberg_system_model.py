@@ -192,6 +192,26 @@ def test_ger_lattice_builds_g_e_r_levels():
     assert model.blocks.has("H_1013")
 
 
+def test_bare_ger_is_symbolic_regardless_of_param_set():
+    """D11 (Stage 7): the legacy ("ger", param_set="analog_3") inference is gone."""
+    symbolic = RydbergSystem.from_lattice(
+        Register.chain(1),
+        "ger",
+        interaction=InteractionSpec(C6=0.0),
+        param_set="analog_3",
+    )
+    assert not symbolic.blocks.has("H_const")
+    assert symbolic.meta("physical_model", None) is None
+
+    physical = RydbergSystem.from_lattice(
+        Register.chain(1),
+        "analog_3",
+        interaction=InteractionSpec(C6=0.0),
+    )
+    assert physical.blocks.has("H_const")
+    assert physical.meta("physical_model") == "analog_3"
+
+
 def test_ger_transition_blocks_are_not_compiled_as_static_dense_terms():
     model = RydbergSystem.from_lattice(
         Register.chain(1),

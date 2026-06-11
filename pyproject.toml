@@ -31,6 +31,12 @@ dev = [
     "pytest",
     "pytest-cov",
     "ruff",
+    "mypy",
+    "nbconvert",
+    "nbclient",
+    "ipykernel",
+]
+docs = [
     "sphinx",
     "sphinx-rtd-theme",
     "myst-parser",
@@ -58,7 +64,26 @@ gputn-cu12 = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-ryd_gate = ["schemas/*.json"]
+ryd_gate = ["schemas/*.json", "py.typed"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+no_implicit_optional = false
+# Stage 7 ratchet: the product surface is type-checked; kernel/backend
+# internals are excluded by name (not blanket) until annotated.
+
+[[tool.mypy.overrides]]
+module = [
+    "ryd_gate.core.*",
+    "ryd_gate.ir.*",
+    "ryd_gate.backends.*",
+    "ryd_gate.protocols.*",
+    "ryd_gate.analysis.*",
+    "ryd_gate.physics.*",
+    "ryd_gate.simulate",
+]
+ignore_errors = true
 
 [tool.ruff]
 target-version = "py310"

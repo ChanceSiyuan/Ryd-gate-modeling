@@ -348,6 +348,7 @@ class Register:
     # ── Indexing ────────────────────────────────────────────────────────
 
     def index(self, atom_id: str) -> int:
+        assert self.ids is not None  # normalized in __post_init__
         try:
             return self.ids.index(atom_id)
         except ValueError:
@@ -358,6 +359,7 @@ class Register:
             raise IndexError(f"index must be an integer, got {index!r}.")
         if index < 0 or index >= self.N:
             raise IndexError(f"atom index {index} out of range for N={self.N}.")
+        assert self.ids is not None  # normalized in __post_init__
         return self.ids[int(index)]
 
     # ── Geometry queries ────────────────────────────────────────────────
@@ -416,6 +418,7 @@ class Register:
                 )
         ax.scatter(xs, ys, s=60, color="C0", zorder=2)
         if show_ids:
+            assert self.ids is not None  # normalized in __post_init__
             for atom_id, x, y in zip(self.ids, xs, ys):
                 ax.annotate(atom_id, (x, y), textcoords="offset points", xytext=(5, 5), fontsize=8)
         ax.set_xlabel("x (um)")
@@ -433,6 +436,7 @@ class Register:
         return device.validate_register(self)
 
     def to_dict(self) -> dict:
+        assert self.ids is not None  # normalized in __post_init__
         return {
             "schema": schema_tag("register"),
             "ids": list(self.ids),

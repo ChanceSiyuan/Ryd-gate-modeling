@@ -10,7 +10,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from scipy.sparse import eye as speye, kron as spkron
+from scipy.sparse import eye as speye
+from scipy.sparse import kron as spkron
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

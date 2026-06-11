@@ -9,7 +9,6 @@ from __future__ import annotations
 import numpy as np
 from arc.wigner import CG
 
-
 # ======================================================================
 # BRANCHING RATIOS
 # ======================================================================

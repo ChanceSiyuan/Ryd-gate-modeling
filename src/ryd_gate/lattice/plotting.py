@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -28,10 +30,11 @@ def plot_spatial_rydberg(
     ax : Axes or None
         Existing axes. Creates new figure if None.
     """
+    fig: Any
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(6, 6))
     else:
-        fig = ax.get_figure()
+        fig = ax.figure
 
     if sublattice is not None:
         for sub_val, marker in [(1, 's'), (-1, 'o')]:
@@ -78,10 +81,11 @@ def plot_population_evolution(
     rydberg_occ : ndarray, shape (n_times, N)
     sublattice : ndarray, shape (N,)
     """
+    fig: Any
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(10, 5))
     else:
-        fig = ax.get_figure()
+        fig = ax.figure
 
     N = rydberg_occ.shape[1]
     t_us = times * 1e6

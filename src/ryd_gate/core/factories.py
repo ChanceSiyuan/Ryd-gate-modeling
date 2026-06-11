@@ -161,11 +161,10 @@ def _interaction_pairs(geometry: Register, interaction: InteractionSpec) -> tupl
 
 
 def _physical_model_for(level_name: str, param_set: str | None) -> str | None:
+    # Preset *names* carry Hamiltonian semantics (stageplans/README D11):
+    # bare `ger` is always symbolic; physical analog-3 construction is the
+    # `analog_3` preset only.
     if level_name == "analog_3":
-        return "analog_3"
-    # Legacy spelling, kept for frozen notebooks until Stage 7 (stageplans/README
-    # D11): the official path is the `analog_3` preset; bare `ger` stays symbolic.
-    if level_name == "ger" and param_set in {"analog", "analog_3"}:
         return "analog_3"
     if level_name == "rb87_7" and param_set in {"our", "lukin"}:
         return param_set

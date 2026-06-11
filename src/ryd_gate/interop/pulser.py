@@ -282,6 +282,7 @@ def to_pulser_abstract_repr(sequence: Sequence) -> dict:
                 ("channels", alias), construct=channel.channel_id,
             )
 
+    assert register.ids is not None  # normalized in Register.__post_init__
     payload: dict[str, Any] = {
         "version": "1",
         "name": "ryd-gate-sequence",
@@ -355,6 +356,7 @@ def _waveform_to_ar(waveform: Waveform, path: tuple[str, ...]) -> dict:
             "values": list(waveform.params["values"]),
         }
     # custom
+    assert waveform.samples is not None  # guaranteed by Waveform.custom
     if waveform.params["dt_ns"] != 1:
         raise PulserInteropError(
             "pulser.waveform_not_supported",
