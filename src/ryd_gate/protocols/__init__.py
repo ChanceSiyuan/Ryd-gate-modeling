@@ -28,6 +28,7 @@ from ryd_gate.protocols.lattice_dynamics import (
     interaction_longitudinal_shifts,
     tfim_to_rydberg_controls,
 )
+from ryd_gate.protocols.sequence_protocol import SequenceProtocol, compile_sequence_to_system
 from ryd_gate.protocols.sweep import SweepProtocol
 
 __all__ = [
@@ -36,6 +37,8 @@ __all__ = [
     "ARProtocol",
     "DoubleARPProtocol",
     "SweepProtocol",
+    "SequenceProtocol",
+    "compile_sequence_to_system",
     "TFIMAnnealProtocol",
     "TFIMQuenchProtocol",
     "TFIMRydbergControls",

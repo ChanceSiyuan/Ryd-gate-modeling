@@ -66,11 +66,16 @@ from .protocols.lattice_dynamics import (
     interaction_longitudinal_shifts,
     tfim_to_rydberg_controls,
 )
+from .protocols.sequence_protocol import SequenceProtocol
 from .protocols.sweep import SweepProtocol
 from .pulse import Pulse, Waveform
 
+# --- Sequence layer (Stage 2) ---
+from .results import ExactStateHandle, SimulationResult
+from .sequence import DelayOp, MeasureOp, PulseOp, Sequence
+
 # --- Unified simulation entry point ---
-from .simulate import simulate
+from .simulate import simulate, simulate_sequence
 
 
 def __getattr__(name: str):
@@ -108,6 +113,15 @@ __all__ = [
     "raise_for_errors",
     "Waveform",
     "Pulse",
+    # Sequence layer (Stage 2)
+    "Sequence",
+    "PulseOp",
+    "DelayOp",
+    "MeasureOp",
+    "SequenceProtocol",
+    "simulate_sequence",
+    "SimulationResult",
+    "ExactStateHandle",
     # Protocols
     "Protocol",
     "TOProtocol",

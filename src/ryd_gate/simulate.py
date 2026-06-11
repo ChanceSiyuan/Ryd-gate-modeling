@@ -60,3 +60,57 @@ def simulate(system, x, psi0="all_ground", *, backend: str = "exact", **kwargs) 
         )
     spec = tn_lattice_spec_from_system(system)
     return simulate_tn(spec, system.protocol, x, initial_state=psi0, backend=key, **kwargs)
+
+
+def simulate_sequence(
+    sequence,
+    *,
+    backend: str = "exact",
+    psi0=None,
+    interaction=None,
+    **kwargs,
+):
+    """Compile a :class:`~ryd_gate.sequence.Sequence` and run it (Stage 2: exact only).
+
+    Parameters
+    ----------
+    sequence
+        A built :class:`~ryd_gate.sequence.Sequence`.
+    backend
+        Only ``"exact"`` in Stage 2; other names raise ``NotImplementedError``
+        until Stage 3 expands the sequence path.
+    psi0
+        Initial state. ``None`` (default) prepares every atom in the level
+        structure's ``initial_level_or_default()``; strings and arrays are
+        forwarded to the engine unchanged.
+    interaction
+        Optional :class:`~ryd_gate.core.level_structures.InteractionSpec`.
+    **kwargs
+        Engine options forwarded verbatim to :func:`simulate`
+        (e.g. ``t_eval``, ``n_steps``).
+
+    Returns
+    -------
+    SimulationResult
+        Lazy result wrapper; the kernel ``EvolutionResult`` stays at ``.raw``.
+    """
+    from ryd_gate.protocols.sequence_protocol import compile_sequence_to_system
+    from ryd_gate.results import ExactStateHandle, SimulationResult
+
+    if backend.lower() != "exact":
+        raise NotImplementedError(
+            f"simulate_sequence.backend_not_stage2: backend {backend!r} is not available "
+            "through the sequence path yet; Stage 2 supports backend='exact' only."
+        )
+    system = compile_sequence_to_system(sequence, interaction=interaction)
+    if psi0 is None:
+        level = sequence.level_structure.initial_level_or_default()
+        psi0 = system.product_state([level] * sequence.register.n_atoms)
+    raw = simulate(system, [], psi0, backend="exact", **kwargs)
+    state = ExactStateHandle(
+        psi=raw.psi_final,
+        system=system,
+        register=sequence.register,
+        level_structure=sequence.level_structure,
+    )
+    return SimulationResult(raw=raw, state=state, backend="exact", sequence=sequence)
