@@ -41,7 +41,7 @@ _WAVEFORM_KINDS = ("constant", "ramp", "blackman", "interpolated", "custom")
 def blackman_window(t, t_rise):
     """Evaluate the Blackman window function.
 
-    Internal kernel helper (gate protocols / legacy backends) — not public
+    Internal kernel helper (gate protocols) — not public
     API; no stability guarantee.
 
     Parameters
@@ -63,7 +63,7 @@ def blackman_window(t, t_rise):
 def blackman_pulse(t, t_rise, t_gate):
     """Blackman-windowed flat-top pulse.
 
-    Internal kernel helper (gate protocols / legacy backends) — not public
+    Internal kernel helper (gate protocols) — not public
     API; no stability guarantee.
 
     Parameters
@@ -92,7 +92,7 @@ def blackman_pulse(t, t_rise, t_gate):
 def blackman_pulse_sqrt(t, t_rise, t_gate):
     """Square-root of the Blackman-windowed flat-top pulse.
 
-    Internal kernel helper (gate protocols / legacy backends) — not public
+    Internal kernel helper (gate protocols) — not public
     API; no stability guarantee.
 
     Parameters

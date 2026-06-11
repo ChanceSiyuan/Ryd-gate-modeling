@@ -184,11 +184,11 @@ src/ryd_gate/
 │
 ├── lattice/               # 纯几何：晶格形状/坐标/子格标签 + 绘图（不含能量）
 ├── physics/               # Rb87 原子物理：AC Stark 频移、ARC 衰变分支比
-├── analysis/              # 结果后处理：门保真度/误差预算、局部寻址、粗化、对称性等
+├── analysis/              # 结果后处理：门保真度/误差预算、局部寻址、格点/自旋观测量等
 │
 ├── backends/              # ── 算法后端（统一命名空间）──
 │   ├── _options.py            # 共享 as_backend_options()（dict/dataclass 归一化）
-│   ├── exact/                 # 精确态矢量：sparse_expm / dense_ode / monte_carlo + legacy/
+│   ├── exact/                 # 精确态矢量：sparse_expm / dense_ode / monte_carlo
 │   ├── tn_common/             # 所有 TN 后端共享：TN IR / lattice_spec / simulate_tn 分发
 │   ├── tenpy_mps/             # TeNPy MPS DMRG/TDVP（最完整的 TN 后端）   [extra: tn]
 │   ├── gputn/                 # CUDA / cuQuantum 张量网络                 [extra: gputn-cu12]

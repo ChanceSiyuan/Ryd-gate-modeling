@@ -19,10 +19,14 @@ if TYPE_CHECKING:
     from ryd_gate.protocols.base import Protocol
 
 
-def _is_rydberg_system(system) -> bool:
+def _require_rydberg_system(system) -> None:
     from ryd_gate.core.system import RydbergSystem
 
-    return isinstance(system, RydbergSystem)
+    if not isinstance(system, RydbergSystem):
+        raise TypeError(
+            "gate metrics require a RydbergSystem. Build one with "
+            "RydbergSystem.from_lattice(..., protocol=...)."
+        )
 
 
 def _system_value(system, name: str, default=None):
@@ -41,33 +45,22 @@ def _solve_state(
     ham_const_override: "NDArray[np.complexfloating] | None" = None,
     amplitude_scale: float = 1.0,
 ) -> "NDArray[np.complexfloating]":
-    if _is_rydberg_system(system):
-        if ham_const_override is not None:
-            raise NotImplementedError(
-                "ham_const_override is only supported by the historical AtomicSystem path. "
-                "Use MonteCarloRunner to add perturbation terms to compiled IR."
-            )
-        from ryd_gate.backends.exact import simulate
+    _require_rydberg_system(system)
+    if ham_const_override is not None:
+        raise NotImplementedError(
+            "ham_const_override is not supported on the RydbergSystem path. "
+            "Use MonteCarloRunner to add perturbation terms to compiled IR."
+        )
+    from ryd_gate.backends.exact import simulate
 
-        bound = system.with_protocol(protocol).with_amplitude_scale(amplitude_scale)
-        result = simulate(bound, x, state, t_eval=t_eval)
-        return result.states if t_eval is not None else result.psi_final
-
-    from ryd_gate.backends.exact.legacy import solve_gate
-
-    return solve_gate(
-        system,
-        protocol,
-        x,
-        state,
-        t_eval=t_eval,
-        ham_const_override=ham_const_override,
-        amplitude_scale=amplitude_scale,
-    )
+    bound = system.with_protocol(protocol).with_amplitude_scale(amplitude_scale)
+    result = simulate(bound, x, state, t_eval=t_eval)
+    return result.states if t_eval is not None else result.psi_final
 
 
 def _observable_population(system, name: str, psi: np.ndarray, fallback_op) -> float:
-    if _is_rydberg_system(system) and system.observables.has(name):
+    _require_rydberg_system(system)
+    if system.observables.has(name):
         return system.observables.measure(name, psi)
     return float(np.real(np.vdot(psi, fallback_op @ psi)))
 
@@ -75,19 +68,15 @@ def _observable_population(system, name: str, psi: np.ndarray, fallback_op) -> f
 def _solve_trajectory(system, protocol, x, state, t_eval):
     """Return ``(state_seq, times)`` for a trajectory as a list of state vectors.
 
-    Normalizes the two backend conventions onto row-major iteration: the new
-    RydbergSystem exact backend returns states as ``(n_t, dim)`` and reports the
-    times it actually recorded (a piecewise backend may record fewer points than
-    requested); the legacy AtomicSystem path returns column-major ``(dim, n_t)``
-    interpolated to ``t_eval``.
+    Normalizes exact backend output onto row-major iteration: states as
+    ``(n_t, dim)`` plus the times actually recorded (a piecewise backend may
+    record fewer points than requested).
     """
-    if _is_rydberg_system(system):
-        from ryd_gate.backends.exact import simulate
+    _require_rydberg_system(system)
+    from ryd_gate.backends.exact import simulate
 
-        res = simulate(system.with_protocol(protocol), x, state, t_eval=t_eval)
-        return list(np.asarray(res.states)), np.asarray(res.times)
-    res_list = np.asarray(_solve_state(system, protocol, x, state, t_eval=t_eval))
-    return [res_list[:, k] for k in range(res_list.shape[1])], np.asarray(t_eval)
+    res = simulate(system.with_protocol(protocol), x, state, t_eval=t_eval)
+    return list(np.asarray(res.states)), np.asarray(res.times)
 
 
 def average_gate_infidelity(
