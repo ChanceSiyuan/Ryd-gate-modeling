@@ -109,7 +109,7 @@ def test_plot_smoke_uses_address_profile():
 
     matplotlib.use("Agg")
     from ryd_gate import InteractionSpec, RydbergSystem
-    from ryd_gate.lattice import make_square_lattice
+    from ryd_gate.lattice import Register
 
     proto = SweepProtocol(
         t_gate=1.0,
@@ -119,7 +119,7 @@ def test_plot_smoke_uses_address_profile():
         n_steps=4,
     )
     system = RydbergSystem.from_lattice(
-        make_square_lattice(1, 2),
+        Register.rectangle(1, 2),
         "1r",
         interaction=InteractionSpec(C6=0.0),
         protocol=proto,

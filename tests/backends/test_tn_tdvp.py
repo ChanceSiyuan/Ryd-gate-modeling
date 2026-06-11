@@ -8,7 +8,7 @@ from ryd_gate.backends.tn_common.compiler import TNCompiler
 from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
 from ryd_gate.backends.tn_common.simulate import simulate_tn, simulate_tn_ir
 from ryd_gate.core.level_structures import InteractionSpec
-from ryd_gate.lattice import make_square_lattice
+from ryd_gate.lattice import Register
 from ryd_gate.protocols.sweep import SweepProtocol
 
 tenpy = pytest.importorskip("tenpy")
@@ -115,7 +115,7 @@ class TestSimulateTN:
     def test_unified_simulate_mps_backend(self):
         proto = _sweep(t_gate=1.0, omega=1.0)
         system = RydbergSystem.from_lattice(
-            make_square_lattice(2, 2, spacing_um=1.0),
+            Register.rectangle(2, 2, spacing_um=1.0),
             level_structure="1r",
             interaction=InteractionSpec(C6=24.0, mode="nnn"),
             protocol=proto,

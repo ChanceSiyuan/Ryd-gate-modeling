@@ -29,7 +29,7 @@ from ryd_gate.core.operator_spec import (
     measure_state_vector_operator,
 )
 from ryd_gate.core.system_model import SystemModel
-from ryd_gate.lattice.geometry import LatticeGeometry
+from ryd_gate.lattice.geometry import Register
 
 if TYPE_CHECKING:
     from ryd_gate.protocols.base import Protocol
@@ -54,7 +54,7 @@ class RydbergSystem(SystemModel):
         observables: ObservableRegistry,
         protocol: "Protocol | None" = None,
         metadata: dict[str, Any] | None = None,
-        geometry: LatticeGeometry | None = None,
+        geometry: Register | None = None,
         is_sparse: bool = True,
         amplitude_scale: float = 1.0,
     ) -> None:
@@ -157,7 +157,7 @@ class RydbergSystem(SystemModel):
     @classmethod
     def from_lattice(
         cls,
-        geometry: LatticeGeometry,
+        geometry: Register,
         level_structure: str | LevelStructureSpec = "1r",
         interaction: InteractionSpec | None = None,
         *,

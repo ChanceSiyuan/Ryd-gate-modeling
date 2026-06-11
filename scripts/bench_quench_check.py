@@ -27,12 +27,12 @@ import numpy as np
 
 import ryd_gate as rg
 from ryd_gate import InteractionSpec
-from ryd_gate.lattice import make_square_lattice
+from ryd_gate.lattice import Register
 
 
 def build_system(args):
     Omega = 2 * np.pi * args.omega_mhz * 1e6
-    geom = make_square_lattice(args.lx, args.ly, spacing_um=args.a_um)
+    geom = Register.rectangle(args.lx, args.ly, spacing_um=args.a_um)
     C6 = 2 * np.pi * 874e9
     t_sweep = args.t_sweep
     delta_start = -2 * np.pi * 10.0e6

@@ -10,7 +10,7 @@ from ryd_gate.backends.exact import simulate
 from ryd_gate.backends.exact.compiler import ExactSparseCompiler
 from ryd_gate.core.level_structures import InteractionSpec, level_structure
 from ryd_gate.core.operator_spec import RydbergPairInteractionSpec
-from ryd_gate.lattice import make_chain, make_square_lattice
+from ryd_gate.lattice import Register
 from ryd_gate.protocols.digital_analog import DigitalAnalogProtocol
 
 
@@ -42,7 +42,7 @@ class _GerProtocol:
 
 
 def test_1r_lattice_basis_blocks_and_observables():
-    model = RydbergSystem.from_lattice(make_square_lattice(2, 2), "1r")
+    model = RydbergSystem.from_lattice(Register.rectangle(2, 2), "1r")
 
     assert model.basis.local_levels == ("1", "r")
     assert model.basis.n_sites == 4
@@ -54,14 +54,14 @@ def test_1r_lattice_basis_blocks_and_observables():
 
 
 def test_all_pair_vdw_is_default():
-    geom = make_chain(4, spacing_um=4.0)
+    geom = Register.chain(4, spacing_um=4.0)
     model = RydbergSystem.from_lattice(geom, "1r")
 
     assert len(model.meta("interaction_pairs")) == 6
 
 
 def test_nnn_interaction_mode_truncates_pairs():
-    geom = make_square_lattice(3, 3, spacing_um=1.0)
+    geom = Register.rectangle(3, 3, spacing_um=1.0)
     model = RydbergSystem.from_lattice(
         geom,
         "1r",
@@ -72,7 +72,7 @@ def test_nnn_interaction_mode_truncates_pairs():
 
 
 def test_vdw_energy_on_double_rydberg_state():
-    geom = make_chain(2, spacing_um=4.0)
+    geom = Register.chain(2, spacing_um=4.0)
     model = RydbergSystem.from_lattice(geom, "1r")
     psi = model.product_state("rr")
     pair = model.meta("interaction_pairs")[0]
@@ -83,7 +83,7 @@ def test_vdw_energy_on_double_rydberg_state():
 
 
 def test_large_lattice_construction_does_not_materialize_exact_matrices():
-    geom = make_square_lattice(20, 20, spacing_um=1.0)
+    geom = Register.rectangle(20, 20, spacing_um=1.0)
     model = RydbergSystem.from_lattice(
         geom,
         "1r",
@@ -96,7 +96,7 @@ def test_large_lattice_construction_does_not_materialize_exact_matrices():
 
 def test_exact_sparse_compiler_rejects_too_large_hilbert_space():
     model = RydbergSystem.from_lattice(
-        make_chain(8),
+        Register.chain(8),
         "1r",
         interaction=InteractionSpec(C6=0.0),
         protocol=_sweep(n_steps=2),
@@ -109,7 +109,7 @@ def test_exact_sparse_compiler_rejects_too_large_hilbert_space():
 
 def test_sweep_simulation_with_unified_model():
     model = RydbergSystem.from_lattice(
-        make_square_lattice(2, 2),
+        Register.rectangle(2, 2),
         "1r",
         interaction=InteractionSpec(C6=0.0),
         protocol=_sweep(delta=0.0, n_steps=10),
@@ -122,7 +122,7 @@ def test_sweep_simulation_with_unified_model():
 
 def test_sparse_expm_t_eval_array_records_requested_steps_only():
     model = RydbergSystem.from_lattice(
-        make_chain(1),
+        Register.chain(1),
         "1r",
         interaction=InteractionSpec(C6=0.0),
         protocol=_sweep(n_steps=10),
@@ -138,7 +138,7 @@ def test_sparse_expm_t_eval_array_records_requested_steps_only():
 
 def test_sparse_expm_t_eval_true_records_internal_steps_for_compatibility():
     model = RydbergSystem.from_lattice(
-        make_chain(1),
+        Register.chain(1),
         "1r",
         interaction=InteractionSpec(C6=0.0),
         protocol=_sweep(n_steps=4),
@@ -158,7 +158,7 @@ def test_01r_digital_analog_simulation():
         n_steps=10,
     )
     model = RydbergSystem.from_lattice(
-        make_chain(2, spacing_um=4.0),
+        Register.chain(2, spacing_um=4.0),
         "01r",
         interaction=InteractionSpec(C6=0.0),
         protocol=protocol,
@@ -182,7 +182,7 @@ def test_level_structure_presets():
 
 def test_ger_lattice_builds_g_e_r_levels():
     model = RydbergSystem.from_lattice(
-        make_chain(1),
+        Register.chain(1),
         "ger",
         interaction=InteractionSpec(C6=0.0),
     )
@@ -194,7 +194,7 @@ def test_ger_lattice_builds_g_e_r_levels():
 
 def test_ger_transition_blocks_are_not_compiled_as_static_dense_terms():
     model = RydbergSystem.from_lattice(
-        make_chain(1),
+        Register.chain(1),
         "ger",
         interaction=InteractionSpec(C6=0.0),
         protocol=_GerProtocol(),
@@ -208,7 +208,7 @@ def test_ger_transition_blocks_are_not_compiled_as_static_dense_terms():
 @pytest.mark.slow
 def test_rb87_7_lattice_constructs_our_model():
     model = RydbergSystem.from_lattice(
-        make_chain(2, spacing_um=3.0),
+        Register.chain(2, spacing_um=3.0),
         "rb87_7",
         param_set="our",
     )

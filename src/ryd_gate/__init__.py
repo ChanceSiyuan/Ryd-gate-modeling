@@ -12,9 +12,7 @@ Typical workflow
 
 2. **Create a quantum system with the protocol bound**::
 
-       from ryd_gate.lattice import make_chain
-
-       system = RydbergSystem.from_lattice(make_chain(4), "01r", protocol=protocol)
+       system = RydbergSystem.from_lattice(Register.chain(4), "01r", protocol=protocol)
 
 3. **Choose an algorithm package**::
 
@@ -47,10 +45,16 @@ from .core.system import RydbergSystem
 
 # --- Advanced / new-arch primitives ---
 from .core.system_model import SystemModel
+
+# --- Product data layer (Stage 1) ---
+from .core.validation import ValidationIssue, raise_for_errors
+from .devices import DeviceSpec
 from .ir import EvolutionResult, HamiltonianIR, HamiltonianTerm, compile_hamiltonian_ir
+from .lattice import Register, RegisterLayout
 
 # --- Protocols ---
 from .protocols.base import Protocol
+from .protocols.channels import ChannelSpec
 from .protocols.digital_analog import DigitalAnalogProtocol
 from .protocols.gate_cz_ar import ARProtocol
 from .protocols.gate_cz_double_arp import DoubleARPProtocol
@@ -63,10 +67,7 @@ from .protocols.lattice_dynamics import (
     tfim_to_rydberg_controls,
 )
 from .protocols.sweep import SweepProtocol
-
-# --- Analysis (convenience re-exports) ---
-# --- Pulse utilities ---
-from .pulse import blackman_pulse, blackman_pulse_sqrt, blackman_window
+from .pulse import Pulse, Waveform
 
 # --- Unified simulation entry point ---
 from .simulate import simulate
@@ -98,6 +99,15 @@ __all__ = [
     "DEFAULT_C6",
     "level_structure",
     "compute_shift_scatter",
+    # Product data layer (Stage 1)
+    "Register",
+    "RegisterLayout",
+    "DeviceSpec",
+    "ChannelSpec",
+    "ValidationIssue",
+    "raise_for_errors",
+    "Waveform",
+    "Pulse",
     # Protocols
     "Protocol",
     "TOProtocol",
@@ -121,10 +131,6 @@ __all__ = [
     "AddressingEvaluator",
     # Simulation
     "simulate",
-    # Pulse utilities
-    "blackman_pulse",
-    "blackman_pulse_sqrt",
-    "blackman_window",
     # Advanced primitives
     "SystemModel",
     "BasisSpec",

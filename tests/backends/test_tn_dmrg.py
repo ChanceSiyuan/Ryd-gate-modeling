@@ -75,7 +75,7 @@ class TestDMRG:
         from ryd_gate import RydbergSystem, compile_hamiltonian_ir
         from ryd_gate.backends.exact import compile_expm_ir
         from ryd_gate.core.level_structures import InteractionSpec
-        from ryd_gate.lattice import make_square_lattice
+        from ryd_gate.lattice import Register
         from ryd_gate.protocols.sweep import SweepProtocol
 
         Delta = 2.0
@@ -85,7 +85,7 @@ class TestDMRG:
             delta_fn=lambda t: Delta,
         )
         system = RydbergSystem.from_lattice(
-            make_square_lattice(2, 2, spacing_um=1.0),
+            Register.rectangle(2, 2, spacing_um=1.0),
             "1r",
             interaction=InteractionSpec(C6=24.0, mode="nnn"),
             protocol=proto,

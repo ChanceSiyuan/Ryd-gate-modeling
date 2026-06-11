@@ -1,8 +1,8 @@
 """Pure-geometry helpers for N-atom Rydberg arrays.
 
-Scope: lattice shapes, coordinates, sublattice signs, and basic helpers.
-This package does **not** define energy levels, Hamiltonians, states,
-observables, interactions, or evolution; for those see:
+Scope: the atom register (ids, coordinates, sublattice signs) and basic
+helpers. This package does **not** define energy levels, Hamiltonians,
+states, observables, interactions, or evolution; for those see:
 
 - ``ryd_gate.core.interactions``           — pairwise VdW coupling computation
 - ``ryd_gate.core.system``                 — level structure, Hamiltonian blocks,
@@ -14,21 +14,14 @@ observables, interactions, or evolution; for those see:
 
 Contents
 --------
-- ``geometry`` — LatticeGeometry dataclass; shape factories
-  (``make_chain``, ``make_square_lattice``, ``make_triangular_lattice``,
-  ``make_geometry_from_coords``); ``is_in_domain`` helper.
+- ``geometry`` — :class:`Register` (constructed via ``Register.chain`` /
+  ``square`` / ``rectangle`` / ``triangular`` / ``from_coordinates``),
+  :class:`RegisterLayout`, and the ``is_in_domain`` helper.
 - ``plotting`` — ``plot_spatial_rydberg``, ``plot_population_evolution``
   (visualizations of physics quantities on lattice coordinates).
 """
 
-from .geometry import (
-    LatticeGeometry,
-    is_in_domain,
-    make_chain,
-    make_geometry_from_coords,
-    make_square_lattice,
-    make_triangular_lattice,
-)
+from .geometry import Register, RegisterLayout, is_in_domain
 
 
 def __getattr__(name: str):
@@ -40,11 +33,8 @@ def __getattr__(name: str):
 
 __all__ = [
     # Geometry
-    "LatticeGeometry",
-    "make_chain",
-    "make_square_lattice",
-    "make_triangular_lattice",
-    "make_geometry_from_coords",
+    "Register",
+    "RegisterLayout",
     "is_in_domain",
     # Plotting
     "plot_spatial_rydberg",

@@ -30,7 +30,7 @@ from ryd_gate.core.operator_spec import (
     WeightedProjectorSumSpec,
 )
 from ryd_gate.core.rb87_params import _rb87_default_c6
-from ryd_gate.lattice.geometry import LatticeGeometry
+from ryd_gate.lattice.geometry import Register
 
 if TYPE_CHECKING:
     from ryd_gate.protocols.base import Protocol
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 def build_from_lattice(
     cls,
-    geometry: LatticeGeometry,
+    geometry: Register,
     level_structure: str | LevelStructureSpec = "1r",
     interaction: InteractionSpec | None = None,
     *,
@@ -82,11 +82,12 @@ def build_from_lattice(
         observables.register(f"sum_n_{level}", sum_spec, description=f"total |{level}> population")
 
     pairs = _interaction_pairs(geometry, interaction)
-    blocks.register(
-        "H_vdw",
-        RydbergPairInteractionSpec(pairs, spec.rydberg_levels),
-        description="Rydberg VdW interaction",
-    )
+    if spec.rydberg_levels:
+        blocks.register(
+            "H_vdw",
+            RydbergPairInteractionSpec(pairs, spec.rydberg_levels),
+            description="Rydberg VdW interaction",
+        )
 
     for transition in spec.transitions:
         blocks.register(
@@ -146,27 +147,24 @@ def build_from_lattice(
     return model
 
 
-def _interaction_pairs(geometry: LatticeGeometry, interaction: InteractionSpec) -> tuple:
+def _interaction_pairs(geometry: Register, interaction: InteractionSpec) -> tuple:
     if interaction.mode == "all":
         return vdw_couplings(geometry.coords, interaction.C6, interaction.max_range_um)
 
     coords = np.asarray(geometry.coords, dtype=float)
-    spacing = geometry.spacing_um or _nearest_spacing(coords)
+    spacing = geometry.spacing_um or min(
+        (d for _, _, d in geometry.distance_pairs()), default=0.0
+    )
     max_dist = spacing * (1.01 if interaction.mode == "nn" else np.sqrt(2) * 1.01)
     max_range = interaction.max_range_um if interaction.max_range_um is not None else max_dist
     return vdw_couplings(coords, interaction.C6, max_range)
 
 
-def _nearest_spacing(coords: np.ndarray) -> float:
-    if len(coords) < 2:
-        return 0.0
-    dists = [
-        float(np.linalg.norm(coords[i] - coords[j])) for i in range(len(coords)) for j in range(i + 1, len(coords))
-    ]
-    return min(dists)
-
-
 def _physical_model_for(level_name: str, param_set: str | None) -> str | None:
+    if level_name == "analog_3":
+        return "analog_3"
+    # Legacy spelling, kept for frozen notebooks until Stage 7 (stageplans/README
+    # D11): the official path is the `analog_3` preset; bare `ger` stays symbolic.
     if level_name == "ger" and param_set in {"analog", "analog_3"}:
         return "analog_3"
     if level_name == "rb87_7" and param_set in {"our", "lukin"}:

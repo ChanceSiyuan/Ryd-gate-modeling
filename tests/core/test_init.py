@@ -10,13 +10,37 @@ class TestPackageImports:
         assert hasattr(ryd_gate, "__version__")
         assert isinstance(ryd_gate.__version__, str)
 
-    def test_blackman_exports(self):
-        """Blackman functions should be exported."""
-        from ryd_gate import blackman_pulse, blackman_pulse_sqrt, blackman_window
+    def test_product_layer_exports(self):
+        """Stage 1 product objects should be exported at top level."""
+        from ryd_gate import (
+            ChannelSpec,
+            DeviceSpec,
+            Pulse,
+            Register,
+            RegisterLayout,
+            ValidationIssue,
+            Waveform,
+            raise_for_errors,
+        )
 
-        assert callable(blackman_pulse)
-        assert callable(blackman_pulse_sqrt)
-        assert callable(blackman_window)
+        assert all(
+            item is not None
+            for item in (
+                Register, RegisterLayout, DeviceSpec, ChannelSpec,
+                ValidationIssue, raise_for_errors, Waveform, Pulse,
+            )
+        )
+
+    def test_removed_top_level_exports(self):
+        """Kernel blackman helpers are soft-closed: not top-level API."""
+        import pytest
+
+        with pytest.raises(ImportError):
+            from ryd_gate import blackman_pulse  # noqa: F401
+        with pytest.raises(ImportError):
+            from ryd_gate import blackman_window  # noqa: F401
+        with pytest.raises(ImportError):
+            from ryd_gate import blackman_pulse_sqrt  # noqa: F401
 
     def test_all_exports_match(self):
         """__all__ should list exactly the expected exports."""
@@ -39,8 +63,9 @@ class TestPackageImports:
             "average_gate_infidelity", "error_budget", "AddressingEvaluator",
             # Simulation
             "simulate",
-            # Pulse utilities
-            "blackman_pulse", "blackman_pulse_sqrt", "blackman_window",
+            # Product data layer (Stage 1)
+            "Register", "RegisterLayout", "DeviceSpec", "ChannelSpec",
+            "ValidationIssue", "raise_for_errors", "Waveform", "Pulse",
             # Advanced primitives
             "SystemModel", "BasisSpec", "BlockRegistry",
             "ObservableRegistry", "Observable",
