@@ -1,584 +1,49 @@
-# Stage 1 Plan: Foundation for api
+# Stage 1 Plan: API Foundation
 
-## Stage 1 User API Documentation
+## Normative Split
 
-The detailed user-facing API contract for Stage 1 lives in [docs/stage1_api.md](../docs/stage1_api.md).
-
-That document is normative for user-callable APIs: imports, one-line calls, inputs, outputs, units, and failure conditions. This stage plan only keeps engineering ownership, file operations, module implementation details, tests, and acceptance commands.
-
-## Stage 1 File Responsibility Contract
-
-This section fixes the responsibility of each file touched in Stage 1. Implementation must follow these ownership boundaries so the result is a product refactor of existing domain modules, not a new wrapper layer.
-
-### New File: `src/ryd_gate/core/validation.py`
-
-Primary responsibility:
-
-- define the common validation issue primitive used by Stage 1 user-facing objects.
-
-Functions and classes owned by this file:
-
-- `ValidationSeverity = Literal["error", "warning"]`;
-- `ValidationIssue`;
-- `raise_for_errors`.
-
-Exact behavior owned by this file:
-
-- `ValidationIssue("error", code, message, path)` represents a blocking validation problem;
-- `ValidationIssue("warning", code, message, path)` represents a non-blocking validation problem;
-- `code` is the stable string that tests and downstream callers should branch on;
-- `message` is human-readable text;
-- `path` locates the invalid object field, for example `("register", "coords")` or `("pulse", "duration_ns")`;
-- `raise_for_errors(issues)` turns accumulated validation errors into one `ValueError` only at an explicit boundary chosen by the user or caller.
-
-What must not live here:
-
-- no register geometry rules;
-- no pulse sampling rules;
-- no device constraints;
-- no backend imports;
-- no simulation imports.
-
-How this contributes to the Stage 1 goal:
-
-- it gives `Register`, `DeviceSpec`, `Pulse`, `ChannelSpec`, and later `Sequence` one shared validation vocabulary;
-- it prevents every product API object from inventing its own error format.
-
-### New File: `src/ryd_gate/devices.py`
-
-Primary responsibility:
-
-- define hardware and physical constraints for a neutral-atom device-like target.
-
-Functions and classes owned by this file:
-
-- `DeviceSpec`;
-- `DeviceSpec.virtual_rb87`;
-- `DeviceSpec.validate_register`;
-- `DeviceSpec.validate_level_structure`;
-- `DeviceSpec.validate_pulse`.
-
-Exact behavior owned by this file:
-
-- `DeviceSpec.virtual_rb87()` creates the default Stage 1 Rb87 virtual device;
-- `validate_register(register)` checks geometry against dimension, atom count, minimum distance, and maximum radius constraints;
-- `validate_level_structure(spec)` checks whether a level model is allowed on the device and whether species matches;
-- `validate_pulse(pulse, channel_id)` checks channel existence, duration limits, clock-period divisibility, amplitude limits, and detuning limits;
-- all validation methods return `list[ValidationIssue]` and do not raise.
-
-What must not live here:
-
-- no backend selection;
-- no QPU job submission;
-- no sequence compilation;
-- no Hamiltonian construction;
-- no waveform implementation;
-- no atom coordinate storage.
-
-How this contributes to the Stage 1 goal:
-
-- it makes device constraints explicit and inspectable before any sequence or backend exists;
-- it separates physical capability checks from simulation algorithms.
-
-### New Test File: `tests/lattice/test_register.py`
-
-Primary responsibility:
-
-- lock down the user-facing register API and prevent old lattice names from remaining public API.
-
-Required behavior tested here:
-
-- `Register.chain` stable ids and coordinates;
-- `Register.square` and `Register.rectangle` row-major ordering;
-- `Register.from_coordinates` id generation, centering behavior, and coordinate normalization;
-- duplicate ids raise;
-- invalid coordinate dimensions raise;
-- `coords_array` returns a copy;
-- `coords_um` returns tuple-of-tuples;
-- `index` and `id_at` preserve stable order;
-- `distances_um` returns a symmetric matrix with zero diagonal;
-- `distance_pairs` returns only upper-triangular pairs and respects cutoff;
-- `blockade_edges` returns only upper-triangular edges within radius;
-- `Register.validate(device)` delegates to `device.validate_register(register)`;
-- `LatticeGeometry` is not importable from `ryd_gate.lattice`;
-- old `make_*` geometry factory functions are not importable from `ryd_gate.lattice`.
-
-What must not be tested here:
-
-- no pulse behavior;
-- no level-structure behavior;
-- no device pulse validation;
-- no simulation behavior.
-
-How this contributes to the Stage 1 goal:
-
-- it ensures the atom register is the stable public geometry object that all later state, bitstring, observable, and backend logic can rely on.
-
-### New Test File: `tests/core/test_level_structures_product_api.py`
-
-Primary responsibility:
-
-- lock down `LevelStructureSpec` as the Stage 1 atom-model API.
-
-Required behavior tested here:
-
-- `level_structure("01")` returns a two-level computational model;
-- `level_structure("1r")` returns a two-level Rydberg model with initial level `"1"`;
-- `level_structure("01r")` returns a three-level model with initial level `"1"`;
-- `level_structure("ger")` remains the explicit ladder model;
-- `level_structure("analog_3")` is the official analog three-level preset;
-- `level_structure("rb87_7")` returns the seven-level precision model;
-- `initial_level_or_default` has deterministic output;
-- `physical_kwargs` returns the exact physical factory kwargs required by current system construction;
-- `supports_backend` returns the exact Stage 1 backend support matrix;
-- `validate` catches malformed custom level specs.
-
-What must not be tested here:
-
-- no device geometry limits;
-- no pulse waveform sampling;
-- no backend compilation;
-- no sequence construction.
-
-How this contributes to the Stage 1 goal:
-
-- it prevents creation of a duplicate `AtomModel` hierarchy and instead turns the existing level-structure concept into the product-level model API.
-
-### New Test File: `tests/core/test_validation.py`
-
-Primary responsibility:
-
-- lock down the shared validation primitive.
-
-Required behavior tested here:
-
-- valid `"warning"` issues construct successfully;
-- valid `"error"` issues construct successfully;
-- invalid severity raises;
-- empty code raises;
-- non-tuple path raises;
-- warning-only lists do not raise in `raise_for_errors`;
-- one error raises `ValueError`;
-- multiple errors appear on separate lines with both code and message.
-
-What must not be tested here:
-
-- no register, device, channel, or pulse domain rules except through simple synthetic issues.
-
-How this contributes to the Stage 1 goal:
-
-- it gives all Stage 1 public objects a deterministic validation result format that later APIs can compose.
-
-### New Test File: `tests/core/test_devices.py`
-
-Primary responsibility:
-
-- lock down device/channel/register/level/pulse validation at the product boundary.
-
-Required behavior tested here:
-
-- `DeviceSpec.virtual_rb87()` exposes required channels;
-- valid `Register` passes `validate_register`;
-- too-close atoms return `register.min_distance`;
-- wrong dimensions return `register.dimensions`;
-- too many atoms return `register.max_atom_num` when a max is configured;
-- too-large radial coordinate returns `register.max_radial_distance` when a max is configured;
-- allowed level structures pass;
-- unsupported level structures return `level_structure.unsupported`;
-- incompatible species returns `level_structure.species`;
-- unknown pulse channel returns `channel.unknown`;
-- pulse duration below minimum returns `pulse.min_duration`;
-- pulse duration above maximum returns `pulse.max_duration`;
-- pulse duration not divisible by clock period returns `pulse.clock_period`;
-- pulse amplitude above channel limit returns `pulse.amplitude_limit`;
-- pulse detuning above channel limit returns `pulse.detuning_limit`.
-
-What must not be tested here:
-
-- no Hamiltonian construction;
-- no protocol lowering;
-- no backend execution;
-- no sampling from a simulated state.
-
-How this contributes to the Stage 1 goal:
-
-- it makes hardware constraints enforceable before Stage 2 introduces `Sequence`.
-
-### New Test File: `tests/core/test_pulse_api.py`
-
-Primary responsibility:
-
-- lock down `Waveform` and `Pulse` as the product pulse API.
-
-Required behavior tested here:
-
-- `Waveform.constant` samples constant values;
-- `Waveform.ramp` starts and ends at the requested values;
-- `Waveform.blackman` reproduces the intended current Blackman envelope through the new API;
-- `Waveform.interpolated` performs piecewise-linear interpolation;
-- `Waveform.custom` derives duration from sample count and `dt_ns`;
-- `value_at_ns` clamps time and returns `rad/us`;
-- `value_at_s` converts to `rad/s`;
-- `sample` includes the final duration endpoint;
-- `integral_rad` integrates `rad/us` over microseconds;
-- invalid waveform durations raise;
-- invalid interpolation grids raise;
-- `Pulse.constant` creates matching amplitude and detuning waveforms;
-- direct `Pulse(...)` rejects mismatched waveform durations;
-- finite nonzero phase is stored;
-- `Pulse.validate(channel)` returns validation issues without touching systems or backends;
-- `blackman_pulse` is not importable from top-level `ryd_gate`.
-
-What must not be tested here:
-
-- no sequence timing;
-- no protocol compilation;
-- no backend execution;
-- no atom geometry.
-
-How this contributes to the Stage 1 goal:
-
-- it moves pulse construction from loose helper functions to explicit user-level waveform and pulse objects while retaining the useful Blackman math as implementation detail.
-
-### Modified File: `src/ryd_gate/lattice/geometry.py`
-
-Primary responsibility after Stage 1:
-
-- own the atom register product API and all geometry-only operations.
-
-Functions and classes owned by this file after Stage 1:
-
-- `RegisterLayout`;
-- `Register`;
-- `Register.from_coordinates`;
-- `Register.chain`;
-- `Register.square`;
-- `Register.rectangle`;
-- `Register.n_atoms`;
-- `Register.dimensions`;
-- `Register.coords_array`;
-- `Register.coords_um`;
-- `Register.index`;
-- `Register.id_at`;
-- `Register.distances_um`;
-- `Register.distance_pairs`;
-- `Register.blockade_edges`;
-- `Register.validate`.
-
-Exact refactor required in this file:
-
-- replace the old `LatticeGeometry` class with `Register`;
-- do not create a second geometry class;
-- do not implement `Register` as a wrapper around `LatticeGeometry`;
-- do not keep `LatticeGeometry` as a public alias;
-- delete old module-level public factories `make_chain`, `make_square_lattice`, `make_triangular_lattice`, and `make_geometry_from_coords`;
-- move official construction to `Register` classmethods.
-
-What must not live here:
-
-- no atom level model;
-- no device constraints except delegation through `validate(device)`;
-- no pulse or waveform logic;
-- no backend-specific lattice spec logic;
-- no simulation logic.
-
-How this contributes to the Stage 1 goal:
-
-- it turns the existing geometry kernel into the stable atom register API that determines atom order for basis states, bitstrings, observables, and future result handling.
-
-### Modified File: `src/ryd_gate/lattice/__init__.py`
-
-Primary responsibility after Stage 1:
-
-- define the public lattice-domain exports.
-
-Exact behavior owned by this file:
-
-- export `Register`;
-- export `RegisterLayout`;
-- do not export `LatticeGeometry`;
-- do not export old `make_*` geometry factories.
-
-What must not live here:
-
-- no implementation logic;
-- no compatibility aliases;
-- no backend imports.
-
-How this contributes to the Stage 1 goal:
-
-- it makes `from ryd_gate.lattice import Register` the single public lattice entry point.
-
-### Modified File: `src/ryd_gate/core/level_structures.py`
-
-Primary responsibility after Stage 1:
-
-- own the level/model API for computational, Rydberg, ladder, analog, and precision local models.
-
-Functions and classes owned by this file:
-
-- `TransitionSpec`;
-- `LevelStructureSpec`;
-- `InteractionSpec`;
-- `level_structure`;
-- `DEFAULT_C6`.
-
-Exact refactor required in this file:
-
-- extend `LevelStructureSpec` instead of creating `AtomModel`;
-- add `initial_level`, `species`, `interaction_kind`, and `params`;
-- add `initial_level_or_default`;
-- add `physical_kwargs`;
-- add `supports_backend`;
-- add `validate`;
-- add `level_structure("01")`;
-- add `level_structure("analog_3")` as the official analog three-level preset;
-- keep `level_structure("ger")` as the explicit ladder preset;
-- keep `level_structure("rb87_7")` as the precision model preset.
-
-What must not live here:
-
-- no register coordinates;
-- no pulse waveforms;
-- no device validation policy except data needed by `DeviceSpec.validate_level_structure`;
-- no backend compiler implementation.
-
-How this contributes to the Stage 1 goal:
-
-- it turns existing level-structure machinery into the public atom-model API without duplicating it in a new module.
-
-### Modified File: `src/ryd_gate/core/__init__.py`
-
-Primary responsibility after Stage 1:
-
-- expose stable core-domain primitives.
-
-Exact behavior owned by this file:
-
-- export `ValidationIssue`;
-- export `raise_for_errors`;
-- export `LevelStructureSpec`;
-- export `level_structure`;
-- export only the existing core-domain names that are deliberately kept as Stage 1 core API.
-
-What must not live here:
-
-- no new implementation logic;
-- no compatibility aliases for removed lattice or pulse names.
-
-How this contributes to the Stage 1 goal:
-
-- it gives advanced users a core-domain import path without forcing them through top-level `ryd_gate`.
-
-### Modified File: `src/ryd_gate/core/system.py`
-
-Primary responsibility after Stage 1:
-
-- accept `Register` as the geometry object stored on `RydbergSystem`.
-
-Exact refactor required in this file:
-
-- import `Register` instead of `LatticeGeometry`;
-- annotate `geometry: Register | None`;
-- annotate `RydbergSystem.from_lattice(geometry: Register, ...)`;
-- store the provided `Register` on `system.geometry`;
-- keep `RydbergSystem.from_lattice(...)` as the system-construction entry point.
-
-What must not change in this file:
-
-- no simulation entry point;
-- no sequence support;
-- no backend selection;
-- no Hamiltonian materialization behavior;
-- no protocol API redesign.
-
-How this contributes to the Stage 1 goal:
-
-- it makes `Register` the real object consumed by current system construction, not a superficial front-end class.
-
-### Modified File: `src/ryd_gate/core/factories.py`
-
-Primary responsibility after Stage 1:
-
-- build `RydbergSystem` from `Register`, `LevelStructureSpec`, and `InteractionSpec` using the current physical construction path.
-
-Exact refactor required in this file:
-
-- import `Register` instead of `LatticeGeometry`;
-- annotate `build_from_lattice(..., geometry: Register, ...)`;
-- annotate internal interaction-pair helpers with `Register`;
-- read `geometry.N`, `geometry.coords`, `geometry.sublattice`, and `geometry.spacing_um` from `Register`;
-- preserve existing physical Hamiltonian construction behavior.
-
-What must not change in this file:
-
-- no new public sequence object;
-- no backend result object;
-- no MPS/PEPS/stabilizer contract changes;
-- no pulse waveform object compilation.
-
-How this contributes to the Stage 1 goal:
-
-- it ensures the new register API reaches the existing system factory directly.
-
-### Modified File: `src/ryd_gate/backends/tn_common/lattice_spec.py`
-
-Primary responsibility after Stage 1:
-
-- align tensor-network lattice-spec helpers with the product register construction path.
-
-Exact refactor required in this file:
-
-- replace internal use of `make_square_lattice(...)` with `Register.square(...)`;
-- import `Register` from `ryd_gate.lattice.geometry`;
-- do not introduce a public compatibility factory.
-
-What must not change in this file:
-
-- no tensor-network backend contract;
-- no MPS state handle;
-- no simulation result API;
-- no sampling API.
-
-How this contributes to the Stage 1 goal:
-
-- it removes an internal dependency on deleted old geometry factories without changing backend behavior.
-
-### Modified File: `src/ryd_gate/protocols/channels.py`
-
-Primary responsibility after Stage 1:
-
-- own typed channel specifications and canonical compiler channel ids.
-
-Functions and classes owned by this file:
-
-- `ChannelSpec`;
-- existing compiler channel id constants only where current lowering code needs them.
-
-Exact refactor required in this file:
-
-- add `ChannelSpec`;
-- validate channel id, kind, transition, addressing, duration limits, clock period, amplitude limits, and detuning limits;
-- keep string constants only as internal compiler channel ids, not as the product channel API.
-
-What must not live here:
-
-- no pulse object;
-- no waveform sampling;
-- no device registry;
-- no sequence compilation;
-- no backend code.
-
-How this contributes to the Stage 1 goal:
-
-- it gives devices and pulses a typed channel contract while leaving protocol lowering untouched.
-
-### Modified File: `src/ryd_gate/pulse.py`
-
-Primary responsibility after Stage 1:
-
-- own waveform and pulse construction for user-facing laser controls.
-
-Functions and classes owned by this file:
-
-- `Waveform`;
-- `Pulse`;
-- private helpers for Blackman math if useful.
-
-Exact refactor required in this file:
-
-- add `Waveform.constant`;
-- add `Waveform.ramp`;
-- add `Waveform.blackman`;
-- add `Waveform.interpolated`;
-- add `Waveform.custom`;
-- add waveform evaluation, sampling, integration, and endpoint methods;
-- add `Pulse.constant`;
-- add `Pulse.duration_ns`;
-- add `Pulse.validate`;
-- stop treating `blackman_window`, `blackman_pulse`, and `blackman_pulse_sqrt` as top-level product API.
-
-What must not live here:
-
-- no sequence object;
-- no backend compiler;
-- no system construction;
-- no device registry;
-- no noise model.
-
-How this contributes to the Stage 1 goal:
-
-- it turns laser control data into explicit product objects that later `Sequence` can compose without forcing Stage 1 to implement sequence simulation.
-
-### Modified File: `src/ryd_gate/__init__.py`
-
-Primary responsibility after Stage 1:
-
-- expose the intended Stage 1 user imports at package top level.
-
-Exact behavior owned by this file:
-
-- export `Register`;
-- export `RegisterLayout`;
-- export `DeviceSpec`;
-- export `ChannelSpec`;
-- export `ValidationIssue`;
-- export `raise_for_errors`;
-- export `Waveform`;
-- export `Pulse`;
-- export `LevelStructureSpec`;
-- export `level_structure`;
-- keep `RydbergSystem` available.
-
-What must not be exported from this file after Stage 1:
-
-- `LatticeGeometry`;
-- `make_chain`;
-- `make_square_lattice`;
-- `make_triangular_lattice`;
-- `make_geometry_from_coords`;
-- `blackman_window`;
-- `blackman_pulse`;
-- `blackman_pulse_sqrt`.
-
-How this contributes to the Stage 1 goal:
-
-- it makes the clean product API visible from `ryd_gate` itself while avoiding a separate `ryd_gate.api` wrapper package.
+The user-facing API contract for Stage 1 (every callable's purpose, input, output, failure) lives in [docs/stage1_api.md](../docs/stage1_api.md). That document is normative for behavior. This stage plan is normative for engineering: which existing code is refactored into which API, in what order, with what verification. If the two documents disagree, fix the disagreement before implementing.
 
 ## Stage 1 Goal
 
-Stage 1 builds a clean user-facing foundation while preserving physical behavior, not old API shape:
+Refactor the existing data layer into the product API **in place** — no `src/ryd_gate/api/` package, no wrapper classes, no parallel hierarchies:
 
-- stable atom register API, implemented in `lattice.geometry`;
-- model/level API, implemented by extending `core.level_structures`;
-- channel/device validation API, implemented in `protocols.channels` and a new `devices.py`;
-- waveform/pulse API, implemented in existing `pulse.py`;
-- validation issue primitive, implemented in `core.validation`;
-- top-level exports in `ryd_gate.__init__`.
+- atom register API: refactor `lattice/geometry.py::LatticeGeometry` into `Register` (the same kernel object, productized);
+- atom-model API: extend `core/level_structures.py::LevelStructureSpec` (no new `AtomModel` class);
+- channel/device API: type the existing string-channel conventions with `ChannelSpec` (in `protocols/channels.py`) and add a new `devices.py` with `DeviceSpec`;
+- waveform/pulse API: add `Waveform`/`Pulse` to the existing `pulse.py`, keeping the kernel Blackman helpers;
+- validation primitive: new `core/validation.py`;
+- serialization helpers: new `core/serialization.py`; every Stage 1 object gets `to_dict()`/`from_dict()`;
+- top-level exports in `ryd_gate/__init__.py`.
 
-Stage 1 does not run simulations from a sequence. Stage 1 does not modify backend contracts.
+Stage 1 does not run simulations from a sequence and does not modify backend contracts.
 
-## Hard Scope Boundary
+## No-Wrapper Rules
 
-Do not implement any of the following in Stage 1:
+These are the anti-patterns this refactor exists to avoid. Violating any of them fails review:
 
-- `Sequence`
-- `SequenceProtocol`
-- `simulate_sequence`
-- `simulate(seq, ...)`
-- `NoiseModel`
-- `SimulationResult`
-- `QuantumStateHandle`
-- `ExactStateHandle`
-- `MPSStateHandle`
-- `PEPSStateHandle`
-- backend-native result handling
-- MPS sampling
-- PEPS contraction
-- dense statevector materialization policy
-- Pulser import/export compatibility
+1. `Register` **replaces** `LatticeGeometry` (rename + extend). Do not keep `LatticeGeometry`, do not alias it, do not implement `Register` as a class that *holds* a geometry. After Stage 1 there is exactly one geometry class in the repo.
+2. No `Register.to_geometry()`: `RydbergSystem.from_lattice(...)` consumes `Register` directly because `Register` keeps the kernel field names (`N`, `coords`, `sublattice`, `spacing_um`).
+3. No `AtomModel`: `LevelStructureSpec` is both the compiler-facing and the user-facing model object. One class, extended in place.
+4. `ChannelSpec` does not replace the internal compiler channel ids (`global_X`, `drive_R`, `drive_420`, …). It *carries the mapping* to them. Protocol lowering code is untouched.
+5. `Waveform`/`Pulse` do not wrap the kernel Blackman helpers; both layers live in `pulse.py` and share formulas. `blackman_window`, `blackman_pulse`, `blackman_pulse_sqrt` stay as module functions because `protocols/gate_cz_to.py:57` and `protocols/gate_cz_ar.py:62` import them — only the *top-level* re-exports are removed. The helpers are **soft-closed**, not public: excluded from `ryd_gate.pulse.__all__`, docstring-marked as internal kernel API with no stability guarantee, and declared unsupported for user code in docs/stage1_api.md.
+6. Validation rules live once: device-level rules in `DeviceSpec`, channel-limit rules in one helper that both `DeviceSpec.validate_pulse` and `Pulse.validate` call. `Register.validate(device)` is a one-line delegation.
+7. No compatibility aliases for removed names (`make_*`, `LatticeGeometry`, top-level `blackman_*`). Internal call sites are migrated, not shimmed.
 
-These belong to later stages.
+## Implementation Order
+
+Execute as six commit-sized steps. Each step ends with its verify command green before the next starts.
+
+```text
+Step 1  core/validation.py + core/serialization.py (new)        -> uv run pytest tests/core/test_validation.py -q
+Step 2  geometry.py refactor + all geometry call sites           -> uv run pytest -m "not slow" -q   (full fast suite)
+Step 3  level_structures.py extension + factories inference      -> uv run pytest tests/core -q
+Step 4  channels.py ChannelSpec + pulse.py Waveform/Pulse        -> uv run pytest tests/core/test_pulse_api.py tests/core/test_blackman.py -q
+Step 5  devices.py DeviceSpec                                    -> uv run pytest tests/core/test_devices.py -q
+Step 6  __init__.py exports + serialization round-trip tests     -> full acceptance (below)
+```
+
+Step 2 is the only step that touches many files; it must land as one unit (the rename breaks imports until all call sites move).
 
 ## Allowed File Operations
 
@@ -586,15 +51,18 @@ Create exactly these files:
 
 ```text
 src/ryd_gate/core/validation.py
+src/ryd_gate/core/serialization.py
 src/ryd_gate/devices.py
+tests/lattice/__init__.py
 tests/lattice/test_register.py
 tests/core/test_level_structures_product_api.py
 tests/core/test_validation.py
 tests/core/test_devices.py
 tests/core/test_pulse_api.py
+tests/core/test_serialization_roundtrip.py
 ```
 
-Modify exactly these existing files:
+Modify these source files (the API refactor itself):
 
 ```text
 src/ryd_gate/lattice/geometry.py
@@ -609,67 +77,72 @@ src/ryd_gate/pulse.py
 src/ryd_gate/__init__.py
 ```
 
+Modify these files **only** to migrate call sites of removed names (see Call-Site Migration table — no behavior changes beyond the mechanical replacement):
+
+```text
+src/ryd_gate/protocols/digital_analog.py        (docstring example only)
+tests/core/test_init.py
+tests/core/test_simulate_entry.py
+tests/core/test_rydberg_system_model.py
+tests/protocols/test_sweep_protocol.py
+tests/protocols/test_digital_analog_site_profiles.py
+tests/protocols/test_lattice_dynamics_protocols.py
+tests/backends/test_tn_dmrg.py
+tests/backends/test_tn_lattice_spec.py
+tests/backends/test_tn_tdvp.py
+tests/backends/test_plus_init.py
+app/pages/2_lattice_simulator.py
+app/pages/4_local_addressing.py
+scripts/bench_quench_check.py
+examples/demo_local_addressing.py
+examples/* (any other example importing a removed name)
+```
+
 Do not modify:
 
 ```text
 src/ryd_gate/simulate.py
-src/ryd_gate/ir/evolution.py
-src/ryd_gate/ir/hamiltonian.py
+src/ryd_gate/ir/*
 src/ryd_gate/core/system_model.py
 src/ryd_gate/core/rb87_params.py
 src/ryd_gate/core/local_blocks.py
+src/ryd_gate/core/basis.py
+src/ryd_gate/core/blocks.py
+src/ryd_gate/core/observables.py
 src/ryd_gate/protocols/base.py
-src/ryd_gate/protocols/digital_analog.py
 src/ryd_gate/protocols/sweep.py
-src/ryd_gate/backends/* except src/ryd_gate/backends/tn_common/lattice_spec.py
-scripts/notebooks/*
+src/ryd_gate/protocols/gate_cz_*.py
+src/ryd_gate/backends/*  except backends/tn_common/lattice_spec.py
+scripts/notebooks/*  and all *.ipynb
 pyproject.toml
 ```
 
 If implementation requires changing any forbidden file, stop and update this plan first.
 
-## Public Import Contract
+## Call-Site Migration
 
-After Stage 1, these imports must work:
+Mechanical replacement rules. The right-hand forms are behavior-identical to the left-hand forms (same coordinates, same atom order, same sublattice signs):
 
-```python
-from ryd_gate import (
-    Register,
-    RegisterLayout,
-    DeviceSpec,
-    ChannelSpec,
-    ValidationIssue,
-    Waveform,
-    Pulse,
-    LevelStructureSpec,
-    level_structure,
-)
-
-from ryd_gate.lattice import Register, RegisterLayout
-from ryd_gate.core import ValidationIssue, LevelStructureSpec, level_structure
-from ryd_gate.devices import DeviceSpec
-from ryd_gate.protocols.channels import ChannelSpec
-from ryd_gate.pulse import Waveform, Pulse
+```text
+make_chain(N)                      -> Register.chain(N)                       # default spacing 4.0 preserved
+make_chain(N, s)                   -> Register.chain(N, s)
+make_square_lattice(Lx, Ly, s)     -> Register.rectangle(Lx, Ly, s)           # rows=Lx, cols=Ly
+make_square_lattice(L, L, s)       -> Register.square(L, s)
+make_triangular_lattice(Lx, Ly, s) -> Register.triangular(Ly, Lx, s)          # rows=Ly, atoms_per_row=Lx — note the swap
+make_geometry_from_coords(c)       -> Register.from_coordinates(c, center=False)
+make_geometry_from_coords(c, sub)  -> Register.from_coordinates(c, sublattice=sub, center=False)
+LatticeGeometry (annotation/import)-> Register
+from ryd_gate import blackman_*    -> from ryd_gate.pulse import blackman_*   # kernel helpers keep working there
+"ger" + param_set="analog_3"       -> level_structure("analog_3")             # app/pages/4_local_addressing.py:53; notebooks keep the old spelling until Stage 7
 ```
 
-## Current Repository Mapping
+`center=False` is mandatory when migrating `make_geometry_from_coords` call sites: the old function never centered, while `from_coordinates` defaults to `center=True` (Pulser-style). Forgetting this silently shifts coordinates.
 
+`tests/core/test_init.py` additionally changes meaning: it currently asserts top-level availability of `blackman_pulse` etc.; after Stage 1 it must assert the new top-level export list and assert that removed names raise `ImportError`.
 
-| Product concept | Current module                                                                  | Stage 1 action                                                                                                |
-| --------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Register        | `lattice.geometry.LatticeGeometry` and geometry factories                       | Replace `LatticeGeometry` with `Register` as the single geometry/register class; update internal call sites |
-| Atom model      | `core.level_structures.LevelStructureSpec`, `TransitionSpec`, `level_structure` | Extend `LevelStructureSpec`; do not create `AtomModel` class                                                  |
-| Interaction     | `core.level_structures.InteractionSpec`, `core.interactions.vdw_couplings`      | No API expansion in Stage 1                                                                                   |
-| Channel         | `protocols.channels` constants and `LevelStructureSpec` channels                | Replace constants-only channel surface with `ChannelSpec` plus canonical compiler channel ids                 |
-| Device          | No dedicated module                                                             | Add `devices.py` with `DeviceSpec`                                                                            |
-| Waveform        | `pulse.py` Blackman helpers; callable schedules in protocols                    | Refactor `pulse.py` around `Waveform`; Blackman math may remain as private implementation detail              |
-| Pulse           | Implicit in protocol coefficient functions                                      | Add `Pulse` to `pulse.py`; do not modify protocols                                                            |
-| Validation      | No reusable validation primitive                                                | Add `core.validation.ValidationIssue`                                                                         |
+## Module Plan: `src/ryd_gate/core/validation.py` (new)
 
-
-## Module Plan: `src/ryd_gate/core/validation.py`
-
-Create this file.
+Current state: no shared validation primitive exists; constraints raise ad hoc `ValueError`s near where they are checked.
 
 Implement exactly:
 
@@ -689,778 +162,367 @@ class ValidationIssue:
 def raise_for_errors(issues: list[ValidationIssue]) -> None: ...
 ```
 
-Behavior:
+Implementation steps:
 
-- `severity` must be `"error"` or `"warning"`.
-- `code` must be a stable machine-readable string.
-- `path` must be a tuple of strings.
-- `raise_for_errors` returns `None` if no error exists.
-- `raise_for_errors` raises `ValueError` if any issue has `severity == "error"`.
-- The raised message must include each error code and message on separate lines.
+1. `ValidationIssue.__post_init__` rejects invalid severity, empty `code`, non-string `message`, non-tuple `path` (`ValueError`).
+2. `raise_for_errors` returns `None` when no issue has `severity == "error"`; otherwise raises `ValueError` whose message contains each error's `code` and `message` on its own line.
 
-Export `ValidationIssue` and `raise_for_errors` from:
+Must not contain: register/pulse/device rules, backend imports, simulation imports.
 
-```text
-src/ryd_gate/core/__init__.py
-src/ryd_gate/__init__.py
+## Module Plan: `src/ryd_gate/core/serialization.py` (new)
+
+Current state: no serialization support anywhere; configs are reproduced by re-running scripts.
+
+Implement exactly (small helpers; each class still owns its own `to_dict`/`from_dict`):
+
+```python
+SCHEMA_PREFIX = "ryd-gate"
+
+def schema_tag(kind: str) -> str:
+    """Return 'ryd-gate/<kind>/v1'."""
+
+def check_schema(data, kind: str) -> None:
+    """Raise ValueError unless data is a mapping with data['schema'] == schema_tag(kind)."""
+
+def json_ready(value, path: str = "metadata"):
+    """Recursively convert numpy scalars/arrays to Python scalars/lists; raise
+    ValueError naming `path` for values that are not JSON-compatible."""
 ```
+
+Rationale: seven classes implement the dict contract; these ~30 lines keep the tag format and the numpy-conversion rule in one place. This is shared logic, not a framework — do not add registries, base classes, or decorators.
 
 ## Module Plan: `src/ryd_gate/lattice/geometry.py`
 
-Replace the existing `LatticeGeometry` class with `Register`.
-
-Do not create a wrapper class. Do not keep a second `LatticeGeometry` class. Do not define `Register = LatticeGeometry`.
-
-The final Stage 1 geometry object is:
-
-```text
-Register
-```
-
-The intended path after Stage 1 is:
-
-```text
-Register -> RydbergSystem.from_lattice(...)
-```
-
-Breaking the old `LatticeGeometry` API is allowed. The implementation must update the direct internal call sites in:
-
-```text
-src/ryd_gate/core/system.py
-src/ryd_gate/core/factories.py
-src/ryd_gate/lattice/__init__.py
-src/ryd_gate/__init__.py
-```
-
-so that the repository uses `Register` as the geometry/register class.
-
-### RegisterLayout
-
-```python
-@dataclass(frozen=True)
-class RegisterLayout:
-    name: str
-    trap_coords_um: tuple[tuple[float, ...], ...]
-    kind: Literal["chain", "square", "rectangle", "triangular", "custom"]
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-```
-
-`RegisterLayout` is allowed because it is metadata about a trap pattern, not a wrapper around geometry/register state. It must not contain level structure, pulse, device, interaction, or backend information.
-
-### Register Fields
-
-Replace the current `LatticeGeometry` dataclass with exactly:
-
-```python
-@dataclass(frozen=True)
-class Register:
-    N: int
-    coords: np.ndarray
-    sublattice: np.ndarray
-    spacing_um: float
-    ids: tuple[str, ...]
-    layout: RegisterLayout | None = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-```
-
-Rules:
-
-- `coords` is the single stored coordinate field.
-- `coords` units are micrometers.
-- do not add a stored field named `coords_um`.
-- `coords_um` may exist only as a computed property.
-- `N`, `coords`, `sublattice`, and `spacing_um` are still real fields because lattice algorithms need these values, but they now belong to `Register`.
-
-### Register Validation and Normalization
-
-In `Register.__post_init__`, implement exactly:
-
-1. `N` must be a positive integer.
-2. `coords` must be convertible to a finite float numpy array of shape `(N, 2)` or `(N, 3)`.
-3. `sublattice` must be convertible to a numpy array of shape `(N,)`.
-4. `spacing_um` must be a finite nonnegative float.
-5. `ids` must be non-empty.
-6. `len(ids) == N`.
-7. every id must be a non-empty string after `str(...)`.
-8. ids must be unique.
-9. normalized `ids` must be stored as `tuple[str, ...]`.
-10. normalized `coords` must be stored as a numpy array with dtype `float`.
-11. normalized `sublattice` must be stored as a numpy array.
-
-Use `object.__setattr__` because the dataclass is frozen.
-
-Do not mutate input arrays in place.
-
-### Class Constructors
-
-Add these classmethods to `Register`:
-
-```python
-@classmethod
-def from_coordinates(
-    cls,
-    coords,
-    ids: Sequence[str] | None = None,
-    prefix: str = "q",
-    center: bool = True,
-) -> "Register": ...
-```
-
-Rules:
-
-- `coords` may be list-like or numpy array.
-- if `center=True`, subtract the mean coordinate vector.
-- if `ids is None`, generate ids `f"{prefix}{i}"`.
-- `prefix` must be non-empty.
-- generated ids must preserve coordinate order.
-- if no sublattice is supplied, use zeros.
-- spacing is inferred using the existing `make_geometry_from_coords` behavior, or the same nearest-positive-x-spacing rule if implemented directly.
-
-Add:
-
-```python
-@classmethod
-def chain(cls, n_atoms: int, spacing_um: float, prefix: str = "q") -> "Register": ...
-
-@classmethod
-def square(cls, side: int, spacing_um: float, prefix: str = "q") -> "Register": ...
-
-@classmethod
-def rectangle(cls, rows: int, cols: int, spacing_um: float, prefix: str = "q") -> "Register": ...
-```
-
-Rules:
-
-- `chain`: coordinates are `(i * spacing_um, 0.0)`.
-- `square`: calls `rectangle(side, side, spacing_um, prefix)`.
-- `rectangle`: row-major with index `i = row * cols + col`; coordinate is `(row * spacing_um, col * spacing_um)`.
-- `chain`, `square`, and `rectangle` do not center coordinates.
-- all integer sizes must be positive.
-- `spacing_um` must be positive.
-- these constructors return `Register` objects.
-
-### Constructor API Requirement
-
-The official Stage 1 geometry construction API is the `Register` classmethod set:
-
-```python
-Register.chain(...)
-Register.square(...)
-Register.rectangle(...)
-Register.from_coordinates(...)
-```
-
-Delete the old module-level public factory functions from `lattice.geometry`:
-
-```python
-make_chain
-make_square_lattice
-make_triangular_lattice
-make_geometry_from_coords
-```
-
-Do not export them from `ryd_gate.lattice` or `ryd_gate`.
-
-If internal source files need these constructors, update them to call the `Register` classmethods. In Stage 1 this specifically includes:
-
-```text
-src/ryd_gate/backends/tn_common/lattice_spec.py
-  make_square_lattice(...) -> Register.square(...)
-```
-
-Do not keep old factory functions as aliases. They are an old API shape, not the product API.
-
-### Register Properties and Methods
-
-Add:
-
-```python
-@property
-def n_atoms(self) -> int: ...
-
-@property
-def dimensions(self) -> int: ...
-
-@property
-def coords_array(self) -> np.ndarray: ...
-
-@property
-def coords_um(self) -> tuple[tuple[float, ...], ...]: ...
-
-def index(self, atom_id: str) -> int: ...
-
-def id_at(self, index: int) -> str: ...
-
-def distances_um(self) -> np.ndarray: ...
-
-def distance_pairs(self, cutoff_um: float | None = None) -> tuple[tuple[int, int, float], ...]: ...
-
-def blockade_edges(self, radius_um: float) -> tuple[tuple[int, int], ...]: ...
-
-def validate(self, device: Any) -> list[ValidationIssue]: ...
-```
-
-Rules:
-
-- `coords_array` returns a new numpy array.
-- `coords_um` returns a tuple-of-tuples view of `coords` for serialization/user display.
-- `index` raises `KeyError` for unknown id.
-- `id_at` raises `IndexError` for invalid index.
-- `distances_um` returns a symmetric `(N, N)` array with zero diagonal.
-- `distance_pairs` returns upper-triangular `(i, j, distance_um)` pairs.
-- `distance_pairs(cutoff_um=x)` omits pairs with distance greater than `x`.
-- `blockade_edges(radius_um)` returns upper-triangular `(i, j)` pairs with distance `<= radius_um`.
-- `validate(device)` returns `device.validate_register(self)`.
-
-Do not implement `to_geometry()`. `Register` is already the geometry object consumed by `RydbergSystem.from_lattice(...)`.
-
-### Required Internal Call-Site Updates
-
-Update direct imports and annotations:
-
-```text
-src/ryd_gate/core/system.py
-  from ryd_gate.lattice.geometry import Register
-  RydbergSystem.__init__(..., geometry: Register | None = None, ...)
-  RydbergSystem.from_lattice(geometry: Register, ...)
-
-src/ryd_gate/core/factories.py
-  from ryd_gate.lattice.geometry import Register
-  build_from_lattice(..., geometry: Register, ...)
-  _interaction_pairs(geometry: Register, ...)
-
-src/ryd_gate/backends/tn_common/lattice_spec.py
-  from ryd_gate.lattice.geometry import Register
-  use Register.square(...) instead of make_square_lattice(...)
-```
-
-Do not rename `RydbergSystem.from_lattice` in Stage 1. The method name remains because it describes constructing from an atom array geometry; only the geometry class becomes `Register`.
-
-Remove all direct imports of `LatticeGeometry` from source files touched in Stage 1.
-
-### Exports
-
-Export `Register` and `RegisterLayout` from:
-
-```text
-src/ryd_gate/lattice/__init__.py
-src/ryd_gate/__init__.py
-```
-
-Do not export `LatticeGeometry` from these modules after Stage 1.
+Current state (file is 181 lines):
+
+- `LatticeGeometry` frozen dataclass, fields `N: int`, `coords: np.ndarray`, `sublattice: np.ndarray`, `spacing_um: float` (lines 27–49); no ids, no validation, no methods;
+- `make_chain(N, spacing_um=4.0)` (line 51): coords `(i*s, 0)`, sublattice `(-1)**i`;
+- `make_square_lattice(Lx, Ly, spacing_um=4.0)` (line 66): order `for ix in range(Lx) for iy in range(Ly)`, coords `(ix*s, iy*s)`, sublattice `(-1)**(ix+iy)`;
+- `make_triangular_lattice(Lx, Ly, spacing_um=4.0)` (line 84): outer loop rows `iy`, inner columns `ix`, odd-row x-offset `s/2`, row pitch `s*sqrt(3)/2`, sublattice zeros;
+- `make_geometry_from_coords(coords_um, sublattice=None)` (line 110): no centering, spacing = smallest positive difference of sorted x-coordinates, `0.0` for `N == 1`;
+- module helpers `is_in_domain` (133), `nn_nnn_relative_pairs` (138), `cylinder_nn_nnn_pairs` (158) — pure functions used by TN/analysis code.
+
+Implementation steps:
+
+1. Add `RegisterLayout` frozen dataclass (`name`, `trap_coords_um`, `kind`, `metadata`) with `__post_init__` validation and `to_dict`/`from_dict` (`"ryd-gate/register-layout/v1"`).
+2. **Rename** `LatticeGeometry` → `Register`, keeping the four kernel fields with the same names and order, and append:
+
+   ```python
+   ids: tuple[str, ...] | None = None
+   layout: RegisterLayout | None = None
+   metadata: Mapping[str, Any] = field(default_factory=dict)
+   ```
+
+   `ids=None` auto-generates `("q0", ..., f"q{N-1}")` in `__post_init__` — this keeps any internal positional construction valid and gives deserialized legacy data sane ids.
+3. Implement `__post_init__` (use `object.__setattr__`; never mutate input arrays):
+   - `N` positive int; `coords` → finite float ndarray of shape `(N, 2)` or `(N, 3)` (copy); `sublattice` → ndarray shape `(N,)` (copy); `spacing_um` finite nonnegative float;
+   - ids: generate if `None`; else exactly `N` unique non-empty strings, stored as `tuple[str, ...]`.
+4. Convert each factory **body** into the corresponding classmethod, preserving the loops verbatim and adding id generation:
+   - `make_chain` body → `Register.chain(n_atoms, spacing_um=4.0, prefix="q")`;
+   - `make_square_lattice` body → `Register.rectangle(rows, cols, spacing_um=4.0, prefix="q")` with `rows ≡ Lx`, `cols ≡ Ly`; `Register.square(side, spacing_um=4.0, prefix="q")` calls `rectangle(side, side, ...)`;
+   - `make_triangular_lattice` body → `Register.triangular(rows, atoms_per_row, spacing_um=4.0, prefix="q")` with `rows ≡ Ly`, `atoms_per_row ≡ Lx`;
+   - `make_geometry_from_coords` body → `Register.from_coordinates(coords, ids=None, prefix="q", center=True, sublattice=None)`; the spacing-inference block is copied unchanged; add the centering branch (subtract mean when `center=True`) and id handling;
+   - every classmethod sets `layout=None`; do **not** synthesize a `RegisterLayout` — layout presence must remain meaningful provenance ("built from a trap pattern"), never decoration (Decision D10). Explicit attachment goes through the direct constructor or `dataclasses.replace(reg, layout=...)`.
+5. Delete the four module-level factories. Do not leave aliases.
+6. Add methods per docs/stage1_api.md: `n_atoms`, `dimensions`, `coords_array` (copy), `coords_um` (tuple-of-tuples), `index` (`KeyError` on unknown), `id_at` (`IndexError` on out-of-range), `distances_um`, `distance_pairs(cutoff_um=None)`, `blockade_edges(radius_um)`, `validate(device)` (one-line delegation), `draw(blockade_radius_um=None, show_ids=True, show=True)` (matplotlib imported inside the method; 2D only, `NotImplementedError` for 3D), `to_dict`/`from_dict` (`"ryd-gate/register/v1"`; coords/sublattice via `.tolist()`).
+7. Leave `is_in_domain`, `nn_nnn_relative_pairs`, `cylinder_nn_nnn_pairs` untouched at module level (internal utilities, not product API, still imported elsewhere).
+8. Update the module docstring: it currently advertises the `make_*` factories.
+
+Must not live here: level structures, device constraints (beyond the `validate` delegation), pulses, backend lattice specs, simulation logic.
+
+Verify: `uv run pytest tests/lattice/test_register.py -q`, then the full fast suite after call-site migration.
+
+## Module Plan: `src/ryd_gate/lattice/__init__.py`
+
+Current state: re-exports `LatticeGeometry` and the `make_*` factories; also hosts/forwards lattice plotting helpers.
+
+Implementation steps:
+
+1. Export `Register` and `RegisterLayout` from `.geometry`.
+2. Remove `LatticeGeometry` and all `make_*` exports.
+3. Keep existing plotting exports unchanged (`lattice/plotting.py` functions read `.coords`/`.sublattice` attributes, which `Register` preserves — no change needed there).
 
 ## Module Plan: `src/ryd_gate/core/level_structures.py`
 
-Do not create `AtomModel`.
+Current state (file is 101 lines): `TransitionSpec` (line 19); `LevelStructureSpec` (line 33) with fields `name`, `levels`, `rydberg_levels`, `transitions`, `detuning_levels`; `InteractionSpec` (line 54) with `C6`/`max_range_um`/`mode` and `DEFAULT_C6`; `level_structure(name)` (line 62) with presets `1r` (66), `01r` (73), `ger` (83), `rb87_7` (93).
 
-Extend `LevelStructureSpec` in place so it can serve as both:
+Do not create `AtomModel`. Extend `LevelStructureSpec` in place.
 
-- compiler-facing local level spec;
-- user-facing atom model spec.
+Implementation steps:
 
-Change dataclass fields to exactly:
+1. Append fields (all defaulted, so existing construction sites keep working):
 
-```python
-@dataclass(frozen=True)
-class LevelStructureSpec:
-    name: str
-    levels: tuple[str, ...]
-    rydberg_levels: tuple[str, ...]
-    transitions: tuple[TransitionSpec, ...] = ()
-    detuning_levels: dict[str, str] = field(default_factory=dict)
-    initial_level: str | None = None
-    species: str = "Rb87"
-    interaction_kind: Literal["none", "ising_c6", "xy_c3", "custom"] = "ising_c6"
-    params: Mapping[str, Any] = field(default_factory=dict)
-```
+   ```python
+   initial_level: str | None = None
+   species: str = "Rb87"
+   interaction_kind: Literal["none", "ising_c6", "xy_c3", "custom"] = "ising_c6"
+   params: Mapping[str, Any] = field(default_factory=dict)
+   ```
 
-Migration rule:
+2. Add methods exactly as specified in docs/stage1_api.md:
+   - `initial_level_or_default()` — `initial_level` if set else `levels[0]`;
+   - `physical_kwargs()` — `{"param_set": "analog_3", **params-without-param_set}` for `analog_3`; `{"param_set": params.get("param_set", "our"), **params-without-param_set}` for `rb87_7`; `{}` otherwise;
+   - `supports_backend(name)` — the fixed Stage 1 truth table (exact: all six; mps/gputn/peps: `1r`, `01r`; stabilizer: `01`; unknown: `False`);
+   - `validate()` — returns `ValidationIssue`s for empty/duplicate levels, unknown initial level, Rydberg levels not in `levels`, invalid detuning target, invalid interaction kind;
+   - `to_dict()`/`from_dict()` (`"ryd-gate/level-structure/v1"`; `TransitionSpec` entries as nested field dicts).
+3. Extend `level_structure(name)`:
+   - add `"01"`: `levels=("0", "1")`, no Rydberg levels, `initial_level="0"`, `interaction_kind="none"`;
+   - add `"analog_3"`: same levels/transitions/detuning channels as `ger`, `name="analog_3"`, `initial_level="g"`, `params={"param_set": "analog_3"}`. This is **not** a parameter alias of `ger` — the two names encode different Hamiltonian construction semantics (symbolic vs physical; Decision D11);
+   - set `initial_level` on existing presets: `1r` → `"1"`, `01r` → `"1"`, `ger` → `"g"`, `rb87_7` → `"0"` (+ `params={"param_set": "our"}` on `rb87_7`);
+   - keep all existing channel names unchanged (`global_X`/`global_n`; `drive_R`/`drive_hf`/`delta_R`/`delta_hf`; `drive_420`/`H_1013`/`delta_e`/`delta_R`).
+4. Migration rule: `level_structure("analog_3")` becomes the official way to request the analog three-level model. The `ger + param_set="analog_3"` spelling is not preserved as a *public* path; non-notebook call sites that used it are migrated in this stage, while the internal `_physical_model_for` branch keeps working for frozen notebooks until Stage 7 (see the factories plan below).
 
-- All new fields may have defaults to keep object construction concise, but Stage 1 is allowed to update internal call sites instead of preserving every old construction shape.
+Must not live here: register coordinates, waveforms, device policy beyond data, backend compiler code.
 
-Add methods:
+## Module Plan: `src/ryd_gate/core/factories.py`
 
-```python
-def initial_level_or_default(self) -> str: ...
+Current state: `build_from_lattice(cls, geometry: LatticeGeometry, level_structure=..., interaction=..., ...)` reads `geometry.N`, `geometry.coords`, `geometry.sublattice`, `geometry.spacing_um`; infers the physical block builder from the level-structure name; generates `BasisSpec.site_labels` as `"0"..f"{N-1}"`.
 
-def physical_kwargs(self) -> dict[str, Any]: ...
+Implementation steps:
 
-def supports_backend(self, backend: str) -> bool: ...
+1. Replace the `LatticeGeometry` import/annotations with `Register`. No attribute access changes (field names preserved).
+2. Extend the physical-model inference in `_physical_model_for` (factories.py:169) with three pinned behaviors:
+   - preset `analog_3` routes to the `_apply_analog_3_lattice_blocks` physical path (and the analog default interaction via `_default_interaction_for_physical_model`), sourcing `param_set` from `spec.physical_kwargs()`;
+   - bare `ger` keeps the symbolic path: abstract transition blocks only, no static `H_1013` term — the existing kernel test `tests/core/test_rydberg_system_model.py::test_ger_transition_blocks_are_not_compiled_as_static_dense_terms` must remain green **unmodified**;
+   - the legacy branch `("ger", param_set in {"analog", "analog_3"})` is **kept** as an internal, undocumented path: `scripts/notebooks/02_ac_stark_local_addressing.ipynb` still uses that spelling and notebooks are frozen until Stage 7, where the branch is removed (see README Stage 7 outline).
 
-def validate(self) -> list[ValidationIssue]: ...
-```
+   `name == "01"` builds a bare two-level system (no drive blocks beyond projectors/observables — same generic path as other non-physical presets).
+3. Keep `BasisSpec.site_labels` generation unchanged (`"0"..` strings). Register ids map to site indices through `Register.index`/`id_at`; unifying labels is out of scope for Stage 1.
 
-Rules:
+Must not change: Hamiltonian block contents, observable registration, interaction lowering.
 
-- `initial_level_or_default()` returns `initial_level` if not `None`, else `levels[0]`.
-- `physical_kwargs()`:
-  - for `name == "analog_3"`, return `{"param_set": "analog_3", **params_without_param_set}`;
-  - for `name == "rb87_7"`, return `{"param_set": params.get("param_set", "our"), **params_without_param_set}`;
-  - for all other names, return `{}`.
-- `supports_backend("exact")` returns true for `01`, `1r`, `01r`, `ger`, `analog_3`, `rb87_7`.
-- `supports_backend("mps")`, `"gputn"`, and `"peps"` return true only for `1r` and `01r`.
-- `supports_backend("stabilizer")` returns true only for `01`.
-- unknown backend returns false.
+## Module Plan: `src/ryd_gate/core/system.py`
 
-### Presets
+Current state: imports `LatticeGeometry` for the `geometry` field annotation and `from_lattice` signature.
 
-Modify `level_structure(name: str)` so these names are valid:
+Implementation steps: swap import and annotations to `Register` (`geometry: Register | None`, `from_lattice(geometry: Register, ...)`). Keep the method name `from_lattice` — it describes construction from an atom-array geometry; only the class is renamed. No behavioral change.
 
-```text
-01
-1r
-01r
-ger
-analog_3
-rb87_7
-```
+## Module Plan: `src/ryd_gate/backends/tn_common/lattice_spec.py`
 
-Preset details:
+Current state: imports `make_square_lattice` to build reference geometries.
 
-```text
-01:
-  levels=("0", "1")
-  rydberg_levels=()
-  transitions=()
-  detuning_levels={}
-  initial_level="0"
-  interaction_kind="none"
-
-1r:
-  current compiler channel names unchanged: global_X, global_n
-  initial_level="1"
-  interaction_kind="ising_c6"
-
-01r:
-  current compiler channel names unchanged: drive_R, drive_hf, delta_R, delta_hf
-  initial_level="1"
-  interaction_kind="ising_c6"
-
-ger:
-  current compiler channel names unchanged: drive_420, H_1013, delta_e, delta_R
-  initial_level="g"
-  interaction_kind="ising_c6"
-
-analog_3:
-  same levels, transitions, detuning channels as ger
-  name="analog_3"
-  initial_level="g"
-  params={"param_set": "analog_3"}
-
-rb87_7:
-  current levels unchanged
-  initial_level="0"
-  interaction_kind="ising_c6"
-  params={"param_set": "our"}
-```
-
-Important migration rule:
-
-- `level_structure("analog_3")` becomes the official Stage 1 way to request the analog three-level preset.
-- The implementation may update internal examples/tests to use `level_structure="analog_3"` instead of `level_structure="ger", param_set="analog_3"`.
-- Stage 1 does not need to preserve `ger + param_set="analog_3"` as a public compatibility path.
+Implementation steps: import `Register` from `ryd_gate.lattice.geometry`; replace `make_square_lattice(lx, ly, s)` with `Register.rectangle(lx, ly, s)` (identical coordinates/order). No TN contract changes; no public compatibility factory.
 
 ## Module Plan: `src/ryd_gate/protocols/channels.py`
 
-Replace the constants-only channel module with a typed channel spec module.
+Current state: string constants only (`DRIVE_420`, `DRIVE_420_DAG`, `LIGHTSHIFT_ZERO`, `GLOBAL_X`, `GLOBAL_N`) plus the docstring describing the channel conventions.
 
-Stage 1 may keep string constants only when they are canonical compiler channel ids used by existing lowering code. They are not retained as a compatibility public API; they are implementation constants.
+Implementation steps:
 
-Add:
+1. Keep all constants — they are the canonical compiler channel ids used by lowering code; they are implementation constants, not product API.
+2. Add `ChannelSpec` frozen dataclass exactly as specified in docs/stage1_api.md:
 
-```python
-@dataclass(frozen=True)
-class ChannelSpec:
-    channel_id: str
-    kind: Literal["rydberg", "raman", "microwave", "dmm", "custom"]
-    transition: str
-    addressing: Literal["global", "local"]
-    amplitude_channels: Mapping[str, str] = field(default_factory=dict)
-    detuning_channels: Mapping[str, str] = field(default_factory=dict)
-    max_abs_amplitude_rad_per_us: float | None = None
-    max_abs_detuning_rad_per_us: float | None = None
-    min_duration_ns: int = 0
-    max_duration_ns: int | None = None
-    clock_period_ns: int = 1
-    max_targets: int | None = None
-    retarget_time_ns: int | None = None
-```
+   ```python
+   @dataclass(frozen=True)
+   class ChannelSpec:
+       channel_id: str
+       kind: Literal["rydberg", "raman", "microwave", "dmm", "custom"]
+       transition: str
+       addressing: Literal["global", "local"]
+       amplitude_channels: Mapping[str, str] = field(default_factory=dict)
+       detuning_channels: Mapping[str, str] = field(default_factory=dict)
+       max_abs_amplitude_rad_per_us: float | None = None
+       max_abs_detuning_rad_per_us: float | None = None
+       min_duration_ns: int = 0
+       max_duration_ns: int | None = None
+       clock_period_ns: int = 1
+       max_targets: int | None = None
+       retarget_time_ns: int | None = None
+   ```
 
-Validation in `__post_init__`:
+   with `__post_init__` validation (non-empty id, valid kind/addressing, `min_duration_ns >= 0`, `max_duration_ns is None or >= min`, `clock_period_ns > 0`, limits `None` or positive) and `to_dict`/`from_dict` (`"ryd-gate/channel/v1"`).
+3. No pulse compilation logic here. The `amplitude_channels`/`detuning_channels` maps are *data* consumed by Stage 2's sequence compiler.
 
-- `channel_id` non-empty.
-- `kind` one of the declared literal values.
-- `addressing` is `"global"` or `"local"`.
-- `min_duration_ns >= 0`.
-- `max_duration_ns` is `None` or `>= min_duration_ns`.
-- `clock_period_ns > 0`.
-- all max amplitude/detuning limits, if present, are positive.
+## Module Plan: `src/ryd_gate/devices.py` (new)
 
-Do not add pulse compilation logic here.
+Current state: no device concept; constraints are scattered (interaction defaults in `InteractionSpec`, physics presets in `rb87_params.py`, no geometry limits anywhere).
 
-Export `ChannelSpec` from:
+Implementation steps:
 
-```text
-src/ryd_gate/protocols/channels.py
-src/ryd_gate/__init__.py
-```
+1. Implement `DeviceSpec` frozen dataclass:
 
-## Module Plan: `src/ryd_gate/devices.py`
+   ```python
+   @dataclass(frozen=True)
+   class DeviceSpec:
+       name: str
+       dimensions: Literal[2, 3]
+       atom_species: str
+       allowed_level_structures: tuple[str, ...]
+       default_level_structure: str
+       min_atom_distance_um: float
+       max_atom_num: int | None = None
+       max_radial_distance_um: float | None = None
+       interaction_coeffs: Mapping[str, float] = field(default_factory=dict)
+       channels: Mapping[str, ChannelSpec] = field(default_factory=dict)
+       supports_slm_mask: bool = False
+       max_sequence_duration_ns: int | None = None
+       max_runs: int | None = None
+       metadata: Mapping[str, Any] = field(default_factory=dict)
+   ```
 
-Create this new top-level module. This mirrors Pulser's domain-module style more closely than `api/device.py`.
+   Field names use `*_level_structure*` (the repo's concept), not `*_atom_model*`.
+2. `DeviceSpec.virtual_rb87()` with the fixed values from docs/stage1_api.md and these channels (the compiler-channel maps are the Stage 2 lowering contract — names verified against `core/channel_lowering.py`):
 
-Implement:
+   ```text
+   rydberg_global:   kind="rydberg",  transition="1_r", addressing="global",
+                     amplitude_channels={"1r": "global_X", "01r": "drive_R"},
+                     detuning_channels={"1r": "global_n", "01r": "delta_R"}
+   rydberg_local:    kind="rydberg",  transition="1_r", addressing="local",
+                     amplitude_channels={"01r": "drive_R"},
+                     detuning_channels={"01r": "delta_R"}
+   hyperfine_global: kind="microwave", transition="0_1", addressing="global",
+                     amplitude_channels={"01r": "drive_hf"},
+                     detuning_channels={"01r": "delta_hf"}
+   ```
 
-```python
-@dataclass(frozen=True)
-class DeviceSpec:
-    name: str
-    dimensions: Literal[2, 3]
-    atom_species: str
-    allowed_level_structures: tuple[str, ...]
-    default_level_structure: str
-    min_atom_distance_um: float
-    max_atom_num: int | None = None
-    max_radial_distance_um: float | None = None
-    interaction_coeffs: Mapping[str, float] = field(default_factory=dict)
-    channels: Mapping[str, ChannelSpec] = field(default_factory=dict)
-    supports_slm_mask: bool = False
-    max_sequence_duration_ns: int | None = None
-    max_runs: int | None = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-```
+3. Validation methods returning `list[ValidationIssue]` with the exact error codes in docs/stage1_api.md:
+   - `validate_register(register)` — dimensions, atom count, pair distances (via `register.distance_pairs()`), radial extent;
+   - `validate_level_structure(spec_or_name)` — allowed-list membership, species match;
+   - `validate_pulse(pulse, channel_id)` — channel existence, then delegate the limit checks to the shared channel-limit helper (the same one `Pulse.validate` uses; implement the helper once, in `pulse.py` or `channels.py`, not twice).
+4. Helpers: `rydberg_blockade_radius_um(rabi_rad_per_us)` (formula and failure modes per docs/stage1_api.md) and `describe()` (name, dimensions, species, set constraints, one line per channel).
+5. `to_dict`/`from_dict` (`"ryd-gate/device/v1"`, nested channel dicts).
 
-Do not use field names `allowed_atom_models` or `default_atom_model` in Stage 1. The repo's existing concept is `LevelStructureSpec`, so the public device must use `allowed_level_structures`.
-
-### Constructor
-
-Implement:
-
-```python
-@classmethod
-def virtual_rb87(cls) -> "DeviceSpec": ...
-```
-
-Fixed values:
-
-```text
-name="virtual_rb87"
-dimensions=2
-atom_species="Rb87"
-allowed_level_structures=("01", "1r", "01r", "ger", "analog_3", "rb87_7")
-default_level_structure="01r"
-min_atom_distance_um=2.0
-max_atom_num=None
-max_radial_distance_um=None
-interaction_coeffs={"C6_rad_s_um6": DEFAULT_C6}
-supports_slm_mask=False
-max_sequence_duration_ns=None
-max_runs=None
-```
-
-Fixed channels:
-
-```text
-rydberg_global:
-  kind="rydberg"
-  transition="1_r"
-  addressing="global"
-  amplitude_channels={"1r": "global_X", "01r": "drive_R"}
-  detuning_channels={"1r": "global_n", "01r": "delta_R"}
-
-rydberg_local:
-  kind="rydberg"
-  transition="1_r"
-  addressing="local"
-  amplitude_channels={"01r": "drive_R"}
-  detuning_channels={"01r": "delta_R"}
-
-hyperfine_global:
-  kind="microwave"
-  transition="0_1"
-  addressing="global"
-  amplitude_channels={"01r": "drive_hf"}
-  detuning_channels={"01r": "delta_hf"}
-```
-
-### Validation Methods
-
-Implement:
-
-```python
-def validate_register(self, register: Register) -> list[ValidationIssue]: ...
-
-def validate_level_structure(self, spec: LevelStructureSpec | str) -> list[ValidationIssue]: ...
-
-def validate_pulse(self, pulse: "Pulse", channel_id: str) -> list[ValidationIssue]: ...
-```
-
-Rules:
-
-- `validate_register` checks:
-  - register dimensions equal device dimensions;
-  - atom count <= `max_atom_num` if max is not `None`;
-  - every pair distance >= `min_atom_distance_um`;
-  - every radial distance <= `max_radial_distance_um` if max is not `None`.
-- `validate_level_structure` checks:
-  - spec name is in `allowed_level_structures`;
-  - spec species equals `atom_species`.
-- `validate_pulse` checks:
-  - channel exists;
-  - pulse duration respects min/max duration;
-  - pulse duration is a multiple of `clock_period_ns`;
-  - amplitude values respect `max_abs_amplitude_rad_per_us` if set;
-  - detuning values respect `max_abs_detuning_rad_per_us` if set.
-- Validation methods return `ValidationIssue` objects; they do not raise.
-
-Export `DeviceSpec` from:
-
-```text
-src/ryd_gate/__init__.py
-```
-
-Do not create `src/ryd_gate/core/devices.py`.
+Must not live here: backend selection, job submission, sequence compilation, Hamiltonian construction, waveform code, coordinate storage. Do not create `src/ryd_gate/core/devices.py`.
 
 ## Module Plan: `src/ryd_gate/pulse.py`
 
-Refactor this module around product-level `Waveform` and `Pulse`.
+Current state (file is 75 lines): three continuous-time kernel helpers in seconds — `blackman_window(t, t_rise)`, `blackman_pulse(t, t_rise, t_gate)`, `blackman_pulse_sqrt(...)`. Imported by `protocols/gate_cz_to.py:57`, `protocols/gate_cz_ar.py:62`, legacy exact backends, and `tests/core/test_blackman.py`.
 
-The old public helper functions are not a compatibility requirement:
+Implementation steps:
 
-```python
-blackman_window
-blackman_pulse
-blackman_pulse_sqrt
-```
+1. **Keep** the three kernel helpers' names, signatures, and numerical behavior unchanged, and add one line to each docstring: *"Internal kernel helper (gate protocols / legacy backends) — not public API; no stability guarantee."* They remain importable by name as `ryd_gate.pulse.blackman_*` (consumers: `protocols/gate_cz_to.py:57`, `protocols/gate_cz_ar.py:62`, legacy exact backends); only the top-level `ryd_gate` re-exports are removed. `tests/core/test_blackman.py` continues to pass untouched.
+2. Add the product layer in the same module:
 
-The implementation may keep their numerical formulas as private helpers if useful, but Stage 1 public API is `Waveform` and `Pulse`.
+   ```python
+   WaveformKind = Literal["constant", "ramp", "blackman", "interpolated", "custom"]
 
-### Waveform
+   @dataclass(frozen=True)
+   class Waveform:
+       duration_ns: int
+       kind: WaveformKind
+       params: Mapping[str, Any] = field(default_factory=dict)
+       samples: tuple[float, ...] | None = None
+       unit: Literal["rad_per_us"] = "rad_per_us"
+   ```
 
-Add:
+   Constructors `constant`, `ramp`, `blackman(duration_ns, peak=None, area=None)` (exactly one; `peak = area / (0.42 * duration_us)` when area-form), `interpolated`, `custom(samples, dt_ns=1)`. Methods `value_at_ns` (clamped), `value_at_s` (`value_at_ns(t_s*1e9) * 1e6`), `sample(dt_ns)` / `integral_rad(dt_ns)` (both require `dt_ns` to divide `duration_ns`; trapezoid over µs), `first_value`, `last_value`, `to_dict`/`from_dict` (`"ryd-gate/waveform/v1"`). The blackman evaluation uses the same window expression as `blackman_window` with `t_rise = duration/2` — shared formula, not a call-wrapper (units differ: ns grid vs seconds).
+3. Add `Pulse`:
 
-```python
-WaveformKind = Literal["constant", "ramp", "blackman", "interpolated", "custom"]
-WaveformUnit = Literal["rad_per_us"]
+   ```python
+   @dataclass(frozen=True)
+   class Pulse:
+       amplitude: Waveform
+       detuning: Waveform
+       phase_rad: float = 0.0
+       post_phase_shift_rad: float = 0.0
+       metadata: Mapping[str, Any] = field(default_factory=dict)
+   ```
 
-@dataclass(frozen=True)
-class Waveform:
-    duration_ns: int
-    kind: WaveformKind
-    params: Mapping[str, Any] = field(default_factory=dict)
-    samples: tuple[float, ...] | None = None
-    unit: WaveformUnit = "rad_per_us"
-```
+   Constructors `constant(duration_ns, amplitude, detuning, phase_rad=0.0, post_phase_shift_rad=0.0)`, `constant_amplitude(amplitude: float, detuning: Waveform, ...)`, `constant_detuning(amplitude: Waveform, detuning: float, ...)`; property `duration_ns`; `validate(channel)` delegating to the shared channel-limit helper; `to_dict`/`from_dict` (`"ryd-gate/pulse/v1"`).
+4. Implement the shared channel-limit helper here (module-level, private): given `(pulse, channel: ChannelSpec)` return the `pulse.*`-coded issues. Both `Pulse.validate` and `DeviceSpec.validate_pulse` call it.
+5. Define `__all__ = ["Pulse", "Waveform"]` in `pulse.py` (soft closure): star-imports and IDE completion expose only the product API, while the `blackman_*` helpers remain importable by name for the kernel consumers listed in step 1.
 
-Constructors:
+Must not live here: sequence objects, backend compilers, system construction, device registry, noise.
 
-```python
-@classmethod
-def constant(cls, duration_ns: int, value: float) -> "Waveform": ...
+## Module Plan: `src/ryd_gate/core/__init__.py` and `src/ryd_gate/__init__.py`
 
-@classmethod
-def ramp(cls, duration_ns: int, start: float, stop: float) -> "Waveform": ...
+Current state: top-level `__init__.py` re-exports `blackman_pulse`, `blackman_pulse_sqrt`, `blackman_window` (line 69, `__all__` lines 125–127), the `make_*` factories, and shows `make_chain` in its docstring example (line 15).
 
-@classmethod
-def blackman(cls, duration_ns: int, peak: float) -> "Waveform": ...
+Implementation steps:
 
-@classmethod
-def interpolated(cls, duration_ns: int, times_ns, values) -> "Waveform": ...
-
-@classmethod
-def custom(cls, samples, dt_ns: int = 1) -> "Waveform": ...
-```
-
-Methods:
-
-```python
-def value_at_ns(self, t_ns: float) -> float: ...
-
-def value_at_s(self, t_s: float) -> float: ...
-
-def sample(self, dt_ns: int = 1) -> np.ndarray: ...
-
-def integral_rad(self, dt_ns: int = 1) -> float: ...
-
-def first_value(self) -> float: ...
-
-def last_value(self) -> float: ...
-```
-
-Rules:
-
-- `duration_ns` must be positive integer.
-- values are public-facing `rad/us`.
-- `value_at_ns` clamps into `[0, duration_ns]`.
-- `value_at_s(t_s)` returns `rad/s`, equal to `value_at_ns(t_s * 1e9) * 1e6`.
-- `sample(dt_ns)` returns samples at `0, dt_ns, ...` including `duration_ns`.
-- `integral_rad` integrates `rad/us` over microseconds.
-- no composite waveform in Stage 1.
-
-### Pulse
-
-Add:
-
-```python
-@dataclass(frozen=True)
-class Pulse:
-    amplitude: Waveform
-    detuning: Waveform
-    phase_rad: float = 0.0
-    post_phase_shift_rad: float = 0.0
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-```
-
-Constructor:
-
-```python
-@classmethod
-def constant(
-    cls,
-    duration_ns: int,
-    amplitude: float,
-    detuning: float,
-    phase_rad: float = 0.0,
-    post_phase_shift_rad: float = 0.0,
-) -> "Pulse": ...
-```
-
-Properties and methods:
-
-```python
-@property
-def duration_ns(self) -> int: ...
-
-def validate(self, channel: ChannelSpec) -> list[ValidationIssue]: ...
-```
-
-Rules:
-
-- amplitude and detuning durations must match.
-- phase values must be finite floats.
-- nonzero phase is stored but not compiled in Stage 1.
-- `Pulse.validate(channel)` checks only channel limits; no system or backend access.
-
-Export `Waveform` and `Pulse` from:
-
-```text
-src/ryd_gate/__init__.py
-```
-
-## Export Plan
-
-Modify `src/ryd_gate/lattice/__init__.py`:
-
-```python
-from .geometry import Register, RegisterLayout
-```
-
-Modify `src/ryd_gate/core/__init__.py`:
-
-```python
-from ryd_gate.core.validation import ValidationIssue, raise_for_errors
-```
-
-Modify `src/ryd_gate/__init__.py`:
-
-Add imports:
-
-```python
-from .devices import DeviceSpec
-from .lattice import Register, RegisterLayout
-from .protocols.channels import ChannelSpec
-from .pulse import Pulse, Waveform
-from .core.validation import ValidationIssue, raise_for_errors
-```
-
-Update `__all__` accordingly.
-
-Do not add lazy imports for these Stage 1 classes.
+1. `core/__init__.py`: add exports `ValidationIssue`, `raise_for_errors` (from `core.validation`), keep `LevelStructureSpec`, `level_structure`, `InteractionSpec` exported.
+2. Top-level `__init__.py`:
+   - add: `Register`, `RegisterLayout`, `DeviceSpec`, `ChannelSpec`, `ValidationIssue`, `raise_for_errors`, `Waveform`, `Pulse` (plus keep `LevelStructureSpec`, `level_structure`, `InteractionSpec`, `RydbergSystem`, protocols, `simulate`, …);
+   - remove: `make_chain`, `make_square_lattice`, `make_triangular_lattice`, `make_geometry_from_coords`, `LatticeGeometry`, `blackman_window`, `blackman_pulse`, `blackman_pulse_sqrt`;
+   - update `__all__` and the module docstring example (`make_chain(4)` → `Register.chain(4)`);
+   - plain imports, no lazy-import machinery for Stage 1 names.
 
 ## Tests
 
 ### `tests/lattice/test_register.py`
 
-Required tests:
-
-1. `Register.chain(3, 4.0)` produces ids `("q0", "q1", "q2")` and coordinates `((0.0, 0.0), (4.0, 0.0), (8.0, 0.0))`.
-2. `Register.rectangle(2, 3, 5.0)` uses row-major id order.
-3. duplicate ids raise `ValueError`.
-4. mixed coordinate dimensions raise `ValueError`.
-5. `distances_um()` is symmetric with zero diagonal.
-6. `distance_pairs(cutoff_um=...)` filters pairs.
-7. `blockade_edges(radius_um=...)` returns only upper-triangular pairs.
-8. `Register.square(...)` returns a `Register`.
-9. `from ryd_gate.lattice import LatticeGeometry` is no longer a valid public import after Stage 1.
-10. `from ryd_gate.lattice import make_square_lattice` is no longer a valid public import after Stage 1.
+1. `Register.chain(3, 4.0)`: ids `("q0","q1","q2")`, coords `((0,0),(4,0),(8,0))`, `sublattice == [1,-1,1]`.
+2. `Register.rectangle(2, 3, 5.0)`: row-major order, coords per docs, checkerboard sublattice `[1,-1,1,-1,1,-1]`.
+3. `Register.square(2, 5.0)` equals `Register.rectangle(2, 2, 5.0)` field-wise.
+4. `Register.triangular(2, 3, 4.0)`: odd-row x-offset `2.0`, row pitch `4*sqrt(3)/2`, zero sublattice, row-major ids.
+5. `Register.from_coordinates`: id generation, `center=True/False` behavior, `sublattice=` passthrough, spacing inference.
+6. duplicate ids raise `ValueError`; mixed coordinate dimensions raise `ValueError`; omitted ids auto-generate `q0..`.
+7. `coords_array` returns a copy; `coords_um` returns tuple-of-tuples.
+8. `index`/`id_at` round-trip and raise `KeyError`/`IndexError`.
+9. `distances_um` symmetric, zero diagonal; `distance_pairs(cutoff_um=...)` filters; `blockade_edges` upper-triangular within radius.
+10. `draw(show=False)` returns a matplotlib `Figure` (Agg backend); 3D register draw raises `NotImplementedError`.
+11. `validate(device)` returns exactly `device.validate_register(register)` (stub device).
+12. `from ryd_gate.lattice import LatticeGeometry` raises `ImportError`; same for all four `make_*` names.
+13. every classmethod constructor returns `layout is None`; `dataclasses.replace(reg, layout=...)` attaches a layout and re-runs `__post_init__` validation.
 
 ### `tests/core/test_level_structures_product_api.py`
 
-Required tests:
-
-1. `level_structure("01")` exists and has levels `("0", "1")`.
-2. `level_structure("1r").initial_level_or_default() == "1"`.
-3. `level_structure("01r").initial_level_or_default() == "1"`.
-4. `level_structure("analog_3").name == "analog_3"`.
-5. `level_structure("analog_3").physical_kwargs()["param_set"] == "analog_3"`.
-6. `level_structure("rb87_7").physical_kwargs()["param_set"] == "our"`.
-7. `supports_backend("mps")` is true only for `1r` and `01r`.
-8. `supports_backend("stabilizer")` is true only for `01`.
-9. `level_structure("ger")` remains a distinct explicit ladder preset with channels `drive_420`, `H_1013`, `delta_e`, and `delta_R`.
+1. `level_structure("01")` has levels `("0","1")`, `initial_level == "0"`, `interaction_kind == "none"`.
+2. `initial_level_or_default()`: `"1"` for `1r`/`01r`, `"g"` for `ger`/`analog_3`, `"0"` for `rb87_7`.
+3. `level_structure("analog_3").physical_kwargs()["param_set"] == "analog_3"`; `rb87_7` → `"our"`; `1r`/`01r`/`ger`/`01` → `{}`.
+4. `supports_backend` truth table exactly as specified (including unknown backend → `False`).
+5. `ger` keeps channels `drive_420`, `H_1013`, `delta_e`, `delta_R`.
+6. `validate()` flags duplicate levels, unknown initial level, Rydberg level not in levels.
+7. `RydbergSystem.from_lattice(Register.chain(2), level_structure("analog_3"))` builds and matches the old `ger + param_set="analog_3"` system (same basis, same block names).
+8. semantic split pinned at product level: the `analog_3` system compiles with the physical analog blocks (static `H_1013` term present), while a bare-`ger` system with the same protocol does not (and the kernel test `test_ger_transition_blocks_are_not_compiled_as_static_dense_terms` stays green unmodified).
 
 ### `tests/core/test_validation.py`
 
-Required tests:
-
-1. warning-only issues do not raise.
-2. one error issue raises `ValueError`.
-3. multiple error issues appear on separate lines.
+1. valid warning/error issues construct; invalid severity / empty code / non-tuple path raise.
+2. warning-only list does not raise in `raise_for_errors`; one error raises `ValueError`; multiple errors appear on separate lines with code and message.
 
 ### `tests/core/test_devices.py`
 
-Required tests:
-
-1. `DeviceSpec.virtual_rb87()` contains `rydberg_global`.
-2. register with distance below `2.0 um` returns error code `register.min_distance`.
-3. unsupported level structure returns error code `level_structure.unsupported`.
-4. pulse exceeding amplitude limit returns an error if a limit is set manually.
-5. pulse duration not divisible by `clock_period_ns` returns error code `pulse.clock_period`.
+1. `virtual_rb87()` exposes `rydberg_global`, `rydberg_local`, `hyperfine_global` with the specified kinds/transitions/maps.
+2. register below 2.0 µm spacing → `register.min_distance`; 3D register → `register.dimensions`; `max_atom_num`/`max_radial_distance_um` checks fire when configured on a custom `DeviceSpec`.
+3. allowed level structures pass; unknown name → `level_structure.unsupported`; species mismatch → `level_structure.species`.
+4. pulse validation codes: `channel.unknown`, `pulse.min_duration`, `pulse.max_duration`, `pulse.clock_period`, `pulse.amplitude_limit`, `pulse.detuning_limit` (limits set on a custom channel).
+5. `rydberg_blockade_radius_um`: formula value for a known C6/Ω pair; `ValueError` on missing C6 key or nonpositive Ω.
+6. `describe()` contains the device name and every channel id.
+7. `Pulse.validate(channel)` and `DeviceSpec.validate_pulse(pulse, id)` return identical issue codes for the same violation (shared helper, not duplicated rules).
 
 ### `tests/core/test_pulse_api.py`
 
-Required tests:
+1. `Waveform.constant` samples all equal; `Waveform.ramp` endpoints correct.
+2. `Waveform.blackman(T, peak=p)`: endpoints exactly 0, center exactly `p`, matches the window formula on a sample grid.
+3. `Waveform.blackman(T, area=a)`: `abs(integral_rad(1) - a) <= 1e-3 * abs(a)`; negative area flips sign; both/neither of peak/area raise.
+4. `Waveform.interpolated` piecewise-linear values; invalid grids raise.
+5. `Waveform.custom` duration `(len-1)*dt_ns`; linear interpolation between samples.
+6. `value_at_ns` clamps; `value_at_s` equals `value_at_ns(t*1e9)*1e6`.
+7. `sample`/`integral_rad` raise when `dt_ns` does not divide `duration_ns`.
+8. `Pulse.constant` builds matching constant waveforms; `constant_amplitude`/`constant_detuning` match the other waveform's duration; mismatched durations raise; non-finite phase raises.
+9. kernel helpers still importable from `ryd_gate.pulse` (`blackman_window` et al.) and still pass their existing numeric checks (covered by untouched `tests/core/test_blackman.py`).
+10. `from ryd_gate import blackman_pulse` raises `ImportError`.
+11. `set(ryd_gate.pulse.__all__) == {"Pulse", "Waveform"}`.
+12. `from ryd_gate.pulse import *` (executed in a fresh namespace) binds `Waveform` and `Pulse` but no `blackman_*` name.
 
-1. `Waveform.blackman` reproduces the intended Blackman envelope shape through the new API.
-2. `Waveform.constant` samples all equal value.
-3. `Waveform.ramp` starts and ends at requested values.
-4. `Waveform.value_at_s` converts `rad/us` to `rad/s`.
-5. `Waveform.custom` respects `dt_ns`.
-6. invalid waveform duration raises.
-7. `Pulse.constant` creates matching amplitude/detuning durations.
-8. mismatched waveform durations raise.
-9. finite nonzero phase is stored.
-10. `Pulse.validate(channel)` returns no errors for an unconstrained virtual channel.
-11. `from ryd_gate import blackman_pulse` is no longer a valid public import after Stage 1.
+### `tests/core/test_serialization_roundtrip.py`
 
-## Acceptance Command
+1. For each of `RegisterLayout`, `Register` (one with `layout=None` and one with an explicitly attached `RegisterLayout`), `LevelStructureSpec` (one preset + one custom), `ChannelSpec`, `DeviceSpec.virtual_rb87()`, all five `Waveform` kinds, and a `Pulse`: `json.dumps(obj.to_dict())` succeeds and `from_dict(to_dict())` round-trips (`==` for scalar/tuple-field objects; field-wise for `Register`, including the restored nested layout).
+2. every `to_dict()` carries the correct `"schema"` tag.
+3. `from_dict` raises `ValueError` on a wrong tag and on an invalid payload (e.g. duplicate ids smuggled into a register dict).
+4. non-JSON-compatible metadata raises `ValueError` in `to_dict()`.
 
-Run exactly:
+## Acceptance
+
+Run, in order, all green:
 
 ```bash
-pytest tests/lattice/test_register.py tests/core/test_level_structures_product_api.py tests/core/test_validation.py tests/core/test_devices.py tests/core/test_pulse_api.py
+uv run pytest tests/lattice/test_register.py tests/core/test_level_structures_product_api.py \
+  tests/core/test_validation.py tests/core/test_devices.py tests/core/test_pulse_api.py \
+  tests/core/test_serialization_roundtrip.py -q
+uv run pytest -m "not slow" -q
 ```
 
-Stage 1 is complete only if:
+Stage 1 is complete only if additionally:
 
-1. the command passes;
-2. no `src/ryd_gate/api/` directory exists;
-3. no forbidden file changed;
-4. new imports from `ryd_gate`, `ryd_gate.core`, `ryd_gate.lattice`, `ryd_gate.protocols`, and `ryd_gate.pulse` work;
-5. `LatticeGeometry` is not exported as a public class from `ryd_gate` or `ryd_gate.lattice`;
-6. `make_chain`, `make_square_lattice`, `make_triangular_lattice`, and `make_geometry_from_coords` are not exported as public functions from `ryd_gate` or `ryd_gate.lattice`;
-7. `blackman_window`, `blackman_pulse`, and `blackman_pulse_sqrt` are not exported from top-level `ryd_gate`;
-8. all internal call sites touched by Stage 1 use `Register`, not `LatticeGeometry`.
+1. no `src/ryd_gate/api/` directory exists;
+2. no forbidden file changed;
+3. the import contract in docs/stage1_api.md holds (top-level and domain imports work; all eight removed imports fail);
+4. `python -c "import ryd_gate"` triggers no backend/matplotlib import;
+5. every internal call site uses `Register` / `Register.*` classmethods — `grep -rn "LatticeGeometry\|make_square_lattice\|make_chain\|make_triangular_lattice\|make_geometry_from_coords" src tests app examples scripts --include="*.py"` returns nothing;
+6. `examples/demo_local_addressing.py --help` and `scripts/bench_quench_check.py --help` (or an equivalent smoke invocation) still run.
 
 ## Non-Goals for Stage 1
 
-Stage 1 must not attempt to decide the final shape of `Sequence`, `SimulationResult`, or backend-native state handles. Those are later-stage integration problems. Stage 1 only ensures that the foundational public nouns live in the correct existing domain modules.
+Stage 1 must not implement `Sequence`, `simulate_sequence`, results/state handles, `NoiseModel`, sequence drawing, Pulser interop, JSON Schema files, or any backend contract change. Stage 1 only ensures the foundational public nouns are the real kernel objects, validated, drawable, and serializable.
