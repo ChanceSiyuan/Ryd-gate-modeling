@@ -13,6 +13,13 @@ if TYPE_CHECKING:
     from ryd_gate.ir import HamiltonianIR
 
 
+def _as_dense(operator) -> np.ndarray:
+    """Densify an IR operator; ``np.asarray`` alone wraps scipy sparse in an object array."""
+    if hasattr(operator, "toarray"):
+        return np.asarray(operator.toarray())
+    return np.asarray(operator)
+
+
 class DenseODEBackend(SolverBackend):
     """Dense ODE backend using scipy DOP853."""
 
@@ -31,13 +38,13 @@ class DenseODEBackend(SolverBackend):
         H_static = np.zeros((ir.dim, ir.dim), dtype=np.complex128)
         for term in ir.static_terms:
             coeff = term.coefficient(0) if callable(term.coefficient) else term.coefficient
-            H_static += coeff * np.asarray(term.operator)
+            H_static += coeff * _as_dense(term.operator)
 
         # Pre-bind drive terms once: (dense operator, coefficient, op_dag), so the
         # rhs (called many times by solve_ivp) never re-densifies or re-transposes.
         drive = []
         for term in ir.drive_terms:
-            op = np.asarray(term.operator)
+            op = _as_dense(term.operator)
             op_dag = op.conj().T if term.add_hermitian_conjugate else None
             drive.append((op, term.coefficient, op_dag))
 

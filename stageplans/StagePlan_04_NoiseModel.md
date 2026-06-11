@@ -80,8 +80,18 @@ Modify:
 src/ryd_gate/__init__.py                         (top-level exports)
 src/ryd_gate/protocols/sequence_protocol.py      (optional: pass decay physical kwargs when compiling sequences)
 src/ryd_gate/analysis/local_addressing.py        (optional: replace manual runner setup with NoiseModel helper)
+src/ryd_gate/backends/exact/dense_ode.py         (bug fix only — see note below)
 stageplans/README.md                             (status/table only, after implementation)
 ```
+
+*Implementation note (2026-06-11):* the runner-identity test exposed a
+pre-existing kernel bug: ``DenseODEBackend`` used ``np.asarray`` on IR
+operators, which wraps scipy sparse matrices in a 0-d object array instead of
+densifying them. Every ``MonteCarloRunner`` noise perturbation term is sparse,
+so ``run_gate_fidelity`` with the default backend crashed; the notebook never
+caught it because its MC cells default to cached data. Stage 4 adds the
+one-function densification fix in ``dense_ode.py`` (no solver algorithm
+change).
 
 Do not modify:
 
