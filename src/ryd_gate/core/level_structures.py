@@ -2,14 +2,15 @@
 
 Defines the small dataclasses that describe a site's local energy levels and
 pairwise interactions, plus the built-in ``level_structure`` presets
-(``01`` / ``1r`` / ``01r`` / ``ger`` / ``analog_3`` / ``rb87_7``).
+(``01`` / ``1r`` / ``01r`` / ``analog_3`` / ``rb87_7``).
 
 ``LevelStructureSpec`` is both the compiler-facing level spec and the
 user-facing atom model (there is no separate ``AtomModel`` class). Preset
-*names* encode Hamiltonian construction semantics — ``ger`` is the symbolic
-protocol-driven ladder while ``analog_3`` mounts the physical Rb87 analog
-blocks — whereas ``param_set`` tags (``rb87_7``: ``our``/``lukin``) only
-switch numerical sets within identical semantics.
+*names* encode Hamiltonian construction semantics — ``analog_3`` mounts the
+physical Rb87 analog blocks — whereas ``param_set`` tags (``rb87_7``:
+``our``/``lukin``) only switch numerical sets within identical semantics.
+Fully custom (symbolic) models are hand-built ``LevelStructureSpec``
+instances passed straight to ``RydbergSystem.from_lattice``.
 
 Also hosts the shared lowering helpers for protocol channels: the exact
 sparse compiler and TN backends both consume protocol coefficients, but they
@@ -39,7 +40,7 @@ _INTERACTION_KINDS = ("none", "ising_c6", "xy_c3", "custom")
 # Stage 1 backend support matrix (preset name -> capable backends).
 _TN_CAPABLE = frozenset({"1r", "01r"})
 _BACKEND_SUPPORT = {
-    "exact": frozenset({"01", "1r", "01r", "ger", "analog_3", "rb87_7"}),
+    "exact": frozenset({"01", "1r", "01r", "analog_3", "rb87_7"}),
     "mps": _TN_CAPABLE,
     "gputn": _TN_CAPABLE,
     "peps": _TN_CAPABLE,
@@ -230,20 +231,9 @@ def level_structure(name: str) -> LevelStructureSpec:
             detuning_levels={"delta_R": "r", "delta_hf": "1"},
             initial_level="1",
         ),
-        "ger": LevelStructureSpec(
-            name="ger",
-            levels=("g", "e", "r"),
-            rydberg_levels=("r",),
-            transitions=(
-                TransitionSpec("420", "g", "e", "drive_420"),
-                TransitionSpec("1013", "e", "r", "H_1013"),
-            ),
-            detuning_levels={"delta_e": "e", "delta_R": "r"},
-            initial_level="g",
-        ),
-        # Physical Rb87 ladder: same topology/channels as `ger`, different
-        # Hamiltonian construction (analog blocks with static H_1013). A
-        # separate *name*, not a param_set tag — see stageplans/README D11.
+        # Physical Rb87 three-level ladder: analog blocks with static H_1013.
+        # The *name* mounts the physics (stageplans/README D11/D13); symbolic
+        # three-level models are hand-built LevelStructureSpec instances.
         "analog_3": LevelStructureSpec(
             name="analog_3",
             levels=("g", "e", "r"),

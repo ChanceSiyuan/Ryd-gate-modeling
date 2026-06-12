@@ -145,7 +145,6 @@ class YASTNPEPSBackend:
                 "accumulated_truncation_error": accumulated_truncation_error,
                 "max_truncation_error": max(truncation_error, default=0.0),
                 "obs": obs_data,
-                "state_handle_kind": "unsupported",
             },
         )
         if recorded_times:
@@ -261,7 +260,6 @@ class YASTNPEPSBackend:
                 "energy": float(energy),
                 "max_truncation_error": max(truncation_error, default=0.0),
                 "obs": measured,
-                "state_handle_kind": "unsupported",
             },
         )
 

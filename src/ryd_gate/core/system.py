@@ -1,8 +1,9 @@
 """Universal Rydberg system model and its lattice construction.
 
 A :class:`RydbergSystem` is built from three things: a lattice geometry,
-a local energy-level structure (``1r`` / ``01r`` / ``ger`` / ``rb87_7``;
-``analog_3`` is a physical ``ger`` preset), and a pulse protocol.
+a local energy-level structure (``1r`` / ``01r`` / ``analog_3`` /
+``rb87_7``, or a hand-built :class:`LevelStructureSpec`), and a pulse
+protocol.
 The class owns symbolic Hamiltonian blocks, observables, geometry metadata,
 and the bound protocol. Backend-specific compilers materialize those symbolic
 blocks into matrices, MPOs, or other solver inputs only when needed.
@@ -326,9 +327,9 @@ def _interaction_pairs(geometry: Register, interaction: InteractionSpec) -> tupl
 
 
 def _physical_model_for(level_name: str, param_set: str | None) -> str | None:
-    # Preset *names* carry Hamiltonian semantics (stageplans/README D11):
-    # bare `ger` is always symbolic; physical analog-3 construction is the
-    # `analog_3` preset only.
+    # Preset *names* carry Hamiltonian semantics (stageplans/README D11/D13):
+    # physical analog-3 construction is the `analog_3` preset only; custom
+    # LevelStructureSpec instances always build symbolically.
     if level_name == "analog_3":
         return "analog_3"
     if level_name == "rb87_7" and param_set in {"our", "lukin"}:

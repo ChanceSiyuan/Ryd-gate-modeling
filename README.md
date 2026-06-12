@@ -4,17 +4,19 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Rydberg-atom simulation toolkit for neutral-atom quantum computing, with two
-control surfaces over one exact + tensor-network kernel:
+Rydberg neutral-atom many-body simulator: TFIM quenches, lattice dynamics,
+and microscopic gate physics on one exact + tensor-network kernel.
+Continuous-time pulse **protocols** are the single control surface — a
+protocol bound to a `RydbergSystem` lowers to a unified Hamiltonian IR and
+runs on any backend:
 
-- a **Pulser-style Sequence API** — device-validated registers, channels,
-  waveforms (integer ns, rad/µs), serializable to frozen
-  `ryd-gate/<kind>/v1` payloads, with a Pulser abstract-repr interop bridge;
-- a **gate/protocol API** — the flagship: microscopic ⁸⁷Rb CZ gate modeling
-  (7-level two-photon structure, blockade, spontaneous decay, AC Stark
-  shifts), time-optimal / amplitude-robust / double-ARP protocols, Nielsen
-  fidelities, and per-channel error budgets — none of which has a Pulser
-  equivalent.
+- **many-body / TFIM line** — 2D quenches, annealing, critical behavior on
+  `1r`/`01r` lattices, with exact state-vector, TeNPy MPS (DMRG/TDVP),
+  YASTN 2D PEPS, and cuTensorNet GPU backends;
+- **gate line** — microscopic ⁸⁷Rb CZ gate modeling (7-level two-photon
+  structure, blockade, spontaneous decay, AC Stark shifts), time-optimal /
+  amplitude-robust / double-ARP protocols, Nielsen fidelities, and
+  per-channel error budgets.
 
 ## Installation
 
@@ -24,24 +26,25 @@ uv pip install -e ".[tn]"         # + TeNPy MPS backend (DMRG/TDVP)
 uv pip install -e ".[dev]"        # + test/lint/type tooling
 ```
 
-## Quickstart 1 — run a pulse sequence
+## Quickstart 1 — TFIM quench on a Rydberg lattice
 
 ```python
 import numpy as np
-from ryd_gate import DeviceSpec, Pulse, Register, Sequence, Waveform, simulate_sequence
+from ryd_gate import Register, RydbergSystem, TFIMQuenchProtocol, simulate
 
-seq = Sequence(Register.chain(1, 20.0), DeviceSpec.virtual_rb87(), "1r")
-seq.declare_channel("ryd", "rydberg_global")
-seq.add(Pulse.constant_detuning(Waveform.blackman(1000, area=np.pi), 0.0), "ryd")
-
-result = simulate_sequence(seq)
-assert result.populations("r")[0] > 0.999          # pi pulse: |1> -> |r>
-print(result.sample(1000, basis="rydberg", seed=1))
+protocol = TFIMQuenchProtocol(hx=2 * np.pi * 1e6, t_gate=0.5e-6)
+system = RydbergSystem.from_lattice(
+    Register.square(2, spacing_um=9.0), "1r", protocol=protocol,
+)
+result = simulate(system, [], psi0="all_1", backend="exact")
+n_r = system.expectation("sum_nr", result.psi_final)
+assert 0.0 < n_r < system.N                        # quench excites Rydberg population
+print(f"<n_r> after the quench: {n_r:.3f}")
 ```
 
-The same sequence runs on the MPS backend
-(`simulate_sequence(seq, backend="mps")`) with backend-native result handles
-— see the [capability matrix](docs/capability_matrix.md).
+The same system runs on the tensor-network backends
+(`simulate(system, [], backend="mps")`, `"peps"`, `"gputn"`) — see the
+[capability matrix](docs/capability_matrix.md).
 
 ## Quickstart 2 — CZ gate report
 
@@ -63,16 +66,15 @@ print(report.fidelity, report.phase_error_rad)
 
 ## Documentation
 
-The Sphinx site under `docs/` (build with
-`uv run sphinx-build -b html docs docs/_build/html` after
-`uv sync --extra docs`):
+The Quarto site under `docs/` (after `uv sync --extra docs`, build with
+`cd docs && uv run quartodoc build && quarto render`; output lands in
+`docs/_build/html`):
 
 [Getting Started](docs/getting_started.md) ·
 [Fundamentals (units/conventions)](docs/fundamentals.md) ·
-[Sequences](docs/how_to_sequences.md) ·
+[Hamiltonians & notation](docs/hamiltonians.qmd) ·
 [NoiseModel](docs/how_to_noise.md) ·
 [Gate reports](docs/how_to_gates.md) ·
-[Serialization & Pulser interop](docs/how_to_interop.md) ·
 [Capability matrix](docs/capability_matrix.md)
 
 Runnable demos live in [`examples/`](examples/README.md); research notebooks
@@ -85,9 +87,8 @@ in `scripts/notebooks/` (execute the gated set with
 |---|---|
 | *(base)* | numpy, scipy, qutip, matplotlib, ARC (exact backend) |
 | `dev` | pytest, pytest-cov, ruff, mypy, nbconvert/nbclient/ipykernel |
-| `docs` | sphinx, sphinx-rtd-theme, myst-parser |
+| `docs` | quartodoc + griffe (API reference; site built with Quarto) |
 | `schema` | jsonschema (frozen-payload validation) |
-| `interop` | jsonschema (Pulser abstract-repr bridge checks) |
 | `tn` | physics-tenpy (MPS DMRG/TDVP backend) |
 | `tn-2d` | physics-tenpy, yastn, cotengra, autoray (2D PEPS) |
 | `gputn-cu12` | cuQuantum / cuPy stack (GPU tensor networks, sm_70+) |
@@ -96,20 +97,21 @@ in `scripts/notebooks/` (execute the gated set with
 
 ```
 src/ryd_gate/
-   lattice/        Register, RegisterLayout, plotting
-   pulse.py        Waveform / Pulse (product) + kernel Blackman helpers
-   devices.py      DeviceSpec (hardware constraints as data)
-   sequence.py     Sequence -> SequenceProtocol -> kernel
-   results.py      SimulationResult + capability-aware state handles
+   core/           RydbergSystem, level structures, operators, serialization
+   protocols/      continuous-time pulse protocols (TFIM quench/anneal,
+                   sweeps, digital-analog, CZ gate protocols)
+   backends/       exact state-vector + MPS / PEPS / gputn engines
+   ir.py           unified Hamiltonian IR + EvolutionResult
+   lattice.py      Register, RegisterLayout, plotting
+   simulate.py     simulate(system, x, ...) backend dispatcher
    noise.py        NoiseModel -> exact Monte Carlo / decay flags
-   gates/          CZ gate library: protocols, metrics, CZGateReport
-   observables.py  ObservableConfig streaming schedules
-   interop/        Pulser abstract-repr subset bridge
+   gates.py        CZ gate library: CZGateReport, cz_gate_report
+   analysis/       gate metrics, lattice observables, domain analysis
+   physics.py      AC Stark shifts, ARC decay branching
    schemas/        frozen ryd-gate/<kind>/v1 JSON Schemas
-   core/, ir/, protocols/, backends/, analysis/   the kernel
 tests/             pytest suite (fast suite: `uv run pytest -q`)
 scripts/           optimization workflows + research notebooks
-docs/              Sphinx site + generated capability matrix
+docs/              Quarto site + generated capability matrix
 ```
 
 ## Development

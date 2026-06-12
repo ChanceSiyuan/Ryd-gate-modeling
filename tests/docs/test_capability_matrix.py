@@ -41,10 +41,6 @@ class TestMatrixCoverage:
         for backend in generator.BACKENDS:
             assert backend in matrix_text
 
-    def test_handle_capability_names_from_stage3(self, matrix_text):
-        for cap in ("expectation", "sampling", "statevector", "statevector_materialization"):
-            assert f"`{cap}`" in matrix_text
-
 
 class TestMatrixDerivation:
     def test_noise_rows_come_from_validate_for(self, generator, monkeypatch):

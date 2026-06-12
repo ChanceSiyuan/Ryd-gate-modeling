@@ -2,18 +2,11 @@
 
 import sys
 
-import numpy as np
 import pytest
 
 from ryd_gate import (
-    DeviceSpec,
     NoiseModel,
-    ObservableConfig,
-    Pulse,
-    Register,
     RegisterLayout,
-    Sequence,
-    Waveform,
     level_structure,
 )
 from ryd_gate.core.serialization import (
@@ -36,15 +29,6 @@ def _layout():
     )
 
 
-def _sequence():
-    seq = Sequence(Register.chain(2, spacing_um=6.0), DeviceSpec.virtual_rb87(), "1r")
-    seq.declare_channel("ryd", "rydberg_global")
-    seq.add(Pulse.constant_detuning(Waveform.blackman(1000, area=np.pi), 0.0), "ryd")
-    seq.delay(100, "ryd")
-    seq.measure("rydberg")
-    return seq
-
-
 def _report():
     return CZGateReport(
         protocol="TOProtocol",
@@ -62,15 +46,9 @@ PAYLOADS = {
     "register": lambda: _layout().define_register([0, 3], ["a", "b"]).to_dict(),
     "register-layout": lambda: _layout().to_dict(),
     "level-structure": lambda: level_structure("01r").to_dict(),
-    "channel": lambda: DeviceSpec.virtual_rb87().channels["rydberg_global"].to_dict(),
-    "device": lambda: DeviceSpec.virtual_rb87().to_dict(),
-    "waveform": lambda: Waveform.interpolated(100, [0.0, 40.0, 100.0], [0.0, 1.5, 0.0]).to_dict(),
-    "pulse": lambda: Pulse.constant(100, 1.0, -2.0).to_dict(),
-    "sequence": lambda: _sequence().to_dict(),
     "noise": lambda: NoiseModel(runs=8, detuning_sigma_rad_per_us=0.02,
                                 position_sigma_um=(0.07, 0.07, 0.13)).to_dict(),
     "cz-gate-report": lambda: _report().to_dict(),
-    "observable-config": lambda: ObservableConfig(("sum_nr",), times_ns=(0, 500, 1000)).to_dict(),
 }
 
 

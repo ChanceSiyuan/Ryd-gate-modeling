@@ -1,0 +1,190 @@
+project:
+  type: website
+  output-dir: _build/html
+
+website:
+  title: "ryd-gate"
+  navbar:
+    left:
+      - href: index.qmd
+        text: Home
+      - href: getting_started.md
+        text: Getting Started
+      - href: hamiltonians.qmd
+        text: Hamiltonians
+      - href: reference/index.qmd
+        text: API Reference
+  sidebar:
+    style: docked
+    contents:
+      - index.qmd
+      - section: Guides
+        contents:
+          - getting_started.md
+          - fundamentals.md
+          - hamiltonians.qmd
+          - how_to_noise.md
+          - how_to_gates.md
+          - capability_matrix.md
+      - section: Reference
+        contents:
+          - reference/index.qmd
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    html-math-method: mathjax
+
+quartodoc:
+  package: ryd_gate
+  dir: reference
+  parser: numpy
+  title: API Reference
+  sections:
+    - title: Simulation entry point
+      desc: Backend dispatcher over the exact and tensor-network engines.
+      contents:
+        - simulate.simulate
+    - title: Systems and level structures
+      desc: The universal Rydberg system and the atom models it is built from.
+      contents:
+        - core.system.RydbergSystem
+        - core.level_structures.LevelStructureSpec
+        - core.level_structures.TransitionSpec
+        - core.level_structures.InteractionSpec
+        - core.level_structures.level_structure
+    - title: Registers and layouts
+      desc: Atom geometry (positions, sublattice signs) and plotting.
+      contents:
+        - lattice.Register
+        - lattice.RegisterLayout
+        - lattice.is_in_domain
+        - lattice.plot_spatial_rydberg
+        - lattice.plot_population_evolution
+    - title: Protocols
+      desc: >
+        Continuous-time pulse protocols — the single control surface.
+        All protocols implement `n_params`, `unpack_params(x, system)`, and
+        `get_drive_coefficients(t, params)`.
+      contents:
+        - protocols.base.Protocol
+        - protocols.lattice_dynamics.TFIMQuenchProtocol
+        - protocols.lattice_dynamics.TFIMAnnealProtocol
+        - protocols.lattice_dynamics.TFIMRydbergControls
+        - protocols.lattice_dynamics.tfim_to_rydberg_controls
+        - protocols.lattice_dynamics.interaction_longitudinal_shifts
+        - protocols.sweep.SweepProtocol
+        - protocols.digital_analog.DigitalAnalogProtocol
+        - protocols.gate_cz.TOProtocol
+        - protocols.gate_cz.ARProtocol
+        - protocols.gate_cz.DoubleARPProtocol
+    - title: Hamiltonian IR and results
+      desc: The unified intermediate representation every backend consumes.
+      contents:
+        - ir.HamiltonianTerm
+        - ir.HamiltonianIR
+        - ir.compile_hamiltonian_ir
+        - ir.EvolutionResult
+    - title: "Backends: exact state-vector"
+      contents:
+        - backends.exact.simulate.simulate
+        - backends.exact.simulate.ExactOptions
+        - backends.exact.compiler.SolverBackend
+        - backends.exact.compiler.ExactSparseCompiler
+        - backends.exact.compiler.compile_expm_ir
+        - backends.exact.sparse_expm.SparseExpmBackend
+        - backends.exact.dense_ode.DenseODEBackend
+        - backends.exact.monte_carlo_runner.MonteCarloRunner
+        - backends.exact.monte_carlo_runner.MonteCarloResult
+    - title: "Backends: tensor networks"
+      contents:
+        - backends.tn_common.simulate_tn
+        - backends.tn_common.simulate_tn_ir
+        - backends.tn_common.TNLatticeSpec
+        - backends.tn_common.create_tn_lattice_spec
+        - backends.tn_common.TNCompiler
+        - backends.tn_common.TNEvolutionIR
+        - backends.tn_common.tn_lattice_spec_from_system
+        - backends.tn_common.tn_lattice_spec_from_hamiltonian_ir
+        - backends.tenpy_mps.backends.TenpyOptions
+        - backends.gputn.GPUTNOptions
+    - title: Noise
+      contents:
+        - noise.NoiseModel
+        - noise.configure_monte_carlo_runner
+    - title: Gate library
+      contents:
+        - gates.CZGateReport
+        - gates.cz_gate_report
+        - analysis.gate_metrics.average_gate_infidelity
+        - analysis.gate_metrics.error_budget
+        - analysis.gate_metrics.bell_infidelity
+        - analysis.gate_metrics.sss_infidelity
+        - analysis.gate_metrics.state_infidelity
+        - analysis.gate_metrics.population_evolution
+        - analysis.gate_metrics.residuals_to_branching
+    - title: "Analysis: observables"
+      contents:
+        - analysis.observables.precompute_bit_masks
+        - analysis.observables.measure_from_states
+        - analysis.observables.precompute_trit_masks
+        - analysis.observables.measure_rydberg_occupation
+        - analysis.observables.staggered_magnetization
+        - analysis.observables.measure_observables
+        - analysis.observables.measure_trajectory
+        - analysis.observables.state_overlap
+        - analysis.observables.norm_squared
+        - analysis.observables.sigma_z_from_rydberg_occ
+        - analysis.observables.connected_zz_from_connected_nn
+        - analysis.observables.center_line_sites
+        - analysis.observables.center_reference_site
+        - analysis.observables.line_pairs_from_reference
+        - analysis.observables.epsilon_z
+        - analysis.observables.epsilon_zz
+    - title: "Analysis: domains and addressing"
+      contents:
+        - analysis.coarsening.build_neighbor_lists
+        - analysis.coarsening.local_staggered_magnetization
+        - analysis.coarsening.correct_single_spin_flips
+        - analysis.coarsening.coarsegrained_boundary_mask
+        - analysis.coarsening.identify_domains
+        - analysis.coarsening.domain_area_distribution
+        - analysis.addressing.AddressingEvaluator
+        - analysis.addressing.default_sweep_x
+        - analysis.addressing.evaluate_addressing
+    - title: State constructors
+      contents:
+        - core.states.product_state
+        - core.states.af_config
+        - core.states.domain_config
+        - core.states.product_state_3level
+        - core.states.ground_state
+        - core.states.checkerboard_rydberg
+        - core.states.product_superposition_state
+        - core.states.plus_local_amplitudes
+    - title: Physics helpers
+      contents:
+        - physics.compute_shift_scatter
+    - title: Pulse envelope kernels
+      contents:
+        - pulse.blackman_window
+        - pulse.blackman_pulse
+        - pulse.blackman_pulse_sqrt
+    - title: Validation and serialization
+      contents:
+        - core.serialization.ValidationIssue
+        - core.serialization.raise_for_errors
+        - core.serialization.schema_tag
+        - core.serialization.check_schema
+        - core.serialization.json_ready
+        - core.serialization.load_json_schema
+        - core.serialization.validate_json_schema
+    - title: Core model primitives
+      contents:
+        - core.model.SystemModel
+        - core.model.BasisSpec
+        - core.model.BlockRegistry
+        - core.model.BlockInfo
+        - core.model.ObservableRegistry
+        - core.model.Observable

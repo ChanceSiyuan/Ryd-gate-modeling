@@ -83,7 +83,7 @@ class TestCreateTNLatticeSpec:
 
     def test_registered_but_unsupported_level_structure_raises(self):
         with pytest.raises(ValueError, match="not supported"):
-            create_tn_lattice_spec(Lx=2, Ly=2, level_structure="ger")
+            create_tn_lattice_spec(Lx=2, Ly=2, level_structure="analog_3")
 
     def test_nn_interaction_mode_filters_diagonals(self):
         spec = create_tn_lattice_spec(Lx=2, Ly=2, interaction_mode="nn")

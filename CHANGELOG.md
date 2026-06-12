@@ -3,7 +3,29 @@
 ## Unreleased (0.1.0 development line)
 
 Product-API refactor, staged per `stageplans/` (binding specs; Decision Log
-D1–D11 in `stageplans/README.md`).
+D1–D13 in `stageplans/README.md`).
+
+### Preset cleanup (Decision D13)
+- Removed the symbolic `ger` level-structure preset (zero workflow users);
+  `analog_3` is the only built-in three-level ladder. Custom symbolic
+  three-level models are hand-built `LevelStructureSpec` instances passed to
+  `RydbergSystem.from_lattice`.
+
+### Surface streamlining — Protocol-only simulator (Decision D12)
+- Removed the Pulser-parity Sequence product surface: `Sequence`,
+  `simulate_sequence`, `DeviceSpec`/`ChannelSpec`, product `Waveform`/`Pulse`,
+  `ObservableConfig`, `SimulationResult`/state handles, the
+  `sequence_from_protocol` bridge, and the Pulser abstract-repr interop
+  module. Continuous-time protocols bound to `RydbergSystem` are the single
+  control surface; `simulate(...)` returns the kernel `EvolutionResult`.
+- Frozen `v1` schemas reduced to the reproducibility set: `register`,
+  `register-layout`, `level-structure`, `noise`, `cz-gate-report`
+  (six Sequence-face schemas removed). The `interop` extra is gone;
+  `schema` remains.
+- `ryd_gate.pulse` is now the kernel Blackman-envelope module only
+  (`blackman_window` / `blackman_pulse` / `blackman_pulse_sqrt`).
+- The gate line (CZ protocols, `CZGateReport`, gate metrics) and the noise
+  layer (`NoiseModel`, exact Monte Carlo) are unchanged.
 
 ### Stage 1 — API foundation
 - `Register` / `RegisterLayout` replace the old lattice factories in place
