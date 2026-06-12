@@ -69,7 +69,7 @@ class BasisSpec:
             raise ValueError(f"Site '{label}' not in {self.site_labels}") from None
 
     def projector(self, site: str, level: str) -> NDArray[np.complexfloating]:
-        """Build |level><level| on the given site, tensored with identity on other sites.
+        """Build ``|level><level|`` on the given site, tensored with identity on other sites.
 
         Returns a total_dim x total_dim dense matrix.
         """

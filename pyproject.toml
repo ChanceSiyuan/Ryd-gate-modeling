@@ -24,9 +24,6 @@ dependencies = [
 schema = [
     "jsonschema>=4",
 ]
-interop = [
-    "jsonschema>=4",
-]
 dev = [
     "pytest",
     "pytest-cov",
@@ -37,9 +34,8 @@ dev = [
     "ipykernel",
 ]
 docs = [
-    "sphinx",
-    "sphinx-rtd-theme",
-    "myst-parser",
+    "quartodoc>=0.7",
+    "griffe>=1.0,<2.0",
 ]
 tn = [
     "physics-tenpy>=1.0",

@@ -3,17 +3,12 @@
 import dataclasses
 import json
 
-import numpy as np
 import pytest
 
 from ryd_gate import (
-    ChannelSpec,
-    DeviceSpec,
     LevelStructureSpec,
-    Pulse,
     Register,
     RegisterLayout,
-    Waveform,
     level_structure,
 )
 
@@ -38,31 +33,6 @@ def _eq_objects():
                 initial_level="g", params={"note": "test"},
             ),
             LevelStructureSpec,
-        ),
-        (
-            "channel",
-            ChannelSpec(
-                channel_id="ryd", kind="rydberg", transition="1_r", addressing="global",
-                amplitude_channels={"1r": "global_X"}, max_abs_amplitude_rad_per_us=12.5,
-                min_duration_ns=16, clock_period_ns=4,
-            ),
-            ChannelSpec,
-        ),
-        ("device", DeviceSpec.virtual_rb87(), DeviceSpec),
-        ("waveform", Waveform.constant(1000, 2.5), Waveform),
-        ("waveform", Waveform.ramp(1000, 0.0, 5.0), Waveform),
-        ("waveform", Waveform.blackman(1000, area=np.pi), Waveform),
-        ("waveform", Waveform.interpolated(1000, [0, 500, 1000], [0.0, 2.0, 0.0]), Waveform),
-        ("waveform", Waveform.custom([0.0, 1.0, 0.0], dt_ns=10), Waveform),
-        (
-            "pulse",
-            Pulse(
-                amplitude=Waveform.blackman(1000, area=np.pi),
-                detuning=Waveform.constant(1000, 0.0),
-                phase_rad=0.25,
-                post_phase_shift_rad=-0.5,
-            ),
-            Pulse,
         ),
     ]
 
@@ -98,10 +68,10 @@ class TestRegisterRoundTrip:
 
 class TestFailureModes:
     def test_wrong_schema_tag_raises(self):
-        data = Waveform.constant(1000, 1.0).to_dict()
-        data["schema"] = "ryd-gate/pulse/v1"
+        data = _layout().to_dict()
+        data["schema"] = "ryd-gate/register/v1"
         with pytest.raises(ValueError, match="schema"):
-            Waveform.from_dict(data)
+            RegisterLayout.from_dict(data)
 
     def test_invalid_payload_raises(self):
         data = Register.chain(2, 4.0).to_dict()

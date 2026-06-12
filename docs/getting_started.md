@@ -1,12 +1,9 @@
 # Getting Started
 
-`ryd-gate` simulates neutral-atom (Rydberg) quantum systems with two control
-surfaces over one exact/tensor-network kernel:
-
-- the **Sequence API** — discrete, device-validated pulse schedules
-  (Pulser-style: registers, channels, waveforms in rad/µs and integer ns);
-- the **Protocol API** — continuous-time gate and many-body protocols for
-  research workflows (time-optimal CZ gates, TFIM quenches, sweeps).
+`ryd-gate` is a Rydberg neutral-atom many-body simulator. Continuous-time
+pulse **protocols** are the single control surface: a protocol bound to a
+`RydbergSystem` lowers to a unified Hamiltonian IR and runs on the exact
+state-vector backend or the tensor-network backends (MPS / PEPS / gputn).
 
 ## Install
 
@@ -17,22 +14,27 @@ pip install -e ".[schema]"       # + JSON Schema validation
 pip install -e ".[dev,docs]"     # development / documentation tooling
 ```
 
-## First simulation (Sequence API)
+## First simulation (TFIM quench)
 
 ```python
 import numpy as np
-from ryd_gate import DeviceSpec, Pulse, Register, Sequence, Waveform, simulate_sequence
+from ryd_gate import Register, RydbergSystem, TFIMQuenchProtocol, simulate
 
-seq = Sequence(Register.chain(1, 20.0), DeviceSpec.virtual_rb87(), "1r")
-seq.declare_channel("ryd", "rydberg_global")
-seq.add(Pulse.constant_detuning(Waveform.blackman(1000, area=np.pi), 0.0), "ryd")
-
-result = simulate_sequence(seq)
-print(result.populations("r"))     # ~[1.0]: a pi pulse drives |1> -> |r>
-print(result.sample(1000, basis="rydberg", seed=1))
+protocol = TFIMQuenchProtocol(hx=2 * np.pi * 1e6, t_gate=0.5e-6)
+system = RydbergSystem.from_lattice(
+    Register.square(2, spacing_um=9.0), "1r", protocol=protocol,
+)
+result = simulate(system, [], psi0="all_1", backend="exact")
+print(system.expectation("sum_nr", result.psi_final))   # Rydberg population
 ```
 
-## First gate report (Protocol API)
+Swap `backend="exact"` for `"mps"`, `"peps"`, or `"gputn"` to run the same
+system on a tensor-network engine — see the
+[Capability Matrix](capability_matrix.md) for what runs where. The research
+notebooks under `scripts/notebooks/` cover TFIM critical fields, quench
+benchmarks, and 2D lattice dynamics end to end.
+
+## First gate report (CZ line)
 
 ```python
 from ryd_gate import Register, RydbergSystem

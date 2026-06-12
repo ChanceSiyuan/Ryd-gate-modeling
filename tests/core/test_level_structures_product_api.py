@@ -8,8 +8,24 @@ from ryd_gate.core.level_structures import (
     InteractionSpec,
     LevelStructureSpec,
     level_structure,
+    TransitionSpec,
 )
 from ryd_gate.lattice import Register
+
+
+def _symbolic_ger_spec() -> LevelStructureSpec:
+    """Hand-built symbolic three-level ladder (the custom-model escape hatch)."""
+    return LevelStructureSpec(
+        name="ger_symbolic",
+        levels=("g", "e", "r"),
+        rydberg_levels=("r",),
+        transitions=(
+            TransitionSpec("420", "g", "e", "drive_420"),
+            TransitionSpec("1013", "e", "r", "H_1013"),
+        ),
+        detuning_levels={"delta_e": "e", "delta_R": "r"},
+        initial_level="g",
+    )
 
 
 class _AnalogProtocol:
@@ -43,7 +59,6 @@ class TestPresets:
     def test_initial_level_or_default(self):
         assert level_structure("1r").initial_level_or_default() == "1"
         assert level_structure("01r").initial_level_or_default() == "1"
-        assert level_structure("ger").initial_level_or_default() == "g"
         assert level_structure("analog_3").initial_level_or_default() == "g"
         assert level_structure("rb87_7").initial_level_or_default() == "0"
         # default rule: levels[0] when initial_level unset
@@ -53,11 +68,11 @@ class TestPresets:
     def test_physical_kwargs(self):
         assert level_structure("analog_3").physical_kwargs()["param_set"] == "analog_3"
         assert level_structure("rb87_7").physical_kwargs()["param_set"] == "our"
-        for name in ("01", "1r", "01r", "ger"):
+        for name in ("01", "1r", "01r"):
             assert level_structure(name).physical_kwargs() == {}
 
     def test_supports_backend_matrix(self):
-        exact_ok = ("01", "1r", "01r", "ger", "analog_3", "rb87_7")
+        exact_ok = ("01", "1r", "01r", "analog_3", "rb87_7")
         tn_ok = ("1r", "01r")
         for name in exact_ok:
             spec = level_structure(name)
@@ -67,8 +82,8 @@ class TestPresets:
             assert spec.supports_backend("stabilizer") == (name == "01")
             assert not spec.supports_backend("quantum_teleporter")
 
-    def test_ger_keeps_channels(self):
-        spec = level_structure("ger")
+    def test_analog_3_keeps_channels(self):
+        spec = level_structure("analog_3")
         channels = {t.channel for t in spec.transitions} | set(spec.detuning_levels)
         assert channels == {"drive_420", "H_1013", "delta_e", "delta_R"}
 
@@ -94,18 +109,19 @@ class TestValidate:
         assert "level_structure.rydberg_levels" in codes
 
     def test_valid_preset_has_no_issues(self):
-        for name in ("01", "1r", "01r", "ger", "analog_3", "rb87_7"):
+        for name in ("01", "1r", "01r", "analog_3", "rb87_7"):
             assert level_structure(name).validate() == []
 
 
 class TestAnalog3Semantics:
-    def test_bare_ger_no_longer_infers_analog_3(self):
-        """D11 cleanup (Stage 7): names carry semantics; param_set is numbers only."""
+    def test_custom_symbolic_spec_never_infers_analog_3(self):
+        """D11/D13: names carry semantics; param_set is numbers only."""
         physical = RydbergSystem.from_lattice(
             Register.chain(2), level_structure("analog_3"), interaction=InteractionSpec(C6=0.0)
         )
         symbolic = RydbergSystem.from_lattice(
-            Register.chain(2), "ger", interaction=InteractionSpec(C6=0.0), param_set="analog_3"
+            Register.chain(2), _symbolic_ger_spec(), interaction=InteractionSpec(C6=0.0),
+            param_set="analog_3",
         )
         assert physical.basis.local_levels == symbolic.basis.local_levels == ("g", "e", "r")
         assert physical.metadata["physical_model"] == "analog_3"
@@ -121,7 +137,7 @@ class TestAnalog3Semantics:
             protocol=_AnalogProtocol(),
         )
         symbolic = RydbergSystem.from_lattice(
-            Register.chain(1), "ger", interaction=InteractionSpec(C6=0.0)
+            Register.chain(1), _symbolic_ger_spec(), interaction=InteractionSpec(C6=0.0)
         )
 
         # physical blocks mounted only on analog_3

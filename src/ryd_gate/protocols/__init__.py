@@ -7,8 +7,8 @@ Contents
   DoubleARPProtocol (double rapid-adiabatic-passage)
 - ``sweep``      — SweepProtocol: function-defined global Rydberg sweep
 - ``lattice_dynamics`` — TFIMQuenchProtocol / TFIMAnnealProtocol for 2D lattice dynamics
+- ``digital_analog`` — DigitalAnalogProtocol: piecewise digital-analog schedules
 - ``base``       — Protocol abstract base class
-- ``channels``   — Drive channel name constants (e.g. ``"drive_420"``, ``"global_n"``)
 
 All protocol classes implement:
 - ``n_params``: number of real-valued parameters
@@ -26,7 +26,6 @@ from ryd_gate.protocols.lattice_dynamics import (
     interaction_longitudinal_shifts,
     tfim_to_rydberg_controls,
 )
-from ryd_gate.protocols.sequence_protocol import SequenceProtocol, compile_sequence_to_system
 from ryd_gate.protocols.sweep import SweepProtocol
 
 __all__ = [
@@ -35,8 +34,6 @@ __all__ = [
     "ARProtocol",
     "DoubleARPProtocol",
     "SweepProtocol",
-    "SequenceProtocol",
-    "compile_sequence_to_system",
     "TFIMAnnealProtocol",
     "TFIMQuenchProtocol",
     "TFIMRydbergControls",

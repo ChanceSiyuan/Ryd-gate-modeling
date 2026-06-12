@@ -164,7 +164,6 @@ class TenpyDMRGBackend:
             "chi": max(psi.chi),
             "n_sweeps": eng.sweeps,
             "method": "dmrg",
-            "state_handle_kind": "mps" if self.keep_state else "unsupported",
         }
         if self.keep_state:
             metadata["native_state"] = psi
@@ -358,7 +357,6 @@ class TenpyTDVPBackend:
             "dt": dt_actual,
             "n_steps": n_steps,
             "obs": obs_data,
-            "state_handle_kind": "mps" if self.keep_state else "unsupported",
         }
         if self.keep_state:
             metadata_out["native_state"] = psi

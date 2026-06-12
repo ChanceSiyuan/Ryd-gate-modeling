@@ -14,11 +14,11 @@ def _python_blocks():
 def test_readme_has_two_quickstart_blocks():
     blocks = _python_blocks()
     assert len(blocks) >= 2
-    assert "simulate_sequence" in blocks[0]
+    assert "TFIMQuenchProtocol" in blocks[0]
     assert "cz_gate_report" in blocks[1]
 
 
-def test_sequence_quickstart_executes():
+def test_quench_quickstart_executes():
     blocks = _python_blocks()
     namespace: dict = {}
     exec(compile(blocks[0], str(README), "exec"), namespace)  # asserts inside the snippet

@@ -10,16 +10,8 @@ Regenerate with `uv run python docs/_scripts/build_capability_matrix.py`.
 | `01` | yes | — | — | — | yes |
 | `1r` | yes | yes | yes | yes | — |
 | `01r` | yes | yes | yes | yes | — |
-| `ger` | yes | — | — | — | — |
 | `analog_3` | yes | — | — | — | — |
 | `rb87_7` | yes | — | — | — | — |
-
-## Result-handle capabilities by backend
-| result handle | `expectation` | `sampling` | `statevector` | `statevector_materialization` |
-|---|---|---|---|---|
-| exact (`statevector`) | yes | yes | yes | — |
-| mps (`mps`) | yes | — | — | yes |
-| gputn / peps (`unsupported`) | — | — | — | — |
 
 ## NoiseModel runtime support by backend
 | noise group | exact | mps | gputn | peps | stabilizer |
@@ -27,23 +19,3 @@ Regenerate with `uv run python docs/_scripts/build_capability_matrix.py`.
 | detuning / amplitude / local RIN / position (Monte Carlo) | yes | — | — | — | — |
 | rydberg / intermediate decay (construction-time) | yes | — | — | — | — |
 | state-prep / readout / temperature / waist (data only) | — | — | — | — | — |
-
-## Sequence support by backend
-| backend | `simulate_sequence` |
-|---|---|
-| `exact` | yes |
-| `mps` | yes |
-| `gputn` | yes |
-| `peps` | yes |
-| `stabilizer` | — (not on the sequence path) |
-
-## Pulser interop subset
-| construct | supported subset |
-|---|---|
-| channels | `rydberg_global` only |
-| level structure on import | `1r` |
-| waveforms | `constant`, `ramp`, `blackman`, `interpolated`, `custom` |
-| pulses | zero phase, zero post-phase-shift |
-| measurement | `ground-rydberg` |
-| layout | trap coordinates + trap → qubit mapping |
-| noise fields | `amp_sigma`, `detuning_sigma`, `detuning_sigma_rad_per_us`, `n_trajectories`, `p_false_neg`, `p_false_pos`, `runs`, `state_prep_error` |

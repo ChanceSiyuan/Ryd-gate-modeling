@@ -11,24 +11,17 @@ class TestPackageImports:
         assert isinstance(ryd_gate.__version__, str)
 
     def test_product_layer_exports(self):
-        """Stage 1 product objects should be exported at top level."""
+        """Lattice/validation objects should be exported at top level."""
         from ryd_gate import (
-            ChannelSpec,
-            DeviceSpec,
-            Pulse,
             Register,
             RegisterLayout,
             ValidationIssue,
-            Waveform,
             raise_for_errors,
         )
 
         assert all(
             item is not None
-            for item in (
-                Register, RegisterLayout, DeviceSpec, ChannelSpec,
-                ValidationIssue, raise_for_errors, Waveform, Pulse,
-            )
+            for item in (Register, RegisterLayout, ValidationIssue, raise_for_errors)
         )
 
     def test_removed_top_level_exports(self):
@@ -63,19 +56,13 @@ class TestPackageImports:
             "average_gate_infidelity", "error_budget", "AddressingEvaluator",
             # Simulation
             "simulate",
-            # Product data layer (Stage 1)
-            "Register", "RegisterLayout", "DeviceSpec", "ChannelSpec",
-            "ValidationIssue", "raise_for_errors", "Waveform", "Pulse",
-            # Sequence layer (Stage 2 + Stage 8)
-            "Sequence", "PulseOp", "DelayOp", "MeasureOp", "TargetOp", "SequenceProtocol",
-            "simulate_sequence", "sequence_from_protocol",
-            "SimulationResult", "ExactStateHandle",
-            # Noise layer (Stage 4)
+            # Lattice geometry / validation
+            "Register", "RegisterLayout",
+            "ValidationIssue", "raise_for_errors",
+            # Noise layer
             "NoiseModel", "configure_monte_carlo_runner",
-            # Gate library (Stage 5)
+            # Gate library
             "CZGateReport", "cz_gate_report",
-            # Observable schedules (Stage 6)
-            "ObservableConfig",
             # Advanced primitives
             "SystemModel", "BasisSpec", "BlockRegistry",
             "ObservableRegistry", "Observable",

@@ -1,0 +1,28 @@
+---
+title: "ryd-gate"
+---
+
+Rydberg neutral-atom many-body simulator: TFIM quenches, lattice dynamics,
+and microscopic gate physics, with continuous-time pulse protocols as the
+single control surface over one exact + tensor-network kernel.
+
+## Where to start
+
+| Goal | Page |
+|---|---|
+| Install and run a first simulation | [Getting Started](getting_started.md) |
+| Units, conventions, data flow | [Fundamentals](fundamentals.md) |
+| The exact Hamiltonian of every model | [Hamiltonians](hamiltonians.qmd) |
+| Declarative noise on the exact Monte Carlo runner | [NoiseModel](how_to_noise.md) |
+| CZ gate reports and error budgets | [Gate reports](how_to_gates.md) |
+| What runs on which backend | [Capability Matrix](capability_matrix.md) |
+| Complete public API | [API Reference](reference/index.qmd) |
+
+## Build this site
+
+```bash
+uv sync --extra docs          # installs quartodoc
+cd docs
+uv run quartodoc build        # generate reference/ from docstrings
+quarto render                 # writes docs/_build/html
+```

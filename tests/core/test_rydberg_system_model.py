@@ -8,7 +8,12 @@ import pytest
 from ryd_gate import RydbergSystem, SweepProtocol
 from ryd_gate.backends.exact import simulate
 from ryd_gate.backends.exact.compiler import ExactSparseCompiler
-from ryd_gate.core.level_structures import InteractionSpec, level_structure
+from ryd_gate.core.level_structures import (
+    InteractionSpec,
+    LevelStructureSpec,
+    TransitionSpec,
+    level_structure,
+)
 from ryd_gate.core.operators import RydbergPairInteractionSpec
 from ryd_gate.lattice import Register
 from ryd_gate.protocols.digital_analog import DigitalAnalogProtocol
@@ -170,20 +175,42 @@ def test_01r_digital_analog_simulation():
     assert np.isclose(np.linalg.norm(result.psi_final), 1.0)
 
 
+
+
+def _symbolic_ger_spec() -> LevelStructureSpec:
+    """Hand-built symbolic three-level ladder (the custom-model escape hatch)."""
+    return LevelStructureSpec(
+        name="ger_symbolic",
+        levels=("g", "e", "r"),
+        rydberg_levels=("r",),
+        transitions=(
+            TransitionSpec("420", "g", "e", "drive_420"),
+            TransitionSpec("1013", "e", "r", "H_1013"),
+        ),
+        detuning_levels={"delta_e": "e", "delta_R": "r"},
+        initial_level="g",
+    )
+
 def test_level_structure_presets():
     assert level_structure("1r").levels == ("1", "r")
     assert level_structure("01r").levels == ("0", "1", "r")
-    assert level_structure("ger").levels == ("g", "e", "r")
+    assert level_structure("analog_3").levels == ("g", "e", "r")
     assert level_structure("rb87_7").levels == ("0", "1", "e1", "e2", "e3", "r", "r_garb")
 
     with pytest.raises(ValueError, match="Unknown level-structure"):
         level_structure("1er")
 
 
-def test_ger_lattice_builds_g_e_r_levels():
+def test_ger_preset_removed():
+    """D13: the symbolic `ger` preset is gone; hand-built specs replace it."""
+    with pytest.raises(ValueError, match="Unknown level-structure"):
+        level_structure("ger")
+
+
+def test_custom_symbolic_spec_builds_g_e_r_levels():
     model = RydbergSystem.from_lattice(
         Register.chain(1),
-        "ger",
+        _symbolic_ger_spec(),
         interaction=InteractionSpec(C6=0.0),
     )
 
@@ -192,11 +219,11 @@ def test_ger_lattice_builds_g_e_r_levels():
     assert model.blocks.has("H_1013")
 
 
-def test_bare_ger_is_symbolic_regardless_of_param_set():
-    """D11 (Stage 7): the legacy ("ger", param_set="analog_3") inference is gone."""
+def test_custom_spec_is_symbolic_regardless_of_param_set():
+    """D11/D13: names carry semantics — only `analog_3` mounts physical blocks."""
     symbolic = RydbergSystem.from_lattice(
         Register.chain(1),
-        "ger",
+        _symbolic_ger_spec(),
         interaction=InteractionSpec(C6=0.0),
         param_set="analog_3",
     )
@@ -212,10 +239,10 @@ def test_bare_ger_is_symbolic_regardless_of_param_set():
     assert physical.meta("physical_model") == "analog_3"
 
 
-def test_ger_transition_blocks_are_not_compiled_as_static_dense_terms():
+def test_symbolic_transition_blocks_are_not_compiled_as_static_dense_terms():
     model = RydbergSystem.from_lattice(
         Register.chain(1),
-        "ger",
+        _symbolic_ger_spec(),
         interaction=InteractionSpec(C6=0.0),
         protocol=_GerProtocol(),
     )

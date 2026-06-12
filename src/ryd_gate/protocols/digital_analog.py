@@ -2,8 +2,8 @@
 
 Continuous schedules for four channels:
 
-- ``drive_R``   — hyperfine→Rydberg Rabi amplitude on |1>↔|r| (per atom, Omega_R)
-- ``drive_hf``  — hyperfine Rabi amplitude on |0>↔|1| (Omega_hf)
+- ``drive_R``   — hyperfine→Rydberg Rabi amplitude on ``|1>``↔``|r>`` (per atom, Omega_R)
+- ``drive_hf``  — hyperfine Rabi amplitude on ``|0>``↔``|1>`` (Omega_hf)
 - ``delta_R``   — Rydberg detuning (Delta_R, sign convention: H contains -Delta_R n^r)
 - ``delta_hf``  — hyperfine detuning (Delta_hf)
 
