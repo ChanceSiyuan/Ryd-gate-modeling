@@ -55,7 +55,8 @@
             "enum": [
               "pulse",
               "delay",
-              "measure"
+              "measure",
+              "target"
             ]
           }
         },
@@ -106,6 +107,22 @@
             "then": {
               "required": [
                 "basis",
+                "t_start_ns"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "target"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "channel",
+                "targets",
                 "t_start_ns"
               ]
             }

@@ -4,9 +4,9 @@
 class TestGateNamespace:
     def test_protocol_classes_are_the_kernel_classes(self):
         from ryd_gate import gates
-        from ryd_gate.protocols.gate_cz_ar import ARProtocol
-        from ryd_gate.protocols.gate_cz_double_arp import DoubleARPProtocol
-        from ryd_gate.protocols.gate_cz_to import TOProtocol
+        from ryd_gate.protocols.gate_cz import ARProtocol
+        from ryd_gate.protocols.gate_cz import DoubleARPProtocol
+        from ryd_gate.protocols.gate_cz import TOProtocol
 
         assert gates.TOProtocol is TOProtocol
         assert gates.ARProtocol is ARProtocol
@@ -21,10 +21,10 @@ class TestGateNamespace:
 
     def test_top_level_report_exports(self):
         from ryd_gate import CZGateReport, cz_gate_report
-        from ryd_gate.gates import cz
+        from ryd_gate import gates
 
-        assert CZGateReport is cz.CZGateReport
-        assert cz_gate_report is cz.cz_gate_report
+        assert CZGateReport is gates.CZGateReport
+        assert cz_gate_report is gates.cz_gate_report
 
     def test_top_level_metric_exports_still_lazy(self):
         from ryd_gate import average_gate_infidelity, error_budget

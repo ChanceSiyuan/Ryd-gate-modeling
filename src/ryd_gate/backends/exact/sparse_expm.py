@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ryd_gate.backends.exact.base import EvolutionResult, SolverBackend
+from ryd_gate.backends.exact.compiler import SolverBackend
+from ryd_gate.ir import EvolutionResult
 
 if TYPE_CHECKING:
     from ryd_gate.ir import HamiltonianIR

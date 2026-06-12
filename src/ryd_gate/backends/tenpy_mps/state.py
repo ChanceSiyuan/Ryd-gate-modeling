@@ -45,7 +45,7 @@ def product_state_mps(
     _require_tenpy()
     from tenpy.networks.mps import MPS
 
-    from .sites import build_tenpy_site
+    from .model import build_tenpy_site
 
     if isinstance(config, str) and config == "plus":
         amp = 1.0 / np.sqrt(2.0)
@@ -124,7 +124,7 @@ def product_superposition_mps(
     _require_tenpy()
     from tenpy.networks.mps import MPS
 
-    from .sites import build_tenpy_site
+    from .model import build_tenpy_site
 
     site = build_tenpy_site(spec.level_spec)
     sites = [site] * spec.N

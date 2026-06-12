@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from ryd_gate.backends.pepskit.backend import (
+from ryd_gate.backends.pepskit import (
     PEPSKitDriveError,
     PEPSKitIPEPSBackend,
     _initial_state_payload,

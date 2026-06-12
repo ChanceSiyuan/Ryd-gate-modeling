@@ -1,7 +1,8 @@
-"""DMRG and TDVP backend wrappers for TeNPy."""
+"""DMRG and TDVP backend wrappers for TeNPy, plus their typed options."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -11,11 +12,11 @@ from ryd_gate.backends.tn_common.protocol_context import (
     merge_pin_deltas,
     pin_deltas_from_params,
 )
-from ryd_gate.core.channel_lowering import (
+from ryd_gate.core.level_structures import (
     three_level_profiles_from_coeffs,
     two_level_drive_and_detuning_from_coeffs,
 )
-from ryd_gate.ir.evolution import EvolutionResult
+from ryd_gate.ir import EvolutionResult
 
 if TYPE_CHECKING:
     from ryd_gate.protocols.base import Protocol
@@ -369,3 +370,18 @@ class TenpyTDVPBackend:
             result.times = np.array(recorded_times)
 
         return result
+
+
+@dataclass(frozen=True)
+class TenpyOptions:
+    """Options for ``backend="mps"`` TDVP/DMRG evolution.
+
+    ``None`` means "use the backend default". ``dt`` and ``chi_max`` apply to
+    TDVP; ``n_sweeps`` and ``mixer`` apply to DMRG ground-state search.
+    """
+
+    chi_max: int | None = None
+    dt: float | None = None
+    svd_min: float | None = None
+    n_sweeps: int | None = None
+    mixer: bool | None = None

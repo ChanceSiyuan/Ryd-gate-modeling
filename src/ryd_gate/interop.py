@@ -32,7 +32,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from ryd_gate.devices import DeviceSpec
-from ryd_gate.lattice.geometry import Register, RegisterLayout
+from ryd_gate.lattice import Register, RegisterLayout
 from ryd_gate.noise import NoiseModel
 from ryd_gate.pulse import Pulse, Waveform
 from ryd_gate.sequence import DelayOp, MeasureOp, PulseOp, Sequence

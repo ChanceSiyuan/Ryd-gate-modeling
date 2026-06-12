@@ -18,26 +18,43 @@ from typing import Any, Literal, Mapping
 
 from ryd_gate.core.level_structures import LevelStructureSpec
 from ryd_gate.core.level_structures import level_structure as level_structure_preset
-from ryd_gate.core.serialization import check_schema, schema_tag
-from ryd_gate.core.validation import ValidationIssue, raise_for_errors
+from ryd_gate.core.serialization import (
+    ValidationIssue,
+    check_schema,
+    raise_for_errors,
+    schema_tag,
+)
 from ryd_gate.devices import DeviceSpec
-from ryd_gate.lattice.geometry import Register
+from ryd_gate.lattice import Register
 from ryd_gate.protocols.channels import ChannelSpec
 from ryd_gate.pulse import Pulse
 
-__all__ = ["DelayOp", "MeasureOp", "PulseOp", "Sequence"]
+__all__ = ["DelayOp", "MeasureOp", "PulseOp", "Sequence", "TargetOp"]
 
 _MEASURE_BASES = ("full-level", "rydberg", "computational")
 
 
 @dataclass(frozen=True)
 class PulseOp:
-    """One scheduled pulse on a declared channel (``targets`` always None in Stage 2)."""
+    """One scheduled pulse on a declared channel.
+
+    ``targets`` is ``None`` on global channels; on local channels it is the
+    atom-id tuple the channel was targeting when the pulse was added.
+    """
 
     channel: str
     pulse: Pulse
     t_start_ns: int
     targets: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class TargetOp:
+    """Retarget a local channel onto a set of atom ids (Stage 8)."""
+
+    channel: str
+    targets: tuple[str, ...]
+    t_start_ns: int
 
 
 @dataclass(frozen=True)
@@ -90,7 +107,8 @@ class Sequence:
         self._declared: dict[str, ChannelSpec] = {}
         self._compiler_names: dict[str, str] = {}  # compiler channel -> declared alias
         self._channel_end_ns: dict[str, int] = {}
-        self._ops: list[PulseOp | DelayOp | MeasureOp] = []
+        self._channel_targets: dict[str, tuple[str, ...] | None] = {}
+        self._ops: list[PulseOp | DelayOp | MeasureOp | TargetOp] = []
         self._measured = False
 
     # ── Read-only views ─────────────────────────────────────────────────
@@ -112,7 +130,7 @@ class Sequence:
         return dict(self._declared)
 
     @property
-    def operations(self) -> tuple[PulseOp | DelayOp | MeasureOp, ...]:
+    def operations(self) -> tuple[PulseOp | DelayOp | MeasureOp | TargetOp, ...]:
         return tuple(self._ops)
 
     @property
@@ -135,11 +153,6 @@ class Sequence:
             raise ValueError(
                 f"unknown channel id {channel_id!r} on device {self._device.name} "
                 f"(available: {', '.join(self._device.channels) or 'none'})."
-            )
-        if channel.addressing == "local":
-            raise NotImplementedError(
-                "sequence.local_not_stage2: local channels (targeting) are not part of "
-                "Stage 2; use a global channel."
             )
         if channel.kind != "rydberg":
             raise NotImplementedError(
@@ -165,14 +178,63 @@ class Sequence:
         self._compiler_names[det_channel] = name
         self._declared[name] = channel
         self._channel_end_ns[name] = 0
+        self._channel_targets[name] = None
+
+    def target(self, atom_ids, channel: str) -> None:
+        """Point a *local* channel at a set of atom ids (Stage 8).
+
+        Subsequent pulses on the channel drive exactly these atoms. Consumes
+        the channel's ``retarget_time_ns`` (when set) on the channel clock.
+        """
+        self._require_not_measured()
+        channel_spec = self._require_declared(channel)
+        if channel_spec.addressing != "local":
+            raise ValueError(
+                f"sequence.target_global: channel {channel!r} is global; "
+                "target() applies to local channels only."
+            )
+        if isinstance(atom_ids, str):
+            atom_ids = (atom_ids,)
+        targets = tuple(str(atom_id) for atom_id in atom_ids)
+        if not targets:
+            raise ValueError("sequence.target_empty: target() needs at least one atom id.")
+        if len(set(targets)) != len(targets):
+            raise ValueError(f"sequence.target_duplicate: duplicate atom ids in {targets}.")
+        assert self._register.ids is not None
+        unknown = [atom_id for atom_id in targets if atom_id not in self._register.ids]
+        if unknown:
+            raise ValueError(
+                f"sequence.target_unknown_atom: {unknown} not in register ids "
+                f"{self._register.ids}."
+            )
+        if channel_spec.max_targets is not None and len(targets) > channel_spec.max_targets:
+            raise ValueError(
+                f"sequence.max_targets: {len(targets)} targets exceed channel limit "
+                f"{channel_spec.max_targets}."
+            )
+        t_start = self._channel_end_ns[channel]
+        self._ops.append(TargetOp(channel=channel, targets=targets, t_start_ns=t_start))
+        if channel_spec.retarget_time_ns:
+            self._channel_end_ns[channel] = t_start + channel_spec.retarget_time_ns
+        self._channel_targets[channel] = targets
 
     def add(self, pulse: Pulse, channel: str) -> None:
         """Append *pulse* at the channel's current end time (hardware limits enforced)."""
         self._require_not_measured()
         channel_spec = self._require_declared(channel)
         raise_for_errors(pulse.validate(channel_spec))
+        targets = None
+        if channel_spec.addressing == "local":
+            targets = self._channel_targets[channel]
+            if targets is None:
+                raise ValueError(
+                    f"sequence.local_targets_missing: call target(...) on local channel "
+                    f"{channel!r} before adding pulses."
+                )
         t_start = self._channel_end_ns[channel]
-        self._ops.append(PulseOp(channel=channel, pulse=pulse, t_start_ns=t_start))
+        self._ops.append(
+            PulseOp(channel=channel, pulse=pulse, t_start_ns=t_start, targets=targets)
+        )
         self._channel_end_ns[channel] = t_start + pulse.duration_ns
 
     def delay(self, duration_ns: int, channel: str) -> None:
@@ -228,7 +290,7 @@ class Sequence:
         }
 
     @staticmethod
-    def _op_dict(op: PulseOp | DelayOp | MeasureOp) -> dict:
+    def _op_dict(op: PulseOp | DelayOp | MeasureOp | TargetOp) -> dict:
         if isinstance(op, PulseOp):
             return {
                 "type": "pulse",
@@ -241,6 +303,13 @@ class Sequence:
                 "type": "delay",
                 "channel": op.channel,
                 "duration_ns": op.duration_ns,
+                "t_start_ns": op.t_start_ns,
+            }
+        if isinstance(op, TargetOp):
+            return {
+                "type": "target",
+                "channel": op.channel,
+                "targets": list(op.targets),
                 "t_start_ns": op.t_start_ns,
             }
         return {"type": "measure", "basis": op.basis, "t_start_ns": op.t_start_ns}
@@ -263,6 +332,8 @@ class Sequence:
                 sequence.add(Pulse.from_dict(op["pulse"]), op["channel"])
             elif kind == "delay":
                 sequence.delay(op["duration_ns"], op["channel"])
+            elif kind == "target":
+                sequence.target(op["targets"], op["channel"])
             elif kind == "measure":
                 sequence.measure(op["basis"])
             else:

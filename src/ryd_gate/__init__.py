@@ -31,8 +31,6 @@ Subpackages
 __version__ = "0.1.0"
 
 # --- Systems ---
-from .core.basis import BasisSpec
-from .core.blocks import BlockRegistry
 from .core.level_structures import (
     DEFAULT_C6,
     InteractionSpec,
@@ -40,15 +38,21 @@ from .core.level_structures import (
     TransitionSpec,
     level_structure,
 )
-from .core.observables import Observable, ObservableRegistry
-from .core.system import RydbergSystem
-
-# --- Advanced / new-arch primitives ---
-from .core.system_model import SystemModel
+from .core.model import (
+    BasisSpec,
+    BlockRegistry,
+    Observable,
+    ObservableRegistry,
+    SystemModel,
+)
 
 # --- Product data layer (Stage 1) ---
-from .core.validation import ValidationIssue, raise_for_errors
+from .core.serialization import ValidationIssue, raise_for_errors
+from .core.system import RydbergSystem
 from .devices import DeviceSpec
+
+# --- Protocol -> Sequence bridge (Stage 8) ---
+from .discretize import sequence_from_protocol
 from .ir import EvolutionResult, HamiltonianIR, HamiltonianTerm, compile_hamiltonian_ir
 from .lattice import Register, RegisterLayout
 
@@ -62,9 +66,7 @@ from .observables import ObservableConfig
 from .protocols.base import Protocol
 from .protocols.channels import ChannelSpec
 from .protocols.digital_analog import DigitalAnalogProtocol
-from .protocols.gate_cz_ar import ARProtocol
-from .protocols.gate_cz_double_arp import DoubleARPProtocol
-from .protocols.gate_cz_to import TOProtocol
+from .protocols.gate_cz import ARProtocol, DoubleARPProtocol, TOProtocol
 from .protocols.lattice_dynamics import (
     TFIMAnnealProtocol,
     TFIMQuenchProtocol,
@@ -76,9 +78,9 @@ from .protocols.sequence_protocol import SequenceProtocol
 from .protocols.sweep import SweepProtocol
 from .pulse import Pulse, Waveform
 
-# --- Sequence layer (Stage 2) ---
+# --- Sequence layer (Stage 2; Stage 8 adds TargetOp + the discretize bridge) ---
 from .results import ExactStateHandle, SimulationResult
-from .sequence import DelayOp, MeasureOp, PulseOp, Sequence
+from .sequence import DelayOp, MeasureOp, PulseOp, Sequence, TargetOp
 
 # --- Unified simulation entry point ---
 from .simulate import simulate, simulate_sequence
@@ -87,7 +89,7 @@ from .simulate import simulate, simulate_sequence
 def __getattr__(name: str):
     """Lazy exports for optional/heavy physics helpers."""
     if name == "compute_shift_scatter":
-        from .physics.ac_stark import compute_shift_scatter
+        from .physics import compute_shift_scatter
 
         return compute_shift_scatter
     if name in {"average_gate_infidelity", "error_budget"}:
@@ -95,11 +97,11 @@ def __getattr__(name: str):
 
         return getattr(gate_metrics, name)
     if name in {"CZGateReport", "cz_gate_report"}:
-        from .gates import cz
+        from . import gates
 
-        return getattr(cz, name)
+        return getattr(gates, name)
     if name == "AddressingEvaluator":
-        from .analysis.addressing_metrics import AddressingEvaluator
+        from .analysis.addressing import AddressingEvaluator
 
         return AddressingEvaluator
     raise AttributeError(f"module 'ryd_gate' has no attribute {name!r}")
@@ -123,13 +125,15 @@ __all__ = [
     "raise_for_errors",
     "Waveform",
     "Pulse",
-    # Sequence layer (Stage 2)
+    # Sequence layer (Stage 2 + Stage 8)
     "Sequence",
     "PulseOp",
     "DelayOp",
     "MeasureOp",
+    "TargetOp",
     "SequenceProtocol",
     "simulate_sequence",
+    "sequence_from_protocol",
     "SimulationResult",
     "ExactStateHandle",
     # Noise layer (Stage 4)

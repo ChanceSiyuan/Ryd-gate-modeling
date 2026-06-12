@@ -146,13 +146,13 @@ def create_tn_lattice_spec(
     """Build a TN-friendly lattice spec reusing geometry conventions.
 
     Matches the coordinate and sublattice conventions of
-    :meth:`ryd_gate.lattice.geometry.Register.rectangle` (with unit
+    :meth:`ryd_gate.lattice.Register.rectangle` (with unit
     spacing) and the NN/NNN VdW convention of
-    :func:`ryd_gate.lattice.geometry.nn_nnn_relative_pairs`, so that
+    :func:`ryd_gate.lattice.nn_nnn_relative_pairs`, so that
     addressing indices and interactions stay consistent across the
     exact and TN paths.
     """
-    from ryd_gate.lattice.geometry import (
+    from ryd_gate.lattice import (
         Register,
         cylinder_nn_nnn_pairs,
         nn_nnn_relative_pairs,

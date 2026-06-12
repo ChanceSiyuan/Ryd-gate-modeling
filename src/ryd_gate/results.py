@@ -21,8 +21,8 @@ if TYPE_CHECKING:
     from ryd_gate.backends.tn_common.lattice_spec import TNLatticeSpec
     from ryd_gate.core.level_structures import LevelStructureSpec
     from ryd_gate.core.system import RydbergSystem
-    from ryd_gate.ir.evolution import EvolutionResult
-    from ryd_gate.lattice.geometry import Register
+    from ryd_gate.ir import EvolutionResult
+    from ryd_gate.lattice import Register
     from ryd_gate.sequence import Sequence
 
 __all__ = [

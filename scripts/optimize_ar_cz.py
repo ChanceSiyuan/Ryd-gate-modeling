@@ -9,11 +9,13 @@ point (which is *not* a high-fidelity optimum under the current protocol
 conventions — see tests/gates/test_cz_benchmark_pins.py).
 
 Usage:
-    OMP_NUM_THREADS=1 uv run python scripts/optimize_ar_cz.py our [maxiter]
-    OMP_NUM_THREADS=1 uv run python scripts/optimize_ar_cz.py lukin [maxiter]
+    OMP_NUM_THREADS=1 uv run python scripts/optimize_ar_cz.py our [maxiter] [--resume]
+    OMP_NUM_THREADS=1 uv run python scripts/optimize_ar_cz.py lukin [maxiter] [--resume]
 
 The best-so-far point is checkpointed to ``data/ar_opt_<param_set>.json``
 after every improvement, so partial results survive interruption.
+``--resume`` restarts Nelder-Mead from the checkpoint's best point (a fresh
+simplex around the old optimum often keeps descending after a maxiter stop).
 """
 
 import json
@@ -25,15 +27,17 @@ from scipy.optimize import minimize
 
 from ryd_gate import Register, RydbergSystem
 from ryd_gate.analysis.gate_metrics import average_gate_infidelity
-from ryd_gate.protocols.gate_cz_ar import ARProtocol
+from ryd_gate.protocols.gate_cz import ARProtocol
 
 # Legacy starting point: [omega/Omega_eff, A1, phi1, A2, phi2, delta/Omega_eff, T/T_scale, theta]
 X_AR_LEGACY = [0.85973359, 0.39146974, 0.99181418, 0.1924498, -1.17123748, -0.00826712, 1.67429728, 0.28527346]
 
 
 def main() -> None:
-    param_set = sys.argv[1] if len(sys.argv) > 1 else "our"
-    maxiter = int(sys.argv[2]) if len(sys.argv) > 2 else 400
+    args = [a for a in sys.argv[1:] if a != "--resume"]
+    resume = "--resume" in sys.argv[1:]
+    param_set = args[0] if args else "our"
+    maxiter = int(args[1]) if len(args) > 1 else 400
     if param_set not in {"our", "lukin"}:
         raise SystemExit(f"param_set must be 'our' or 'lukin', got {param_set!r}")
 
@@ -44,9 +48,17 @@ def main() -> None:
     out_path = Path("data") / f"ar_opt_{param_set}.json"
     out_path.parent.mkdir(exist_ok=True)
 
+    x_initial = list(X_AR_LEGACY)
+    if resume:
+        previous = json.loads(out_path.read_text())
+        if previous.get("best_x"):
+            x_initial = [float(v) for v in previous["best_x"]]
+            print(f"[{param_set}] resuming from checkpoint best "
+                  f"{previous['best_infidelity']:.6e}", flush=True)
+
     state = {
         "param_set": param_set,
-        "x_initial": list(X_AR_LEGACY),
+        "x_initial": x_initial,
         "n_eval": 0,
         "best_infidelity": float("inf"),
         "best_x": None,
@@ -67,7 +79,7 @@ def main() -> None:
 
     result = minimize(
         objective,
-        X_AR_LEGACY,
+        x_initial,
         method="Nelder-Mead",
         bounds=protocol.get_optimization_bounds(),
         options={"disp": True, "fatol": 1e-9, "maxiter": maxiter},

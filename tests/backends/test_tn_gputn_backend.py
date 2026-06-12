@@ -7,10 +7,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from ryd_gate.backends.gputn import backend as gpu_backends
+from ryd_gate.backends import gputn as gpu_backends
 from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
 from ryd_gate.backends.tn_common.simulate import simulate_tn
-from ryd_gate.ir.evolution import EvolutionResult
+from ryd_gate.ir import EvolutionResult
 from ryd_gate.protocols.sweep import SweepProtocol
 
 

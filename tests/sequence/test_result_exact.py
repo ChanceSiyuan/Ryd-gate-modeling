@@ -13,7 +13,7 @@ from ryd_gate import (
     Waveform,
     simulate_sequence,
 )
-from ryd_gate.ir.evolution import EvolutionResult
+from ryd_gate.ir import EvolutionResult
 
 
 def _pi_pulse_sequence(n_atoms=1, spacing=20.0):
@@ -58,9 +58,9 @@ class TestSimulateSequence:
         expected = [system.expectation(f"n_r_{i}", psi) for i in range(2)]
         np.testing.assert_allclose(result.populations("r"), expected)
 
-    def test_other_backend_not_stage3(self):
-        with pytest.raises(NotImplementedError, match="backend_not_stage3"):
-            simulate_sequence(_pi_pulse_sequence(), backend="peps")
+    def test_unknown_backend_rejected(self):
+        with pytest.raises(NotImplementedError, match="simulate_sequence.backend_unsupported"):
+            simulate_sequence(_pi_pulse_sequence(), backend="stabilizer")
 
 
 class TestSampling:

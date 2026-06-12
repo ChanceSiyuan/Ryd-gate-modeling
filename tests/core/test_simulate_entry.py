@@ -5,7 +5,7 @@ import pytest
 
 import ryd_gate
 from ryd_gate import InteractionSpec, RydbergSystem, SweepProtocol
-from ryd_gate.ir.evolution import EvolutionResult
+from ryd_gate.ir import EvolutionResult
 from ryd_gate.lattice import Register
 
 

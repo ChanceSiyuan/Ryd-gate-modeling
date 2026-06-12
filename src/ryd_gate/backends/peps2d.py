@@ -8,13 +8,13 @@ from typing import Any
 
 import numpy as np
 
-from ryd_gate.analysis.spin_observables import line_pairs_from_reference
+from ryd_gate.analysis.observables import line_pairs_from_reference
 from ryd_gate.backends.tn_common.protocol_context import merge_pin_deltas, pin_deltas_from_params
-from ryd_gate.core.channel_lowering import (
+from ryd_gate.core.level_structures import (
     three_level_profiles_from_coeffs,
     two_level_drive_and_detuning_from_coeffs,
 )
-from ryd_gate.ir.evolution import EvolutionResult
+from ryd_gate.ir import EvolutionResult
 
 
 class YASTNPEPSError(RuntimeError):

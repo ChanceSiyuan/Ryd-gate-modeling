@@ -66,9 +66,10 @@ class TestPackageImports:
             # Product data layer (Stage 1)
             "Register", "RegisterLayout", "DeviceSpec", "ChannelSpec",
             "ValidationIssue", "raise_for_errors", "Waveform", "Pulse",
-            # Sequence layer (Stage 2)
-            "Sequence", "PulseOp", "DelayOp", "MeasureOp", "SequenceProtocol",
-            "simulate_sequence", "SimulationResult", "ExactStateHandle",
+            # Sequence layer (Stage 2 + Stage 8)
+            "Sequence", "PulseOp", "DelayOp", "MeasureOp", "TargetOp", "SequenceProtocol",
+            "simulate_sequence", "sequence_from_protocol",
+            "SimulationResult", "ExactStateHandle",
             # Noise layer (Stage 4)
             "NoiseModel", "configure_monte_carlo_runner",
             # Gate library (Stage 5)

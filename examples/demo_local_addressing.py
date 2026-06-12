@@ -33,7 +33,7 @@ from ryd_gate.analysis.coarsening import (
     identify_domains,
     local_staggered_magnetization,
 )
-from ryd_gate.analysis.lattice_observables import (
+from ryd_gate.analysis.observables import (
     measure_from_states,
     precompute_bit_masks,
 )

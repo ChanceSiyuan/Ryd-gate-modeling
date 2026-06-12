@@ -24,11 +24,11 @@ from ryd_gate.backends.tn_common.protocol_context import (
     TNProtocolContext,
     pin_deltas_from_params,
 )
-from ryd_gate.ir.evolution import EvolutionResult
+from ryd_gate.ir import EvolutionResult
 
 if TYPE_CHECKING:
-    from ryd_gate.backends.gputn.options import GPUTNOptions
-    from ryd_gate.backends.tenpy_mps.options import TenpyOptions
+    from ryd_gate.backends.gputn import GPUTNOptions
+    from ryd_gate.backends.tenpy_mps.backends import TenpyOptions
     from ryd_gate.protocols.base import Protocol
 
     from .compiler import TNEvolutionIR
@@ -101,21 +101,21 @@ def simulate_tn_ir(
         )
 
     if backend == "peps":
-        from ryd_gate.backends.peps2d.yastn_backend import YASTNPEPSBackend
+        from ryd_gate.backends.peps2d import YASTNPEPSBackend
 
         return YASTNPEPSBackend(**_peps_options(opts)).evolve_ir(
             ir, initial_state=initial_state, t_eval=t_eval, observables=observables,
         )
 
     if backend == "gputn":
-        from ryd_gate.backends.gputn.backend import GPUTNTDVPBackend
+        from ryd_gate.backends.gputn import GPUTNTDVPBackend
 
         return GPUTNTDVPBackend(**opts).evolve_ir(
             ir, initial_state, t_eval=t_eval, observables=observables,
         )
 
     if backend == "pepskit":
-        from ryd_gate.backends.pepskit.backend import PEPSKitIPEPSBackend
+        from ryd_gate.backends.pepskit import PEPSKitIPEPSBackend
 
         return PEPSKitIPEPSBackend(**opts).evolve_ir(
             ir, initial_state=initial_state, t_eval=t_eval, observables=observables,

@@ -48,6 +48,21 @@ D1–D11 in `stageplans/README.md`).
   path-aware `PulserInteropError`; `RegisterLayout.define_register` (D10);
   `ObservableConfig` streaming schedules on the TeNPy measurement path.
 
+### Stage 8 — Surface convergence
+- Sequence pulse phase with Pulser virtual-Z semantics (`phase_rad` +
+  accumulated `post_phase_shift_rad`), lowered to complex drive
+  coefficients; exact backend only, typed refusal on TN backends.
+- Local channels: `Sequence.target(...)` + replayable `TargetOp`
+  (per-site compiler keys; works on exact and mps); `rydberg_local` gains
+  `1r` channel maps; additive `"target"` op in the sequence/v1 schema.
+- `simulate_sequence` accepts `gputn` / `peps` (non-native states expose
+  `raw` + `UnsupportedStateHandle`); error code renamed to
+  `simulate_sequence.backend_unsupported`.
+- `sequence_from_protocol`: explicit, lossy Protocol → Sequence
+  discretization bridge with loss metadata and typed refusals.
+- Docs: the `SequenceProtocol` convergence point documented in
+  fundamentals; capability matrix regenerated.
+
 ### Stage 7 — Docs, examples, packaging
 - Sphinx product docs (getting started, fundamentals, how-tos, generated
   capability matrix, autodoc API reference); README quickstart rewritten

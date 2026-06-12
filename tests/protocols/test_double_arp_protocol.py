@@ -1,6 +1,6 @@
 import numpy as np
 
-from ryd_gate.protocols.gate_cz_double_arp import DoubleARPProtocol
+from ryd_gate.protocols.gate_cz import DoubleARPProtocol
 
 
 class _FakeSystem:

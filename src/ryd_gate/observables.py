@@ -13,8 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from ryd_gate.core.serialization import check_schema, schema_tag
-from ryd_gate.core.validation import ValidationIssue
+from ryd_gate.core.serialization import ValidationIssue, check_schema, schema_tag
 
 __all__ = ["ObservableConfig"]
 

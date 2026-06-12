@@ -60,10 +60,10 @@ class TestDeclareChannel:
         with pytest.raises(ValueError, match="already declared"):
             seq.declare_channel("ryd", "rydberg_global")
 
-    def test_local_channel_not_stage2(self):
+    def test_local_channel_declares(self):
         seq = Sequence(Register.chain(2, 4.0), _device(), "01r")
-        with pytest.raises(NotImplementedError, match="local_not_stage2"):
-            seq.declare_channel("loc", "rydberg_local")
+        seq.declare_channel("loc", "rydberg_local")
+        assert seq.declared_channels["loc"].addressing == "local"
 
     def test_hyperfine_channel_not_stage2(self):
         seq = Sequence(Register.chain(2, 4.0), _device(), "01r")

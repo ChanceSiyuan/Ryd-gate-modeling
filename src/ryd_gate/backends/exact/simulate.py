@@ -1,17 +1,27 @@
-"""Exact state-vector simulation entry point."""
+"""Exact state-vector simulation entry point and typed options."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from ryd_gate.backends._options import as_backend_options
-from ryd_gate.backends.exact.options import ExactOptions
-from ryd_gate.ir.evolution import EvolutionResult
+from ryd_gate.ir import EvolutionResult
 
 if TYPE_CHECKING:
-    from ryd_gate.backends.exact.base import SolverBackend
+    from ryd_gate.backends.exact.compiler import SolverBackend
+
+
+@dataclass(frozen=True)
+class ExactOptions:
+    """Options for :func:`ryd_gate.backends.exact.simulate`.
+
+    ``None`` means "use the backend default".
+    """
+
+    n_steps: int | None = None
 
 
 def simulate(
@@ -28,7 +38,7 @@ def simulate(
     ``system`` must have a protocol bound. With ``backend=None`` the solver is
     selected automatically: sparse piecewise-exponential evolution for a sparse
     Hamiltonian IR, otherwise a dense ODE integrator. Pass a concrete
-    :class:`~ryd_gate.backends.exact.base.SolverBackend` to override. Backend
+    :class:`~ryd_gate.backends.exact.compiler.SolverBackend` to override. Backend
     dispatch by name lives in :func:`ryd_gate.simulate`; tensor-network and
     external algorithms live under ``ryd_gate.backends``. ``backend_options``
     accepts a dict or an :class:`ExactOptions`.

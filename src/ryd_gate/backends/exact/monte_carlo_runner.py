@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from ryd_gate.ir.evolution import EvolutionResult
+from ryd_gate.ir import EvolutionResult
 
 if TYPE_CHECKING:
-    from ryd_gate.backends.exact.base import SolverBackend
+    from ryd_gate.backends.exact.compiler import SolverBackend
     from ryd_gate.core.system import RydbergSystem
 
 

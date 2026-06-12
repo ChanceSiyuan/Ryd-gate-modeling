@@ -5,7 +5,7 @@ import pytest
 
 from ryd_gate import NoiseModel, Register, RydbergSystem, configure_monte_carlo_runner, level_structure
 from ryd_gate.backends.exact import MonteCarloRunner
-from ryd_gate.protocols.gate_cz_to import TOProtocol
+from ryd_gate.protocols.gate_cz import TOProtocol
 
 X_TO = [
     -0.6989301339711643,

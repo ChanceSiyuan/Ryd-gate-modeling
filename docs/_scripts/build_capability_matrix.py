@@ -120,7 +120,7 @@ def _sequence_table() -> list[str]:
 
 
 def _interop_table() -> list[str]:
-    from ryd_gate.interop import pulser as interop
+    from ryd_gate import interop
     from ryd_gate.pulse import _WAVEFORM_KINDS
 
     noise_keys = sorted(interop._NOISE_IMPORT_KEYS)
