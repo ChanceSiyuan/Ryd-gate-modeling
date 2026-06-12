@@ -6,7 +6,7 @@ import pytest
 
 from ryd_gate import DeviceSpec, Pulse, Register, Sequence, Waveform, simulate_sequence
 from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
-from ryd_gate.ir.evolution import EvolutionResult
+from ryd_gate.ir import EvolutionResult
 from ryd_gate.results import (
     MPSStateHandle,
     SimulationResult,

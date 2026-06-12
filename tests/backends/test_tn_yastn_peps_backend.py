@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from ryd_gate.backends.peps2d.yastn_backend import build_yastn_peps_payload
+from ryd_gate.backends.peps2d import build_yastn_peps_payload
 from ryd_gate.backends.tn_common.compiler import TNEvolutionIR
 from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
 from ryd_gate.backends.tn_common.protocol_context import TNProtocolContext

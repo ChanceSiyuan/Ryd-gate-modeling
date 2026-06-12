@@ -1,8 +1,8 @@
-"""Tests for the shared validation primitive (core/validation.py)."""
+"""Tests for the shared validation primitive (core/serialization.py)."""
 
 import pytest
 
-from ryd_gate.core.validation import ValidationIssue, raise_for_errors
+from ryd_gate.core.serialization import ValidationIssue, raise_for_errors
 
 
 class TestValidationIssue:

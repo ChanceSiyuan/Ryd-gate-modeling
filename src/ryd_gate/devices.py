@@ -14,9 +14,13 @@ from typing import Any, Literal, Mapping
 import numpy as np
 
 from ryd_gate.core.level_structures import DEFAULT_C6, LevelStructureSpec, level_structure
-from ryd_gate.core.serialization import check_schema, json_ready, schema_tag
-from ryd_gate.core.validation import ValidationIssue
-from ryd_gate.lattice.geometry import Register
+from ryd_gate.core.serialization import (
+    ValidationIssue,
+    check_schema,
+    json_ready,
+    schema_tag,
+)
+from ryd_gate.lattice import Register
 from ryd_gate.protocols.channels import ChannelSpec
 from ryd_gate.pulse import Pulse, _channel_limit_issues
 
@@ -80,8 +84,8 @@ class DeviceSpec:
                 kind="rydberg",
                 transition="1_r",
                 addressing="local",
-                amplitude_channels={"01r": "drive_R"},
-                detuning_channels={"01r": "delta_R"},
+                amplitude_channels={"1r": "global_X", "01r": "drive_R"},
+                detuning_channels={"1r": "global_n", "01r": "delta_R"},
             ),
             "hyperfine_global": ChannelSpec(
                 channel_id="hyperfine_global",

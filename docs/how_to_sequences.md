@@ -21,8 +21,30 @@ seq.measure("rydberg")                               # locks the sequence
 Construction fails fast: invalid registers, unsupported level structures,
 channel collisions, and channel-limit violations raise `ValueError` with
 stable codes (`register.min_distance`, `sequence.channel_model_mismatch`,
-`pulse.amplitude_limit`, ...). Stage 2 scope: global Rydberg channels only —
-local addressing and hyperfine channels raise typed `NotImplementedError`s.
+`pulse.amplitude_limit`, ...). Hyperfine channels stay gated
+(`sequence.hyperfine_not_stage2`).
+
+## Phase and local addressing (Stage 8)
+
+```python
+# Ramsey: two pi/2 pulses, second one phase-shifted (virtual-Z semantics)
+seq.add(Pulse.constant_detuning(Waveform.blackman(1000, area=np.pi/2), 0.0), "ryd")
+seq.add(Pulse.constant_detuning(Waveform.blackman(1000, area=np.pi/2), 0.0,
+                                phase_rad=np.pi), "ryd")     # echoes back to |1>
+
+# Local channel: target, pulse, retarget
+seq2 = Sequence(Register.chain(2, 6.0), device, "1r")
+seq2.declare_channel("loc", "rydberg_local")
+seq2.target("q0", "loc")
+seq2.add(Pulse.constant_detuning(Waveform.blackman(1000, area=np.pi), 0.0), "loc")
+seq2.target("q1", "loc")                                      # replayable TargetOp
+```
+
+A pulse's effective phase is `phase_rad` plus the accumulated
+`post_phase_shift_rad` of earlier pulses on the same channel. Phase lowers
+to complex drive coefficients and is exact-backend only
+(`sequence.phase_backend_unsupported` on TN backends — never silently
+dropped). Local targeting works on exact and mps.
 
 ## Run
 

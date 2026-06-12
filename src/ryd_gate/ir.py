@@ -1,9 +1,27 @@
-"""Algorithm-agnostic Hamiltonian intermediate representation."""
+"""Unified Hamiltonian and evolution data representations.
+
+Algorithm-agnostic Hamiltonian intermediate representation
+(:class:`HamiltonianTerm` / :class:`HamiltonianIR` /
+:func:`compile_hamiltonian_ir`) plus the :class:`EvolutionResult`
+container returned by all simulation algorithm packages.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable
+
+import numpy as np
+
+
+@dataclass
+class EvolutionResult:
+    """Unified result object returned by simulation algorithm packages."""
+
+    psi_final: Any
+    times: np.ndarray | None = None
+    states: Any | None = None
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -45,12 +63,12 @@ _STATIC_BLOCKS = ("H_const", "H_vdw", "H_1013", "H_1013_conj")
 
 def compile_hamiltonian_ir(system, params: dict) -> HamiltonianIR:
     """Compile a protocol-bound system into the unified Hamiltonian IR."""
-    from ryd_gate.core.channel_lowering import (
+    from ryd_gate.core.level_structures import (
+        LevelStructureSpec,
         block_name_for_drive_channel,
         channel_needs_hermitian_conjugate,
     )
-    from ryd_gate.core.level_structures import LevelStructureSpec
-    from ryd_gate.core.operator_spec import LocalProjectorSpec
+    from ryd_gate.core.operators import LocalProjectorSpec
 
     protocol = system._require_protocol()
     level_spec = system.meta("level_spec", None)

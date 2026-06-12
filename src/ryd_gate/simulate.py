@@ -15,7 +15,7 @@ are forwarded unchanged.
 
 from __future__ import annotations
 
-from ryd_gate.ir.evolution import EvolutionResult
+from ryd_gate.ir import EvolutionResult
 
 _EXACT_BACKENDS = {"exact", "sparse", "sparse_expm"}
 
@@ -78,8 +78,11 @@ def simulate_sequence(
     sequence
         A built :class:`~ryd_gate.sequence.Sequence`.
     backend
-        ``"exact"`` or ``"mps"`` in Stage 3. Other backend names still raise
-        ``NotImplementedError`` through the sequence path.
+        ``"exact"``, ``"mps"``, ``"gputn"``, or ``"peps"`` (Stage 8). The TN
+        backends require their optional extras; results from backends without
+        a native state handle expose ``raw`` plus an
+        :class:`~ryd_gate.results.UnsupportedStateHandle`. Other names raise
+        ``NotImplementedError``.
     psi0
         Initial state. ``None`` (default) prepares every atom in the level
         structure's ``initial_level_or_default()``; strings and arrays are
@@ -112,15 +115,26 @@ def simulate_sequence(
     )
 
     key = backend.lower()
-    if key not in {"exact", "mps"}:
+    if key not in {"exact", "mps", "gputn", "peps"}:
         raise NotImplementedError(
-            f"simulate_sequence.backend_not_stage3: backend {backend!r} is not available "
-            "through the sequence path in Stage 3."
+            f"simulate_sequence.backend_unsupported: backend {backend!r} is not on "
+            "the sequence path (use exact, mps, gputn, or peps)."
         )
     if not sequence.level_structure.supports_backend(key):
         raise ValueError("level_structure.backend_unsupported")
+    if key != "exact":
+        from ryd_gate.protocols.sequence_protocol import sequence_uses_phase
+
+        # TN profile lowering takes np.real(...) of coefficients; refuse
+        # instead of silently dropping the phase factor.
+        if sequence_uses_phase(sequence):
+            raise ValueError(
+                f"sequence.phase_backend_unsupported: pulse phases lower to complex "
+                f"drive coefficients, which backend {key!r} does not represent; "
+                "run phase-modulated sequences on the exact backend."
+            )
     if observables is not None:
-        from ryd_gate.core.validation import raise_for_errors
+        from ryd_gate.core.serialization import raise_for_errors
 
         raise_for_errors(observables.validate())
         if key == "mps":

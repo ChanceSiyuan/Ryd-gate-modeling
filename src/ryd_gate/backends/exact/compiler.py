@@ -1,12 +1,30 @@
-"""Exact matrix lowering for state-vector sparse/dense backends."""
+"""Exact state-vector backend interface and matrix lowering."""
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from ryd_gate.core.operator_spec import is_operator_spec, materialize_sparse_operator
-from ryd_gate.ir import HamiltonianIR, HamiltonianTerm, compile_hamiltonian_ir
+import numpy as np
+
+from ryd_gate.core.operators import is_operator_spec, materialize_sparse_operator
+from ryd_gate.ir import EvolutionResult, HamiltonianIR, HamiltonianTerm, compile_hamiltonian_ir
+
+
+class SolverBackend(ABC):
+    """Abstract simulation backend."""
+
+    @abstractmethod
+    def evolve(
+        self,
+        ir: HamiltonianIR,
+        psi0: Any,
+        t_gate: float,
+        t_eval: np.ndarray | bool | None = None,
+    ) -> EvolutionResult:
+        """Evolve initial state under a compiled IR."""
+        ...
 
 
 @dataclass

@@ -7,7 +7,7 @@ from ryd_gate.backends.tn_common.compiler import (
     tn_lattice_spec_from_system,
 )
 
-from .backends import TenpyDMRGBackend, TenpyTDVPBackend
+from .backends import TenpyDMRGBackend, TenpyOptions, TenpyTDVPBackend
 from .model import build_tenpy_model
 from .observables import (
     measure_centerline_connected_zz,
@@ -17,7 +17,6 @@ from .observables import (
     measure_site_occupations,
     measure_staggered_magnetization,
 )
-from .options import TenpyOptions
 from .state import (
     domain_state_mps,
     mps_fidelity,

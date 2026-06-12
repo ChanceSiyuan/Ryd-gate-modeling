@@ -1,4 +1,4 @@
-"""TeNPy model builder for the 2-level Rydberg lattice Hamiltonian.
+"""TeNPy local site builders and the Rydberg lattice model builder.
 
 H = (Omega/2) sum_i X_i - sum_i (Delta + delta_i) n_i + sum_{i<j} V_ij n_i n_j
 """
@@ -8,6 +8,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
+
+from ryd_gate.backends.tn_common.sites import require_transition, resolve_level_structure
+from ryd_gate.core.level_structures import LevelStructureSpec
 
 if TYPE_CHECKING:
     from ryd_gate.backends.tn_common.lattice_spec import TNLatticeSpec
@@ -68,8 +71,6 @@ def build_tenpy_model(
     _require_tenpy()
     from tenpy.models.lattice import Chain
     from tenpy.models.model import CouplingMPOModel
-
-    from .sites import build_tenpy_site, transition_x_op_name
 
     def profile(value, default=0.0) -> np.ndarray:
         if value is None:
@@ -157,3 +158,44 @@ def build_tenpy_model(
                 self.add_coupling_term(V_ij, i_1d, j_1d, "n_r", "n_r")
 
     return RydbergLatticeModel({})
+
+
+def build_tenpy_site(level_structure: str | LevelStructureSpec) -> object:
+    """Build the TeNPy local site for a shared :class:`LevelStructureSpec`."""
+    _require_tenpy()
+    spec = resolve_level_structure(level_structure)
+    if spec.name == "1r":
+        from tenpy.networks.site import SpinHalfSite
+
+        return SpinHalfSite(conserve=None)
+    return _build_explicit_site(spec)
+
+
+def transition_x_op_name(spec: LevelStructureSpec, lower: str, upper: str) -> str:
+    """Return the Hermitian transition operator name for a central transition."""
+    transition = require_transition(spec, lower, upper)
+    return f"X_{transition.name}"
+
+
+def _build_explicit_site(spec: LevelStructureSpec) -> object:
+    from tenpy.linalg import np_conserved as npc
+    from tenpy.networks.site import Site
+
+    dim = spec.local_dim
+    leg = npc.LegCharge.from_trivial(dim)
+    ops = {}
+
+    for idx, level in enumerate(spec.levels):
+        projector = np.zeros((dim, dim), dtype=float)
+        projector[idx, idx] = 1.0
+        ops[f"n_{level}"] = projector
+
+    for transition in spec.transitions:
+        lower = spec.index(transition.lower)
+        upper = spec.index(transition.upper)
+        x_op = np.zeros((dim, dim), dtype=complex)
+        x_op[upper, lower] = 1.0
+        x_op[lower, upper] = 1.0
+        ops[f"X_{transition.name}"] = x_op
+
+    return Site(leg, state_labels=list(spec.levels), sort_charge=False, **ops)

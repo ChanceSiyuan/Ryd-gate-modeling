@@ -105,7 +105,7 @@ class TestCreateTNLatticeSpec:
 
     def test_vdw_pairs_consistency(self):
         """VdW pairs match the shared NN/NNN lattice convention."""
-        from ryd_gate.lattice.geometry import nn_nnn_relative_pairs
+        from ryd_gate.lattice import nn_nnn_relative_pairs
 
         spec = create_tn_lattice_spec(Lx=3, Ly=3)
         assert spec.vdw_pairs == nn_nnn_relative_pairs(3, 3)

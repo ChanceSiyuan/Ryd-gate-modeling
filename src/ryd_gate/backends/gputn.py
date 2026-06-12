@@ -1,26 +1,38 @@
-"""CuPy/cuTensorNet lattice evolution kernels used by ``backend="gputn"``.
+"""GPU tensor-network backend: CuPy/cuTensorNet kernels for ``backend="gputn"``.
 
 The default production path uses cuQuantum's experimental ``NetworkState``
 MPS interface when available.  A CuPy state-vector fallback is kept for small
 lattices and for dependency-injected tests; it is exact but scales as
 ``local_dim ** n_sites``.
+
+CUDA libraries are never imported at module import time: the CPU TeNPy path
+remains usable on machines without a GPU, while ``backend="gputn"`` fails
+early with a clear dependency/device error (:class:`GPUTNDependencyError`).
+The :class:`GPUTNTDVPBackend` adapter is wired into
+:func:`tn_common.simulate_tn`, and :class:`GPUTNOptions` is the typed options
+dataclass for that dispatch path.
 """
 
 from __future__ import annotations
 
-import importlib
+import importlib.util
 from dataclasses import dataclass
-from typing import Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from scipy.linalg import expm
 
 from ryd_gate.backends.tn_common.protocol_context import pin_deltas_from_params
-from ryd_gate.core.channel_lowering import (
+from ryd_gate.core.level_structures import (
     three_level_profiles_from_coeffs,
     two_level_drive_and_detuning_from_coeffs,
 )
-from ryd_gate.ir.evolution import EvolutionResult
+from ryd_gate.ir import EvolutionResult
+
+if TYPE_CHECKING:
+    from ryd_gate.backends.tn_common.lattice_spec import TNLatticeSpec
+    from ryd_gate.protocols.base import Protocol
 
 
 class GPUTNKernelError(RuntimeError):
@@ -319,7 +331,7 @@ class _StateVectorRunner:
         return float(_as_numpy(probs[tuple(idx)].sum(), self.xp).real)
 
     def _centerline_connected_zz(self, occ_r: np.ndarray) -> np.ndarray:
-        from ryd_gate.analysis.spin_observables import line_pairs_from_reference
+        from ryd_gate.analysis.observables import line_pairs_from_reference
 
         values = []
         for i, j in line_pairs_from_reference(self.spec.Lx, self.spec.Ly, axis="horizontal"):
@@ -542,7 +554,7 @@ class _CuTensorNetMPSRunner:
         return occ
 
     def _centerline_connected_zz(self, occ_r: np.ndarray) -> np.ndarray:
-        from ryd_gate.analysis.spin_observables import line_pairs_from_reference
+        from ryd_gate.analysis.observables import line_pairs_from_reference
 
         pairs = line_pairs_from_reference(self.spec.Lx, self.spec.Ly, axis="horizontal")
         if not self._operators_applied:
@@ -856,3 +868,171 @@ class _NetworkStateAPI:
     NetworkState: Any
     MPSConfig: Any | None
     NetworkOptions: Any | None
+
+
+# ── Backend entry points (no CUDA imports at module import time) ────────────
+
+
+class GPUTNDependencyError(ImportError):
+    """Raised when the GPU TN backend dependencies or CUDA device are unavailable."""
+
+
+def _missing_dependency_message(missing: list[str]) -> str:
+    missing_text = ", ".join(missing)
+    return (
+        f"GPUTN backend requires CUDA tensor-network dependencies: {missing_text}. "
+        "For CUDA 12, install the optional extra with "
+        "`pip install -e '.[gputn-cu12]'` or install NVIDIA cuQuantum Python "
+        "manually for your CUDA version. The CPU TeNPy backend remains available "
+        "with `backend='mps'`."
+    )
+
+
+def _require_gputn_dependencies(
+    *,
+    require_gpu: bool = True,
+    device_id: int | None = 0,
+) -> SimpleNamespace:
+    """Return GPU dependency modules after checking importability and device access."""
+    missing = [
+        module_name
+        for module_name in ("cupy", "cuquantum")
+        if importlib.util.find_spec(module_name) is None
+    ]
+    if missing:
+        raise GPUTNDependencyError(_missing_dependency_message(missing))
+
+    import cupy
+    import cuquantum
+
+    n_devices: int | None = None
+    if require_gpu:
+        try:
+            n_devices = int(cupy.cuda.runtime.getDeviceCount())
+        except Exception as exc:  # pragma: no cover - depends on local CUDA runtime
+            raise GPUTNDependencyError(
+                "GPUTN backend found CuPy/cuQuantum but could not query CUDA devices. "
+                "Check the NVIDIA driver, CUDA runtime libraries, and LD_LIBRARY_PATH."
+            ) from exc
+        if n_devices <= 0:
+            raise GPUTNDependencyError("GPUTN backend requires at least one CUDA device.")
+        if device_id is not None and not 0 <= int(device_id) < n_devices:
+            raise GPUTNDependencyError(
+                f"GPUTN backend requested CUDA device {device_id}, "
+                f"but only {n_devices} device(s) are visible."
+            )
+
+    return SimpleNamespace(cupy=cupy, cuquantum=cuquantum, n_devices=n_devices)
+
+
+def gputn_available(*, require_gpu: bool = True, device_id: int | None = 0) -> bool:
+    """Return whether the optional GPU TN dependencies and device are available."""
+    try:
+        _require_gputn_dependencies(require_gpu=require_gpu, device_id=device_id)
+    except GPUTNDependencyError:
+        return False
+    return True
+
+
+@dataclass
+class GPUTNTDVPBackend:
+    """GPU tensor-network lattice-evolution backend adapter.
+
+    The public adapter is wired into :func:`tn_common.simulate_tn` so callers
+    can switch from ``backend="mps"`` to ``backend="gputn"`` without changing
+    protocol/notebook code.  When ``engine`` is omitted, the built-in
+    :class:`CuTensorNetRydbergEngine` runs a cuTensorNet MPS Trotter kernel
+    when available, with a small-system CuPy state-vector fallback.  Custom
+    engines can still be injected by exposing an ``evolve(...)`` method with
+    the signature below.
+    """
+
+    chi_max: int = 256
+    dt: float = 0.2
+    svd_min: float = 1e-10
+    device_id: int | None = 0
+    require_gpu: bool = True
+    engine: object | None = None
+    kernel: str = "auto"
+    trotter_order: int = 2
+    statevector_max_sites: int | None = 24
+    return_state_vector: bool = False
+
+    def evolve_ir(
+        self,
+        ir,
+        initial_state: str | np.ndarray | object = "all_ground",
+        t_eval: np.ndarray | None = None,
+        observables: list[str] | None = None,
+    ) -> EvolutionResult:
+        """Evolve a compiled TN IR with the configured GPU TN engine."""
+        return self.evolve_compiled(
+            ir.spec,
+            ir.protocol,
+            ir.params,
+            initial_state,
+            t_eval=t_eval,
+            observables=observables,
+        )
+
+    def evolve_compiled(
+        self,
+        spec: TNLatticeSpec,
+        protocol: Protocol,
+        params: dict,
+        psi0: object,
+        t_eval: np.ndarray | None = None,
+        observables: list[str] | None = None,
+    ) -> EvolutionResult:
+        """Evolve with already-unpacked protocol parameters."""
+        deps = _require_gputn_dependencies(
+            require_gpu=self.require_gpu,
+            device_id=self.device_id,
+        )
+        engine = self.engine
+        if engine is None:
+            engine = CuTensorNetRydbergEngine(
+                kernel=self.kernel,
+                trotter_order=self.trotter_order,
+                statevector_max_sites=self.statevector_max_sites,
+                return_state_vector=self.return_state_vector,
+            )
+
+        result = engine.evolve(
+            spec,
+            protocol,
+            params,
+            psi0,
+            t_eval=t_eval,
+            observables=observables,
+            chi_max=self.chi_max,
+            dt=self.dt,
+            svd_min=self.svd_min,
+            device_id=self.device_id,
+            xp=deps.cupy,
+            cuquantum=deps.cuquantum,
+        )
+        result.metadata.setdefault("backend", "gputn")
+        result.metadata.setdefault("accelerator", "cuda")
+        result.metadata.setdefault("state_handle_kind", "unsupported")
+        if self.engine is None:
+            result.metadata.setdefault("engine_package", "gputn")
+        return result
+
+
+@dataclass(frozen=True)
+class GPUTNOptions:
+    """Options for ``backend="gputn"`` TDVP evolution.
+
+    ``None`` means "use the backend default".
+    """
+
+    chi_max: int | None = None
+    dt: float | None = None
+    svd_min: float | None = None
+    device_id: int | None = None
+    require_gpu: bool | None = None
+    kernel: str | None = None
+    trotter_order: int | None = None
+    statevector_max_sites: int | None = None
+    return_state_vector: bool | None = None

@@ -9,7 +9,7 @@ from ryd_gate import RydbergSystem, SweepProtocol
 from ryd_gate.backends.exact import simulate
 from ryd_gate.backends.exact.compiler import ExactSparseCompiler
 from ryd_gate.core.level_structures import InteractionSpec, level_structure
-from ryd_gate.core.operator_spec import RydbergPairInteractionSpec
+from ryd_gate.core.operators import RydbergPairInteractionSpec
 from ryd_gate.lattice import Register
 from ryd_gate.protocols.digital_analog import DigitalAnalogProtocol
 

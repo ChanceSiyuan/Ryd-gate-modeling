@@ -2,24 +2,22 @@
 
 Contents
 --------
-- ``system``          — RydbergSystem (universal model: lattice + level
-  structure + protocol → symbolic blocks + observables)
-- ``level_structures``— level/transition/interaction specs + presets
-- ``rb87_params``     — Rb87 seven-level physical parameter sets
-- ``local_blocks``    — single-atom Hamiltonian matrix blocks
-- ``factories``       — RydbergSystem.from_lattice construction
-- ``system_model``   — SystemModel ABC consumed by solvers
-- ``basis``          — BasisSpec: site/level labels and Hilbert dimensions
-- ``blocks``         — BlockRegistry: named matrix or symbolic Hamiltonian blocks
-- ``operator_spec``  — symbolic local/sum/pair operator descriptions
-- ``observables``    — ObservableRegistry: named measurement matrices or specs
-- ``operators``      — Low-level operator builders (Kronecker embed, projectors)
-- ``interactions``   — vdw_couplings for pairwise Rydberg interactions
-- ``states``         — Many-body state constructors (product, AF, domain)
+- ``system``           — RydbergSystem (universal model: lattice + level
+  structure + protocol → symbolic blocks + observables) and the
+  ``from_lattice`` construction logic
+- ``model``            — BasisSpec, BlockRegistry, ObservableRegistry, and
+  the SystemModel ABC consumed by solvers
+- ``level_structures`` — level/transition/interaction specs + presets, plus
+  protocol-channel lowering helpers
+- ``operators``        — concrete operator builders (Kronecker embed,
+  projectors) and symbolic local/sum/pair operator specs
+- ``physical_models``  — vdw_couplings, Rb87 seven-level physical parameter
+  sets, single-atom Hamiltonian matrix blocks
+- ``serialization``    — ValidationIssue/raise_for_errors primitives and the
+  schema-tag serialization contract
+- ``states``           — many-body state constructors (product, AF, domain)
 """
 
-from ryd_gate.core.basis import BasisSpec
-from ryd_gate.core.blocks import BlockRegistry
 from ryd_gate.core.level_structures import (
     DEFAULT_C6,
     InteractionSpec,
@@ -27,9 +25,14 @@ from ryd_gate.core.level_structures import (
     TransitionSpec,
     level_structure,
 )
-from ryd_gate.core.observables import Observable, ObservableRegistry
+from ryd_gate.core.model import (
+    BasisSpec,
+    BlockRegistry,
+    Observable,
+    ObservableRegistry,
+)
+from ryd_gate.core.serialization import ValidationIssue, raise_for_errors
 from ryd_gate.core.system import RydbergSystem
-from ryd_gate.core.validation import ValidationIssue, raise_for_errors
 
 __all__ = [
     "RydbergSystem",

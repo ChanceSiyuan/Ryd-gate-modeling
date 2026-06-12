@@ -95,15 +95,19 @@ class TestCompile:
         assert system.basis.local_levels == ("0", "1", "r")
         assert system.blocks.has("drive_R") and system.blocks.has("delta_R")
 
-    def test_phase_not_stage2(self):
+    def test_phase_compiles_to_complex_coefficient(self):
+        import numpy as np
+
+        from ryd_gate.protocols.sequence_protocol import SequenceProtocol
+
         seq = _seq("1r")
         seq.add(Pulse.constant(1000, 1.0, 0.0, phase_rad=0.3), "ryd")
-        with pytest.raises(NotImplementedError, match="phase_not_stage2"):
-            compile_sequence_to_system(seq)
-        seq2 = _seq("1r")
-        seq2.add(Pulse.constant(1000, 1.0, 0.0, post_phase_shift_rad=0.3), "ryd")
-        with pytest.raises(NotImplementedError, match="phase_not_stage2"):
-            compile_sequence_to_system(seq2)
+        system = compile_sequence_to_system(seq)
+        protocol = system.protocol
+        assert isinstance(protocol, SequenceProtocol)
+        params = protocol.unpack_params([], system)
+        coeff = protocol.get_drive_coefficients(500e-9, params)["global_X"]
+        np.testing.assert_allclose(coeff, (1.0e6 / 2.0) * np.exp(-1j * 0.3))
 
     def test_empty_sequence_raises(self):
         with pytest.raises(ValueError, match="sequence.empty"):

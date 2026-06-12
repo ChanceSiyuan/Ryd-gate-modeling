@@ -3,9 +3,7 @@
 import numpy as np
 import pytest
 
-from ryd_gate.core.basis import BasisSpec
-from ryd_gate.core.blocks import BlockRegistry
-from ryd_gate.core.observables import ObservableRegistry
+from ryd_gate.core.model import BasisSpec, BlockRegistry, ObservableRegistry
 
 # ---------------------------------------------------------------------------
 # BasisSpec

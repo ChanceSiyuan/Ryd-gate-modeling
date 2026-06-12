@@ -165,7 +165,7 @@ def measure_centerline_connected_zz(
     axis: str = "horizontal",
 ) -> np.ndarray:
     """Measure connected ``C_zz`` from a center site along a center line."""
-    from ryd_gate.analysis.spin_observables import line_pairs_from_reference
+    from ryd_gate.analysis.observables import line_pairs_from_reference
 
     return np.array([
         measure_connected_zz(psi, spec, i, j)

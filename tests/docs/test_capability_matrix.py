@@ -50,7 +50,7 @@ class TestMatrixDerivation:
     def test_noise_rows_come_from_validate_for(self, generator, monkeypatch):
         """Forcing validate_for to reject everything must flip the noise rows."""
         from ryd_gate import NoiseModel
-        from ryd_gate.core.validation import ValidationIssue
+        from ryd_gate.core.serialization import ValidationIssue
 
         def reject(self, *, backend, level_structure=None, n_atoms=None):
             return [ValidationIssue("error", "noise.backend_unsupported", "forced", ())]

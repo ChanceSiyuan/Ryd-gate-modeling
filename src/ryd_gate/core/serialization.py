@@ -1,9 +1,15 @@
-"""Schema-tag helpers for the plain-dict serialization contract.
+"""Validation primitives and the plain-dict serialization contract.
 
-Every product object serializes to a JSON-compatible dict tagged with
-``"schema": "ryd-gate/<kind>/v1"`` and reconstructs via ``from_dict``. These
-helpers keep the tag format and the numpy-conversion rule in one place; each
-class still owns its own ``to_dict``/``from_dict``.
+Validation: one vocabulary for "what is wrong" — severity, stable
+machine-readable code, human-readable message, and a path locating the
+offending field. Validation methods accumulate :class:`ValidationIssue`
+objects without raising; :func:`raise_for_errors` is the explicit raise
+boundary.
+
+Serialization: every product object serializes to a JSON-compatible dict
+tagged with ``"schema": "ryd-gate/<kind>/v1"`` and reconstructs via
+``from_dict``. These helpers keep the tag format and the numpy-conversion
+rule in one place; each class still owns its own ``to_dict``/``from_dict``.
 
 Stage 6 freezes the ``v1`` payloads as JSON Schema files shipped in
 ``ryd_gate/schemas/``; :func:`validate_json_schema` checks a payload against
@@ -14,12 +20,70 @@ its frozen schema (optional ``jsonschema`` dependency — install the
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 import numpy as np
 
-from ryd_gate.core.validation import ValidationIssue
+# ── Validation primitives ────────────────────────────────────────────────────
+
+ValidationSeverity = Literal["error", "warning"]
+
+_VALID_SEVERITIES = ("error", "warning")
+
+
+@dataclass(frozen=True)
+class ValidationIssue:
+    """One validation problem.
+
+    Attributes
+    ----------
+    severity : {"error", "warning"}
+        Errors block execution at ``raise_for_errors``; warnings never raise.
+    code : str
+        Stable machine-readable code (e.g. ``"register.min_distance"``).
+        Codes are API: tests and downstream callers branch on them.
+    message : str
+        Human-readable description.
+    path : tuple[str, ...]
+        Location of the invalid field, e.g. ``("register", "coords")``.
+    """
+
+    severity: ValidationSeverity
+    code: str
+    message: str
+    path: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.severity not in _VALID_SEVERITIES:
+            raise ValueError(
+                f"severity must be 'error' or 'warning', got {self.severity!r}."
+            )
+        if not isinstance(self.code, str) or not self.code:
+            raise ValueError("code must be a non-empty string.")
+        if not isinstance(self.message, str):
+            raise ValueError("message must be a string.")
+        if not isinstance(self.path, tuple) or not all(
+            isinstance(p, str) for p in self.path
+        ):
+            raise ValueError("path must be a tuple of strings.")
+
+
+def raise_for_errors(issues: list[ValidationIssue]) -> None:
+    """Raise ``ValueError`` if any issue has severity ``"error"``.
+
+    Returns ``None`` when there are no errors (warnings never raise). The
+    raised message lists each error's code and message on its own line.
+    """
+    errors = [issue for issue in issues if issue.severity == "error"]
+    if not errors:
+        return None
+    lines = [f"{issue.code}: {issue.message}" for issue in errors]
+    raise ValueError("validation failed:\n" + "\n".join(lines))
+
+
+# ── Schema-tag helpers ───────────────────────────────────────────────────────
 
 SCHEMA_PREFIX = "ryd-gate"
 SCHEMA_VERSION = "v1"

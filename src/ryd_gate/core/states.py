@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ryd_gate.lattice.geometry import is_in_domain
+from ryd_gate.lattice import is_in_domain
 
 # ─────────────────────────────────────────────────────────────────────
 # 2-level

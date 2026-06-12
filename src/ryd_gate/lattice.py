@@ -2,8 +2,8 @@
 
 Only "where the atoms sit" — no energy-level structure, no Hamiltonians,
 no interactions. Energy structures live in ``core/system.py`` (and
-level_structures/local_blocks) and van der Waals coupling computation lives
-in ``core/interactions.py``.
+``core/level_structures.py`` / ``core/physical_models.py``, the latter also
+holding the van der Waals coupling computation).
 
 Contents
 --------
@@ -15,6 +15,9 @@ Contents
 - :func:`is_in_domain`, :func:`nn_nnn_relative_pairs`,
   :func:`cylinder_nn_nnn_pairs` — internal lattice helpers used by the
   TN/analysis layers.
+- :func:`plot_spatial_rydberg`, :func:`plot_population_evolution` —
+  visualizations of physics quantities on lattice coordinates (matplotlib
+  imported lazily inside the functions).
 """
 
 from __future__ import annotations
@@ -24,8 +27,12 @@ from typing import Any, Literal, Mapping, Sequence
 
 import numpy as np
 
-from ryd_gate.core.serialization import check_schema, json_ready, schema_tag
-from ryd_gate.core.validation import ValidationIssue
+from ryd_gate.core.serialization import (
+    ValidationIssue,
+    check_schema,
+    json_ready,
+    schema_tag,
+)
 
 _LAYOUT_KINDS = ("chain", "square", "rectangle", "triangular", "custom")
 
@@ -532,3 +539,108 @@ def cylinder_nn_nnn_pairs(Lx: int, Ly: int) -> tuple:
             if dist_sq <= 2.01:
                 pairs.append((i, j, 1.0 / dist_sq ** 3))
     return tuple(pairs)
+
+
+# ── Visualization (matplotlib imported lazily) ───────────────────────────────
+
+
+def plot_spatial_rydberg(
+    coords: np.ndarray,
+    rydberg_occ: np.ndarray,
+    sublattice: np.ndarray | None = None,
+    title: str = "",
+    ax=None,
+):
+    """Plot Rydberg population as colored circles at atom positions.
+
+    Parameters
+    ----------
+    coords : ndarray, shape (N, 2)
+        Atom positions.
+    rydberg_occ : ndarray, shape (N,)
+        Per-atom Rydberg population.
+    sublattice : ndarray or None
+        If given, use squares for +1 sublattice, circles for -1.
+    title : str
+        Plot title.
+    ax : Axes or None
+        Existing axes. Creates new figure if None.
+    """
+    import matplotlib.pyplot as plt
+
+    fig: Any
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+    else:
+        fig = ax.figure
+
+    if sublattice is not None:
+        for sub_val, marker in [(1, 's'), (-1, 'o')]:
+            mask = sublattice == sub_val
+            sc = ax.scatter(
+                coords[mask, 0], coords[mask, 1],
+                c=rydberg_occ[mask], cmap='coolwarm',
+                vmin=0, vmax=1, s=300, marker=marker,
+                edgecolors='black', linewidths=1.0,
+            )
+    else:
+        sc = ax.scatter(
+            coords[:, 0], coords[:, 1],
+            c=rydberg_occ, cmap='coolwarm',
+            vmin=0, vmax=1, s=300,
+            edgecolors='black', linewidths=1.0,
+        )
+
+    fig.colorbar(sc, ax=ax, label=r'$P_r$', shrink=0.8)
+
+    for i, (x, y) in enumerate(coords):
+        ax.annotate(f'{rydberg_occ[i]:.2f}', (x, y),
+                    ha='center', va='center', fontsize=8, fontweight='bold')
+
+    ax.set_aspect('equal')
+    ax.set_xlabel(r'$x$ ($\mu$m)')
+    ax.set_ylabel(r'$y$ ($\mu$m)')
+    if title:
+        ax.set_title(title)
+    return fig
+
+
+def plot_population_evolution(
+    times: np.ndarray,
+    rydberg_occ: np.ndarray,
+    sublattice: np.ndarray,
+    ax=None,
+):
+    """Per-atom P_r(t) curves colored by sublattice.
+
+    Parameters
+    ----------
+    times : ndarray, shape (n_times,)
+    rydberg_occ : ndarray, shape (n_times, N)
+    sublattice : ndarray, shape (N,)
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+
+    fig: Any
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+    else:
+        fig = ax.figure
+
+    N = rydberg_occ.shape[1]
+    t_us = times * 1e6
+
+    for i in range(N):
+        color = '#d62728' if sublattice[i] > 0 else '#1f77b4'
+        ax.plot(t_us, rydberg_occ[:, i], color=color, alpha=0.6, lw=1)
+
+    legend_elements = [
+        Line2D([0], [0], color='#d62728', label='Sublattice +1'),
+        Line2D([0], [0], color='#1f77b4', label='Sublattice -1'),
+    ]
+    ax.legend(handles=legend_elements)
+    ax.set_xlabel(r'Time ($\mu$s)')
+    ax.set_ylabel(r'$P_r$')
+    ax.set_ylim(-0.05, 1.05)
+    return fig

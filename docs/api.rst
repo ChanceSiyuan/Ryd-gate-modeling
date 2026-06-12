@@ -13,7 +13,7 @@ Top level
 Registers and layouts
 ---------------------
 
-.. automodule:: ryd_gate.lattice.geometry
+.. automodule:: ryd_gate.lattice
    :members: Register, RegisterLayout
 
 Pulses and waveforms
@@ -54,7 +54,7 @@ Noise
 Gate library
 ------------
 
-.. automodule:: ryd_gate.gates.cz
+.. automodule:: ryd_gate.gates
    :members: CZGateReport, cz_gate_report
 
 Observable schedules
@@ -66,7 +66,7 @@ Observable schedules
 Pulser interop
 --------------
 
-.. automodule:: ryd_gate.interop.pulser
+.. automodule:: ryd_gate.interop
    :members: PulserInteropError, from_pulser_abstract_repr,
              to_pulser_abstract_repr, noise_from_pulser_abstract_repr,
              noise_to_pulser_abstract_repr

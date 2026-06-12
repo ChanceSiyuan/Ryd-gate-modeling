@@ -33,8 +33,8 @@ Regenerate with `uv run python docs/_scripts/build_capability_matrix.py`.
 |---|---|
 | `exact` | yes |
 | `mps` | yes |
-| `gputn` | — (not on the sequence path) |
-| `peps` | — (not on the sequence path) |
+| `gputn` | yes |
+| `peps` | yes |
 | `stabilizer` | — (not on the sequence path) |
 
 ## Pulser interop subset
