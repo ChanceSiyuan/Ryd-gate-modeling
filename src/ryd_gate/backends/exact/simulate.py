@@ -26,8 +26,8 @@ class ExactOptions:
 
 def simulate(
     system,
-    x,
-    psi0,
+    x=(),
+    psi0="all_ground",
     t_eval: np.ndarray | bool | None = None,
     backend: "SolverBackend | None" = None,
     compiler=None,

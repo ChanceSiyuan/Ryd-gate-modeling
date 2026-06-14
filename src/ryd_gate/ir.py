@@ -8,6 +8,7 @@ container returned by all simulation algorithm packages.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -16,12 +17,88 @@ import numpy as np
 
 @dataclass
 class EvolutionResult:
-    """Unified result object returned by simulation algorithm packages."""
+    """Unified result object returned by simulation algorithm packages.
+
+    ``psi_final`` is the final state — a dense state vector for the exact
+    backend, or a backend-native state handle for tensor-network backends.
+    ``times`` / ``states`` hold the trajectory when ``t_eval`` was requested.
+
+    Convenience accessors (:attr:`final_state`, :meth:`expectation`,
+    :meth:`probabilities`, :meth:`sample`) are wired up by
+    :func:`ryd_gate.simulate`, which attaches the measuring ``system`` and any
+    values requested via ``simulate(..., observables=[...])`` so results can be
+    read without re-threading the state back through the system.
+    """
 
     psi_final: Any
     times: np.ndarray | None = None
     states: Any | None = None
     metadata: dict = field(default_factory=dict)
+    expectations: dict | None = None
+    system: Any = field(default=None, repr=False, compare=False)
+
+    @property
+    def final_state(self) -> Any:
+        """Alias for :attr:`psi_final` (peer-library naming)."""
+        return self.psi_final
+
+    def expectation(self, name: str) -> Any:
+        """Expectation value of a named observable in the final state.
+
+        Returns the precomputed value when ``simulate(..., observables=[...])``
+        requested it; otherwise measures it on the dense final state through the
+        bound system. Raises ``RuntimeError`` if no measurement context is
+        attached (e.g. a bare result built outside :func:`ryd_gate.simulate`).
+        """
+        if self.expectations is not None and name in self.expectations:
+            return self.expectations[name]
+        if self.system is None:
+            raise RuntimeError(
+                "no measurement context on this result; request it via "
+                "simulate(..., observables=[name]), or measure on the system "
+                "directly: system.expectation(name, result.final_state)."
+            )
+        return self.system.expectation(name, self._dense_final())
+
+    def probabilities(self) -> np.ndarray:
+        """Computational-basis probabilities ``|psi|**2`` of the final state."""
+        psi = np.asarray(self._dense_final())
+        return np.abs(psi) ** 2
+
+    def sample(self, n_shots: int, seed: int | None = None) -> Counter:
+        """Multinomially sample measurement outcomes from the final state.
+
+        Returns a :class:`collections.Counter` keyed by per-site level-label
+        strings in basis site order (e.g. ``"rr"``, ``"1r"`` for a 2-level
+        chain; ``"|"``-joined when level labels are multi-character). Requires a
+        dense final state and the bound system's basis.
+        """
+        basis = getattr(self.system, "basis", None)
+        if basis is None:
+            raise RuntimeError("sample() needs the bound system's basis; use ryd_gate.simulate(...).")
+        probs = self.probabilities()
+        total = probs.sum()
+        if not np.isclose(total, 1.0):
+            probs = probs / total
+        rng = np.random.default_rng(seed)
+        draws = rng.choice(probs.size, size=int(n_shots), p=probs)
+        d, n_sites, levels = basis.local_dim, basis.n_sites, basis.local_levels
+        joiner = "" if all(len(str(s)) == 1 for s in levels) else "|"
+        counts: Counter = Counter()
+        for idx in draws:
+            site_levels = (levels[(int(idx) // d ** (n_sites - 1 - i)) % d] for i in range(n_sites))
+            counts[joiner.join(site_levels)] += 1
+        return counts
+
+    def _dense_final(self) -> np.ndarray:
+        psi = self.psi_final
+        if not isinstance(psi, np.ndarray):
+            raise TypeError(
+                "a dense final state vector is not available (the backend returned "
+                f"a {type(psi).__name__} state handle); request named observables via "
+                "simulate(..., observables=[...]) instead."
+            )
+        return psi
 
 
 @dataclass
