@@ -42,9 +42,13 @@ tn = [
 ]
 tn-2d = [
     "physics-tenpy>=1.0",
-    "yastn @ git+https://github.com/yastn/yastn.git",
     "cotengra",
     "autoray",
+]
+# YASTN is only needed to cross-validate the self-written `rydtn` PEPS engine
+# (backend="peps" defaults to engine_package="rydtn"; "yastn" is the reference).
+tn-2d-validation = [
+    "yastn @ git+https://github.com/yastn/yastn.git",
 ]
 gputn-cu12 = [
     "cupy-cuda12x[ctk]>=13.0",

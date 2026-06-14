@@ -3,7 +3,8 @@
 Four TN backends are exposed:
 
 - ``backend="mps"``: TeNPy CPU MPS reference path.
-- ``backend="peps"``: YASTN finite-PEPS path for 2D lattices.
+- ``backend="peps"``: self-written finite-PEPS path for 2D lattices
+  (``engine_package="rydtn"``, the default; ``"yastn"`` keeps the YASTN reference).
 - ``backend="gputn"``: experimental CuPy/cuQuantum GPU validation path.
 - ``backend="pepskit"``: PEPSKit.jl iPEPS path.
 
@@ -101,11 +102,7 @@ def simulate_tn_ir(
         )
 
     if backend == "peps":
-        from ryd_gate.backends.peps2d import YASTNPEPSBackend
-
-        return YASTNPEPSBackend(**_peps_options(opts)).evolve_ir(
-            ir, initial_state=initial_state, t_eval=t_eval, observables=observables,
-        )
+        return _run_peps(ir, initial_state, t_eval, observables, opts)
 
     if backend == "gputn":
         from ryd_gate.backends.gputn import GPUTNTDVPBackend
@@ -150,15 +147,31 @@ def _normalize_backend(backend: str) -> str:
     raise ValueError(f"Unknown TN backend: {backend!r}. Use 'mps', 'peps', 'gputn', or 'pepskit'.")
 
 
-def _peps_options(opts: dict) -> dict:
+def _run_peps(ir, initial_state, t_eval, observables, opts: dict) -> EvolutionResult:
+    """Dispatch ``backend='peps'`` on ``engine_package``.
+
+    Default ``engine_package='rydtn'`` runs the self-written finite-PEPS engine;
+    ``engine_package='yastn'`` keeps the original YASTN path (validation/reference).
+    """
     options = dict(opts)
-    engine = options.pop("engine", None)
-    if engine is not None:
-        raise ValueError("backend='peps' uses the built-in YASTN PEPS backend; custom engines are not public.")
-    engine_package = options.pop("engine_package", None)
-    if engine_package is not None and str(engine_package).strip().lower() != "yastn":
-        raise ValueError("backend='peps' uses engine_package='yastn' only.")
-    return options
+    if options.pop("engine", None) is not None:
+        raise ValueError("backend='peps' does not accept a custom 'engine'.")
+    engine_package = str(options.pop("engine_package", "rydtn")).strip().lower()
+    if engine_package == "yastn":
+        from ryd_gate.backends.peps2d import YASTNPEPSBackend
+
+        return YASTNPEPSBackend(**options).evolve_ir(
+            ir, initial_state=initial_state, t_eval=t_eval, observables=observables,
+        )
+    if engine_package in {"rydtn", "self", "builtin"}:
+        from ryd_gate.backends.rydtn import RydTNPEPSBackend
+
+        return RydTNPEPSBackend(**options).evolve_ir(
+            ir, initial_state=initial_state, t_eval=t_eval, observables=observables,
+        )
+    raise ValueError(
+        f"backend='peps' uses engine_package='rydtn' (default) or 'yastn'; got {engine_package!r}."
+    )
 
 
 def _metadata(spec, backend: str) -> dict:

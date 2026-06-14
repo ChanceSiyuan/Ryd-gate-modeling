@@ -24,6 +24,7 @@ def test_peps_yastn_package_runs_concrete_smoke():
         t_eval=np.array([0.0, 0.05]),
         observables=["sigma_z", "czz_centerline"],
         backend_options={
+            "engine_package": "yastn",
             "chi_max": 2,
             "dt": 0.05,
             "use_cuda": False,
@@ -94,6 +95,7 @@ def test_peps_yastn_package_runs_01r_qutrit_smoke():
         t_eval=np.array([0.0, 0.02]),
         observables=["n_0", "n_1", "n_r", "n_mean", "sigma_z", "czz"],
         backend_options={
+            "engine_package": "yastn",
             "chi_max": 3,
             "dt": 0.02,
             "use_cuda": False,
@@ -114,11 +116,50 @@ def test_peps_yastn_package_runs_01r_qutrit_smoke():
     np.testing.assert_allclose(result.metadata["obs"]["n_r"][0], [0.0, 0.0], atol=1e-10)
 
 
-def test_peps_rejects_non_yastn_engine_package():
+def test_peps_yastn_ctm_measurement_is_physical():
+    """Converged-CTM measurement must be physical (0<=n_r<=1), symmetric, ~ BP.
+
+    Guards the fix for the previously unconverged CTM path, which returned
+    out-of-range, symmetry-breaking occupations (e.g. n_r = -0.84, 1.88).
+    """
+    pytest.importorskip("yastn")
+    spec = create_tn_lattice_spec(2, 2, V_nn=3.0, interaction_mode="nn")
+    proto = TFIMQuenchProtocol(hx=1.2, hz=0.2, t_gate=0.4)
+
+    def run(meas):
+        return simulate_tn(
+            spec, proto, [], backend="peps",
+            t_eval=np.array([0.4]), observables=["n_r"],
+            backend_options={
+                "engine_package": "yastn", "chi_max": 8, "dt": 0.05,
+                "measurement_environment": meas, "ctm_chi": 24, "ctm_iters": 60,
+            },
+        ).metadata["obs"]["n_r"][-1]
+
+    nr_ctm, nr_bp = run("ctm"), run("bp")
+    assert np.all(nr_ctm >= -1e-6) and np.all(nr_ctm <= 1.0 + 1e-6)  # physical bounds
+    assert float(nr_ctm.max() - nr_ctm.min()) < 1e-3                  # 2x2 uniform-drive symmetry
+    np.testing.assert_allclose(nr_ctm, nr_bp, atol=2e-2)             # agree up to BP loop error
+
+
+def test_peps_ctm_requires_iterations():
+    """Guards: CTM measurement rejects degenerate (chi<=1 / iters<=0) settings."""
+    pytest.importorskip("yastn")
+    from ryd_gate.backends.peps2d import YASTNPEPSError, _measurement_env
+    import yastn.tn.fpeps as fpeps
+
+    geom = fpeps.SquareLattice(dims=(1, 2), boundary="obc")
+    with pytest.raises(YASTNPEPSError, match="ctm_chi > 1"):
+        _measurement_env(fpeps, None, "ctm", ctm_chi=1, ctm_iters=10, ctm_tol=1e-8)
+    with pytest.raises(YASTNPEPSError, match="ctm_iters > 0"):
+        _measurement_env(fpeps, None, "ctm", ctm_chi=16, ctm_iters=0, ctm_tol=1e-8)
+
+
+def test_peps_rejects_unknown_engine_package():
     spec = create_tn_lattice_spec(1, 2, V_nn=4.0, interaction_mode="nn")
     proto = TFIMQuenchProtocol(hx=0.1, hz=0.0, t_gate=0.05)
 
-    with pytest.raises(ValueError, match="engine_package='yastn'"):
+    with pytest.raises(ValueError, match="engine_package"):
         simulate_tn(
             spec,
             proto,
