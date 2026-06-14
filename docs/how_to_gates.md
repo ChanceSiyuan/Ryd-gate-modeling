@@ -60,11 +60,24 @@ report.error_budget["rydberg_decay"]    # {"total": ..., "XYZ": ..., "AL": ..., 
 ## Benchmark status (pinned in tests/gates/test_cz_benchmark_pins.py)
 
 - **TO dark** (`X_TO_DARK`, blackman flat-top, detuning_sign=+1): infidelity
-  ≈ 7.8e-7 — the validated high-fidelity operating point.
-- The legacy AR parameter set and the Saffman-constants Double-ARP
-  configuration are **not** high-fidelity optima under the current protocol
-  conventions; their pins guard the computation path, not gate quality.
-  Re-optimization lives in `scripts/optimize_ar_cz.py`.
+  ≈ 7.8e-7 — the validated high-fidelity TO operating point.
+- **AR re-optimized**: genuine high-fidelity amplitude-robust CZ gates on
+  **both** parameter sets, found by `scripts/optimize_ar_cz.py`:
+  `X_AR_OUR_OPT` → ≈ 9.5e-6 (fidelity 0.99999) on `param_set="our"`, and
+  `X_AR_LUKIN` → ≈ 2.1e-4 on `param_set="lukin"` (the lukin pin is
+  `slow`-marked; its exact evaluation costs ~400 s).
+- The *legacy* `X_AR` parameters and the Saffman-constants Double-ARP
+  configuration are **not** high-fidelity optima as written; their pins guard
+  the computation path, not gate quality.
+
+> **Why the legacy AR seed looks bad.** The legacy `X_AR` single-start gets
+> trapped at infidelity ~0.45 on "our" — a *non-entangling local minimum*
+> (low leakage, but conditional phase ≈ 0 instead of π), **not** a protocol or
+> target bug: the TO gate reaches 7.8e-7 on the same system with the same
+> `average_gate_infidelity`, and `scripts/diagnose_ar_target.py` confirms the
+> 01↔10 symmetry is exact. A **multi-start** search (`--restarts`) escapes the
+> local minimum and reaches the high-fidelity points above. Use multi-start,
+> not a single seed, when re-optimizing AR.
 
 Noisy gate statistics combine this with the [NoiseModel](how_to_noise.md)
 Monte Carlo runner.
