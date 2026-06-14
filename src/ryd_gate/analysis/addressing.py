@@ -89,9 +89,9 @@ def default_sweep_x(system):
     Sweep from -15 MHz to +15 MHz over 1.5 us.
     """
     return [
-        -2 * pi * SWEEP_DELTA_HZ / system.rabi_eff,
-         2 * pi * SWEEP_DELTA_HZ / system.rabi_eff,
-         SWEEP_T_GATE / system.time_scale,
+        -2 * pi * SWEEP_DELTA_HZ / system.meta("rabi_eff"),
+         2 * pi * SWEEP_DELTA_HZ / system.meta("rabi_eff"),
+         SWEEP_T_GATE / system.meta("time_scale"),
     ]
 
 
