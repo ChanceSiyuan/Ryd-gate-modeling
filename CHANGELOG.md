@@ -2,8 +2,24 @@
 
 ## Unreleased (0.1.0 development line)
 
-Product-API refactor, staged per `stageplans/` (binding specs; Decision Log
-D1–D13 in `stageplans/README.md`).
+Product-API refactor. The staged refactor specs (`stageplans/`, Decision Log
+D1–D13) have been retired now that the protocol-only surface has landed; the
+sections below summarize the history.
+
+### API ergonomics reframe
+- `EvolutionResult` gained result-side accessors — `final_state`,
+  `expectation(name)` / `expectations`, `probabilities()`, and
+  `sample(n_shots)` — with the measuring system attached, so results read and
+  sample themselves instead of threading the state back through the system.
+- `simulate(...)` takes an optional `x` (only the CZ-gate protocols need a
+  parameter vector) and an `observables=` argument, unified across the exact
+  (final-state values) and tensor-network (per-time series) backends.
+- Precision fixes: `analysis.addressing.default_sweep_x` reads physical
+  parameters from metadata (previously an `AttributeError`); the documented
+  `analysis.observables` helpers (`measure_observables`, `measure_trajectory`,
+  `state_overlap`, `norm_squared`) are now exported from `ryd_gate.analysis`.
+- De-duplicated the TO/AR Blackman drive; added `scripts/api_walkthrough.py`,
+  a runnable end-to-end tour of the public API.
 
 ### Preset cleanup (Decision D13)
 - Removed the symbolic `ger` level-structure preset (zero workflow users);
