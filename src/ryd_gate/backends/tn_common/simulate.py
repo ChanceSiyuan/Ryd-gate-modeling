@@ -166,6 +166,11 @@ def _run_peps(ir, initial_state, t_eval, observables, opts: dict) -> EvolutionRe
     if engine_package in {"rydtn", "self", "builtin"}:
         from ryd_gate.backends.rydtn import RydTNPEPSBackend
 
+        # Back-compat: the YASTN backend named the array backend `yastn_backend`;
+        # the rydtn engine calls it `backend_name`.  Accept the legacy name so
+        # existing YASTN-style backend_options keep working under the new default.
+        if "yastn_backend" in options:
+            options.setdefault("backend_name", options.pop("yastn_backend"))
         return RydTNPEPSBackend(**options).evolve_ir(
             ir, initial_state=initial_state, t_eval=t_eval, observables=observables,
         )

@@ -54,6 +54,20 @@ def test_rydtn_peps_runs_01r_qutrit_smoke():
     np.testing.assert_allclose(result.metadata["obs"]["n_r"][0], [0.0, 0.0], atol=1e-10)
 
 
+def test_legacy_yastn_backend_option_aliases_to_rydtn():
+    """YASTN-style backend_options (yastn_backend=...) keep working under the rydtn default."""
+    from ryd_gate.backends.tn_common.simulate import simulate_tn
+
+    spec = create_tn_lattice_spec(1, 2, V_nn=2.0, interaction_mode="nn")
+    proto = TFIMQuenchProtocol(hx=0.5, hz=0.1, t_gate=0.05)
+    res = simulate_tn(
+        spec, proto, [], backend="peps", t_eval=np.array([0.05]), observables=["n_mean"],
+        backend_options={"chi_max": 4, "dt": 0.05, "yastn_backend": "np"},  # legacy option name
+    )
+    assert res.metadata["engine_package"] == "rydtn"
+    assert res.metadata["array_backend"] == "numpy"
+
+
 def test_rydtn_peps_torch_cpu_smoke():
     import pytest
 
