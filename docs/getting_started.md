@@ -24,8 +24,8 @@ protocol = TFIMQuenchProtocol(hx=2 * np.pi * 1e6, t_gate=0.5e-6)
 system = RydbergSystem.from_lattice(
     Register.square(2, spacing_um=9.0), "1r", protocol=protocol,
 )
-result = simulate(system, [], psi0="all_1", backend="exact")
-print(system.expectation("sum_nr", result.psi_final))   # Rydberg population
+result = simulate(system, psi0="all_1", observables=["sum_nr"])
+print(result.expectation("sum_nr"))   # Rydberg population (read off the result)
 ```
 
 Swap `backend="exact"` for `"mps"`, `"peps"`, or `"gputn"` to run the same

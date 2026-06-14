@@ -36,14 +36,16 @@ protocol = TFIMQuenchProtocol(hx=2 * np.pi * 1e6, t_gate=0.5e-6)
 system = RydbergSystem.from_lattice(
     Register.square(2, spacing_um=9.0), "1r", protocol=protocol,
 )
-result = simulate(system, [], psi0="all_1", backend="exact")
-n_r = system.expectation("sum_nr", result.psi_final)
+# x is optional (this protocol carries its own schedule); request observables.
+result = simulate(system, psi0="all_1", observables=["sum_nr"])
+n_r = result.expectation("sum_nr")                 # read straight off the result
 assert 0.0 < n_r < system.N                        # quench excites Rydberg population
 print(f"<n_r> after the quench: {n_r:.3f}")
+print(result.sample(1000, seed=0).most_common(3))  # sampled measurement outcomes
 ```
 
 The same system runs on the tensor-network backends
-(`simulate(system, [], backend="mps")`, `"peps"`, `"gputn"`) — see the
+(`simulate(system, backend="mps")`, `"peps"`, `"gputn"`) — see the
 [capability matrix](docs/capability_matrix.md).
 
 ## Quickstart 2 — CZ gate report
@@ -103,7 +105,7 @@ src/ryd_gate/
    backends/       exact state-vector + MPS / PEPS / gputn engines
    ir.py           unified Hamiltonian IR + EvolutionResult
    lattice.py      Register, RegisterLayout, plotting
-   simulate.py     simulate(system, x, ...) backend dispatcher
+   simulate.py     simulate(system, x=(), ...) backend dispatcher
    noise.py        NoiseModel -> exact Monte Carlo / decay flags
    gates.py        CZ gate library: CZGateReport, cz_gate_report
    analysis/       gate metrics, lattice observables, domain analysis
@@ -124,8 +126,7 @@ uv run mypy src/ryd_gate                    # scoped type gate
 uv run python docs/_scripts/build_capability_matrix.py --check
 ```
 
-See `CHANGELOG.md` for the stage-by-stage history and `stageplans/` for the
-binding refactor specifications.
+See `CHANGELOG.md` for the stage-by-stage history.
 
 ## References
 
