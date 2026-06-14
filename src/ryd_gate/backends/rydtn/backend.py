@@ -298,4 +298,14 @@ def _measure(ab, psi, ops: PEPSOps, payload, observables, measure_chi) -> dict:
                 zz = env.measure_2site(ops.Z, ops.Z, ci, cj)
                 vals.append(float(np.real(zz)) - z[int(i)] * z[int(j)])
             out[name] = np.asarray(vals, dtype=float)
+        elif name == "czz_full":
+            # Full <Z_i Z_j> matrix in 2D site order (i = x*Ly + y); diagonal = 1.
+            # O(N^2) boundary contractions -- intended for structure-factor / R(g).
+            C = np.eye(N, dtype=float)
+            for i in range(N):
+                ci = (i // Ly, i % Ly)
+                for j in range(i + 1, N):
+                    zz = float(np.real(env.measure_2site(ops.Z, ops.Z, ci, (j // Ly, j % Ly))))
+                    C[i, j] = C[j, i] = zz
+            out[name] = C
     return out
