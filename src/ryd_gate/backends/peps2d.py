@@ -43,6 +43,13 @@ class YASTNPEPSBackend:
     max_iter: int = 20
     tol_iter: float = 1e-12
     require_gpu: bool = False
+    ctm_chi: int | None = None
+    ctm_iters: int = 50
+    ctm_tol: float = 1e-8
+
+    def _ctm_chi(self) -> int:
+        """Environment bond dimension for converged CTM measurement."""
+        return int(self.ctm_chi) if self.ctm_chi else max(2 * int(self.chi_max), 16)
 
     def evolve_ir(
         self,
@@ -81,7 +88,10 @@ class YASTNPEPSBackend:
             if not observables:
                 return
             recorded_times.append(float(t_value))
-            measured = _measure_yastn(fpeps, psi, ops, payload, observables, self.measurement_environment)
+            measured = _measure_yastn(
+                fpeps, psi, ops, payload, observables, self.measurement_environment,
+                ctm_chi=self._ctm_chi(), ctm_iters=int(self.ctm_iters), ctm_tol=float(self.ctm_tol),
+            )
             for name, value in measured.items():
                 obs_data[name].append(value)
 
@@ -240,7 +250,10 @@ class YASTNPEPSBackend:
                     break
                 prev_E = energy
 
-        measured = _measure_yastn(fpeps, psi, ops, payload, observables, self.measurement_environment)
+        measured = _measure_yastn(
+            fpeps, psi, ops, payload, observables, self.measurement_environment,
+            ctm_chi=self._ctm_chi(), ctm_iters=int(self.ctm_iters), ctm_tol=float(self.ctm_tol),
+        )
         if not np.isfinite(energy):
             energy, _ = _peps_energy_ctm(fpeps, psi, ops, payload, step0, ctm_chi, ctm_iters)
         return EvolutionResult(
@@ -592,6 +605,24 @@ def _make_update_env(fpeps, psi, name: str, opts_svd=None):
 
 
 def _yastn_gates(gates, ops: _YASTNPEPSOps, payload: dict, step_data: dict, dt: float):
+    """Second-order Trotter gate list ``[local(½dt), nn(dt), local(½dt)]`` for one step.
+
+    Each ``gate_*_exp`` runs an ``eigh``/SVD on the GPU, and the drive is usually
+    spatially uniform (global ``Omega``/``Delta``), so the per-site and per-bond
+    exponentials repeat. We build each *distinct* gate once -- keyed by its field
+    tuple / bond strength -- and place copies with ``Gate._replace(sites=...)``,
+    the same mechanism YASTN's own ``gates.distribute`` uses. This collapses the
+    ~56 gate builds per step down to the handful that are physically distinct
+    (one local + one nn when the drive is uniform). The two outer local
+    half-steps are identical, so the same list is reused for both.
+    """
+    local_gates = _local_gate_list(gates, ops, payload, step_data, 0.5j * dt)
+    nn_gates = _nn_gate_list(gates, ops, payload, 1j * dt)
+    return local_gates + nn_gates + local_gates
+
+
+def _local_gate_list(gates, ops: _YASTNPEPSOps, payload: dict, step_data: dict, coeff: complex):
+    """One ``exp(-coeff·H_local)`` gate per site, built once per distinct field tuple."""
     lattice = payload["lattice"]
     Ly = int(lattice["Ly"])
     inv_snake = np.asarray(lattice["inv_snake"], dtype=int)
@@ -599,15 +630,35 @@ def _yastn_gates(gates, ops: _YASTNPEPSOps, payload: dict, step_data: dict, dt: 
     omega_hf = np.asarray(step_data["omega_hf_1d"], dtype=float)
     delta_R = np.asarray(step_data["delta_R_1d"], dtype=float)
     delta_hf = np.asarray(step_data["delta_hf_1d"], dtype=float)
+    I = ops.I
+    cache: dict = {}
     out = []
-
     for site_2d in range(int(lattice["N"])):
         pos = int(inv_snake[site_2d])
         coord = (site_2d // Ly, site_2d % Ly)
-        H = _local_hamiltonian(ops, omega_R[pos], omega_hf[pos], delta_R[pos], delta_hf[pos])
-        out.append(gates.gate_local_exp(0.5j * dt, ops.I, H, site=coord))
+        key = (omega_R[pos], omega_hf[pos], delta_R[pos], delta_hf[pos])
+        proto = cache.get(key)
+        if proto is None:
+            H = _local_hamiltonian(ops, *key)
+            proto = gates.gate_local_exp(coeff, I, H, site=coord)
+            cache[key] = proto
+        out.append(proto._replace(sites=(coord,)))
+    return out
 
+
+def _nn_gate_list(gates, ops: _YASTNPEPSOps, payload: dict, coeff: complex):
+    """One ``exp(-coeff·strength·n_r⊗n_r)`` gate per bond, built once per distinct strength.
+
+    ``n_r⊗n_r`` is symmetric under site swap, so a single decomposed gate is valid
+    on every bond (horizontal or vertical) -- ``apply_gate_`` routes the auxiliary
+    leg from the bond geometry. This is exactly the reuse pattern of ``distribute``.
+    """
+    lattice = payload["lattice"]
+    Ly = int(lattice["Ly"])
     Hnn = gates.fkron(ops.n_r, ops.n_r)
+    I = ops.I
+    cache: dict = {}
+    out = []
     for i_pos, j_pos, strength in lattice["vdw_pairs_1d"]:
         i_2d = int(lattice["snake_to_2d"][int(i_pos) - 1])
         j_2d = int(lattice["snake_to_2d"][int(j_pos) - 1])
@@ -615,13 +666,11 @@ def _yastn_gates(gates, ops: _YASTNPEPSOps, payload: dict, step_data: dict, dt: 
             continue
         ci = (i_2d // Ly, i_2d % Ly)
         cj = (j_2d // Ly, j_2d % Ly)
-        out.append(gates.gate_nn_exp(1j * dt, ops.I, float(strength) * Hnn, bond=(ci, cj)))
-
-    for site_2d in range(int(lattice["N"])):
-        pos = int(inv_snake[site_2d])
-        coord = (site_2d // Ly, site_2d % Ly)
-        H = _local_hamiltonian(ops, omega_R[pos], omega_hf[pos], delta_R[pos], delta_hf[pos])
-        out.append(gates.gate_local_exp(0.5j * dt, ops.I, H, site=coord))
+        proto = cache.get(float(strength))
+        if proto is None:
+            proto = gates.gate_nn_exp(coeff, I, float(strength) * Hnn, bond=(ci, cj))
+            cache[float(strength)] = proto
+        out.append(proto._replace(sites=(ci, cj)))
     return out
 
 
@@ -728,13 +777,16 @@ def _local_hamiltonian(
     )
 
 
-def _measure_yastn(fpeps, psi, ops: _YASTNPEPSOps, payload: dict, observables: list[str], env_name: str):
+def _measure_yastn(
+    fpeps, psi, ops: _YASTNPEPSOps, payload: dict, observables: list[str], env_name: str,
+    *, ctm_chi: int, ctm_iters: int, ctm_tol: float,
+):
     lattice = payload["lattice"]
     Lx = int(lattice["Lx"])
     Ly = int(lattice["Ly"])
     n_sites = int(lattice["N"])
     out: dict[str, Any] = {}
-    env = _measurement_env(fpeps, psi, env_name)
+    env = _measurement_env(fpeps, psi, env_name, ctm_chi=ctm_chi, ctm_iters=ctm_iters, ctm_tol=ctm_tol)
     z_profile: np.ndarray | None = None
     level_profiles: dict[str, np.ndarray] = {}
 
@@ -773,7 +825,10 @@ def _measure_yastn(fpeps, psi, ops: _YASTNPEPSOps, payload: dict, observables: l
             out[name] = float(np.sum(sublattice * sigma_z()) / n_sites)
         elif name in {"czz", "czz_centerline"}:
             z = sigma_z()
-            pair_env = env if hasattr(env, "measure_nsite") else fpeps.EnvCTM(psi)
+            # BP has no 2-site measurement; fall back to a *converged* CTM for the pair.
+            pair_env = env if hasattr(env, "measure_nsite") else _measurement_env(
+                fpeps, psi, "ctm", ctm_chi=ctm_chi, ctm_iters=ctm_iters, ctm_tol=ctm_tol,
+            )
             values = []
             for i, j in line_pairs_from_reference(Lx, Ly, axis="horizontal"):
                 ci = (int(i) // Ly, int(i) % Ly)
@@ -784,10 +839,24 @@ def _measure_yastn(fpeps, psi, ops: _YASTNPEPSOps, payload: dict, observables: l
     return out
 
 
-def _measurement_env(fpeps, psi, name: str):
+def _measurement_env(fpeps, psi, name: str, *, ctm_chi: int, ctm_iters: int, ctm_tol: float):
     key = name.lower()
     if key in {"ctm", "envctm"}:
-        return fpeps.EnvCTM(psi)
+        # A freshly constructed EnvCTM is a random, chi=1 *seed*; the CTM
+        # environment is only physical at the CTMRG fixed point.  Iterate the
+        # directional moves to convergence before measuring -- otherwise the
+        # corner/edge tensors are meaningless and <n_r> can leave [0, 1].
+        if not ctm_chi or int(ctm_chi) <= 1:
+            raise YASTNPEPSError(f"CTM measurement requires ctm_chi > 1; got {ctm_chi!r}.")
+        if int(ctm_iters) <= 0:
+            raise YASTNPEPSError(f"CTM measurement requires ctm_iters > 0; got {ctm_iters!r}.")
+        env = fpeps.EnvCTM(psi, init="eye")
+        env.iterate_(
+            {"D_total": int(ctm_chi), "tol": 1e-10},
+            max_sweeps=int(ctm_iters),
+            corner_tol=float(ctm_tol),
+        )
+        return env
     if key in {"bp", "envbp"}:
         env = fpeps.EnvBP(psi)
         env.update_()
