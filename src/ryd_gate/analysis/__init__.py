@@ -30,11 +30,15 @@ from .observables import (
     epsilon_zz,
     line_pairs_from_reference,
     measure_from_states,
+    measure_observables,
     measure_rydberg_occupation,
+    measure_trajectory,
+    norm_squared,
     precompute_bit_masks,
     precompute_trit_masks,
     sigma_z_from_rydberg_occ,
     staggered_magnetization,
+    state_overlap,
 )
 
 __all__ = [
@@ -51,6 +55,11 @@ __all__ = [
     "measure_from_states",
     "measure_rydberg_occupation",
     "staggered_magnetization",
+    # Observable-registry measurement + overlaps
+    "measure_observables",
+    "measure_trajectory",
+    "state_overlap",
+    "norm_squared",
     # TFIM / spin observables and paper-style benchmark metrics
     "sigma_z_from_rydberg_occ",
     "connected_zz_from_connected_nn",
