@@ -19,6 +19,26 @@ import numpy as np
 from ryd_gate.protocols.base import Protocol
 
 
+def _blackman_drive_coefficients(phase: complex, t: float, params: dict) -> dict[str, complex]:
+    """Shared TO/AR drive: Blackman-enveloped 420 nm drive + its lightshift.
+
+    ``phase`` is the protocol's ``exp(-i phi(t))`` -- the only piece that differs
+    between the time-optimal (cosine) and amplitude-robust (dual-sine) schedules.
+    """
+    from ryd_gate.pulse import blackman_pulse
+
+    amplitude = (
+        blackman_pulse(t, params["t_rise"], params["t_gate"])
+        if params.get("blackmanflag", True)
+        else 1.0
+    )
+    return {
+        "drive_420": amplitude * phase,
+        "drive_420_dag": amplitude * np.conjugate(phase),
+        "lightshift_zero": amplitude * amplitude,
+    }
+
+
 class TOProtocol(Protocol):
     """Time-Optimal pulse protocol with cosine phase modulation."""
 
@@ -61,20 +81,8 @@ class TOProtocol(Protocol):
         )
 
     def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
-        """Return drive coefficients including Blackman amplitude envelope."""
-        from ryd_gate.pulse import blackman_pulse
-
-        phase = self.phase_420(t, params)
-        amplitude = (
-            blackman_pulse(t, params["t_rise"], params["t_gate"])
-            if params.get("blackmanflag", True)
-            else 1.0
-        )
-        return {
-            "drive_420": amplitude * phase,
-            "drive_420_dag": amplitude * np.conjugate(phase),
-            "lightshift_zero": amplitude * amplitude,
-        }
+        """Blackman-enveloped 420 nm drive for the time-optimal / AR schedule."""
+        return _blackman_drive_coefficients(self.phase_420(t, params), t, params)
 
     def get_optimization_bounds(self) -> tuple:
         return (
@@ -134,20 +142,8 @@ class ARProtocol(Protocol):
         )
 
     def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
-        """Return drive coefficients including Blackman amplitude envelope."""
-        from ryd_gate.pulse import blackman_pulse
-
-        phase = self.phase_420(t, params)
-        amplitude = (
-            blackman_pulse(t, params["t_rise"], params["t_gate"])
-            if params.get("blackmanflag", True)
-            else 1.0
-        )
-        return {
-            "drive_420": amplitude * phase,
-            "drive_420_dag": amplitude * np.conjugate(phase),
-            "lightshift_zero": amplitude * amplitude,
-        }
+        """Blackman-enveloped 420 nm drive for the time-optimal / AR schedule."""
+        return _blackman_drive_coefficients(self.phase_420(t, params), t, params)
 
     def get_optimization_bounds(self) -> tuple:
         return (
