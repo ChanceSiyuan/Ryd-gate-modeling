@@ -1,6 +1,6 @@
 """Standalone 10x10 finite-PEPS quench run (rydtn backend: NTU evolve + boundary-MPS).
 
-Reproduces cell 17 of scripts/notebooks/run_quench_benchmark.ipynb as a headless,
+Reproduces the 10x10 cell of scripts/notebooks/04_quench_and_state_prep.ipynb (Part A) as a headless,
 long-running job.  Physics/backend options are identical to the notebook; only the
 plotting is dropped and results are saved to an .npz for later inspection.
 
