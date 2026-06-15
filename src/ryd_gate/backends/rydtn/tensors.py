@@ -92,6 +92,11 @@ class ArrayBackend:
             return np.asarray(a)
         return a.detach().cpu().numpy()
 
+    def empty_cache(self) -> None:
+        """Return cached CUDA blocks to the driver (no-op on CPU/NumPy)."""
+        if self.kind == "torch" and str(self.device).startswith("cuda"):
+            self.torch.cuda.empty_cache()
+
     # ---- linear algebra (computed in complex128 for stability) ----
     def eigh(self, a):
         """Hermitian eigendecomposition; ascending real eigenvalues, complex128."""
