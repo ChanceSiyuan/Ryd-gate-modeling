@@ -37,13 +37,16 @@ def double_tensor(ab: ArrayBackend, A, O=None):
     return out.reshape(Dt * Dt, Dl * Dl, Db * Db, Dr * Dr)
 
 
-def _absorb_row(ab: ArrayBackend, B, row, chi, svd_min):
+def _absorb_row(ab: ArrayBackend, B, tfn, chi, svd_min):
     """Absorb a row of MPO double tensors into boundary MPS ``B`` via a
     left-to-right zip-up, truncating each new bond to ``chi`` (``None`` = exact).
 
-    ``B[y] = [a, pin, b]``; ``row[y] = [pin, l, pout, r]``.  Returns a new MPS
-    ``[a', pout, b']`` with bonds ``<= chi``.  Unlike a naive contract-then-compress,
-    this never forms the full ``(a*l, pout, b*r)`` product tensor: the peak cost is
+    ``tfn(y)`` returns the column-``y`` double tensor ``[pin, l, pout, r]`` on
+    demand, so only one column is materialised at a time -- at ``D^2`` doubled
+    bonds this keeps a full ``Ly``-wide row (``Ly * O(D^8)`` floats) off the
+    device.  ``B[y] = [a, pin, b]``.  Returns a new MPS ``[a', pout, b']`` with
+    bonds ``<= chi``.  Unlike a naive contract-then-compress, this never forms
+    the full ``(a*l, pout, b*r)`` product tensor: the peak cost is
     ``O(chi^2 D^4)`` (``D^2`` = doubled bond), which is what makes moderate ``D``
     feasible.
     """
@@ -52,7 +55,7 @@ def _absorb_row(ab: ArrayBackend, B, row, chi, svd_min):
     carry = ab.asarray(np.ones((1, 1, 1)))  # (x_new_left, a_old_mps_bond, m_mpo_left)
     out = []
     for y in range(Ly):
-        By, Ry = B[y], row[y]
+        By, Ry = B[y], tfn(y)
         # T[x, pout, b, r] = sum_{a, pin, l=m} carry[x,a,m] By[a,pin,b] Ry[pin,l,pout,r]
         T = ab.einsum("xam,apb,pmqr->xqbr", carry, By, Ry)
         x, q, b, r = T.shape
@@ -75,14 +78,6 @@ def _contract_scalar(ab: ArrayBackend, M):
     return complex(ab.to_numpy(res).reshape(-1)[0])
 
 
-def _sandwich(ab: ArrayBackend, top, row, bot):
-    """Contract ``top`` (MPS, phys=row.u) / ``row`` (MPO) / ``bot`` (MPS, phys=row.d)."""
-    E = ab.asarray(np.ones((1, 1, 1)))
-    for ty, ry, by in zip(top, row, bot):
-        E = ab.einsum("tlb,tuT,uldr,bdB->TrB", E, ty, ry, by)
-    return complex(ab.to_numpy(E).reshape(-1)[0])
-
-
 class BoundaryMPS:
     """Boundary-MPS measurement environment over a finite PEPS."""
 
@@ -98,15 +93,14 @@ class BoundaryMPS:
         self._Z = None
 
     # ---- environments ----
-    def _row(self, x, ops_by_col=None, flip=False):
-        """Double tensors for row ``x`` as MPO tensors ``[pin, l, pout, r]``."""
-        ops_by_col = ops_by_col or {}
-        out = []
-        for y in range(self.Ly):
-            a = double_tensor(self.ab, self.psi[(x, y)], ops_by_col.get(y))  # [u,l,d,r]
-            # reorder to [pin, l, pout, r]: top-down pin=u,pout=d; bottom-up pin=d,pout=u
-            out.append(self.ab.transpose(a, (2, 1, 0, 3)) if flip else a)
-        return out
+    def _row_tensor(self, x, y, op=None, flip=False):
+        """Column ``(x, y)`` double tensor as an MPO tensor ``[pin, l, pout, r]``.
+
+        ``flip=False`` (top-down): ``pin=u, pout=d``; ``flip=True`` (bottom-up):
+        ``pin=d, pout=u``.  Built on demand so the caller never holds a whole row.
+        """
+        a = double_tensor(self.ab, self.psi[(x, y)], op)  # [u,l,d,r]
+        return self.ab.transpose(a, (2, 1, 0, 3)) if flip else a
 
     def _trivial_mps(self):
         return [self.ab.asarray(np.ones((1, 1, 1))) for _ in range(self.Ly)]
@@ -115,13 +109,19 @@ class BoundaryMPS:
         if self._top is not None:
             return
         ab = self.ab
+        ab.empty_cache()
         top = [self._trivial_mps()]
         for x in range(self.Lx):
-            top.append(_absorb_row(ab, top[-1], self._row(x), self.chi, self.svd_min))
+            top.append(_absorb_row(
+                ab, top[-1], lambda y, x=x: self._row_tensor(x, y), self.chi, self.svd_min))
+            ab.empty_cache()
         bot = [None] * (self.Lx + 1)
         bot[self.Lx] = self._trivial_mps()
         for x in range(self.Lx - 1, -1, -1):
-            bot[x] = _absorb_row(ab, bot[x + 1], self._row(x, flip=True), self.chi, self.svd_min)
+            bot[x] = _absorb_row(
+                ab, bot[x + 1], lambda y, x=x: self._row_tensor(x, y, flip=True),
+                self.chi, self.svd_min)
+            ab.empty_cache()
         self._top, self._bot = top, bot
         self._Z = _contract_scalar(ab, top[self.Lx])
 
@@ -131,17 +131,34 @@ class BoundaryMPS:
 
     # ---- measurements ----
     def measure_1site(self, O) -> dict:
-        """``{(x, y): <O>}`` for every site."""
+        """``{(x, y): <O>}`` for every site, via streaming left/right environments.
+
+        For each row the background double tensors are swept once from the left
+        and once from the right into ``O(chi^2 D^2)`` environment tensors; each
+        site value is then a single ``L . <O> . R`` contraction.  No full row of
+        ``Ly`` double tensors is ever materialised (peak memory ~ a few columns),
+        and the cost drops from ``O(Lx Ly^2)`` sandwiches to ``O(Lx Ly)``.
+        """
         self._build()
         ab = self.ab
+        eye = ab.asarray(np.ones((1, 1, 1)))
         out = {}
         for x in range(self.Lx):
-            row = self._row(x)
+            top, bot = self._top[x], self._bot[x + 1]
+            L = [eye] + [None] * self.Ly  # L[y] = environment left of column y
             for y in range(self.Ly):
-                rowO = list(row)
-                rowO[y] = double_tensor(ab, self.psi[(x, y)], O)
-                num = _sandwich(ab, self._top[x], rowO, self._bot[x + 1])
-                out[(x, y)] = num / self._Z
+                d = self._row_tensor(x, y)
+                L[y + 1] = ab.einsum("tlb,tuT,uldr,bdB->TrB", L[y], top[y], d, bot[y])
+            R = [None] * self.Ly + [eye]  # R[y] = environment right of column y
+            for y in range(self.Ly - 1, -1, -1):
+                d = self._row_tensor(x, y)
+                R[y] = ab.einsum("tuT,uldr,bdB,TrB->tlb", top[y], d, bot[y], R[y + 1])
+            for y in range(self.Ly):
+                dO = self._row_tensor(x, y, op=O)
+                LO = ab.einsum("tlb,tuT,uldr,bdB->TrB", L[y], top[y], dO, bot[y])
+                num = ab.einsum("TrB,TrB->", LO, R[y + 1])
+                out[(x, y)] = complex(ab.to_numpy(num).reshape(-1)[0]) / self._Z
+            ab.empty_cache()
         return out
 
     def measure_2site(self, O, P, si, sj) -> complex:
@@ -151,8 +168,9 @@ class BoundaryMPS:
         ins = {tuple(si): O, tuple(sj): P}
         B = self._trivial_mps()
         for x in range(self.Lx):
-            ops = {y: ins[(x, y)] for y in range(self.Ly) if (x, y) in ins}
-            B = _absorb_row(ab, B, self._row(x, ops_by_col=ops), self.chi, self.svd_min)
+            B = _absorb_row(
+                ab, B, lambda y, x=x: self._row_tensor(x, y, op=ins.get((x, y))),
+                self.chi, self.svd_min)
         return _contract_scalar(ab, B) / self._Z
 
 

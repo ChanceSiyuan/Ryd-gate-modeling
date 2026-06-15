@@ -8,6 +8,8 @@ keys and ``obs`` names.
 
 from __future__ import annotations
 
+import os
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -87,8 +89,13 @@ class RydTNPEPSBackend:
         if 0 in record_steps:
             record(0.0)
 
+        progress = os.environ.get("RYDTN_PROGRESS")
+        every = int(progress) if (progress or "").isdigit() and int(progress) > 0 else 10
+        n_total = len(payload["schedule"])
+        t_start = time.perf_counter()
+
         dt_actual = float(payload["runtime"]["dt"])
-        for step_data in payload["schedule"]:
+        for i, step_data in enumerate(payload["schedule"], start=1):
             errs = trotter_step(
                 ab, psi, ops, payload, step_data,
                 dt=dt_actual, chi_max=int(self.chi_max), svd_min=float(self.svd_min),
@@ -98,6 +105,17 @@ class RydTNPEPSBackend:
             step = int(step_data["step"])
             if step in record_steps:
                 record(step * dt_actual)
+            if progress and (i % every == 0 or i == n_total):
+                el = time.perf_counter() - t_start
+                eta = el / i * (n_total - i)
+                mem = ""
+                if ab.kind == "torch" and str(ab.device).startswith("cuda"):
+                    mem = f"  gpu={ab.torch.cuda.max_memory_allocated() / 1e9:.1f}GB"
+                print(
+                    f"[evolve] step {i}/{n_total}  err={max(per_step_errs[-1], default=0.0):.2e}"
+                    f"  elapsed={el:.0f}s  eta={eta:.0f}s{mem}",
+                    flush=True,
+                )
 
         for name in obs_data:
             obs_data[name] = np.asarray(obs_data[name])
