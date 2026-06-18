@@ -1,9 +1,24 @@
-"""Physics calculations for Rb87: AC Stark shifts and ARC decay branching.
+"""Physics helpers for Rb87: pulse envelopes, AC Stark shifts, ARC decay branching.
+
+Pulse envelopes: continuous-time Blackman flat-top windows (``blackman_window`` /
+``blackman_pulse`` / ``blackman_pulse_sqrt``) used by the gate protocols'
+amplitude shaping (:mod:`ryd_gate.protocols.gate_cz`). These are pure-numpy and
+carry no atomic-physics dependency.
 
 AC Stark shift physics: ARC-derived constants and calibrated shift/scatter.
 Provides the Grimm-formula calculation for D1+D2 contributions, including
 the scalar + vector decomposition for the alkali ground state, and
 calibration against Manovitz et al. measured values at 784 nm.
+
+Lazy ARC import
+---------------
+``arc`` (the alkali-Rydberg calculator) is **imported lazily**: it is pulled in
+only when an ARC-derived value is first needed (atomic constants, calibrated
+shift/scatter, single-photon Rabi, branching ratios). Importing this module —
+and in particular the pulse-envelope helpers used on the CZ gate path — does
+*not* initialize ARC. ARC-derived module attributes (``FREQ_D1`` / ``FREQ_D2`` /
+``LAMBDA_D1`` / ``LAMBDA_D2`` / ``_atom``) are resolved on first access through
+the module-level ``__getattr__`` and cached.
 
 Vector light-shift model
 ------------------------
@@ -36,20 +51,85 @@ coefficients.
 
 from __future__ import annotations
 
+import functools
+
 import numpy as np
-from arc import Rubidium87
-from arc.wigner import CG
-from scipy.constants import c
+from scipy.constants import c, epsilon_0
 
 # ======================================================================
-# ARC-DERIVED ATOMIC CONSTANTS
+# PULSE ENVELOPE KERNELS (pure numpy; no ARC dependency)
 # ======================================================================
 
-_atom = Rubidium87()
-FREQ_D2: float = _atom.getTransitionFrequency(5, 0, 0.5, 5, 1, 1.5)
-FREQ_D1: float = _atom.getTransitionFrequency(5, 0, 0.5, 5, 1, 0.5)
-LAMBDA_D2: float = c / FREQ_D2 * 1e9   # nm
-LAMBDA_D1: float = c / FREQ_D1 * 1e9   # nm
+
+def blackman_window(t, t_rise):
+    """Evaluate the Blackman window function.
+
+    Parameters
+    ----------
+    t : array_like
+        Time values.
+    t_rise : float
+        Rise time of the window.
+
+    Returns
+    -------
+    numpy.ndarray
+        Window amplitude in [0, 1].
+    """
+    return (0.42 - 0.5 * np.cos(2 * np.pi * t / (2 * t_rise)) +
+            0.08 * np.cos(4 * np.pi * t / (2 * t_rise)))
+
+
+def blackman_pulse(t, t_rise, t_gate):
+    """Blackman-windowed flat-top pulse.
+
+    Parameters
+    ----------
+    t : array_like
+        Time values.
+    t_rise : float
+        Rise/fall time.
+    t_gate : float
+        Total gate duration (must be >= 2 * t_rise).
+
+    Returns
+    -------
+    numpy.ndarray
+        Pulse envelope.
+    """
+    if t_gate < 2 * t_rise:
+        raise ValueError("t_gate is too small compared to t_rise")
+    ret = (blackman_window(t, t_rise) * np.heaviside(t_rise - t, 1) +
+           np.heaviside(t - t_rise, 0) * np.heaviside(t_gate - t - t_rise, 0) +
+           blackman_window(t_gate - t, t_rise) *
+           np.heaviside(t_rise - (t_gate - t), 1))
+    return ret
+
+
+def blackman_pulse_sqrt(t, t_rise, t_gate):
+    """Square-root of the Blackman-windowed flat-top pulse.
+
+    Parameters
+    ----------
+    t : array_like
+        Time values.
+    t_rise : float
+        Rise/fall time.
+    t_gate : float
+        Total gate duration (must be >= 2 * t_rise).
+
+    Returns
+    -------
+    numpy.ndarray
+        Square-root pulse envelope.
+    """
+    return np.sqrt(np.maximum(blackman_pulse(t, t_rise, t_gate), 0))
+
+
+# ======================================================================
+# ARC-DERIVED ATOMIC CONSTANTS (lazy — see module docstring)
+# ======================================================================
+
 GAMMA_D2: float = 2 * np.pi * 6.065e6  # rad/s
 GAMMA_D1: float = 2 * np.pi * 5.746e6  # rad/s
 
@@ -61,6 +141,49 @@ LAMBDA_PAPER: float = 784.0                    # nm
 CALIBRATION_SHIFT_HZ: float = -12.2e6          # Hz at 160 uW
 CALIBRATION_SCATTER_HZ: float = 35.0           # Hz at 160 uW
 POWER_REF_UW: float = 160.0                    # uW reference power
+
+
+@functools.lru_cache(maxsize=1)
+def _get_atom():
+    """Lazily construct (and cache) the ARC ``Rubidium87`` atom."""
+    from arc import Rubidium87
+
+    return Rubidium87()
+
+
+@functools.lru_cache(maxsize=1)
+def _d_line_frequencies() -> tuple[float, float]:
+    """ARC D1/D2 transition frequencies (Hz), computed once and cached."""
+    atom = _get_atom()
+    freq_d2 = atom.getTransitionFrequency(5, 0, 0.5, 5, 1, 1.5)
+    freq_d1 = atom.getTransitionFrequency(5, 0, 0.5, 5, 1, 0.5)
+    return freq_d1, freq_d2
+
+
+@functools.lru_cache(maxsize=1)
+def _calibration() -> tuple[float, float]:
+    """Shift/scatter calibration factors against the 784 nm reference, cached.
+
+    Calibration is performed in the linear-polarization (pol=0) limit, matching
+    the experimental conditions of Manovitz et al.
+    """
+    s784, sc784 = _raw_shift_and_scatter(LAMBDA_PAPER, pol=0.0)
+    return float(CALIBRATION_SHIFT_HZ / s784), float(CALIBRATION_SCATTER_HZ / sc784)
+
+
+def __getattr__(name: str):
+    """Resolve ARC-derived module attributes on first access (then cached)."""
+    if name == "_atom":
+        return _get_atom()
+    if name in {"FREQ_D1", "FREQ_D2", "LAMBDA_D1", "LAMBDA_D2"}:
+        freq_d1, freq_d2 = _d_line_frequencies()
+        return {
+            "FREQ_D1": freq_d1,
+            "FREQ_D2": freq_d2,
+            "LAMBDA_D1": c / freq_d1 * 1e9,  # nm
+            "LAMBDA_D2": c / freq_d2 * 1e9,  # nm
+        }[name]
+    raise AttributeError(f"module 'ryd_gate.physics' has no attribute {name!r}")
 
 
 def _raw_shift_and_scatter(wavelengths_nm, pol: float = 0.0):
@@ -78,6 +201,7 @@ def _raw_shift_and_scatter(wavelengths_nm, pol: float = 0.0):
     -------
     shift, scatter : same shape as input, in consistent arbitrary units.
     """
+    freq_d1, freq_d2 = _d_line_frequencies()
     wavelengths_nm = np.asarray(wavelengths_nm, dtype=float)
     omega = 2 * np.pi * c / (wavelengths_nm * 1e-9)
 
@@ -88,8 +212,8 @@ def _raw_shift_and_scatter(wavelengths_nm, pol: float = 0.0):
     weight_D1 = (1.0 - pol) / 3.0
 
     for omega_line, Gamma_line, w in [
-        (2 * np.pi * FREQ_D2, GAMMA_D2, weight_D2),
-        (2 * np.pi * FREQ_D1, GAMMA_D1, weight_D1),
+        (2 * np.pi * freq_d2, GAMMA_D2, weight_D2),
+        (2 * np.pi * freq_d1, GAMMA_D1, weight_D1),
     ]:
         Dr = omega_line - omega
         Dc = omega_line + omega
@@ -98,13 +222,6 @@ def _raw_shift_and_scatter(wavelengths_nm, pol: float = 0.0):
                     * (omega / omega_line)**3 * (1.0 / Dr + 1.0 / Dc)**2)
 
     return shift, scatter
-
-
-# Calibration is performed in the linear-polarization (pol=0) limit, matching
-# the experimental conditions of Manovitz et al.
-_s784, _sc784 = _raw_shift_and_scatter(LAMBDA_PAPER, pol=0.0)
-_SHIFT_CAL: float = float(CALIBRATION_SHIFT_HZ / _s784)
-_SCATTER_CAL: float = float(CALIBRATION_SCATTER_HZ / _sc784)
 
 
 def compute_shift_scatter(wavelengths_nm, pol: float = 0.0):
@@ -127,7 +244,90 @@ def compute_shift_scatter(wavelengths_nm, pol: float = 0.0):
     shift_Hz, scatter_Hz : same shape as input.
     """
     s, sc = _raw_shift_and_scatter(wavelengths_nm, pol=pol)
-    return s * _SHIFT_CAL, sc * _SCATTER_CAL
+    shift_cal, scatter_cal = _calibration()
+    return s * shift_cal, sc * scatter_cal
+
+
+# ======================================================================
+# LASER POWER -> SINGLE-PHOTON RABI
+# ======================================================================
+
+# Default Rydberg level for the 'our' 70S two-photon configuration.
+RYD_LEVEL_OUR: int = 70
+
+
+def electric_field_uniform_beam(power_w: float, beam_area: float) -> float:
+    """Peak electric field (V/m) of a laser whose power fills a top-hat aperture.
+
+    The beam is modeled as a top-hat: total power ``power_w`` (W) spread
+    uniformly over an area ``beam_area`` (μm²), so the intensity is
+    ``I = P / A``. The plane-wave relation ``I = (c ε0 / 2) E0²`` then gives the
+    field amplitude, matching the convention ARC uses internally in
+    ``getRabiFrequency`` / ``getRabiFrequency2``.
+    """
+    if power_w < 0.0:
+        raise ValueError("power_w must be non-negative.")
+    if beam_area <= 0.0:
+        raise ValueError("beam_area must be positive.")
+    area_m2 = beam_area * (1e-6)**2
+    intensity = power_w / area_m2
+    return float(np.sqrt(2.0 * intensity / (c * epsilon_0)))
+
+
+def single_photon_rabi(
+    power_w: float,
+    beam_area: float,
+    *,
+    n1: int,
+    l1: int,
+    j1: float,
+    mj1: float,
+    n2: int,
+    l2: int,
+    j2: float,
+    q: int,
+) -> float:
+    """Resonant single-photon Rabi frequency (rad/s) for a uniform top-hat beam.
+
+    Combines :func:`electric_field_uniform_beam` with the ARC dipole matrix
+    element of the ``|n1 l1 j1 mj1⟩ → |n2 l2 j2 (mj1+q)⟩`` transition
+    (``Ω = |d| E0 / ħ``). ``q`` is the laser polarization (-1, 0, +1 for
+    σ⁻, π, σ⁺).
+    """
+    e0 = electric_field_uniform_beam(power_w, beam_area)
+    return float(_get_atom().getRabiFrequency2(n1, l1, j1, mj1, n2, l2, j2, q, e0))
+
+
+def our_laser_rabis(
+    p420_w: float,
+    p1013_w: float,
+    beam_area: float,
+    *,
+    ryd_level: int = RYD_LEVEL_OUR,
+) -> tuple[float, float]:
+    """420/1013 nm single-photon Rabi frequencies (rad/s) for the 'our' path.
+
+    Both beams are top-hats of the given power filling the same
+    ``beam_area`` (μm²). Transitions match ``physical_models.py``
+    param_set ``our``:
+
+      * 420 nm:  5S₁/₂ (mⱼ=-1/2) --σ⁻--> 6P₃/₂ (mⱼ=-3/2)
+      * 1013 nm: 6P₃/₂ (mⱼ=-1/2) --σ⁺--> nS₁/₂ (mⱼ=+1/2)
+
+    Returns
+    -------
+    (omega_420, omega_1013) : tuple of float
+        Single-photon Rabi frequencies in rad/s.
+    """
+    omega_420 = single_photon_rabi(
+        p420_w, beam_area,
+        n1=5, l1=0, j1=0.5, mj1=-0.5, n2=6, l2=1, j2=1.5, q=-1,
+    )
+    omega_1013 = single_photon_rabi(
+        p1013_w, beam_area,
+        n1=6, l1=1, j1=1.5, mj1=-0.5, n2=ryd_level, l2=0, j2=0.5, q=1,
+    )
+    return omega_420, omega_1013
 
 
 # ======================================================================
@@ -137,6 +337,8 @@ def compute_shift_scatter(wavelengths_nm, pol: float = 0.0):
 
 def _rydberg_branching_ratios(atom, ryd_level, param_set):
     """Compute branching ratios for Rydberg radiative decay."""
+    from arc.wigner import CG
+
     I = 3 / 2
     mI = 1 / 2
     nr = ryd_level

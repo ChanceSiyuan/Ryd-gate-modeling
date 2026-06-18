@@ -5,11 +5,11 @@ from ryd_gate import (
     RydbergSystem,
     TFIMAnnealProtocol,
     TFIMQuenchProtocol,
-    compile_hamiltonian_ir,
-    tfim_to_rydberg_controls,
 )
 from ryd_gate.backends.exact.compiler import compile_expm_ir
+from ryd_gate.ir import compile_hamiltonian_ir
 from ryd_gate.lattice import Register
+from ryd_gate.protocols import tfim_to_rydberg_controls
 from ryd_gate.protocols.base import Protocol
 
 

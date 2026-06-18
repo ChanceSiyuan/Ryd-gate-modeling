@@ -125,7 +125,8 @@ def test_plot_smoke_uses_address_profile():
         protocol=proto,
     )
 
-    fig_p, fig_s = proto.plot(system=system, show=False)
+    fig_p, ax_p = proto.plot(system=system, show=False)
+    fig_s, ax_s = proto.plot_address_map(system=system, show=False)
 
-    assert len(fig_p.axes) == 2
-    assert len(fig_s.axes) == 2
+    assert len(fig_p.axes) == 1            # single overlaid pulse axis
+    assert len(fig_s.axes) == 2            # heatmap + colorbar

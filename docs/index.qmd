@@ -10,12 +10,12 @@ single control surface over one exact + tensor-network kernel.
 
 | Goal | Page |
 |---|---|
-| Install and run a first simulation | [Getting Started](getting_started.md) |
-| Units, conventions, data flow | [Fundamentals](fundamentals.md) |
+| Install and run a first simulation | [Getting Started](getting_started.qmd) |
+| Units, conventions, data flow | [Fundamentals](fundamentals.qmd) |
 | The exact Hamiltonian of every model | [Hamiltonians](hamiltonians.qmd) |
-| Declarative noise on the exact Monte Carlo runner | [NoiseModel](how_to_noise.md) |
-| CZ gate reports and error budgets | [Gate reports](how_to_gates.md) |
-| What runs on which backend | [Capability Matrix](capability_matrix.md) |
+| Declarative noise on the exact Monte Carlo runner | [NoiseModel](how_to_noise.qmd) |
+| CZ gate reports and error budgets | [Gate reports](how_to_gates.qmd) |
+| What runs on which backend | [Capability Matrix](capability_matrix.qmd) |
 | Complete public API | [API Reference](reference/index.qmd) |
 
 ## Build this site

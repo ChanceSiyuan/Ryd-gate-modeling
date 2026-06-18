@@ -3,13 +3,14 @@
 import numpy as np
 import pytest
 
-from ryd_gate import DEFAULT_C6, RydbergSystem, SweepProtocol, compile_hamiltonian_ir
+from ryd_gate import DEFAULT_C6, RydbergSystem, SweepProtocol
 from ryd_gate.backends.tn_common.compiler import TNCompiler, tn_lattice_spec_from_system
 from ryd_gate.backends.tn_common.lattice_spec import (
     create_tn_lattice_spec,
     snake_order_mapping,
 )
 from ryd_gate.core.level_structures import InteractionSpec, level_structure
+from ryd_gate.ir import compile_hamiltonian_ir
 from ryd_gate.lattice import Register
 
 
@@ -81,9 +82,20 @@ class TestCreateTNLatticeSpec:
         with pytest.raises(ValueError, match="level_structure"):
             create_tn_lattice_spec(Lx=2, Ly=2, level_structure="bad")
 
+    def test_analog_3_spec_supported(self):
+        spec = create_tn_lattice_spec(Lx=1, Ly=2, level_structure="analog_3")
+        assert spec.level_structure == "analog_3"
+        assert spec.level_spec.levels == ("g", "e", "r")
+        lb = spec.local_blocks
+        assert lb is not None
+        assert lb.static.shape == (3, 3) and lb.drive_420.shape == (3, 3)
+        assert lb.hermitian  # decay disabled
+        assert lb.rydberg_index == 2
+        assert np.isclose(lb.drive_420[1, 0], np.pi * 491e6)  # |e><g| * rabi_420/2
+
     def test_registered_but_unsupported_level_structure_raises(self):
         with pytest.raises(ValueError, match="not supported"):
-            create_tn_lattice_spec(Lx=2, Ly=2, level_structure="analog_3")
+            create_tn_lattice_spec(Lx=2, Ly=2, level_structure="rb87_7")
 
     def test_nn_interaction_mode_filters_diagonals(self):
         spec = create_tn_lattice_spec(Lx=2, Ly=2, interaction_mode="nn")

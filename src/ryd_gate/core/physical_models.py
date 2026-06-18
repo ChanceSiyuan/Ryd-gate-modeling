@@ -253,6 +253,99 @@ def _register_local_matrix_block(
     )
 
 
+@dataclass(frozen=True, eq=False)
+class Analog3Blocks:
+    """analog_3 single-atom 3x3 blocks and scalars (shared by exact + TN paths).
+
+    ``h_const``/``h_1013``/``drive_420`` are the registered exact-backend blocks;
+    ``static`` is their time-independent sum used by the TN backends, while
+    ``drive_420`` is the base operator modulated each step by the protocol's
+    (generally complex) ``drive_420`` coefficient.
+    """
+
+    h_const: np.ndarray
+    h_1013: np.ndarray
+    drive_420: np.ndarray
+    rydberg_index: int
+    hermitian: bool
+    Delta: float
+    rabi_420: float
+    rabi_1013: float
+    rabi_eff: float
+    time_scale: float
+
+    @property
+    def static(self) -> np.ndarray:
+        """``H_const + H_1013 + H_1013^dag`` — the time-independent local Hamiltonian."""
+        return self.h_const + self.h_1013 + self.h_1013.conj().T
+
+    @property
+    def drive_420_dag(self) -> np.ndarray:
+        return self.drive_420.conj().T
+
+
+_ANALOG3_MID_DECAY_RATE = 1 / 110.7e-9
+_ANALOG3_RYD_DECAY_RATE = 1 / 151.55e-6
+
+
+def _analog3_blocks(Delta, rabi_420, rabi_1013, mid_decay, ryd_decay, rabi_eff, time_scale) -> Analog3Blocks:
+    h_const = np.zeros((3, 3), dtype=np.complex128)
+    h_const[1, 1] = Delta - 1j * mid_decay / 2
+    h_const[2, 2] = -1j * ryd_decay / 2
+    h_1013 = np.zeros((3, 3), dtype=np.complex128)
+    h_1013[2, 1] = rabi_1013 / 2
+    drive_420 = np.zeros((3, 3), dtype=np.complex128)
+    drive_420[1, 0] = rabi_420 / 2
+    return Analog3Blocks(
+        h_const=h_const, h_1013=h_1013, drive_420=drive_420, rydberg_index=2,
+        hermitian=(mid_decay == 0.0 and ryd_decay == 0.0),
+        Delta=float(Delta), rabi_420=float(rabi_420), rabi_1013=float(rabi_1013),
+        rabi_eff=float(rabi_eff), time_scale=float(time_scale),
+    )
+
+
+def analog_3_local_blocks(
+    *,
+    Delta_Hz: float | None = None,
+    rabi_420_Hz: float | None = None,
+    rabi_1013_Hz: float | None = None,
+    detuning_sign: int = 1,
+    enable_rydberg_decay: bool = False,
+    enable_intermediate_decay: bool = False,
+) -> Analog3Blocks:
+    """Build the analog_3 single-atom blocks from physical (Hz) knobs.
+
+    Single source of truth for the analog_3 local Hamiltonian: the exact path
+    (``_apply_analog_3_lattice_blocks``) and the TN lattice-spec builders both go
+    through this, so the matrices stay bit-identical across backends.
+    """
+    Delta = detuning_sign * 2 * np.pi * (Delta_Hz if Delta_Hz is not None else 9.1e9)
+    rabi_420 = 2 * np.pi * (rabi_420_Hz if rabi_420_Hz is not None else 491e6)
+    rabi_1013 = 2 * np.pi * (rabi_1013_Hz if rabi_1013_Hz is not None else 491e6)
+    rabi_eff = rabi_420 * rabi_1013 / (2 * abs(Delta))
+    time_scale = 2 * np.pi / rabi_eff
+    mid_decay = _ANALOG3_MID_DECAY_RATE if enable_intermediate_decay else 0.0
+    ryd_decay = _ANALOG3_RYD_DECAY_RATE if enable_rydberg_decay else 0.0
+    return _analog3_blocks(Delta, rabi_420, rabi_1013, mid_decay, ryd_decay, rabi_eff, time_scale)
+
+
+def analog_3_local_blocks_from_metadata(metadata: dict | None) -> Analog3Blocks:
+    """Reconstruct analog_3 blocks from a system/IR metadata dict (angular rad/s scalars).
+
+    Falls back to the default analog_3 constants when the scalars are absent.
+    """
+    if not metadata or "Delta" not in metadata:
+        return analog_3_local_blocks()
+    Delta = float(metadata["Delta"])
+    rabi_420 = float(metadata["rabi_420"])
+    rabi_1013 = float(metadata["rabi_1013"])
+    rabi_eff = float(metadata.get("rabi_eff") or rabi_420 * rabi_1013 / (2 * abs(Delta)))
+    time_scale = float(metadata.get("time_scale") or 2 * np.pi / rabi_eff)
+    mid_decay = float(metadata.get("mid_state_decay_rate", 0.0)) if metadata.get("enable_intermediate_decay") else 0.0
+    ryd_decay = float(metadata.get("ryd_state_decay_rate", 0.0)) if metadata.get("enable_rydberg_decay") else 0.0
+    return _analog3_blocks(Delta, rabi_420, rabi_1013, mid_decay, ryd_decay, rabi_eff, time_scale)
+
+
 def _apply_analog_3_lattice_blocks(
     model: "RydbergSystem",
     *,
@@ -267,57 +360,46 @@ def _apply_analog_3_lattice_blocks(
 ) -> None:
     _reject_unused(unused)
     ryd_level = 70
-    Delta = detuning_sign * 2 * np.pi * (Delta_Hz if Delta_Hz is not None else 9.1e9)
-    rabi_420 = 2 * np.pi * (rabi_420_Hz if rabi_420_Hz is not None else 491e6)
-    rabi_1013 = 2 * np.pi * (rabi_1013_Hz if rabi_1013_Hz is not None else 491e6)
-    rabi_eff = rabi_420 * rabi_1013 / (2 * abs(Delta))
-    time_scale = 2 * np.pi / rabi_eff
-    mid_state_decay_rate = 1 / 110.7e-9
-    ryd_state_decay_rate = 1 / 151.55e-6
+    blk = analog_3_local_blocks(
+        Delta_Hz=Delta_Hz,
+        rabi_420_Hz=rabi_420_Hz,
+        rabi_1013_Hz=rabi_1013_Hz,
+        detuning_sign=detuning_sign,
+        enable_rydberg_decay=enable_rydberg_decay,
+        enable_intermediate_decay=enable_intermediate_decay,
+    )
     ryd_RD_rate = 1 / 410.41e-6
-    ryd_BBR_rate = ryd_state_decay_rate - ryd_RD_rate
-
-    mid_decay = mid_state_decay_rate if enable_intermediate_decay else 0.0
-    ryd_decay = ryd_state_decay_rate if enable_rydberg_decay else 0.0
-
-    h_const = np.zeros((3, 3), dtype=np.complex128)
-    h_const[1, 1] = Delta - 1j * mid_decay / 2
-    h_const[2, 2] = -1j * ryd_decay / 2
-
-    h1013 = np.zeros((3, 3), dtype=np.complex128)
-    h1013[2, 1] = rabi_1013 / 2
-    h420 = np.zeros((3, 3), dtype=np.complex128)
-    h420[1, 0] = rabi_420 / 2
+    ryd_BBR_rate = _ANALOG3_RYD_DECAY_RATE - ryd_RD_rate
     lightshift_zero = np.zeros((3, 3), dtype=np.complex128)
 
-    _register_local_matrix_block(model.blocks, "H_const", h_const, description="single-atom ger energies")
-    _register_local_matrix_block(model.blocks, "H_1013", h1013, hermitian=False, description="static e-r coupling")
-    _register_local_matrix_block(model.blocks, "H_1013_conj", h1013.conj().T, hermitian=False)
-    _register_local_matrix_block(model.blocks, "drive_420", h420, hermitian=False, description="g-e drive")
-    _register_local_matrix_block(model.blocks, "drive_420_dag", h420.conj().T, hermitian=False)
+    _register_local_matrix_block(model.blocks, "H_const", blk.h_const, description="single-atom ger energies")
+    _register_local_matrix_block(model.blocks, "H_1013", blk.h_1013, hermitian=False, description="static e-r coupling")
+    _register_local_matrix_block(model.blocks, "H_1013_conj", blk.h_1013.conj().T, hermitian=False)
+    _register_local_matrix_block(model.blocks, "drive_420", blk.drive_420, hermitian=False, description="g-e drive")
+    _register_local_matrix_block(model.blocks, "drive_420_dag", blk.drive_420.conj().T, hermitian=False)
     _register_local_matrix_block(model.blocks, "lightshift_zero", lightshift_zero)
 
     model.metadata.update(
         {
             "physical_model": "analog_3",
-            "rabi_eff": rabi_eff,
-            "time_scale": time_scale,
+            "rabi_eff": blk.rabi_eff,
+            "time_scale": blk.time_scale,
             "t_rise": 20e-9,
             "blackmanflag": blackmanflag,
             "n_atoms": model.N,
             "n_levels": 3,
-            "rabi_420": rabi_420,
-            "rabi_1013": rabi_1013,
+            "rabi_420": blk.rabi_420,
+            "rabi_1013": blk.rabi_1013,
             "rabi_420_garbage": 0.0,
             "rabi_1013_garbage": 0.0,
-            "Delta": Delta,
+            "Delta": blk.Delta,
             "v_ryd": _nearest_pair_strength(model.metadata.get("interaction_pairs", ())),
             "v_ryd_garb": 0.0,
             "ryd_level": ryd_level,
-            "ryd_state_decay_rate": ryd_state_decay_rate,
+            "ryd_state_decay_rate": _ANALOG3_RYD_DECAY_RATE,
             "ryd_RD_rate": ryd_RD_rate,
             "ryd_BBR_rate": ryd_BBR_rate,
-            "mid_state_decay_rate": mid_state_decay_rate,
+            "mid_state_decay_rate": _ANALOG3_MID_DECAY_RATE,
             "ryd_branch": {},
             "mid_branch": {},
             "rydberg_indices": (2,),

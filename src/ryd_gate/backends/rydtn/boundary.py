@@ -22,6 +22,18 @@ from .peps import FinitePEPS
 from .tensors import ArrayBackend
 
 
+def _transpose_peps(psi: FinitePEPS, ab: ArrayBackend) -> FinitePEPS:
+    """Reflect the PEPS across its main diagonal (swap rows<->columns).
+
+    Site ``(x, y) -> (y, x)`` and legs ``[t,l,b,r,s] -> [l,t,r,b,s]`` so that a
+    vertical bond of ``psi`` becomes a horizontal bond of the result.
+    """
+    out = FinitePEPS(psi.Ly, psi.Lx, ab)
+    for (x, y), A in psi.tensors.items():
+        out[(y, x)] = ab.transpose(A, (1, 0, 3, 2, 4))
+    return out
+
+
 def double_tensor(ab: ArrayBackend, A, O=None):
     """Rank-4 double tensor ``a[u, l, d, r]`` (fused ket+bra, ket-major).
 
@@ -91,15 +103,24 @@ class BoundaryMPS:
         self._top = None
         self._bot = None
         self._Z = None
+        self._dt_cache: dict = {}  # background (op=None) double tensors by site
 
     # ---- environments ----
     def _row_tensor(self, x, y, op=None, flip=False):
         """Column ``(x, y)`` double tensor as an MPO tensor ``[pin, l, pout, r]``.
 
         ``flip=False`` (top-down): ``pin=u, pout=d``; ``flip=True`` (bottom-up):
-        ``pin=d, pout=u``.  Built on demand so the caller never holds a whole row.
+        ``pin=d, pout=u``.  The operator-free tensor is cached: it is rebuilt
+        many times across the top/bottom build and the streaming L/R sweeps, and
+        the double-layer ``D^4`` contraction is the dominant per-call cost.
         """
-        a = double_tensor(self.ab, self.psi[(x, y)], op)  # [u,l,d,r]
+        if op is None:
+            a = self._dt_cache.get((x, y))
+            if a is None:
+                a = double_tensor(self.ab, self.psi[(x, y)], None)  # [u,l,d,r]
+                self._dt_cache[(x, y)] = a
+        else:
+            a = double_tensor(self.ab, self.psi[(x, y)], op)  # [u,l,d,r]
         return self.ab.transpose(a, (2, 1, 0, 3)) if flip else a
 
     def _trivial_mps(self):
@@ -172,6 +193,55 @@ class BoundaryMPS:
                 ab, B, lambda y, x=x: self._row_tensor(x, y, op=ins.get((x, y))),
                 self.chi, self.svd_min)
         return _contract_scalar(ab, B) / self._Z
+
+    def _nn_horizontal(self, O, P) -> dict:
+        """``{((x,y),(x,y+1)): <O P>}`` for every horizontal (same-row) bond.
+
+        One streaming left/right sweep per row over the cached top/bottom
+        environments -- the same machinery as ``measure_1site``, with no
+        per-bond boundary rebuild or SVD.
+        """
+        self._build()
+        ab = self.ab
+        eye = ab.asarray(np.ones((1, 1, 1)))
+        out: dict = {}
+        for x in range(self.Lx):
+            top, bot = self._top[x], self._bot[x + 1]
+            L = [eye] + [None] * self.Ly  # L[y] = env left of column y
+            for y in range(self.Ly):
+                d = self._row_tensor(x, y)
+                L[y + 1] = ab.einsum("tlb,tuT,uldr,bdB->TrB", L[y], top[y], d, bot[y])
+            R = [None] * self.Ly + [eye]  # R[y] = env right of column y
+            for y in range(self.Ly - 1, -1, -1):
+                d = self._row_tensor(x, y)
+                R[y] = ab.einsum("tuT,uldr,bdB,TrB->tlb", top[y], d, bot[y], R[y + 1])
+            for y in range(self.Ly - 1):
+                dO = self._row_tensor(x, y, op=O)
+                LO = ab.einsum("tlb,tuT,uldr,bdB->TrB", L[y], top[y], dO, bot[y])
+                dP = self._row_tensor(x, y + 1, op=P)
+                LOP = ab.einsum("tlb,tuT,uldr,bdB->TrB", LO, top[y + 1], dP, bot[y + 1])
+                num = ab.einsum("TrB,TrB->", LOP, R[y + 2])
+                out[((x, y), (x, y + 1))] = complex(ab.to_numpy(num).reshape(-1)[0]) / self._Z
+            ab.empty_cache()
+        return out
+
+    def measure_nn(self, O, P) -> dict:
+        """``{((xi,yi),(xj,yj)): <O_i P_j>}`` for every nearest-neighbour bond.
+
+        Horizontal bonds come from a streaming sweep on ``psi``; vertical bonds
+        are horizontal bonds of the transposed PEPS, so they reuse the *same*
+        streaming on ``psi^T``.  Two boundary builds + cheap streaming replace
+        the per-bond full-boundary rebuilds of ``measure_2site`` -- cost is
+        independent of the number of bonds.
+        """
+        out = self._nn_horizontal(O, P)
+        envT = BoundaryMPS(_transpose_peps(self.psi, self.ab), self.ab,
+                           chi=self.chi, svd_min=self.svd_min)
+        for ((a, b), (a, b1)), val in envT._nn_horizontal(O, P).items():
+            # psi^T site (a,b) == psi site (b,a); a horizontal bond (a,b)-(a,b+1)
+            # on psi^T is the vertical bond (b,a)-(b+1,a) on psi.
+            out[((b, a), (b1, a))] = val
+        return out
 
 
 def contract_peps_dense(psi: FinitePEPS, ab: ArrayBackend) -> np.ndarray:

@@ -87,7 +87,10 @@ class CuTensorNetRydbergEngine:
         if cuquantum is None:
             raise GPUTNKernelError("CuTensorNetRydbergEngine requires a cuQuantum module.")
         if spec.level_structure not in {"1r", "01r"}:
-            raise ValueError("GPUTN kernel supports TN level_structure '1r' and '01r' only.")
+            raise ValueError(
+                "GPUTN kernel supports TN level_structure '1r' and '01r' only "
+                "(analog_3 is supported on backend='peps'/'mps', not gputn)."
+            )
         if self.trotter_order not in {1, 2}:
             raise ValueError("trotter_order must be 1 or 2.")
 

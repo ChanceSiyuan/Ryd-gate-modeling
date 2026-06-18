@@ -21,7 +21,7 @@ drive amplitudes in rad/s, time in seconds, distances in µm.
 | $\delta_i$ | per-site detuning (addressing pin) | `pin_deltas`, channels `global_n_i` |
 | $V_{ij} = C_6 / \lvert \mathbf{r}_i - \mathbf{r}_j \rvert^6$ | van der Waals pair interaction | `core.physical_models.vdw_couplings` |
 | $\gamma$ | population decay rate; enters as $-\tfrac{i}{2}\gamma$ on the diagonal (non-Hermitian norm loss) | `physical_models` decay flags |
-| $A(t)$ | dimensionless Blackman flat-top envelope $\in [0,1]$ | `pulse.blackman_pulse` |
+| $A(t)$ | dimensionless Blackman flat-top envelope $\in [0,1]$ | `physics.blackman_pulse` |
 | $\varphi(t)$ | 420-nm optical phase; drives enter as $e^{-i\varphi(t)}$ | `phase_420` of the gate protocols |
 
 **Default $C_6$:** $C_6 = 2\pi \times 874\,\text{GHz}\,\mu\text{m}^6$
@@ -234,7 +234,7 @@ c_{\text{ls}}(t) = A(t)^2 ,
 $$
 
 with $A(t)$ the Blackman flat-top envelope
-(`pulse.blackman_pulse(t, t_{\text{rise}}, t_{\text{gate}})`) and the
+(`physics.blackman_pulse(t, t_{\text{rise}}, t_{\text{gate}})`) and the
 protocol-specific phase:
 
 | protocol | $\varphi(t)$ |

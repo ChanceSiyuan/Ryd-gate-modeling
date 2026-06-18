@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from ryd_gate.core.level_structures import LevelStructureSpec
 
 from .sites import resolve_level_structure
+
+if TYPE_CHECKING:
+    from ryd_gate.core.physical_models import Analog3Blocks
 
 
 def snake_order_mapping(Lx: int, Ly: int) -> tuple[np.ndarray, np.ndarray]:
@@ -125,6 +129,7 @@ class TNLatticeSpec:
     interaction_mode: str = "nnn"
     ordering: str = "snake"
     bc_y: str = "open"
+    local_blocks: "Analog3Blocks | None" = None
 
     @property
     def level_structure(self) -> str:
@@ -159,6 +164,11 @@ def create_tn_lattice_spec(
     )
 
     level_spec = resolve_level_structure(level_structure)
+    local_blocks = None
+    if level_spec.name == "analog_3":
+        from ryd_gate.core.physical_models import analog_3_local_blocks
+
+        local_blocks = analog_3_local_blocks()
     if interaction_mode not in {"nn", "nnn"}:
         raise ValueError("TN lattice interaction_mode must be 'nn' or 'nnn'.")
     if bc_y not in {"open", "periodic"}:
@@ -187,4 +197,5 @@ def create_tn_lattice_spec(
         interaction_mode=interaction_mode,
         ordering=ordering,
         bc_y=bc_y,
+        local_blocks=local_blocks,
     )

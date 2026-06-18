@@ -1,4 +1,4 @@
-"""Generate docs/capability_matrix.md from code (never hand-edited).
+"""Generate docs/capability_matrix.qmd from code (never hand-edited).
 
 Every table row is derived from the runtime objects themselves —
 ``LevelStructureSpec.supports_backend`` and ``NoiseModel.validate_for`` —
@@ -16,7 +16,7 @@ from pathlib import Path
 
 PRESETS = ("01", "1r", "01r", "analog_3", "rb87_7")
 BACKENDS = ("exact", "mps", "gputn", "peps", "stabilizer")
-OUT_PATH = Path(__file__).resolve().parents[1] / "capability_matrix.md"
+OUT_PATH = Path(__file__).resolve().parents[1] / "capability_matrix.qmd"
 
 YES, NO = "yes", "—"
 

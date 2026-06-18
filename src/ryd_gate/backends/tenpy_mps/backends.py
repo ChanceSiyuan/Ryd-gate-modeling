@@ -9,6 +9,7 @@ import numpy as np
 
 from ryd_gate.backends.tn_common.lattice_spec import TNLatticeSpec
 from ryd_gate.backends.tn_common.protocol_context import (
+    analog3_dt_guard,
     merge_pin_deltas,
     pin_deltas_from_params,
 )
@@ -43,7 +44,7 @@ def measure_mps_observable(psi_mps: object, spec: TNLatticeSpec, name: str):
         return measure_sigma_z(psi_mps, spec)
     if name == "czz_centerline":
         return measure_centerline_connected_zz(psi_mps, spec)
-    if name in {"n_0", "n_1"}:
+    if name in {"n_0", "n_1", "n_g", "n_e"}:
         return measure_level_occupations(psi_mps, spec, name[-1])
     if name == "sum_nr":
         return float(sum(
@@ -269,6 +270,7 @@ class TenpyTDVPBackend:
         if observables is None and t_eval is not None:
             observables = ["m_s", "n_mean"]
 
+        analog3_dt_guard(spec, self.dt)
         t_gate = params["t_gate"]
         n_steps = int(np.ceil(t_gate / self.dt))
         dt_actual = t_gate / n_steps
@@ -309,7 +311,12 @@ class TenpyTDVPBackend:
         for k in range(n_steps):
             t_mid = (k + 0.5) * dt_actual
             coeffs = protocol.get_drive_coefficients(t_mid, params)
-            if spec.level_structure == "01r":
+            if spec.level_structure == "analog_3":
+                model = build_tenpy_model(
+                    spec, Delta=0.0,
+                    drive_420_coeff=complex(coeffs.get("drive_420", 0.0)),
+                )
+            elif spec.level_structure == "01r":
                 profiles = three_level_profiles_from_coeffs(coeffs, spec)
                 pin = pin_deltas_from_params(params, spec.N)
                 if pin is not None:
