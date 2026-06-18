@@ -11,13 +11,9 @@ class TestPackageImports:
         assert isinstance(ryd_gate.__version__, str)
 
     def test_product_layer_exports(self):
-        """Lattice/validation objects should be exported at top level."""
-        from ryd_gate import (
-            Register,
-            RegisterLayout,
-            ValidationIssue,
-            raise_for_errors,
-        )
+        """Lattice geometry stays top-level; validation lives in core.serialization."""
+        from ryd_gate import Register, RegisterLayout
+        from ryd_gate.core.serialization import ValidationIssue, raise_for_errors
 
         assert all(
             item is not None
@@ -35,37 +31,66 @@ class TestPackageImports:
         with pytest.raises(ImportError):
             from ryd_gate import blackman_pulse_sqrt  # noqa: F401
 
+    def test_demoted_top_level_exports(self):
+        """Symbols moved to submodules are no longer top-level."""
+        import pytest
+
+        import ryd_gate
+
+        for name in (
+            "TOProtocol",
+            "ARProtocol",
+            "DoubleARPProtocol",
+            "CZGateReport",
+            "cz_gate_report",
+            "average_gate_infidelity",
+            "error_budget",
+            "Protocol",
+            "DigitalAnalogProtocol",
+            "HamiltonianIR",
+            "HamiltonianTerm",
+            "compile_hamiltonian_ir",
+            "SystemModel",
+            "BasisSpec",
+            "BlockRegistry",
+            "ObservableRegistry",
+            "Observable",
+            "TransitionSpec",
+            "ValidationIssue",
+            "raise_for_errors",
+            "AddressingEvaluator",
+            "compute_shift_scatter",
+            "TFIMRydbergControls",
+            "tfim_to_rydberg_controls",
+            "interaction_longitudinal_shifts",
+        ):
+            assert name not in ryd_gate.__all__
+            with pytest.raises(AttributeError):
+                getattr(ryd_gate, name)
+
     def test_all_exports_match(self):
-        """__all__ should list exactly the expected exports."""
+        """__all__ should list exactly the minimal top-level surface."""
         import ryd_gate
 
         expected = {
-            # Systems
+            # Systems & geometry
             "RydbergSystem",
-            "LevelStructureSpec", "TransitionSpec",
-            "InteractionSpec", "DEFAULT_C6", "level_structure",
-            "compute_shift_scatter",
-            # Protocols
-            "Protocol", "TOProtocol", "ARProtocol", "DoubleARPProtocol", "SweepProtocol",
-            "TFIMAnnealProtocol", "TFIMQuenchProtocol", "TFIMRydbergControls",
-            "tfim_to_rydberg_controls", "interaction_longitudinal_shifts",
-            "DigitalAnalogProtocol",
-            # IR
-            "EvolutionResult", "HamiltonianIR", "HamiltonianTerm", "compile_hamiltonian_ir",
-            # Analysis
-            "average_gate_infidelity", "error_budget", "AddressingEvaluator",
+            "Register",
+            "RegisterLayout",
+            "InteractionSpec",
+            "LevelStructureSpec",
+            "level_structure",
+            "DEFAULT_C6",
+            # Noise layer
+            "NoiseModel",
+            "configure_monte_carlo_runner",
+            # Lattice-dynamics protocols
+            "SweepProtocol",
+            "TFIMQuenchProtocol",
+            "TFIMAnnealProtocol",
             # Simulation
             "simulate",
-            # Lattice geometry / validation
-            "Register", "RegisterLayout",
-            "ValidationIssue", "raise_for_errors",
-            # Noise layer
-            "NoiseModel", "configure_monte_carlo_runner",
-            # Gate library
-            "CZGateReport", "cz_gate_report",
-            # Advanced primitives
-            "SystemModel", "BasisSpec", "BlockRegistry",
-            "ObservableRegistry", "Observable",
+            "EvolutionResult",
         }
         assert set(ryd_gate.__all__) == expected
 
@@ -76,37 +101,25 @@ class TestPackageImports:
         for name in ryd_gate.__all__:
             assert hasattr(ryd_gate, name)
 
-    def test_new_architecture_exports(self):
-        """New architecture types should be importable from top level."""
-        from ryd_gate import (
-            BasisSpec,
-            BlockRegistry,
-            EvolutionResult,
-            HamiltonianIR,
-            HamiltonianTerm,
-            ObservableRegistry,
-            RydbergSystem,
-            SystemModel,
-            compile_hamiltonian_ir,
-        )
-        from ryd_gate.backends.exact import ExactSparseCompiler, SolverBackend, compile_expm_ir, simulate
+    def test_architecture_types_importable_from_submodules(self):
+        """Core/IR types are importable from their owning submodules."""
+        from ryd_gate import EvolutionResult, RydbergSystem
+        from ryd_gate.core import BasisSpec, BlockRegistry, ObservableRegistry
+        from ryd_gate.core.model import SystemModel
+        from ryd_gate.ir import HamiltonianIR, HamiltonianTerm, compile_hamiltonian_ir
 
         assert all(
             item is not None
             for item in (
+                EvolutionResult,
+                RydbergSystem,
                 BasisSpec,
                 BlockRegistry,
-                EvolutionResult,
+                ObservableRegistry,
+                SystemModel,
                 HamiltonianIR,
                 HamiltonianTerm,
-                ObservableRegistry,
-                RydbergSystem,
-                SystemModel,
                 compile_hamiltonian_ir,
-                ExactSparseCompiler,
-                SolverBackend,
-                compile_expm_ir,
-                simulate,
             )
         )
 

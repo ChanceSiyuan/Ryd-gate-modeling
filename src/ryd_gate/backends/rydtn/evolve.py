@@ -55,6 +55,14 @@ def apply_nn_gate_and_truncate_(ab, psi, s0, s1, dirn, G_nn4, chi_max, svd_min, 
 def _local_layer(ab, psi, ops: PEPSOps, payload, step_data, coeff):
     lat = payload["lattice"]
     Ly = int(lat["Ly"])
+    lb = lat.get("local_blocks")
+    if lb is not None:
+        # analog_3: one spatially-uniform 3x3 gate per layer (static blocks + complex drive).
+        H = ops.matrix_hamiltonian(lb.static, lb.drive_420, step_data["drive_coeffs"]["drive_420"])
+        gate = G.gate_local_exp(coeff, H, hermitian=lb.hermitian)
+        for site_2d in range(int(lat["N"])):
+            apply_local_gate_(ab, psi, (site_2d // Ly, site_2d % Ly), gate)
+        return
     inv = np.asarray(lat["inv_snake"], dtype=int)
     oR = np.asarray(step_data["omega_R_1d"], dtype=float)
     ohf = np.asarray(step_data["omega_hf_1d"], dtype=float)

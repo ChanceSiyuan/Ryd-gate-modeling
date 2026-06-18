@@ -72,9 +72,10 @@ class TestDMRG:
     @pytest.mark.slow
     def test_2x2_energy_vs_exact(self, spec_2x2):
         """DMRG energy matches exact diagonalization for 2x2."""
-        from ryd_gate import RydbergSystem, compile_hamiltonian_ir
+        from ryd_gate import RydbergSystem
         from ryd_gate.backends.exact import compile_expm_ir
         from ryd_gate.core.level_structures import InteractionSpec
+        from ryd_gate.ir import compile_hamiltonian_ir
         from ryd_gate.lattice import Register
         from ryd_gate.protocols.sweep import SweepProtocol
 

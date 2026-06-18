@@ -37,6 +37,7 @@ def build_tenpy_model(
     omega_hf: float | np.ndarray | None = None,
     delta_R: float | np.ndarray | None = None,
     delta_hf: float | np.ndarray | None = None,
+    drive_420_coeff: complex | None = None,
 ) -> object:
     """Build a TeNPy CouplingMPOModel for the 2-level Rydberg lattice.
 
@@ -96,8 +97,13 @@ def build_tenpy_model(
         omega_hf_profile = profile(omega_hf)
         delta_R_profile = profile(delta_R, default=Delta + pin_deltas)
         delta_hf_profile = profile(delta_hf)
+    elif spec.level_structure == "analog_3":
+        lb = spec.local_blocks
+        if lb is None:
+            raise ValueError("analog_3 TeNPy model requires spec.local_blocks.")
+        coeff_420 = complex(0.0 if drive_420_coeff is None else drive_420_coeff)
     elif spec.level_structure != "1r":
-        raise ValueError("TN lattice level_structure must be '1r' or '01r'.")
+        raise ValueError("TN lattice level_structure must be '1r', '01r', or 'analog_3'.")
 
     site = build_tenpy_site(spec.level_spec)
     x_r_op = None
@@ -116,8 +122,10 @@ def build_tenpy_model(
         def init_terms(self, model_params):
             if spec.level_structure == "1r":
                 self._init_two_level_terms()
-            else:
+            elif spec.level_structure == "01r":
                 self._init_three_level_terms()
+            else:
+                self._init_analog3_terms()
 
         def _init_two_level_terms(self):
             for i_2d in range(spec.N):
@@ -148,6 +156,25 @@ def build_tenpy_model(
                 self.add_onsite_term(0.5 * float(omega_hf_profile[i_2d]), i_1d, x_hf_op)
                 self.add_onsite_term(-float(delta_R_profile[i_2d]), i_1d, "n_r")
                 self.add_onsite_term(-float(delta_hf_profile[i_2d]), i_1d, "n_1")
+
+            for i_2d, j_2d, v_rel in spec.vdw_pairs:
+                V_ij = spec.V_nn * v_rel
+                i_1d = int(spec.inv_snake[i_2d])
+                j_1d = int(spec.inv_snake[j_2d])
+                if i_1d > j_1d:
+                    i_1d, j_1d = j_1d, i_1d
+                self.add_coupling_term(V_ij, i_1d, j_1d, "n_r", "n_r")
+
+        def _init_analog3_terms(self):
+            # Physical g/e/r ladder: large static intermediate detuning + static
+            # e-r coupling + (complex) time-dependent g-e drive, all from
+            # spec.local_blocks; the protocol only modulates drive_420 (coeff_420).
+            for i_2d in range(spec.N):
+                i_1d = int(spec.inv_snake[i_2d])
+                self.add_onsite_term(float(lb.Delta), i_1d, "n_e")
+                self.add_onsite_term(0.5 * float(lb.rabi_1013), i_1d, "X_1013")
+                self.add_onsite_term(0.5 * lb.rabi_420 * coeff_420, i_1d, "Sp_420")
+                self.add_onsite_term(0.5 * lb.rabi_420 * np.conj(coeff_420), i_1d, "Sm_420")
 
             for i_2d, j_2d, v_rel in spec.vdw_pairs:
                 V_ij = spec.V_nn * v_rel
@@ -197,5 +224,11 @@ def _build_explicit_site(spec: LevelStructureSpec) -> object:
         x_op[upper, lower] = 1.0
         x_op[lower, upper] = 1.0
         ops[f"X_{transition.name}"] = x_op
+        # Raising/lowering operators for complex (phase-carrying) drives, e.g.
+        # the analog_3 420nm drive: |upper><lower| and its conjugate.
+        sp_op = np.zeros((dim, dim), dtype=complex)
+        sp_op[upper, lower] = 1.0
+        ops[f"Sp_{transition.name}"] = sp_op
+        ops[f"Sm_{transition.name}"] = sp_op.conj().T
 
     return Site(leg, state_labels=list(spec.levels), sort_charge=False, **ops)

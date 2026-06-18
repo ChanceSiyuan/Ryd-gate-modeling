@@ -27,6 +27,36 @@ class SolverBackend(ABC):
         ...
 
 
+def record_steps(
+    n_steps: int,
+    t_eval: np.ndarray | bool | None,
+    t_gate: float,
+    dt: float,
+) -> set[int] | None:
+    """Map requested ``t_eval`` times to discrete piecewise-expm step indices.
+
+    Shared by the dense and sparse expm backends. ``None`` records nothing, a
+    bool records every step (``True``) or none (``False``), and an array of
+    times rounds each to its nearest step in ``[0, n_steps]``.
+    """
+    if t_eval is None:
+        return None
+    if isinstance(t_eval, (bool, np.bool_)):
+        return set(range(1, n_steps + 1)) if bool(t_eval) else set()
+
+    times = np.asarray(t_eval, dtype=float)
+    if times.ndim != 1:
+        raise ValueError("t_eval must be a one-dimensional array of times.")
+    tol = max(1e-12, abs(t_gate) * 1e-12)
+    if np.any(times < -tol) or np.any(times > t_gate + tol):
+        raise ValueError("t_eval entries must lie within [0, t_gate].")
+    steps = set()
+    for t_req in times:
+        step = int(round(float(t_req) / dt)) if dt != 0 else 0
+        steps.add(max(0, min(step, n_steps)))
+    return steps
+
+
 @dataclass
 class ExactSparseCompiler:
     """Lower unified Hamiltonian IR into exact matrix-backed terms.

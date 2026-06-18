@@ -7,7 +7,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 GENERATOR = REPO / "docs" / "_scripts" / "build_capability_matrix.py"
-MATRIX = REPO / "docs" / "capability_matrix.md"
+MATRIX = REPO / "docs" / "capability_matrix.qmd"
 
 
 @pytest.fixture(scope="module")
@@ -26,7 +26,7 @@ def matrix_text(generator):
 class TestMatrixFreshness:
     def test_checked_in_matrix_is_not_stale(self, matrix_text):
         assert MATRIX.read_text() == matrix_text, (
-            "docs/capability_matrix.md is stale; regenerate with "
+            "docs/capability_matrix.qmd is stale; regenerate with "
             "`uv run python docs/_scripts/build_capability_matrix.py`."
         )
 

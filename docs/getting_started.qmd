@@ -28,9 +28,9 @@ result = simulate(system, psi0="all_1", observables=["sum_nr"])
 print(result.expectation("sum_nr"))   # Rydberg population (read off the result)
 ```
 
-Swap `backend="exact"` for `"mps"`, `"peps"`, or `"gputn"` to run the same
+Swap `backend="exact_dense"` for `"mps"`, `"peps"`, or `"gputn"` to run the same
 system on a tensor-network engine — see the
-[Capability Matrix](capability_matrix.md) for what runs where. The research
+[Capability Matrix](capability_matrix.qmd) for what runs where. The research
 notebooks under `scripts/notebooks/` cover TFIM critical fields, quench
 benchmarks, and 2D lattice dynamics end to end.
 
@@ -48,6 +48,6 @@ report = cz_gate_report(system, TOProtocol(), X_TO_DARK, include_error_budget=Fa
 print(report.fidelity)             # ~0.9999992 for the benchmark parameters
 ```
 
-Continue with [Fundamentals](fundamentals.md) for units and conventions, the
-how-to guides for each feature, and the [Capability Matrix](capability_matrix.md)
+Continue with [Fundamentals](fundamentals.qmd) for units and conventions, the
+how-to guides for each feature, and the [Capability Matrix](capability_matrix.qmd)
 for what runs where.

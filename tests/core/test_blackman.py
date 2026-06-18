@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from ryd_gate.pulse import blackman_pulse, blackman_pulse_sqrt, blackman_window
+from ryd_gate.physics import blackman_pulse, blackman_pulse_sqrt, blackman_window
 
 
 class TestBlackmanWindow:

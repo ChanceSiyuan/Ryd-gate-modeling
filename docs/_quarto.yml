@@ -8,7 +8,7 @@ website:
     left:
       - href: index.qmd
         text: Home
-      - href: getting_started.md
+      - href: getting_started.qmd
         text: Getting Started
       - href: hamiltonians.qmd
         text: Hamiltonians
@@ -20,12 +20,12 @@ website:
       - index.qmd
       - section: Guides
         contents:
-          - getting_started.md
-          - fundamentals.md
+          - getting_started.qmd
+          - fundamentals.qmd
           - hamiltonians.qmd
-          - how_to_noise.md
-          - how_to_gates.md
-          - capability_matrix.md
+          - how_to_noise.qmd
+          - how_to_gates.qmd
+          - capability_matrix.qmd
       - section: Reference
         contents:
           - reference/index.qmd
@@ -166,11 +166,9 @@ quartodoc:
     - title: Physics helpers
       contents:
         - physics.compute_shift_scatter
-    - title: Pulse envelope kernels
-      contents:
-        - pulse.blackman_window
-        - pulse.blackman_pulse
-        - pulse.blackman_pulse_sqrt
+        - physics.blackman_window
+        - physics.blackman_pulse
+        - physics.blackman_pulse_sqrt
     - title: Validation and serialization
       contents:
         - core.serialization.ValidationIssue

@@ -59,6 +59,25 @@ gputn-cu12 = [
     "cudensitymat-cu12==0.1.0",
     "cutensor-cu12==2.2.0",
 ]
+# torch for the rydtn PEPS-on-CUDA tensor backend (backend_name="torch", device="cuda").
+# Pinned to 2.5.1 because newer wheels (>=2.8 / cu130) drop Volta (sm_70) and fail on the
+# DGX V100s with "no kernel image available". uv pulls 2.5.1+cu121 from the PyTorch index
+# (see [tool.uv.sources]); plain-pip users get PyPI 2.5.1 (cu124), which also still ships sm_70.
+# Opt-in only (kept out of `dependencies`/`dev` so CI and non-CUDA installs don't pull it):
+#   uv sync --extra dev --extra tn --extra tn-2d --extra torch
+torch = [
+    "torch==2.5.1",
+]
+
+[[tool.uv.index]]
+# explicit=true => this index is consulted ONLY for packages mapped in [tool.uv.sources],
+# so everything except torch still resolves from PyPI.
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu121" }
 
 [tool.setuptools.packages.find]
 where = ["src"]

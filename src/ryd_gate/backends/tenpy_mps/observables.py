@@ -27,7 +27,7 @@ def measure_site_occupations(
     occ : ndarray, shape (N,)
         Per-site Rydberg occupation in 2D site order.
     """
-    if spec.level_structure == "01r":
+    if spec.level_structure in {"01r", "analog_3"}:
         occ_snake = np.array(psi.expectation_value("n_r"))
     else:
         sz_vals = psi.expectation_value("Sz")
@@ -54,7 +54,10 @@ def measure_level_occupations(
             return np.zeros(spec.N)
         raise ValueError(f"Unknown level for 1r TN lattice: {level!r}")
 
-    if level not in {"0", "1"}:
+    if spec.level_structure == "analog_3":
+        if level not in {"g", "e"}:
+            raise ValueError(f"Unknown level for analog_3 TN lattice: {level!r}")
+    elif level not in {"0", "1"}:
         raise ValueError(f"Unknown level for 01r TN lattice: {level!r}")
     occ_snake = np.array(psi.expectation_value(f"n_{level}"))
     occ_2d = np.empty(spec.N)
@@ -133,7 +136,7 @@ def measure_correlation(
         i_1d, j_1d = j_1d, i_1d
 
     # n_i = 0.5 + Sz_i  =>  n_i n_j = (0.5+Szi)(0.5+Szj)
-    if spec.level_structure == "01r":
+    if spec.level_structure in {"01r", "analog_3"}:
         n_vals = psi.expectation_value("n_r")
         n_i = float(n_vals[i_1d])
         n_j = float(n_vals[j_1d])

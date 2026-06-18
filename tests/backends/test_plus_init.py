@@ -43,7 +43,7 @@ def test_plus_local_amplitudes_requires_0_and_1():
 
 def test_plus_initial_state_exact():
     system = _system_01r()
-    res = rg.simulate(system, [], "plus", backend="exact", t_eval=np.array([0.0]))
+    res = rg.simulate(system, [], "plus", backend="exact_dense", t_eval=np.array([0.0]))
     psi0 = res.states[0]
     n0 = np.mean([system.expectation(f"n_0_{i}", psi0) for i in range(system.N)])
     n1 = np.mean([system.expectation(f"n_1_{i}", psi0) for i in range(system.N)])

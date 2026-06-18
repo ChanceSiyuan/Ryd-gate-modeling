@@ -92,6 +92,7 @@ def tn_lattice_spec_from_system(system: RydbergSystem) -> TNLatticeSpec:
         level_spec,
         tuple(system.meta("interaction_pairs", ())),
         system.meta("Omega", 1.0),
+        _analog_local_blocks(level_spec, getattr(system, "metadata", None)),
     )
 
 
@@ -106,11 +107,13 @@ def tn_lattice_spec_from_hamiltonian_ir(ir: HamiltonianIR) -> TNLatticeSpec:
     omega = ir.metadata.get("Omega", 1.0)
     if omega is None:
         omega = 1.0
+    resolved = resolve_level_structure(level_spec)
     return _tn_lattice_spec_from_geometry(
         ir.geometry,
-        resolve_level_structure(level_spec),
+        resolved,
         interaction_pairs,
         omega,
+        _analog_local_blocks(resolved, ir.metadata),
     )
 
 
@@ -119,6 +122,7 @@ def _tn_lattice_spec_from_geometry(
     level_spec: LevelStructureSpec,
     interaction_pairs: tuple,
     omega: float,
+    local_blocks=None,
 ) -> TNLatticeSpec:
     Lx, Ly = _infer_square_lattice_shape(np.asarray(geometry.coords, dtype=float), geometry.N)
     snake_to_2d, inv_snake = snake_order_mapping(Lx, Ly)
@@ -136,7 +140,17 @@ def _tn_lattice_spec_from_geometry(
         inv_snake=inv_snake,
         bc="open",
         interaction_mode="system",
+        local_blocks=local_blocks,
     )
+
+
+def _analog_local_blocks(level_spec: LevelStructureSpec, metadata):
+    """Build analog_3 single-atom blocks from system/IR metadata, else ``None``."""
+    if level_spec.name != "analog_3":
+        return None
+    from ryd_gate.core.physical_models import analog_3_local_blocks_from_metadata
+
+    return analog_3_local_blocks_from_metadata(metadata)
 
 
 def _system_level_spec(system: RydbergSystem) -> LevelStructureSpec:

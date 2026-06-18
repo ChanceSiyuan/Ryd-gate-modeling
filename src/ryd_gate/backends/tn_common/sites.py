@@ -30,9 +30,13 @@ def validate_tn_level_structure(spec: LevelStructureSpec) -> None:
         require_transition(spec, "1", "r")
         require_transition(spec, "0", "1")
         return
+    if spec.name == "analog_3" and spec.levels == ("g", "e", "r") and spec.rydberg_levels == ("r",):
+        require_transition(spec, "g", "e")
+        require_transition(spec, "e", "r")
+        return
     raise ValueError(
         f"TN level_structure {spec.name!r} is registered but not supported by the "
-        "current TN lowering. Supported presets are '1r' and '01r'."
+        "current TN lowering. Supported presets are '1r', '01r', and 'analog_3'."
     )
 
 

@@ -173,6 +173,10 @@ class RydTNPEPSBackend:
         ``ctm_chi`` sets the boundary-MPS bond used for the energy cross-check.
         """
         ab = self._backend()
+        if ir.spec.level_structure == "analog_3":
+            raise RydTNError(
+                "find_ground_state is not defined for analog_3 (time-dependent unitary protocol)."
+            )
         if observables is None:
             observables = ["m_s", "n_mean"]
         payload = build_yastn_peps_payload(
@@ -260,6 +264,9 @@ def _energy(ab, psi, ops: PEPSOps, payload, step0, measure_chi) -> float:
             E += 0.5 * ohf[pos] * float(np.real(x01[coord]))
         if n1 is not None:
             E += -dhf[pos] * float(np.real(n1[coord]))
+    # All nearest-neighbour <n_r n_r> from one streaming environment build; any
+    # non-NN pair (only present in full-vdW modes) falls back to measure_2site.
+    nn = env.measure_nn(ops.n_r, ops.n_r)
     for i_pos, j_pos, strength in lat["vdw_pairs_1d"]:
         i2 = int(s2d[int(i_pos) - 1])
         j2 = int(s2d[int(j_pos) - 1])
@@ -267,7 +274,10 @@ def _energy(ab, psi, ops: PEPSOps, payload, step0, measure_chi) -> float:
             continue
         ci = (i2 // Ly, i2 % Ly)
         cj = (j2 // Ly, j2 % Ly)
-        E += float(strength) * float(np.real(env.measure_2site(ops.n_r, ops.n_r, ci, cj)))
+        nnr = nn.get((ci, cj), nn.get((cj, ci)))
+        if nnr is None:
+            nnr = env.measure_2site(ops.n_r, ops.n_r, ci, cj)
+        E += float(strength) * float(np.real(nnr))
     return E
 
 
@@ -302,7 +312,7 @@ def _measure(ab, psi, ops: PEPSOps, payload, observables, measure_chi) -> dict:
             out[name] = float(np.mean(level_occ("r")))
         elif name in {"n_i", "n_r"}:
             out[name] = level_occ("r").copy()
-        elif name in {"n_0", "n_1"}:
+        elif name in {"n_0", "n_1", "n_g", "n_e"}:
             out[name] = level_occ(name[-1]).copy()
         elif name == "m_s":
             sub = np.asarray(lat["sublattice"], dtype=float)

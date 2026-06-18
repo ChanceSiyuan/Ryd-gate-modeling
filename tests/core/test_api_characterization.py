@@ -40,7 +40,7 @@ def _chain_1r(n: int = 2, t_gate: float = 0.1, n_steps: int = 10) -> RydbergSyst
 def test_evolution_result_final_only_contract():
     """simulate(...) returns an EvolutionResult with a normalized final state."""
     system = _chain_1r()
-    result = simulate(system, [], system.ground_state(), backend="exact")
+    result = simulate(system, [], system.ground_state(), backend="exact_dense")
     assert isinstance(result, EvolutionResult)
     assert result.psi_final.shape == (system.dim,)
     assert np.isclose(np.linalg.norm(result.psi_final), 1.0)
@@ -51,7 +51,7 @@ def test_evolution_result_trajectory_contract():
     """With t_eval, states/times are populated and mutually consistent."""
     system = _chain_1r()
     t_eval = np.linspace(0.0, 0.1, 5)
-    result = simulate(system, [], system.ground_state(), backend="exact", t_eval=t_eval)
+    result = simulate(system, [], system.ground_state(), backend="exact_dense", t_eval=t_eval)
     times = np.asarray(result.times)
     states = np.asarray(result.states)
     assert times.ndim == 1 and times.shape[0] >= 2

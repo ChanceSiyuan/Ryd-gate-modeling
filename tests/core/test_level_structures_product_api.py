@@ -73,12 +73,14 @@ class TestPresets:
 
     def test_supports_backend_matrix(self):
         exact_ok = ("01", "1r", "01r", "analog_3", "rb87_7")
-        tn_ok = ("1r", "01r")
+        analog_ok = ("1r", "01r", "analog_3")  # rydtn PEPS + TeNPy MPS lower analog_3
+        base_ok = ("1r", "01r")  # gputn stays 1r/01r only
         for name in exact_ok:
             spec = level_structure(name)
             assert spec.supports_backend("exact")
-            for backend in ("mps", "gputn", "peps"):
-                assert spec.supports_backend(backend) == (name in tn_ok)
+            assert spec.supports_backend("mps") == (name in analog_ok)
+            assert spec.supports_backend("peps") == (name in analog_ok)
+            assert spec.supports_backend("gputn") == (name in base_ok)
             assert spec.supports_backend("stabilizer") == (name == "01")
             assert not spec.supports_backend("quantum_teleporter")
 

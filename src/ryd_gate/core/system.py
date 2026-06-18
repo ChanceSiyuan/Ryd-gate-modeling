@@ -149,7 +149,7 @@ class RydbergSystem(SystemModel):
         del t, params
         raise RuntimeError(
             "RydbergSystem no longer materializes algorithm-specific matrices. "
-            "Use ryd_gate.compile_hamiltonian_ir(system, params) for the unified "
+            "Use ryd_gate.ir.compile_hamiltonian_ir(system, params) for the unified "
             "Hamiltonian IR, then pass that IR to an algorithm compiler."
         )
 

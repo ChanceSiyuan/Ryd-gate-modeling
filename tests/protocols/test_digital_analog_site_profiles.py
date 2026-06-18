@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ryd_gate import RydbergSystem, compile_hamiltonian_ir
+from ryd_gate import RydbergSystem
 from ryd_gate.backends.exact import simulate
 from ryd_gate.backends.exact.compiler import compile_expm_ir
 from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
@@ -17,6 +17,7 @@ from ryd_gate.core.level_structures import (
     three_level_profiles_from_coeffs,
     two_level_drive_and_detuning_from_coeffs,
 )
+from ryd_gate.ir import compile_hamiltonian_ir
 from ryd_gate.lattice import Register
 from ryd_gate.protocols.digital_analog import (
     DigitalAnalogProtocol,
