@@ -16,14 +16,19 @@ the caller cast to the working dtype when applying them to PEPS tensors.
 from __future__ import annotations
 
 import numpy as np
+from scipy.linalg import expm
 
 
-def gate_local_exp(coeff: complex, H: np.ndarray) -> np.ndarray:
+def gate_local_exp(coeff: complex, H: np.ndarray, *, hermitian: bool = True) -> np.ndarray:
     """Single-site gate ``G[a, b] = (exp(-coeff*H))[a, b]``.
 
     Applied as ``A'[..., a] = sum_b G[a, b] A[..., b]`` on the physical leg.
+    ``hermitian=True`` (1r/01r) uses an eigendecomposition; ``hermitian=False``
+    (analog_3, decay-ready) uses a general matrix exponential.
     """
     H = np.asarray(H, dtype=np.complex128)
+    if not hermitian:
+        return expm(-coeff * H)
     w, S = np.linalg.eigh(H)
     return (S * np.exp(-coeff * w)) @ S.conj().T
 

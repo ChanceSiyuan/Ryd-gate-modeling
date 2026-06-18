@@ -73,13 +73,16 @@ def _state_labels_2d(spec: TNLatticeSpec, config: np.ndarray | Sequence[str] | s
         return [_tenpy_label(spec, label) for label in labels]
 
     occ = arr.astype(int)
-    non_rydberg = "1"
+    non_rydberg = spec.level_spec.initial_level_or_default()
     labels = ["r" if c == 1 else non_rydberg for c in occ]
     return [_tenpy_label(spec, label) for label in labels]
 
 
 def _named_state_labels_2d(spec: TNLatticeSpec, name: str) -> list[str]:
-    if name in {"all_ground", "all_1"}:
+    ground = spec.level_spec.initial_level_or_default()
+    if name == "all_ground":
+        labels = [ground] * spec.N
+    elif name == "all_1":
         labels = ["1"] * spec.N
     elif name in {"all_0", "all_zero"}:
         if "0" not in spec.level_spec.levels:
@@ -88,9 +91,9 @@ def _named_state_labels_2d(spec: TNLatticeSpec, name: str) -> list[str]:
     elif name == "all_r":
         labels = ["r"] * spec.N
     elif name == "af1":
-        labels = ["r" if s > 0 else "1" for s in spec.sublattice]
+        labels = ["r" if s > 0 else ground for s in spec.sublattice]
     elif name == "af2":
-        labels = ["r" if s < 0 else "1" for s in spec.sublattice]
+        labels = ["r" if s < 0 else ground for s in spec.sublattice]
     else:
         raise ValueError(f"Unknown config string: {name!r}")
     return [_tenpy_label(spec, label) for label in labels]

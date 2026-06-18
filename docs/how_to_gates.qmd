@@ -79,5 +79,5 @@ report.error_budget["rydberg_decay"]    # {"total": ..., "XYZ": ..., "AL": ..., 
 > local minimum and reaches the high-fidelity points above. Use multi-start,
 > not a single seed, when re-optimizing AR.
 
-Noisy gate statistics combine this with the [NoiseModel](how_to_noise.md)
+Noisy gate statistics combine this with the [NoiseModel](how_to_noise.qmd)
 Monte Carlo runner.

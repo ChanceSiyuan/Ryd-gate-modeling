@@ -25,7 +25,7 @@ def _blackman_drive_coefficients(phase: complex, t: float, params: dict) -> dict
     ``phase`` is the protocol's ``exp(-i phi(t))`` -- the only piece that differs
     between the time-optimal (cosine) and amplitude-robust (dual-sine) schedules.
     """
-    from ryd_gate.pulse import blackman_pulse
+    from ryd_gate.physics import blackman_pulse
 
     amplitude = (
         blackman_pulse(t, params["t_rise"], params["t_gate"])

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ryd_gate.backends.exact.compiler import SolverBackend
+from ryd_gate.backends.exact.compiler import SolverBackend, record_steps
 from ryd_gate.ir import EvolutionResult
 
 if TYPE_CHECKING:
@@ -31,7 +31,7 @@ class SparseExpmBackend(SolverBackend):
 
         psi = psi0.copy().astype(complex)
         dt = t_gate / self.n_steps
-        record_at = self._record_steps(t_eval, t_gate, dt)
+        record_at = record_steps(self.n_steps, t_eval, t_gate, dt)
 
         H_static = None
         for term in ir.static_terms:
@@ -84,27 +84,3 @@ class SparseExpmBackend(SolverBackend):
             else:
                 result.states = np.empty((0, psi.size), dtype=complex)
         return result
-
-    def _record_steps(
-        self,
-        t_eval: np.ndarray | bool | None,
-        t_gate: float,
-        dt: float,
-    ) -> set[int] | None:
-        """Map requested times to discrete sparse-expm step indices."""
-        if t_eval is None:
-            return None
-        if isinstance(t_eval, (bool, np.bool_)):
-            return set(range(1, self.n_steps + 1)) if bool(t_eval) else set()
-
-        times = np.asarray(t_eval, dtype=float)
-        if times.ndim != 1:
-            raise ValueError("t_eval must be a one-dimensional array of times.")
-        tol = max(1e-12, abs(t_gate) * 1e-12)
-        if np.any(times < -tol) or np.any(times > t_gate + tol):
-            raise ValueError("t_eval entries must lie within [0, t_gate].")
-        steps = set()
-        for t_req in times:
-            step = int(round(float(t_req) / dt)) if dt != 0 else 0
-            steps.add(max(0, min(step, self.n_steps)))
-        return steps

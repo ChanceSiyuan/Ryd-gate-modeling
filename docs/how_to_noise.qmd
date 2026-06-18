@@ -67,4 +67,4 @@ system = RydbergSystem.from_lattice(
 
 `validate_for(backend=..., level_structure=..., n_atoms=...)` reports
 capability errors per backend (decay needs `analog_3` or `rb87_7`; no TN
-noise support — see the [Capability Matrix](capability_matrix.md)).
+noise support — see the [Capability Matrix](capability_matrix.qmd)).

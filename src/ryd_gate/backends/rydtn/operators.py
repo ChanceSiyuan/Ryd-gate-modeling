@@ -92,6 +92,18 @@ class PEPSOps:
             - float(delta_hf) * self.n_1
         )
 
+    def matrix_hamiltonian(self, static, drive_mat, coeff) -> np.ndarray:
+        """analog_3 local ``H(t) = static + coeff*drive + conj(coeff)*drive^dag``.
+
+        ``static`` is the time-independent block sum (``H_const + H_1013 + h.c.``);
+        ``drive`` is the base ``|e><g|`` matrix modulated by the protocol's complex
+        ``drive_420`` coefficient.  Mirrors the exact backend's local assembly.
+        """
+        static = np.asarray(static, dtype=np.complex128)
+        drive_mat = np.asarray(drive_mat, dtype=np.complex128)
+        coeff = complex(coeff)
+        return static + coeff * drive_mat + np.conj(coeff) * drive_mat.conj().T
+
     def nn_hamiltonian(self) -> np.ndarray:
         """``n_r ⊗ n_r`` as a 4-leg tensor with leg order ``(s0_out, s0_in, s1_out, s1_in)``.
 

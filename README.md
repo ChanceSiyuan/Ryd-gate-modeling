@@ -46,7 +46,7 @@ print(result.sample(1000, seed=0).most_common(3))  # sampled measurement outcome
 
 The same system runs on the tensor-network backends
 (`simulate(system, backend="mps")`, `"peps"`, `"gputn"`) — see the
-[capability matrix](docs/capability_matrix.md).
+[capability matrix](docs/capability_matrix.qmd).
 
 ## Quickstart 2 — CZ gate report
 
@@ -72,12 +72,12 @@ The Quarto site under `docs/` (after `uv sync --extra docs`, build with
 `cd docs && uv run quartodoc build && quarto render`; output lands in
 `docs/_build/html`):
 
-[Getting Started](docs/getting_started.md) ·
-[Fundamentals (units/conventions)](docs/fundamentals.md) ·
+[Getting Started](docs/getting_started.qmd) ·
+[Fundamentals (units/conventions)](docs/fundamentals.qmd) ·
 [Hamiltonians & notation](docs/hamiltonians.qmd) ·
-[NoiseModel](docs/how_to_noise.md) ·
-[Gate reports](docs/how_to_gates.md) ·
-[Capability matrix](docs/capability_matrix.md)
+[NoiseModel](docs/how_to_noise.qmd) ·
+[Gate reports](docs/how_to_gates.qmd) ·
+[Capability matrix](docs/capability_matrix.qmd)
 
 Runnable demos live in [`examples/`](examples/README.md); research notebooks
 in `scripts/notebooks/` (execute the gated set with

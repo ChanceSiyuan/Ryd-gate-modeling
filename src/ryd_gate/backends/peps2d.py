@@ -9,7 +9,11 @@ from typing import Any
 import numpy as np
 
 from ryd_gate.analysis.observables import line_pairs_from_reference
-from ryd_gate.backends.tn_common.protocol_context import merge_pin_deltas, pin_deltas_from_params
+from ryd_gate.backends.tn_common.protocol_context import (
+    analog3_dt_guard,
+    merge_pin_deltas,
+    pin_deltas_from_params,
+)
 from ryd_gate.core.level_structures import (
     three_level_profiles_from_coeffs,
     two_level_drive_and_detuning_from_coeffs,
@@ -19,6 +23,15 @@ from ryd_gate.ir import EvolutionResult
 
 class YASTNPEPSError(RuntimeError):
     """Raised when the YASTN PEPS adapter cannot run."""
+
+
+def _reject_yastn_analog3(ir) -> None:
+    """The legacy YASTN engine has no analog_3 operator path; rydtn does."""
+    if ir.spec.level_structure == "analog_3":
+        raise YASTNPEPSError(
+            "YASTN PEPS engine does not support analog_3; use the default "
+            "engine_package='rydtn' (backend='peps')."
+        )
 
 
 @dataclass
@@ -58,6 +71,7 @@ class YASTNPEPSBackend:
         t_eval: np.ndarray | None = None,
         observables: list[str] | None = None,
     ) -> EvolutionResult:
+        _reject_yastn_analog3(ir)
         yastn, fpeps, gates, cfg = self._load_yastn()
         payload = build_yastn_peps_payload(
             ir,
@@ -199,6 +213,7 @@ class YASTNPEPSBackend:
         nearest-neighbour ``<n_r n_r>``) -- the cheap, robust cross-check quantity.
         Use a checkerboard seed (``"af1"``) to select the antiferromagnetic sector.
         """
+        _reject_yastn_analog3(ir)
         yastn, fpeps, gates, cfg = self._load_yastn()
         if observables is None:
             observables = ["m_s", "n_mean"]
@@ -331,8 +346,11 @@ def build_yastn_peps_payload(
     PEPS rather than an effective two-level model.
     """
     spec = ir.spec
-    if spec.level_structure not in {"1r", "01r"}:
-        raise ValueError("YASTN PEPS supports TN level_structure '1r' and '01r' only.")
+    if spec.level_structure not in {"1r", "01r", "analog_3"}:
+        raise ValueError(
+            "TN PEPS payload supports level_structure '1r', '01r', and 'analog_3' only."
+        )
+    analog3_dt_guard(spec, dt)
 
     t_gate = float(ir.params["t_gate"])
     if t_gate <= 0:
@@ -353,6 +371,7 @@ def build_yastn_peps_payload(
             "level_structure": spec.level_structure,
             "levels": tuple(spec.level_spec.levels),
             "local_dim": int(spec.level_spec.local_dim),
+            "local_blocks": spec.local_blocks,
             "snake_to_2d": np.asarray(spec.snake_to_2d, dtype=int),
             "inv_snake": np.asarray(spec.inv_snake, dtype=int),
             "vdw_pairs_1d": [
@@ -387,6 +406,18 @@ def _drive_schedule(ir, *, dt_actual: float, n_steps: int) -> list[dict[str, Any
     for step in range(n_steps):
         t_mid = (step + 0.5) * dt_actual
         coeffs = ir.protocol.get_drive_coefficients(t_mid, ir.params)
+        if spec.level_structure == "analog_3":
+            # Physical g/e/r ladder: the local 3x3 blocks live on spec.local_blocks;
+            # the protocol only modulates drive_420 by a (complex) scalar. Drive is
+            # spatially uniform, so no per-site profile/reorder is needed.
+            schedule.append(
+                {
+                    "step": step + 1,
+                    "t_mid": float(t_mid),
+                    "drive_coeffs": {"drive_420": complex(coeffs.get("drive_420", 0.0))},
+                }
+            )
+            continue
         if spec.level_structure == "01r":
             profiles = three_level_profiles_from_coeffs(coeffs, spec)
             if static_pin is not None:
@@ -454,23 +485,27 @@ def _initial_labels_2d(spec, initial_state: str | np.ndarray | object) -> list[s
         labels = [str(label) for label in arr]
         _validate_labels(spec, labels)
         return labels
+    ground = spec.level_spec.initial_level_or_default()
     occ = arr.astype(int)
-    labels = ["r" if int(value) == 1 else "1" for value in occ]
+    labels = ["r" if int(value) == 1 else ground for value in occ]
     _validate_labels(spec, labels)
     return labels
 
 
 def _named_initial_labels(spec, name: str) -> list[str]:
-    if name in {"all_ground", "all_1"}:
+    ground = spec.level_spec.initial_level_or_default()
+    if name == "all_ground":
+        labels = [ground] * spec.N
+    elif name == "all_1":
         labels = ["1"] * spec.N
     elif name in {"all_0", "all_zero"}:
         labels = ["0"] * spec.N
     elif name == "all_r":
         labels = ["r"] * spec.N
     elif name == "af1":
-        labels = ["r" if s > 0 else "1" for s in spec.sublattice]
+        labels = ["r" if s > 0 else ground for s in spec.sublattice]
     elif name == "af2":
-        labels = ["r" if s < 0 else "1" for s in spec.sublattice]
+        labels = ["r" if s < 0 else ground for s in spec.sublattice]
     else:
         raise ValueError(f"Unknown YASTN PEPS initial_state string: {name!r}.")
     _validate_labels(spec, labels)

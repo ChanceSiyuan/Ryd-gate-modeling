@@ -40,7 +40,30 @@ class TNProtocolContext:
             return self._spec.Omega
         if name == "n_sites":
             return self._spec.N
+        blocks = self._spec.local_blocks
+        if blocks is not None:
+            if name == "rabi_eff":
+                return blocks.rabi_eff
+            if name == "time_scale":
+                return blocks.time_scale
         return default
+
+
+def analog3_dt_guard(spec, dt) -> None:
+    """Raise if an analog_3 time step is catastrophically coarse (wrong units).
+
+    analog_3 runs in physical seconds with off-diagonal couplings ~2pi*491 MHz, so
+    the natural-unit default ``dt`` (0.05/0.2) gives ~1 step over a ~0.5 us gate.
+    """
+    if getattr(spec, "level_structure", None) != "analog_3" or spec.local_blocks is None:
+        return
+    time_scale = spec.local_blocks.time_scale
+    if float(dt) >= time_scale:
+        raise ValueError(
+            f"analog_3 needs a small TN step: dt={float(dt):.3g}s >= the effective Rabi "
+            f"period time_scale={time_scale:.3g}s. Pass dt ~ time_scale/20-40 "
+            f"(about {time_scale / 30:.2g}s); the default natural-unit dt is wrong for analog_3."
+        )
 
 
 def pin_deltas_from_params(params: dict, n_sites: int) -> np.ndarray | None:

@@ -7,10 +7,10 @@ against a run captured after it.
 Run with ``uv run`` (project convention):
 
     # capture a baseline (on the untouched branch)
-    uv run python scripts/bench_quench_check.py --backends exact mps gputn --out /tmp/base.json
+    uv run python scripts/bench_quench_check.py --backends exact_dense mps gputn --out /tmp/base.json
 
     # after a change, compare to the baseline
-    uv run python scripts/bench_quench_check.py --backends exact mps gputn \
+    uv run python scripts/bench_quench_check.py --backends exact_dense mps gputn \
         --out /tmp/after.json --baseline /tmp/base.json --atol 1e-10
 
 Phase 1 (pure plumbing) should pass at ``--atol 1e-10``. Phase 2 (speed hoist) is
@@ -77,7 +77,7 @@ def build_system(args):
 
 def run_exact(system, t_eval):
     t0 = time.perf_counter()
-    res = rg.simulate(system, [], "all_ground", backend="exact", t_eval=t_eval)
+    res = rg.simulate(system, [], "all_ground", backend="exact_dense", t_eval=t_eval)
     elapsed = time.perf_counter() - t0
     n_i = np.asarray([[system.expectation(f"n_r_{i}", psi) for i in range(system.N)] for psi in res.states])
     n_mean = n_i.mean(axis=1)
@@ -107,7 +107,7 @@ def main():
     p.add_argument("--n-eval", type=int, default=5)
     p.add_argument("--chi-max", type=int, default=16)
     p.add_argument("--dt-frac", type=float, default=0.2, help="dt = dt_frac / Omega")
-    p.add_argument("--backends", nargs="+", default=["exact", "mps"])
+    p.add_argument("--backends", nargs="+", default=["exact_dense", "mps"])
     p.add_argument("--gputn-kernel", type=str, default="statevector",
                    help="gputn kernel: 'statevector' (exact, fast, <=24 sites) or 'auto'/'cutensornet_mps'")
     p.add_argument("--peps-cuda", action="store_true", help="run YASTN PEPS on CUDA (needs torch); default CPU")
@@ -133,7 +133,7 @@ def main():
     exact_n_mean = None
     for backend in args.backends:
         try:
-            if backend == "exact":
+            if backend == "exact_dense":
                 n_mean, n_i, elapsed = run_exact(system, t_eval)
                 exact_n_mean = n_mean
             else:
@@ -143,7 +143,7 @@ def main():
             print(f"[{backend}] ERROR: {repr(exc)[:200]}")
             continue
         entry = {"n_mean": n_mean.tolist(), "n_i": n_i.tolist(), "elapsed_s": elapsed}
-        if exact_n_mean is not None and backend != "exact":
+        if exact_n_mean is not None and backend != "exact_dense":
             entry["max_abs_diff_n_mean"] = float(np.max(np.abs(n_mean - exact_n_mean)))
         results[backend] = entry
         diff = entry.get("max_abs_diff_n_mean")
