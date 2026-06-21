@@ -1,10 +1,8 @@
-"""Standalone 10x10 finite-PEPS quench run (rydtn backend: NTU evolve + boundary-MPS).
+"""Standalone 10x10 finite-PEPS quench run (YASTN backend: NTU evolve + BP measurement).
 
 Reproduces the 10x10 cell of scripts/notebooks/04_quench_and_state_prep.ipynb (Part A) as a headless,
 long-running job.  Physics/backend options are identical to the notebook; only the
 plotting is dropped and results are saved to an .npz for later inspection.
-
-Set RYDTN_PROGRESS=10 (env) to get a per-10-step progress line with ETA + GPU mem.
 """
 
 from __future__ import annotations
@@ -78,11 +76,11 @@ backend_options = {
     "max_iter": 10,
     "tol_iter": 1e-7,
     "use_cuda": True,
-    "backend_name": "torch",
+    "yastn_backend": "torch",
     "device": "cuda",
 }
 
-print(f"=== 10x10 finite-PEPS quench ===", flush=True)
+print("=== 10x10 finite-PEPS quench ===", flush=True)
 print(f"Lx={Lx} Ly={Ly} N={Lx*Ly}  t_sweep={t_sweep:.3e}s  dt_tn={dt_tn:.3e}s", flush=True)
 print(f"t_eval(us) = {np.round(t_eval*1e6, 4).tolist()}", flush=True)
 print(f"backend_options = {backend_options}", flush=True)

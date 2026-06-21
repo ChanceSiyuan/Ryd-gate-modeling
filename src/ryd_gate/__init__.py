@@ -35,7 +35,7 @@ The top-level namespace stays small. Specialized surfaces live in submodules:
 - ``ryd_gate.analysis``  — gate metrics (``average_gate_infidelity``, ``error_budget``), observables, domain analysis
 - ``ryd_gate.ir``        — Hamiltonian IR (``HamiltonianIR``, ``compile_hamiltonian_ir``) and result containers
 - ``ryd_gate.core``      — symbolic systems, blocks, observable registries
-- ``ryd_gate.backends``  — exact state-vector + MPS/PEPS/gputn engines
+- ``ryd_gate.backends``  — exact state-vector + MPS/PEPS engines
 """
 
 __version__ = "0.1.0"

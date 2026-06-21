@@ -1,10 +1,10 @@
 """Shared helper for backend option objects.
 
 Backends historically take ``backend_options`` as a loose ``dict``. They now also
-accept typed option dataclasses (``ExactOptions``, ``TenpyOptions``,
-``GPUTNOptions``). :func:`as_backend_options` normalizes either form into the
-plain ``dict`` the backend constructors expect, dropping unset (``None``) fields
-so each backend's own defaults still apply.
+accept typed option dataclasses (``ExactOptions``, ``TenpyOptions``).
+:func:`as_backend_options` normalizes either form into the plain ``dict`` the
+backend constructors expect, dropping unset (``None``) fields so each backend's
+own defaults still apply.
 """
 
 from __future__ import annotations

@@ -25,15 +25,6 @@ class YASTNPEPSError(RuntimeError):
     """Raised when the YASTN PEPS adapter cannot run."""
 
 
-def _reject_yastn_analog3(ir) -> None:
-    """The legacy YASTN engine has no analog_3 operator path; rydtn does."""
-    if ir.spec.level_structure == "analog_3":
-        raise YASTNPEPSError(
-            "YASTN PEPS engine does not support analog_3; use the default "
-            "engine_package='rydtn' (backend='peps')."
-        )
-
-
 @dataclass
 class YASTNPEPSBackend:
     """2D fPEPS real-time evolution through YASTN.
@@ -71,7 +62,6 @@ class YASTNPEPSBackend:
         t_eval: np.ndarray | None = None,
         observables: list[str] | None = None,
     ) -> EvolutionResult:
-        _reject_yastn_analog3(ir)
         yastn, fpeps, gates, cfg = self._load_yastn()
         payload = build_yastn_peps_payload(
             ir,
@@ -213,7 +203,11 @@ class YASTNPEPSBackend:
         nearest-neighbour ``<n_r n_r>``) -- the cheap, robust cross-check quantity.
         Use a checkerboard seed (``"af1"``) to select the antiferromagnetic sector.
         """
-        _reject_yastn_analog3(ir)
+        if ir.spec.level_structure == "analog_3":
+            raise YASTNPEPSError(
+                "find_ground_state is not defined for analog_3 "
+                "(time-dependent physical ladder protocol)."
+            )
         yastn, fpeps, gates, cfg = self._load_yastn()
         if observables is None:
             observables = ["m_s", "n_mean"]
@@ -294,8 +288,8 @@ class YASTNPEPSBackend:
     def _load_yastn(self):
         if importlib.util.find_spec("yastn") is None:
             raise YASTNPEPSError(
-                "engine_package='yastn' requires yastn. Install it from GitHub with "
-                "`pip install git+https://github.com/yastn/yastn.git`."
+                "backend='peps' requires yastn. Install it with the tn-2d extra, e.g. "
+                "`pip install -e '.[tn-2d]'` (or `pip install git+https://github.com/yastn/yastn.git`)."
             )
         import yastn
         import yastn.tn.fpeps as fpeps
@@ -545,6 +539,9 @@ class _YASTNPEPSOps:
         tensor.set_block(ts=(), Ds=values.shape, val=np.asarray(values, dtype=complex))
         return tensor
 
+    def matrix_hamiltonian(self, static, drive_mat, coeff):
+        return self.matrix(_matrix_hamiltonian(static, drive_mat, coeff))
+
     def vector(self, label: str):
         values = np.zeros(self.dim, dtype=complex)
         values[self.index(label)] = 1.0
@@ -660,6 +657,28 @@ def _local_gate_list(gates, ops: _YASTNPEPSOps, payload: dict, step_data: dict, 
     """One ``exp(-coeff·H_local)`` gate per site, built once per distinct field tuple."""
     lattice = payload["lattice"]
     Ly = int(lattice["Ly"])
+    local_blocks = lattice.get("local_blocks")
+    if local_blocks is not None:
+        if not local_blocks.hermitian:
+            raise YASTNPEPSError(
+                "YASTN PEPS analog_3 requires Hermitian local blocks; "
+                "decay/noise-enabled analog_3 is not supported by PEPS."
+            )
+        proto = gates.gate_local_exp(
+            coeff,
+            ops.I,
+            ops.matrix_hamiltonian(
+                local_blocks.static,
+                local_blocks.drive_420,
+                step_data["drive_coeffs"]["drive_420"],
+            ),
+            site=(0, 0),
+        )
+        return [
+            proto._replace(sites=((site_2d // Ly, site_2d % Ly),))
+            for site_2d in range(int(lattice["N"]))
+        ]
+
     inv_snake = np.asarray(lattice["inv_snake"], dtype=int)
     omega_R = np.asarray(step_data["omega_R_1d"], dtype=float)
     omega_hf = np.asarray(step_data["omega_hf_1d"], dtype=float)
@@ -718,6 +737,8 @@ def _yastn_imag_gates(gates, ops: _YASTNPEPSOps, payload: dict, step_data: dict,
     (second-order Trotter).
     """
     lattice = payload["lattice"]
+    if lattice.get("local_blocks") is not None:
+        raise YASTNPEPSError("Imaginary-time PEPS is not defined for analog_3 local blocks.")
     Ly = int(lattice["Ly"])
     inv_snake = np.asarray(lattice["inv_snake"], dtype=int)
     omega_R = np.asarray(step_data["omega_R_1d"], dtype=float)
@@ -812,6 +833,14 @@ def _local_hamiltonian(
     )
 
 
+def _matrix_hamiltonian(static, drive_mat, coeff) -> np.ndarray:
+    """analog_3 local H(t) = static + c*drive + c.conj()*drive^dag."""
+    static = np.asarray(static, dtype=np.complex128)
+    drive_mat = np.asarray(drive_mat, dtype=np.complex128)
+    coeff = complex(coeff)
+    return static + coeff * drive_mat + np.conj(coeff) * drive_mat.conj().T
+
+
 def _measure_yastn(
     fpeps, psi, ops: _YASTNPEPSOps, payload: dict, observables: list[str], env_name: str,
     *, ctm_chi: int, ctm_iters: int, ctm_tol: float,
@@ -853,7 +882,7 @@ def _measure_yastn(
             out[name] = float(np.mean(level_occ("r")))
         elif name in {"n_i", "n_r"}:
             out[name] = level_occ("r").copy()
-        elif name in {"n_0", "n_1"}:
+        elif name in {"n_0", "n_1", "n_g", "n_e"}:
             out[name] = level_occ(name[-1]).copy()
         elif name == "m_s":
             sublattice = np.asarray(lattice["sublattice"], dtype=float)

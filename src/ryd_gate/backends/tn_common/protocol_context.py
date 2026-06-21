@@ -5,8 +5,8 @@ All TN backends unpack a :class:`~ryd_gate.protocols.base.Protocol` against a
 ``RydbergSystem``. :class:`TNProtocolContext` is the minimal system-like adapter that
 ``protocol.unpack_params(x, context)`` needs (``N``, ``basis.n_sites``, ``meta``), and
 ``pin_deltas_from_params``/``merge_pin_deltas`` turn unpacked params into per-site
-local-detuning profiles. Keeping them here avoids each backend (TeNPy, gputn, YASTN
-PEPS, PEPSKit) carrying its own copy.
+local-detuning profiles. Keeping them here avoids each backend (TeNPy MPS, YASTN
+PEPS) carrying its own copy.
 """
 
 from __future__ import annotations

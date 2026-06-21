@@ -40,26 +40,12 @@ docs = [
 tn = [
     "physics-tenpy>=1.0",
 ]
+# 2D PEPS backend (backend="peps") runs on YASTN.
 tn-2d = [
     "physics-tenpy>=1.0",
-    "cotengra",
-    "autoray",
-]
-# YASTN is only needed to cross-validate the self-written `rydtn` PEPS engine
-# (backend="peps" defaults to engine_package="rydtn"; "yastn" is the reference).
-tn-2d-validation = [
     "yastn @ git+https://github.com/yastn/yastn.git",
 ]
-gputn-cu12 = [
-    "cupy-cuda12x[ctk]>=13.0",
-    # V100 / sm_70 compatible cuQuantum 25.03 stack.
-    "cuquantum-python-cu12==25.3.0.post0",
-    "cutensornet-cu12==2.7.0",
-    "custatevec-cu12==1.8.0",
-    "cudensitymat-cu12==0.1.0",
-    "cutensor-cu12==2.2.0",
-]
-# torch for the rydtn PEPS-on-CUDA tensor backend (backend_name="torch", device="cuda").
+# torch for the YASTN PEPS-on-CUDA tensor backend (yastn_backend="torch", device="cuda").
 # Pinned to 2.5.1 because newer wheels (>=2.8 / cu130) drop Volta (sm_70) and fail on the
 # DGX V100s with "no kernel image available". uv pulls 2.5.1+cu121 from the PyTorch index
 # (see [tool.uv.sources]); plain-pip users get PyPI 2.5.1 (cu124), which also still ships sm_70.

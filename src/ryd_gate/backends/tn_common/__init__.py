@@ -1,7 +1,7 @@
 """Shared tensor-network IR, lattice specs, and dispatch helpers.
 
-Concrete numerical kernels live in sibling packages: ``tenpy_mps``, ``peps2d``,
-and ``gputn``.
+Concrete numerical kernels live in sibling packages: ``tenpy_mps`` and
+``peps2d``.
 """
 
 from .compiler import (
