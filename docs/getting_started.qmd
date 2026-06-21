@@ -3,7 +3,7 @@
 `ryd-gate` is a Rydberg neutral-atom many-body simulator. Continuous-time
 pulse **protocols** are the single control surface: a protocol bound to a
 `RydbergSystem` lowers to a unified Hamiltonian IR and runs on the exact
-state-vector backend or the tensor-network backends (MPS / PEPS / gputn).
+state-vector backend or the tensor-network backends (MPS / PEPS).
 
 ## Install
 
@@ -28,7 +28,7 @@ result = simulate(system, psi0="all_1", observables=["sum_nr"])
 print(result.expectation("sum_nr"))   # Rydberg population (read off the result)
 ```
 
-Swap `backend="exact_dense"` for `"mps"`, `"peps"`, or `"gputn"` to run the same
+Swap `backend="exact_dense"` for `"mps"` or `"peps"` to run the same
 system on a tensor-network engine — see the
 [Capability Matrix](capability_matrix.qmd) for what runs where. The research
 notebooks under `scripts/notebooks/` cover TFIM critical fields, quench

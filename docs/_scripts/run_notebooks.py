@@ -34,7 +34,6 @@ SKIP = {
     "01r_plus_quench_benchmark.ipynb": "long-running quench benchmark",
     "01r_tfim_critical_field.ipynb": "long-running DMRG critical-field scan",
     "01r_yastn_peps_convergence.ipynb": "needs the yastn / tn-2d extra",
-    "01r_pepskit_quench.ipynb": "needs the pepskit 2D stack",
 }
 
 
