@@ -108,7 +108,6 @@ quartodoc:
         - backends.tn_common.tn_lattice_spec_from_system
         - backends.tn_common.tn_lattice_spec_from_hamiltonian_ir
         - backends.tenpy_mps.backends.TenpyOptions
-        - backends.gputn.GPUTNOptions
     - title: Noise
       contents:
         - noise.NoiseModel

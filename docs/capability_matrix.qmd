@@ -5,17 +5,17 @@ Regenerate with `uv run python docs/_scripts/build_capability_matrix.py`.
 
 
 ## Level structure × backend
-| level structure | exact | mps | gputn | peps | stabilizer |
-|---|---|---|---|---|---|
-| `01` | yes | — | — | — | yes |
-| `1r` | yes | yes | yes | yes | — |
-| `01r` | yes | yes | yes | yes | — |
-| `analog_3` | yes | yes | — | yes | — |
-| `rb87_7` | yes | — | — | — | — |
+| level structure | exact | mps | peps | stabilizer |
+|---|---|---|---|---|
+| `01` | yes | — | — | yes |
+| `1r` | yes | yes | yes | — |
+| `01r` | yes | yes | yes | — |
+| `analog_3` | yes | yes | yes | — |
+| `rb87_7` | yes | — | — | — |
 
 ## NoiseModel runtime support by backend
-| noise group | exact | mps | gputn | peps | stabilizer |
-|---|---|---|---|---|---|
-| detuning / amplitude / local RIN / position (Monte Carlo) | yes | — | — | — | — |
-| rydberg / intermediate decay (construction-time) | yes | — | — | — | — |
-| state-prep / readout / temperature / waist (data only) | — | — | — | — | — |
+| noise group | exact | mps | peps | stabilizer |
+|---|---|---|---|---|
+| detuning / amplitude / local RIN / position (Monte Carlo) | yes | — | — | — |
+| rydberg / intermediate decay (construction-time) | yes | — | — | — |
+| state-prep / readout / temperature / waist (data only) | — | — | — | — |
