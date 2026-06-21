@@ -7,8 +7,8 @@ from ryd_gate.backends.exact.compiler import ExactSparseCompiler
 from ryd_gate.core.level_structures import (
     InteractionSpec,
     LevelStructureSpec,
-    level_structure,
     TransitionSpec,
+    level_structure,
 )
 from ryd_gate.lattice import Register
 
@@ -73,14 +73,12 @@ class TestPresets:
 
     def test_supports_backend_matrix(self):
         exact_ok = ("01", "1r", "01r", "analog_3", "rb87_7")
-        analog_ok = ("1r", "01r", "analog_3")  # rydtn PEPS + TeNPy MPS lower analog_3
-        base_ok = ("1r", "01r")  # gputn stays 1r/01r only
+        analog_ok = ("1r", "01r", "analog_3")  # YASTN PEPS + TeNPy MPS lower analog_3
         for name in exact_ok:
             spec = level_structure(name)
             assert spec.supports_backend("exact")
             assert spec.supports_backend("mps") == (name in analog_ok)
             assert spec.supports_backend("peps") == (name in analog_ok)
-            assert spec.supports_backend("gputn") == (name in base_ok)
             assert spec.supports_backend("stabilizer") == (name == "01")
             assert not spec.supports_backend("quantum_teleporter")
 

@@ -1,16 +1,15 @@
-"""analog_3 (physical g/e/r ladder) on the rydtn PEPS + TeNPy MPS backends.
+"""analog_3 (physical g/e/r ladder) on the YASTN PEPS + TeNPy MPS backends.
 
 Covers the spec/blocks plumbing, end-to-end smokes (with the unitary
 population-conservation invariant), a quantitative exact-vs-TN agreement check on
-a 2-atom chain driven by an uncompensated double-ARP pulse, and the per-engine
-rejection / dt guard.
+a 2-atom chain driven by an uncompensated double-ARP pulse, and the dt guard.
 """
 
 import numpy as np
 import pytest
 
 from ryd_gate.analysis.observables import precompute_trit_masks
-from ryd_gate.backends.rydtn.backend import RydTNPEPSBackend
+from ryd_gate.backends.peps2d import YASTNPEPSBackend
 from ryd_gate.backends.tn_common.compiler import TNEvolutionIR, tn_lattice_spec_from_system
 from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
 from ryd_gate.backends.tn_common.protocol_context import TNProtocolContext
@@ -32,7 +31,7 @@ def _short_arp(t_gate, n_steps=64):
 
 def _ir(spec, proto):
     params = proto.unpack_params([], TNProtocolContext(spec))
-    return TNEvolutionIR(spec=spec, protocol=proto, params=params, method="peps_rydtn")
+    return TNEvolutionIR(spec=spec, protocol=proto, params=params, method="peps_yastn")
 
 
 def _analog3_chain(n=2, spacing_um=5.0, t_gate_scale=2.0):
@@ -62,10 +61,11 @@ def test_analog3_spec_carries_local_blocks():
     assert np.isclose(lb.static[2, 1], np.pi * 491e6)  # rabi_1013 / 2
 
 
-def test_rydtn_peps_analog3_smoke():
+def test_yastn_peps_analog3_smoke():
+    pytest.importorskip("yastn")
     spec = _analog3_spec()
     ts = spec.local_blocks.time_scale
-    res = RydTNPEPSBackend(chi_max=4, dt=ts / 20).evolve_ir(
+    res = YASTNPEPSBackend(chi_max=4, dt=ts / 20).evolve_ir(
         _ir(spec, _short_arp(2 * ts)), initial_state="all_ground",
         t_eval=np.array([0.0, 2 * ts]), observables=["n_g", "n_e", "n_r", "n_mean"],
     )
@@ -81,14 +81,15 @@ def test_rydtn_peps_analog3_smoke():
     assert np.all(np.isfinite(obs["n_r"]))
 
 
-def test_rydtn_peps_analog3_matches_exact():
+def test_yastn_peps_analog3_matches_exact():
+    pytest.importorskip("yastn")
     system, ts = _analog3_chain()
     T = system.protocol.t_gate
     ne_ex, nr_ex = _exact_ger_occupations(system, T)
     assert nr_ex.max() > 1e-3  # the pulse actually moves population (non-vacuous)
 
     spec = tn_lattice_spec_from_system(system)
-    res = RydTNPEPSBackend(chi_max=8, dt=ts / 80).evolve_ir(
+    res = YASTNPEPSBackend(chi_max=8, dt=ts / 80).evolve_ir(
         _ir(spec, system.protocol), initial_state="all_ground",
         t_eval=np.array([T]), observables=["n_e", "n_r"],
     )
@@ -129,20 +130,12 @@ def test_tenpy_mps_analog3_matches_exact():
     np.testing.assert_allclose(res.metadata["obs"]["n_r"][0], nr_ex, atol=5e-3)
 
 
-def test_yastn_engine_rejects_analog3():
-    from ryd_gate.backends.peps2d import YASTNPEPSBackend, YASTNPEPSError
-
-    spec = _analog3_spec()
-    ts = spec.local_blocks.time_scale
-    with pytest.raises(YASTNPEPSError, match="analog_3"):
-        YASTNPEPSBackend(chi_max=4, dt=ts / 20).evolve_ir(_ir(spec, _short_arp(2 * ts)))
-
-
 def test_analog3_dt_guard():
+    pytest.importorskip("yastn")
     spec = _analog3_spec()
     ts = spec.local_blocks.time_scale
     # a natural-unit dt (>= time_scale) is catastrophically coarse -> raise
     with pytest.raises(ValueError, match="analog_3 needs a small TN step"):
-        RydTNPEPSBackend(chi_max=4, dt=ts).evolve_ir(
+        YASTNPEPSBackend(chi_max=4, dt=ts).evolve_ir(
             _ir(spec, _short_arp(2 * ts)), t_eval=np.array([2 * ts])
         )

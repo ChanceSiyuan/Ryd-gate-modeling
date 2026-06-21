@@ -24,7 +24,6 @@ def test_peps_yastn_package_runs_concrete_smoke():
         t_eval=np.array([0.0, 0.05]),
         observables=["sigma_z", "czz_centerline"],
         backend_options={
-            "engine_package": "yastn",
             "chi_max": 2,
             "dt": 0.05,
             "use_cuda": False,
@@ -95,7 +94,6 @@ def test_peps_yastn_package_runs_01r_qutrit_smoke():
         t_eval=np.array([0.0, 0.02]),
         observables=["n_0", "n_1", "n_r", "n_mean", "sigma_z", "czz"],
         backend_options={
-            "engine_package": "yastn",
             "chi_max": 3,
             "dt": 0.02,
             "use_cuda": False,
@@ -131,7 +129,7 @@ def test_peps_yastn_ctm_measurement_is_physical():
             spec, proto, [], backend="peps",
             t_eval=np.array([0.4]), observables=["n_r"],
             backend_options={
-                "engine_package": "yastn", "chi_max": 8, "dt": 0.05,
+                "chi_max": 8, "dt": 0.05,
                 "measurement_environment": meas, "ctm_chi": 24, "ctm_iters": 60,
             },
         ).metadata["obs"]["n_r"][-1]
@@ -145,25 +143,11 @@ def test_peps_yastn_ctm_measurement_is_physical():
 def test_peps_ctm_requires_iterations():
     """Guards: CTM measurement rejects degenerate (chi<=1 / iters<=0) settings."""
     pytest.importorskip("yastn")
-    from ryd_gate.backends.peps2d import YASTNPEPSError, _measurement_env
     import yastn.tn.fpeps as fpeps
 
-    geom = fpeps.SquareLattice(dims=(1, 2), boundary="obc")
+    from ryd_gate.backends.peps2d import YASTNPEPSError, _measurement_env
+
     with pytest.raises(YASTNPEPSError, match="ctm_chi > 1"):
         _measurement_env(fpeps, None, "ctm", ctm_chi=1, ctm_iters=10, ctm_tol=1e-8)
     with pytest.raises(YASTNPEPSError, match="ctm_iters > 0"):
         _measurement_env(fpeps, None, "ctm", ctm_chi=16, ctm_iters=0, ctm_tol=1e-8)
-
-
-def test_peps_rejects_unknown_engine_package():
-    spec = create_tn_lattice_spec(1, 2, V_nn=4.0, interaction_mode="nn")
-    proto = TFIMQuenchProtocol(hx=0.1, hz=0.0, t_gate=0.05)
-
-    with pytest.raises(ValueError, match="engine_package"):
-        simulate_tn(
-            spec,
-            proto,
-            [],
-            backend="peps",
-            backend_options={"engine_package": "quimb"},
-        )

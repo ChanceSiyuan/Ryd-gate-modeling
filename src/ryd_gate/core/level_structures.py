@@ -37,16 +37,14 @@ DEFAULT_C6 = 2 * np.pi * 874e9
 
 _INTERACTION_KINDS = ("none", "ising_c6", "xy_c3", "custom")
 
-# Stage 1 backend support matrix (preset name -> capable backends).
+# Backend support matrix (preset name -> capable backends).
 _TN_CAPABLE = frozenset({"1r", "01r"})
-# analog_3 (physical g/e/r ladder) is lowered to TN only by the rydtn PEPS engine
-# (backend="peps", default engine_package) and the TeNPy MPS path; the legacy
-# yastn-PEPS engine and the gputn kernel still reject it (per-engine guards).
+# analog_3 (physical g/e/r ladder) is lowered to TN by both the YASTN PEPS engine
+# (backend="peps") and the TeNPy MPS path (backend="mps").
 _TN_ANALOG = _TN_CAPABLE | {"analog_3"}
 _BACKEND_SUPPORT = {
     "exact": frozenset({"01", "1r", "01r", "analog_3", "rb87_7"}),
     "mps": _TN_ANALOG,
-    "gputn": _TN_CAPABLE,
     "peps": _TN_ANALOG,
     "stabilizer": frozenset({"01"}),
 }

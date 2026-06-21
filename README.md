@@ -45,7 +45,7 @@ print(result.sample(1000, seed=0).most_common(3))  # sampled measurement outcome
 ```
 
 The same system runs on the tensor-network backends
-(`simulate(system, backend="mps")`, `"peps"`, `"gputn"`) — see the
+(`simulate(system, backend="mps")`, `"peps"`) — see the
 [capability matrix](docs/capability_matrix.qmd).
 
 ## Quickstart 2 — CZ gate report
@@ -92,8 +92,8 @@ in `scripts/notebooks/` (execute the gated set with
 | `docs` | quartodoc + griffe (API reference; site built with Quarto) |
 | `schema` | jsonschema (frozen-payload validation) |
 | `tn` | physics-tenpy (MPS DMRG/TDVP backend) |
-| `tn-2d` | physics-tenpy, yastn, cotengra, autoray (2D PEPS) |
-| `gputn-cu12` | cuQuantum / cuPy stack (GPU tensor networks, sm_70+) |
+| `tn-2d` | physics-tenpy, yastn (2D PEPS backend) |
+| `torch` | PyTorch 2.5.1 (optional YASTN PEPS-on-CUDA path) |
 
 ## Project structure
 
@@ -102,7 +102,7 @@ src/ryd_gate/
    core/           RydbergSystem, level structures, operators, serialization
    protocols/      continuous-time pulse protocols (TFIM quench/anneal,
                    sweeps, digital-analog, CZ gate protocols)
-   backends/       exact state-vector + MPS / PEPS / gputn engines
+   backends/       exact state-vector + MPS / PEPS engines
    ir.py           unified Hamiltonian IR + EvolutionResult
    lattice.py      Register, RegisterLayout, plotting
    simulate.py     simulate(system, x=(), ...) backend dispatcher

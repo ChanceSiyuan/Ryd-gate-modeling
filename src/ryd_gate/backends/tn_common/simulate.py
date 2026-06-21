@@ -1,12 +1,9 @@
 """Small public dispatcher for tensor-network simulations.
 
-Four TN backends are exposed:
+Two TN backends are exposed:
 
 - ``backend="mps"``: TeNPy CPU MPS reference path.
-- ``backend="peps"``: self-written finite-PEPS path for 2D lattices
-  (``engine_package="rydtn"``, the default; ``"yastn"`` keeps the YASTN reference).
-- ``backend="gputn"``: experimental CuPy/cuQuantum GPU validation path.
-- ``backend="pepskit"``: PEPSKit.jl iPEPS path.
+- ``backend="peps"``: YASTN finite-PEPS path for 2D rectangular lattices.
 
 ``simulate_tn`` lowers ``(spec, protocol, x)`` into a single :class:`TNEvolutionIR`
 and hands it to :func:`simulate_tn_ir`, which is the one place that constructs a
@@ -28,7 +25,6 @@ from ryd_gate.backends.tn_common.protocol_context import (
 from ryd_gate.ir import EvolutionResult
 
 if TYPE_CHECKING:
-    from ryd_gate.backends.gputn import GPUTNOptions
     from ryd_gate.backends.tenpy_mps.backends import TenpyOptions
     from ryd_gate.protocols.base import Protocol
 
@@ -46,7 +42,7 @@ def simulate_tn(
     backend: str = "mps",
     t_eval: np.ndarray | None = None,
     observables: list[str] | None = None,
-    backend_options: "dict | TenpyOptions | GPUTNOptions | None" = None,
+    backend_options: "dict | TenpyOptions | None" = None,
 ) -> EvolutionResult:
     """Lower a TN lattice spec to a :class:`TNEvolutionIR` and evolve it."""
     from .compiler import TNEvolutionIR
@@ -85,7 +81,7 @@ def simulate_tn_ir(
     backend: str = "mps",
     t_eval: np.ndarray | None = None,
     observables: list[str] | None = None,
-    backend_options: "dict | TenpyOptions | GPUTNOptions | None" = None,
+    backend_options: "dict | TenpyOptions | None" = None,
 ) -> EvolutionResult:
     """Run a compiled TN IR with one of the public TN backends.
 
@@ -102,19 +98,9 @@ def simulate_tn_ir(
         )
 
     if backend == "peps":
-        return _run_peps(ir, initial_state, t_eval, observables, opts)
+        from ryd_gate.backends.peps2d import YASTNPEPSBackend
 
-    if backend == "gputn":
-        from ryd_gate.backends.gputn import GPUTNTDVPBackend
-
-        return GPUTNTDVPBackend(**opts).evolve_ir(
-            ir, initial_state, t_eval=t_eval, observables=observables,
-        )
-
-    if backend == "pepskit":
-        from ryd_gate.backends.pepskit import PEPSKitIPEPSBackend
-
-        return PEPSKitIPEPSBackend(**opts).evolve_ir(
+        return YASTNPEPSBackend(**opts).evolve_ir(
             ir, initial_state=initial_state, t_eval=t_eval, observables=observables,
         )
 
@@ -140,43 +126,9 @@ def _simulate_dmrg(spec, protocol, x, initial_state, opts: dict) -> EvolutionRes
 
 def _normalize_backend(backend: str) -> str:
     key = str(backend).lower()
-    if key in {"mps", "peps", "gputn"}:
+    if key in {"mps", "peps"}:
         return key
-    if key in {"pepskit", "ipeps", "pepskit_su", "pepskit_ipeps"}:
-        return "pepskit"
-    raise ValueError(f"Unknown TN backend: {backend!r}. Use 'mps', 'peps', 'gputn', or 'pepskit'.")
-
-
-def _run_peps(ir, initial_state, t_eval, observables, opts: dict) -> EvolutionResult:
-    """Dispatch ``backend='peps'`` on ``engine_package``.
-
-    Default ``engine_package='rydtn'`` runs the self-written finite-PEPS engine;
-    ``engine_package='yastn'`` keeps the original YASTN path (validation/reference).
-    """
-    options = dict(opts)
-    if options.pop("engine", None) is not None:
-        raise ValueError("backend='peps' does not accept a custom 'engine'.")
-    engine_package = str(options.pop("engine_package", "rydtn")).strip().lower()
-    if engine_package == "yastn":
-        from ryd_gate.backends.peps2d import YASTNPEPSBackend
-
-        return YASTNPEPSBackend(**options).evolve_ir(
-            ir, initial_state=initial_state, t_eval=t_eval, observables=observables,
-        )
-    if engine_package in {"rydtn", "self", "builtin"}:
-        from ryd_gate.backends.rydtn import RydTNPEPSBackend
-
-        # Back-compat: the YASTN backend named the array backend `yastn_backend`;
-        # the rydtn engine calls it `backend_name`.  Accept the legacy name so
-        # existing YASTN-style backend_options keep working under the new default.
-        if "yastn_backend" in options:
-            options.setdefault("backend_name", options.pop("yastn_backend"))
-        return RydTNPEPSBackend(**options).evolve_ir(
-            ir, initial_state=initial_state, t_eval=t_eval, observables=observables,
-        )
-    raise ValueError(
-        f"backend='peps' uses engine_package='rydtn' (default) or 'yastn'; got {engine_package!r}."
-    )
+    raise ValueError(f"Unknown TN backend: {backend!r}. Use 'mps' or 'peps'.")
 
 
 def _metadata(spec, backend: str) -> dict:

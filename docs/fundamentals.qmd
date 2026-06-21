@@ -35,7 +35,7 @@ selected backend:
 TOProtocol / SweepProtocol ────┐
 TFIMQuenchProtocol / ...       ├─► RydbergSystem (+ bound Protocol)
 DigitalAnalogProtocol ─────────┘        └─ compile_hamiltonian_ir
-                                             └─ backend (exact / mps / gputn / peps)
+                                             └─ backend (exact / mps / peps)
                                                   └─ EvolutionResult
 ```
 

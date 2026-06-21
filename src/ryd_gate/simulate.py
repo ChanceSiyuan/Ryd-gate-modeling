@@ -6,7 +6,7 @@ two real engines:
 - exact state-vector — :func:`ryd_gate.backends.exact.simulate`
   (``backend`` in ``{"exact_dense", "exact_sparse"}``; bare ``"exact"`` was removed)
 - tensor-network — :func:`ryd_gate.backends.tn_common.simulate_tn`
-  (``backend`` in ``{"mps", "peps", "gputn", "pepskit"}``)
+  (``backend`` in ``{"mps", "peps"}``)
 
 For tensor-network backends the system's geometry and bound protocol are lowered
 to a TN lattice spec automatically; ``backend_options`` and other engine kwargs
@@ -95,7 +95,7 @@ def simulate(
         * ``"exact_dense"`` (default) — :class:`~ryd_gate.backends.exact.dense_expm.DenseExpmBackend`
         * ``"exact_sparse"`` — :class:`~ryd_gate.backends.exact.sparse_expm.SparseExpmBackend`
 
-        Tensor-network names (``"mps"``, ``"peps"``, ``"gputn"``, …) are also accepted.
+        Tensor-network names (``"mps"``, ``"peps"``) are also accepted.
     observables
         Optional names of registered observables to evaluate. They are exposed
         on the result via ``result.expectations`` / ``result.expectation(name)``

@@ -7,10 +7,10 @@ against a run captured after it.
 Run with ``uv run`` (project convention):
 
     # capture a baseline (on the untouched branch)
-    uv run python scripts/bench_quench_check.py --backends exact_dense mps gputn --out /tmp/base.json
+    uv run python scripts/bench_quench_check.py --backends exact_dense mps peps --out /tmp/base.json
 
     # after a change, compare to the baseline
-    uv run python scripts/bench_quench_check.py --backends exact_dense mps gputn \
+    uv run python scripts/bench_quench_check.py --backends exact_dense mps peps \
         --out /tmp/after.json --baseline /tmp/base.json --atol 1e-10
 
 Phase 1 (pure plumbing) should pass at ``--atol 1e-10``. Phase 2 (speed hoist) is
@@ -108,8 +108,6 @@ def main():
     p.add_argument("--chi-max", type=int, default=16)
     p.add_argument("--dt-frac", type=float, default=0.2, help="dt = dt_frac / Omega")
     p.add_argument("--backends", nargs="+", default=["exact_dense", "mps"])
-    p.add_argument("--gputn-kernel", type=str, default="statevector",
-                   help="gputn kernel: 'statevector' (exact, fast, <=24 sites) or 'auto'/'cutensornet_mps'")
     p.add_argument("--peps-cuda", action="store_true", help="run YASTN PEPS on CUDA (needs torch); default CPU")
     p.add_argument("--out", type=str, default=None)
     p.add_argument("--baseline", type=str, default=None)
@@ -122,8 +120,6 @@ def main():
 
     tn_opts = {
         "mps": {"chi_max": args.chi_max, "dt": dt_tn, "svd_min": 1e-10},
-        "gputn": {"chi_max": args.chi_max, "dt": dt_tn, "svd_min": 1e-10,
-                  "require_gpu": True, "kernel": args.gputn_kernel},
         "peps": {"chi_max": min(args.chi_max, 10), "dt": dt_tn, "svd_min": 1e-8,
                  "measurement_environment": "bp", "update_environment": "ntu", "max_iter": 10,
                  "use_cuda": args.peps_cuda},
