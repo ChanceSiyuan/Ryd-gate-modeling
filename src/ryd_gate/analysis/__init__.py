@@ -5,9 +5,8 @@ Contents
 - ``gate_metrics`` — average_gate_infidelity, error_budget, sss_infidelity,
   bell_infidelity, population_evolution, state_infidelity
 - ``observables``  — bit/trit-mask occupation and staggered magnetization for
-  many-body lattice states (2-level and 3-level), observable-registry
-  metrics (measure_observables, measure_trajectory, state_overlap), and
-  TFIM sigma_z / C_zz conversions with benchmark errors
+  many-body lattice states (2-level and 3-level), and observable-registry
+  metrics (measure_observables, measure_trajectory, state_overlap)
 - ``addressing``   — AddressingEvaluator (pinning error, crosstalk, leakage
   decomposition), default sweep parameters, and evaluate_addressing() wrapper
 - ``coarsening``   — Lattice domain identification, boundary masks,
@@ -23,12 +22,6 @@ from .coarsening import (
     local_staggered_magnetization,
 )
 from .observables import (
-    center_line_sites,
-    center_reference_site,
-    connected_zz_from_connected_nn,
-    epsilon_z,
-    epsilon_zz,
-    line_pairs_from_reference,
     measure_from_states,
     measure_observables,
     measure_rydberg_occupation,
@@ -36,7 +29,6 @@ from .observables import (
     norm_squared,
     precompute_bit_masks,
     precompute_trit_masks,
-    sigma_z_from_rydberg_occ,
     staggered_magnetization,
     state_overlap,
 )
@@ -60,12 +52,4 @@ __all__ = [
     "measure_trajectory",
     "state_overlap",
     "norm_squared",
-    # TFIM / spin observables and paper-style benchmark metrics
-    "sigma_z_from_rydberg_occ",
-    "connected_zz_from_connected_nn",
-    "center_line_sites",
-    "center_reference_site",
-    "line_pairs_from_reference",
-    "epsilon_z",
-    "epsilon_zz",
 ]
