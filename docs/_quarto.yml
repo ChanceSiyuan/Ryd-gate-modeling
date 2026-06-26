@@ -134,13 +134,6 @@ quartodoc:
         - analysis.observables.measure_trajectory
         - analysis.observables.state_overlap
         - analysis.observables.norm_squared
-        - analysis.observables.sigma_z_from_rydberg_occ
-        - analysis.observables.connected_zz_from_connected_nn
-        - analysis.observables.center_line_sites
-        - analysis.observables.center_reference_site
-        - analysis.observables.line_pairs_from_reference
-        - analysis.observables.epsilon_z
-        - analysis.observables.epsilon_zz
     - title: "Analysis: domains and addressing"
       contents:
         - analysis.coarsening.build_neighbor_lists
