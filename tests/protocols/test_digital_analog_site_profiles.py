@@ -163,12 +163,9 @@ def test_three_level_tn_profiles_follow_shared_level_spec_channels():
 
 def test_drive_channels_scalar_uses_global():
     proto = DigitalAnalogProtocol(t_gate=0.1, omega_R_fn=lambda t: 1.0)
-    system = RydbergSystem.from_lattice(
-        Register.chain(2),
-        "01r",
-        interaction=InteractionSpec(C6=0.0),
-        protocol=proto,
-    )
+    system = RydbergSystem.set_atom_level("01r").set_atom_geom(
+        Register.chain(2), interaction=InteractionSpec(C6=0.0)
+    ).set_protocol(proto)
     assert proto.drive_channels(system) == frozenset({"drive_R", "drive_hf", "delta_R", "delta_hf"})
 
 
@@ -178,12 +175,9 @@ def test_drive_channels_site_profile_uses_per_site():
         omega_R_fn=lambda t: [1.0, 0.0],
         n_steps=20,
     )
-    system = RydbergSystem.from_lattice(
-        Register.chain(2),
-        "01r",
-        interaction=InteractionSpec(C6=0.0),
-        protocol=proto,
-    )
+    system = RydbergSystem.set_atom_level("01r").set_atom_geom(
+        Register.chain(2), interaction=InteractionSpec(C6=0.0)
+    ).set_protocol(proto)
     channels = proto.drive_channels(system)
     assert "drive_R" not in channels
     assert "drive_R_0" in channels
@@ -198,12 +192,9 @@ def test_site_dependent_omega_R_drives_one_site_only():
         omega_R_fn=lambda t: [omega, 0.0],
         n_steps=50,
     )
-    system = RydbergSystem.from_lattice(
-        Register.chain(2),
-        "01r",
-        interaction=InteractionSpec(C6=0.0),
-        protocol=proto,
-    )
+    system = RydbergSystem.set_atom_level("01r").set_atom_geom(
+        Register.chain(2), interaction=InteractionSpec(C6=0.0)
+    ).set_protocol(proto)
     psi0 = system.product_state(["1", "1"])
     result = simulate(system, [], psi0, t_eval=True)
     psi_final = result.states[-1]
@@ -220,12 +211,9 @@ def test_compile_expm_ir_includes_per_site_drive_terms():
         omega_R_fn=lambda t: [1.0, 0.0],
         n_steps=10,
     )
-    system = RydbergSystem.from_lattice(
-        Register.chain(2),
-        "01r",
-        interaction=InteractionSpec(C6=0.0),
-        protocol=proto,
-    )
+    system = RydbergSystem.set_atom_level("01r").set_atom_geom(
+        Register.chain(2), interaction=InteractionSpec(C6=0.0)
+    ).set_protocol(proto)
     params = system.unpack_params([])
     ham = compile_hamiltonian_ir(system, params)
     ir = compile_expm_ir(ham)

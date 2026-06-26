@@ -69,8 +69,10 @@ def _nielsen_inf_at_theta(r, theta):
 
 
 def main() -> None:
-    system = RydbergSystem.from_lattice(
-        Register.chain(2, spacing_um=3.0), "rb87_7", param_set="our"
+    system = (
+        RydbergSystem.set_atom_level("rb87_7", param_set="our")
+        .set_atom_geom(Register.chain(2, spacing_um=3.0))
+        .build()
     )
     cases = [
         ("TO dark  (X_TO_DARK)", TOProtocol(), X_TO_DARK),

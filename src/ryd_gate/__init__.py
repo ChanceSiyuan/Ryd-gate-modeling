@@ -20,7 +20,8 @@ Typical workflow
 
 2. **Create a quantum system with the protocol bound**::
 
-       system = RydbergSystem.from_lattice(Register.chain(4), "01r", protocol=protocol)
+       system = (RydbergSystem.set_atom_level("01r")
+                 .set_atom_geom(Register.chain(4)).set_protocol(protocol))
 
 3. **Simulate**::
 

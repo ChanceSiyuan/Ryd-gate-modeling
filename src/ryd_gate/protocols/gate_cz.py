@@ -39,7 +39,34 @@ def _blackman_drive_coefficients(phase: complex, t: float, params: dict) -> dict
     }
 
 
-class TOProtocol(Protocol):
+class _LaserCarrier:
+    """Mixin: optional rb87/analog laser overrides carried on a protocol.
+
+    ``Delta_Hz`` / ``rabi_420_Hz`` / ``rabi_1013_Hz`` are the laser intensity /
+    frequency knobs.  ``set_protocol`` reads :meth:`laser_kwargs` to forward the
+    non-``None`` ones into system materialization; ``None`` means "use the
+    ``param_set`` / preset default".
+    """
+
+    def __init__(self, *, Delta_Hz=None, rabi_420_Hz=None, rabi_1013_Hz=None, **kwargs) -> None:
+        self.Delta_Hz = Delta_Hz
+        self.rabi_420_Hz = rabi_420_Hz
+        self.rabi_1013_Hz = rabi_1013_Hz
+        super().__init__(**kwargs)
+
+    def laser_kwargs(self) -> dict:
+        return {
+            k: v
+            for k, v in (
+                ("Delta_Hz", self.Delta_Hz),
+                ("rabi_420_Hz", self.rabi_420_Hz),
+                ("rabi_1013_Hz", self.rabi_1013_Hz),
+            )
+            if v is not None
+        }
+
+
+class TOProtocol(_LaserCarrier, Protocol):
     """Time-Optimal pulse protocol with cosine phase modulation."""
 
     @property
@@ -95,7 +122,7 @@ class TOProtocol(Protocol):
         )
 
 
-class ARProtocol(Protocol):
+class ARProtocol(_LaserCarrier, Protocol):
     """Amplitude-Robust pulse protocol with dual-sine phase modulation."""
 
     @property
@@ -158,12 +185,14 @@ class ARProtocol(Protocol):
         )
 
 
-class DoubleARPProtocol(Protocol):
+class DoubleARPProtocol(_LaserCarrier, Protocol):
     """Two consecutive rapid-adiabatic-passage pulses for a Rydberg CZ gate.
 
     Parameters are angular frequencies in rad/s and time in seconds.
     ``omega_max`` is the target effective two-photon Rabi frequency.  If omitted,
-    the system's nominal ``rabi_eff`` is used.
+    the system's nominal ``rabi_eff`` is used.  The laser overrides ``Delta_Hz`` /
+    ``rabi_420_Hz`` / ``rabi_1013_Hz`` set the rb87/analog operating point when
+    this protocol is attached via ``set_protocol``.
     """
 
     def __init__(
@@ -180,6 +209,9 @@ class DoubleARPProtocol(Protocol):
         compensate_stark: bool = False,
         stark_compensation_sign: float = -1.0,
         phase_samples: int | None = None,
+        Delta_Hz: float | None = None,
+        rabi_420_Hz: float | None = None,
+        rabi_1013_Hz: float | None = None,
     ) -> None:
         if t_gate <= 0:
             raise ValueError("t_gate must be positive.")
@@ -203,6 +235,9 @@ class DoubleARPProtocol(Protocol):
         self.phase_samples = None if phase_samples is None else int(phase_samples)
         self.t_pulse = 0.5 * self.t_gate
         self.offset_a = np.exp(-((self.t_pulse / 2.0) ** 4) / self.sigma**4)
+        super().__init__(
+            Delta_Hz=Delta_Hz, rabi_420_Hz=rabi_420_Hz, rabi_1013_Hz=rabi_1013_Hz
+        )
 
     @property
     def n_params(self) -> int:

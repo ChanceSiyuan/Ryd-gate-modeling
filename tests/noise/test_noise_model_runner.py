@@ -18,8 +18,10 @@ X_TO = [
 
 
 def _system(n_atoms=2, **kwargs):
-    return RydbergSystem.from_lattice(
-        Register.chain(n_atoms, spacing_um=3.0), "rb87_7", param_set="our", **kwargs
+    return (
+        RydbergSystem.set_atom_level("rb87_7", param_set="our", **kwargs)
+        .set_atom_geom(Register.chain(n_atoms, spacing_um=3.0))
+        .build()
     )
 
 
@@ -98,14 +100,22 @@ class TestDecayPhysicalKwargs:
     def test_decay_kwargs_reproduce_manual_flags(self, preset):
         spec = level_structure(preset)
         noise = NoiseModel(rydberg_decay=True, intermediate_decay=True)
-        manual = RydbergSystem.from_lattice(
-            Register.chain(2, spacing_um=3.0), preset,
-            **spec.physical_kwargs(),
-            enable_rydberg_decay=True, enable_intermediate_decay=True,
+        manual = (
+            RydbergSystem.set_atom_level(
+                preset,
+                **spec.physical_kwargs(),
+                enable_rydberg_decay=True,
+                enable_intermediate_decay=True,
+            )
+            .set_atom_geom(Register.chain(2, spacing_um=3.0))
+            .build()
         )
-        via_noise = RydbergSystem.from_lattice(
-            Register.chain(2, spacing_um=3.0), preset,
-            **spec.physical_kwargs(), **noise.physical_kwargs(),
+        via_noise = (
+            RydbergSystem.set_atom_level(
+                preset, **spec.physical_kwargs(), **noise.physical_kwargs()
+            )
+            .set_atom_geom(Register.chain(2, spacing_um=3.0))
+            .build()
         )
         assert via_noise.meta("enable_rydberg_decay") is True
         assert via_noise.meta("enable_intermediate_decay") is True

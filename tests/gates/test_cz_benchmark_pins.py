@@ -84,8 +84,10 @@ AR_OUR_OPT_INFIDELITY = 9.461682e-06
 
 
 def _system(**kwargs):
-    return RydbergSystem.from_lattice(
-        Register.chain(2, spacing_um=3.0), "rb87_7", param_set="our", **kwargs
+    return (
+        RydbergSystem.set_atom_level("rb87_7", param_set="our", **kwargs)
+        .set_atom_geom(Register.chain(2, spacing_um=3.0))
+        .build()
     )
 
 
@@ -119,8 +121,10 @@ class TestBenchmarkPins:
         ~400 s exact evaluation (long gate time at this operating point);
         slow-marked. Pins both the high-fidelity guard and the exact value.
         """
-        system = RydbergSystem.from_lattice(
-            Register.chain(2, spacing_um=3.0), "rb87_7", param_set="lukin"
+        system = (
+            RydbergSystem.set_atom_level("rb87_7", param_set="lukin")
+            .set_atom_geom(Register.chain(2, spacing_um=3.0))
+            .build()
         )
         report = cz_gate_report(
             system, ARProtocol(), X_AR_LUKIN,

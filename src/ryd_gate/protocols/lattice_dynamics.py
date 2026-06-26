@@ -328,7 +328,7 @@ def _interaction_pairs(system) -> tuple[tuple[int, int, float], ...]:
         )
     raise ValueError(
         "TFIM lattice protocols require interaction pair metadata. "
-        "Use RydbergSystem.from_lattice(...) or create_tn_lattice_spec(...)."
+        "Use RydbergSystem.set_atom_level(...).set_atom_geom(...) or create_tn_lattice_spec(...)."
     )
 
 

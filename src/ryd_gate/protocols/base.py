@@ -68,6 +68,15 @@ class Protocol(ABC):
         """
         return frozenset(self.required_channels)
 
+    def laser_kwargs(self) -> dict:
+        """Laser overrides (``Delta_Hz`` / ``rabi_420_Hz`` / ``rabi_1013_Hz``)
+        forwarded into system materialization when this protocol is attached via
+        ``set_protocol``.  Default: none, so the rb87/analog operating point
+        comes from the ``param_set`` / preset defaults.  Physical (rb87_7 /
+        analog_3) protocols override this to carry their laser configuration.
+        """
+        return {}
+
     @abstractmethod
     def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
         """Return {channel_name: coefficient(t)} for each drive term."""

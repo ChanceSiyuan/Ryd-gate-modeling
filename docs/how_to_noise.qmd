@@ -35,10 +35,9 @@ from ryd_gate import Register, RydbergSystem, configure_monte_carlo_runner
 from ryd_gate.backends.exact import MonteCarloRunner
 from ryd_gate.gates import TOProtocol
 
-system = RydbergSystem.from_lattice(
-    Register.chain(2, spacing_um=3.0), "rb87_7", param_set="our",
-    blackmanflag=True, detuning_sign=1,
-)
+system = (RydbergSystem
+          .set_atom_level("rb87_7", param_set="our", blackmanflag=True, detuning_sign=1)
+          .set_atom_geom(Register.chain(2, spacing_um=3.0)).build())
 runner = MonteCarloRunner(system.with_protocol(TOProtocol()), X_TO_DARK)
 configure_monte_carlo_runner(runner, noise)            # exact unit conversions
 mc = runner.run_gate_fidelity(n_shots=noise.runs, seed=123)
@@ -53,16 +52,15 @@ path and refuses other atom counts (`noise.position_two_atom_only`).
 ## Apply: decay (construction time)
 
 Non-Hermitian decay must exist when the local blocks are built — pass the
-flags into `RydbergSystem.from_lattice`:
+flags into `RydbergSystem.set_atom_level`:
 
 ```python
 from ryd_gate import level_structure
 
 spec = level_structure("rb87_7")
-system = RydbergSystem.from_lattice(
-    Register.chain(2, spacing_um=3.0), spec,
-    **spec.physical_kwargs(), **noise.physical_kwargs(),
-)
+system = (RydbergSystem
+          .set_atom_level(spec, **spec.physical_kwargs(), **noise.physical_kwargs())
+          .set_atom_geom(Register.chain(2, spacing_um=3.0)).build())
 ```
 
 `validate_for(backend=..., level_structure=..., n_atoms=...)` reports

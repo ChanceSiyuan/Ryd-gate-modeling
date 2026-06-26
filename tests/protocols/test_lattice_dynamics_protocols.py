@@ -14,12 +14,10 @@ from ryd_gate.protocols.base import Protocol
 
 
 def _nn_square_system(L=2):
-    return RydbergSystem.from_lattice(
+    return RydbergSystem.set_atom_level("1r", Omega=1.0).set_atom_geom(
         Register.rectangle(L, L, spacing_um=1.0),
-        level_structure="1r",
         interaction=InteractionSpec(C6=4.0, mode="nn"),
-        Omega=1.0,
-    )
+    ).build()
 
 
 def test_tfim_to_rydberg_controls_uniform_2x2_nn():
@@ -98,12 +96,10 @@ def test_exact_compiler_accepts_site_dependent_global_n_channels():
         def get_drive_coefficients(self, t, params):
             return {"global_n_0": -1.0, "global_n_1": -2.0}
 
-    system = RydbergSystem.from_lattice(
+    system = RydbergSystem.set_atom_level("1r").set_atom_geom(
         Register.rectangle(1, 2, spacing_um=1.0),
-        level_structure="1r",
         interaction=InteractionSpec(C6=0.0, mode="nn"),
-        protocol=SiteDetuningProtocol(),
-    )
+    ).set_protocol(SiteDetuningProtocol())
 
     ham = compile_hamiltonian_ir(system, system.unpack_params([]))
     ir = compile_expm_ir(ham)

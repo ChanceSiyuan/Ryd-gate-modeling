@@ -24,16 +24,17 @@ from ryd_gate.ir import EvolutionResult
 
 def _chain_1r(n: int = 2, t_gate: float = 0.1, n_steps: int = 10) -> RydbergSystem:
     """Minimal non-interacting 1r chain with a trivial constant sweep bound."""
-    return RydbergSystem.from_lattice(
-        Register.chain(n),
-        "1r",
-        interaction=InteractionSpec(C6=0.0),
-        protocol=SweepProtocol(
-            t_gate=t_gate,
-            omega_half_fn=lambda t: 0.5,
-            delta_fn=lambda t: 0.0,
-            n_steps=n_steps,
-        ),
+    return (
+        RydbergSystem.set_atom_level("1r")
+        .set_atom_geom(Register.chain(n), interaction=InteractionSpec(C6=0.0))
+        .set_protocol(
+            SweepProtocol(
+                t_gate=t_gate,
+                omega_half_fn=lambda t: 0.5,
+                delta_fn=lambda t: 0.0,
+                n_steps=n_steps,
+            )
+        )
     )
 
 
@@ -90,8 +91,10 @@ def test_rb87_physical_metadata_present():
     they live in metadata (read through .meta(...)), which the addressing fix
     in the reframe relies on.
     """
-    system = RydbergSystem.from_lattice(
-        Register.chain(2, spacing_um=3.0), "rb87_7", param_set="our",
+    system = (
+        RydbergSystem.set_atom_level("rb87_7", param_set="our")
+        .set_atom_geom(Register.chain(2, spacing_um=3.0))
+        .build()
     )
     assert system.meta("rabi_eff", 0.0) > 0.0
     assert system.meta("time_scale", 0.0) > 0.0

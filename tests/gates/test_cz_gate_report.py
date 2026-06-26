@@ -23,9 +23,10 @@ X_FAST = [
 
 
 def _system(**kwargs):
-    return RydbergSystem.from_lattice(
-        Register.chain(2, spacing_um=3.0), "rb87_7", param_set="our",
-        blackmanflag=False, **kwargs,
+    return (
+        RydbergSystem.set_atom_level("rb87_7", param_set="our", blackmanflag=False, **kwargs)
+        .set_atom_geom(Register.chain(2, spacing_um=3.0))
+        .build()
     )
 
 

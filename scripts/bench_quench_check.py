@@ -67,10 +67,10 @@ def build_system(args):
         address_fn=None,
         n_steps=args.n_steps,
     )
-    system = rg.RydbergSystem.from_lattice(
-        geom, "1r",
-        interaction=InteractionSpec(C6=C6, mode="nn"),
-        protocol=protocol,
+    system = (
+        rg.RydbergSystem.set_atom_level("1r")
+        .set_atom_geom(geom, interaction=InteractionSpec(C6=C6, mode="nn"))
+        .set_protocol(protocol)
     )
     return system, Omega, t_sweep
 

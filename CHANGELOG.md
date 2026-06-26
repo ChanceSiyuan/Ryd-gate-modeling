@@ -6,6 +6,18 @@ Product-API refactor. The staged refactor specs (`stageplans/`, Decision Log
 D1–D13) have been retired now that the protocol-only surface has landed; the
 sections below summarize the history.
 
+### Fluent system builder (replaces `from_lattice`)
+- `RydbergSystem.from_lattice(...)` is removed in favour of a three-step builder
+  that separates the previously-conflated concerns:
+  `RydbergSystem.set_atom_level(level_structure, param_set=..., **flags)` →
+  `.set_atom_geom(geometry, interaction=...)` (adds the Rydberg `H_vdw`) →
+  `.set_protocol(protocol)` (or `.build()` for an undriven system;
+  `set_atom_geom` is optional and defaults to a single atom).
+- The 420/1013 nm laser parameters (`Delta_Hz`, `rabi_420_Hz`, `rabi_1013_Hz`)
+  now travel on the drive protocol (e.g. `DoubleARPProtocol(..., Delta_Hz=...)`)
+  via `Protocol.laser_kwargs()`, and are baked into the operating point when
+  `set_protocol` materializes the system.
+
 ### API ergonomics reframe
 - `EvolutionResult` gained result-side accessors — `final_state`,
   `expectation(name)` / `expectations`, `probabilities()`, and
@@ -25,7 +37,7 @@ sections below summarize the history.
 - Removed the symbolic `ger` level-structure preset (zero workflow users);
   `analog_3` is the only built-in three-level ladder. Custom symbolic
   three-level models are hand-built `LevelStructureSpec` instances passed to
-  `RydbergSystem.from_lattice`.
+  `RydbergSystem.set_atom_level`.
 
 ### Surface streamlining — Protocol-only simulator (Decision D12)
 - Removed the Pulser-parity Sequence product surface: `Sequence`,

@@ -20,12 +20,10 @@ def _system_01r(Lx=2, Ly=2):
         omega_R_fn=lambda t: OMEGA_R,
         delta_R_fn=lambda t: 0.0,
     )
-    return RydbergSystem.from_lattice(
+    return RydbergSystem.set_atom_level("01r").set_atom_geom(
         Register.rectangle(Lx, Ly, spacing_um=6.8),
-        "01r",
         interaction=InteractionSpec(C6=2 * np.pi * 874e9, mode="nn"),
-        protocol=proto,
-    )
+    ).set_protocol(proto)
 
 
 def test_product_superposition_state_normalized():

@@ -118,12 +118,9 @@ def test_plot_smoke_uses_address_profile():
         address_fn=lambda t, i: float(i),
         n_steps=4,
     )
-    system = RydbergSystem.from_lattice(
-        Register.rectangle(1, 2),
-        "1r",
-        interaction=InteractionSpec(C6=0.0),
-        protocol=proto,
-    )
+    system = RydbergSystem.set_atom_level("1r").set_atom_geom(
+        Register.rectangle(1, 2), interaction=InteractionSpec(C6=0.0)
+    ).set_protocol(proto)
 
     fig_p, ax_p = proto.plot(system=system, show=False)
     fig_s, ax_s = proto.plot_address_map(system=system, show=False)

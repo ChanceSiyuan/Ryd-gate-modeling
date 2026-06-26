@@ -85,13 +85,10 @@ class TestDMRG:
             omega_half_fn=lambda t: 0.5,
             delta_fn=lambda t: Delta,
         )
-        system = RydbergSystem.from_lattice(
+        system = RydbergSystem.set_atom_level("1r", Omega=1.0).set_atom_geom(
             Register.rectangle(2, 2, spacing_um=1.0),
-            "1r",
             interaction=InteractionSpec(C6=24.0, mode="nnn"),
-            protocol=proto,
-            Omega=1.0,
-        )
+        ).set_protocol(proto)
         params = system.unpack_params([])
         ham = compile_hamiltonian_ir(system, params)
         ir = compile_expm_ir(ham)

@@ -10,7 +10,7 @@ user-facing atom model (there is no separate ``AtomModel`` class). Preset
 physical Rb87 analog blocks — whereas ``param_set`` tags (``rb87_7``:
 ``our``/``lukin``) only switch numerical sets within identical semantics.
 Fully custom (symbolic) models are hand-built ``LevelStructureSpec``
-instances passed straight to ``RydbergSystem.from_lattice``.
+instances passed straight to ``RydbergSystem.set_atom_level``.
 
 Also hosts the shared lowering helpers for protocol channels: the exact
 sparse compiler and TN backends both consume protocol coefficients, but they

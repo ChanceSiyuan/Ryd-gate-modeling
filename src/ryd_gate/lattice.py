@@ -8,7 +8,7 @@ holding the van der Waals coupling computation).
 Contents
 --------
 - :class:`Register`        — the atom register consumed by
-  ``RydbergSystem.from_lattice``; constructed via ``Register.chain`` /
+  ``RydbergSystem.set_atom_geom``; constructed via ``Register.chain`` /
   ``Register.square`` / ``Register.rectangle`` / ``Register.triangular`` /
   ``Register.from_coordinates``.
 - :class:`RegisterLayout`  — optional trap-pattern provenance metadata.

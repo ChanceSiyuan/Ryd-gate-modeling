@@ -25,10 +25,9 @@ from ryd_gate import Register, RydbergSystem
 X_TO_DARK = [-0.6989301339711643, 1.0296229082590798, 0.3759232324550267,
              1.5710180991068543, 1.4454279613697887, 1.3406239758422793]
 
-system = RydbergSystem.from_lattice(
-    Register.chain(2, spacing_um=3.0), "rb87_7", param_set="our",
-    blackmanflag=True, detuning_sign=1,
-)
+system = (RydbergSystem
+          .set_atom_level("rb87_7", param_set="our", blackmanflag=True, detuning_sign=1)
+          .set_atom_geom(Register.chain(2, spacing_um=3.0)).build())
 report = cz_gate_report(system, TOProtocol(), X_TO_DARK, include_error_budget=False)
 
 report.infidelity        # ~7.8e-7 (benchmark pin)
@@ -49,10 +48,10 @@ With decay enabled at construction time, `error_budget` decomposes the
 infidelity by physical source and decay channel class:
 
 ```python
-system_decay = RydbergSystem.from_lattice(
-    Register.chain(2, spacing_um=3.0), "rb87_7", param_set="our",
-    blackmanflag=True, detuning_sign=1, enable_rydberg_decay=True,
-)
+system_decay = (RydbergSystem
+                .set_atom_level("rb87_7", param_set="our", blackmanflag=True,
+                                detuning_sign=1, enable_rydberg_decay=True)
+                .set_atom_geom(Register.chain(2, spacing_um=3.0)).build())
 report = cz_gate_report(system_decay, TOProtocol(), X_TO_DARK)
 report.error_budget["rydberg_decay"]    # {"total": ..., "XYZ": ..., "AL": ..., "LG": ...}
 ```

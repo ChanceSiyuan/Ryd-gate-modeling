@@ -112,7 +112,7 @@ def simulate(
     if not isinstance(system, RydbergSystem):
         raise TypeError(
             "simulate() requires RydbergSystem instances. "
-            "Build one with RydbergSystem.from_lattice(..., protocol=...) "
+            "Build one with RydbergSystem.set_atom_level(...).set_atom_geom(...).set_protocol(...) "
             "or call .with_protocol(...) before simulation."
         )
 

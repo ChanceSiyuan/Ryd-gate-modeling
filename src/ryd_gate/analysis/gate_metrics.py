@@ -25,7 +25,7 @@ def _require_rydberg_system(system) -> None:
     if not isinstance(system, RydbergSystem):
         raise TypeError(
             "gate metrics require a RydbergSystem. Build one with "
-            "RydbergSystem.from_lattice(..., protocol=...)."
+            "RydbergSystem.set_atom_level(...).set_atom_geom(...).set_protocol(...)."
         )
 
 

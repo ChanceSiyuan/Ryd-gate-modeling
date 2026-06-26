@@ -20,7 +20,7 @@ numerical parameter sets within identical semantics:
   `"lukin"`).
 
 Fully custom symbolic models are hand-built `LevelStructureSpec` instances
-passed straight to `RydbergSystem.from_lattice` — they never mount physical
+passed straight to `RydbergSystem.set_atom_level` — they never mount physical
 blocks, regardless of `param_set` (Decision Log D11/D13).
 
 ## One kernel, one control surface

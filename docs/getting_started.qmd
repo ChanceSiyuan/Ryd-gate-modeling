@@ -21,9 +21,8 @@ import numpy as np
 from ryd_gate import Register, RydbergSystem, TFIMQuenchProtocol, simulate
 
 protocol = TFIMQuenchProtocol(hx=2 * np.pi * 1e6, t_gate=0.5e-6)
-system = RydbergSystem.from_lattice(
-    Register.square(2, spacing_um=9.0), "1r", protocol=protocol,
-)
+system = (RydbergSystem.set_atom_level("1r")
+          .set_atom_geom(Register.square(2, spacing_um=9.0)).set_protocol(protocol))
 result = simulate(system, psi0="all_1", observables=["sum_nr"])
 print(result.expectation("sum_nr"))   # Rydberg population (read off the result)
 ```
@@ -40,10 +39,9 @@ benchmarks, and 2D lattice dynamics end to end.
 from ryd_gate import Register, RydbergSystem
 from ryd_gate.gates import TOProtocol, cz_gate_report
 
-system = RydbergSystem.from_lattice(
-    Register.chain(2, spacing_um=3.0), "rb87_7", param_set="our",
-    blackmanflag=True, detuning_sign=1,
-)
+system = (RydbergSystem
+          .set_atom_level("rb87_7", param_set="our", blackmanflag=True, detuning_sign=1)
+          .set_atom_geom(Register.chain(2, spacing_um=3.0)).build())
 report = cz_gate_report(system, TOProtocol(), X_TO_DARK, include_error_budget=False)
 print(report.fidelity)             # ~0.9999992 for the benchmark parameters
 ```
