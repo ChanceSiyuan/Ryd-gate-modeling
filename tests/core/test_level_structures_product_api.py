@@ -116,12 +116,15 @@ class TestValidate:
 class TestAnalog3Semantics:
     def test_custom_symbolic_spec_never_infers_analog_3(self):
         """D11/D13: names carry semantics; param_set is numbers only."""
-        physical = RydbergSystem.from_lattice(
-            Register.chain(2), level_structure("analog_3"), interaction=InteractionSpec(C6=0.0)
+        physical = (
+            RydbergSystem.set_atom_level(level_structure("analog_3"))
+            .set_atom_geom(Register.chain(2), interaction=InteractionSpec(C6=0.0))
+            .build()
         )
-        symbolic = RydbergSystem.from_lattice(
-            Register.chain(2), _symbolic_ger_spec(), interaction=InteractionSpec(C6=0.0),
-            param_set="analog_3",
+        symbolic = (
+            RydbergSystem.set_atom_level(_symbolic_ger_spec(), param_set="analog_3")
+            .set_atom_geom(Register.chain(2), interaction=InteractionSpec(C6=0.0))
+            .build()
         )
         assert physical.basis.local_levels == symbolic.basis.local_levels == ("g", "e", "r")
         assert physical.metadata["physical_model"] == "analog_3"
@@ -130,14 +133,15 @@ class TestAnalog3Semantics:
         assert not symbolic.blocks.has("H_const")
 
     def test_semantic_split_physical_vs_symbolic(self):
-        analog = RydbergSystem.from_lattice(
-            Register.chain(1),
-            level_structure("analog_3"),
-            interaction=InteractionSpec(C6=0.0),
-            protocol=_AnalogProtocol(),
+        analog = (
+            RydbergSystem.set_atom_level(level_structure("analog_3"))
+            .set_atom_geom(Register.chain(1), interaction=InteractionSpec(C6=0.0))
+            .set_protocol(_AnalogProtocol())
         )
-        symbolic = RydbergSystem.from_lattice(
-            Register.chain(1), _symbolic_ger_spec(), interaction=InteractionSpec(C6=0.0)
+        symbolic = (
+            RydbergSystem.set_atom_level(_symbolic_ger_spec())
+            .set_atom_geom(Register.chain(1), interaction=InteractionSpec(C6=0.0))
+            .build()
         )
 
         # physical blocks mounted only on analog_3

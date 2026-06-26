@@ -182,9 +182,8 @@ def make_schedule(omega_eff_val, t_sweep, d_amp):
 def build_base_system(lx: int, ly: int, a_um: float):
     """A protocol-less 1r/nn RydbergSystem; rebind schedules with with_protocol()."""
     geom = Register.rectangle(lx, ly, spacing_um=a_um)
-    return rg.RydbergSystem.from_lattice(
-        geom, "1r", interaction=InteractionSpec(C6=C6, mode="nn")
-    )
+    return (rg.RydbergSystem.set_atom_level("1r")
+            .set_atom_geom(geom, interaction=InteractionSpec(C6=C6, mode="nn")).build())
 
 
 def evaluate(base_system, a_um, delta_e, t_sweep, *, d_amp, n_steps, n_eval):

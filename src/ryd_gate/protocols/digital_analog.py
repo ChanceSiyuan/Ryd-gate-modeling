@@ -18,7 +18,8 @@ Typical use::
         omega_R_fn=lambda t: 2*pi*1e6,
         delta_R_fn=lambda t: 0.0,
     )
-    system = RydbergSystem.from_lattice(Register.chain(2), "01r", protocol=protocol)
+    system = (RydbergSystem.set_atom_level("01r")
+              .set_atom_geom(Register.chain(2)).set_protocol(protocol))
     result = simulate(system, [], psi0)
 """
 

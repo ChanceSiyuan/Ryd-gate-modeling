@@ -236,7 +236,7 @@ class NoiseModel:
     # ── Runtime hand-off ─────────────────────────────────────────────────
 
     def physical_kwargs(self) -> dict[str, bool]:
-        """Decay flags for ``RydbergSystem.from_lattice`` (construction time)."""
+        """Decay flags for ``RydbergSystem.set_atom_level`` (construction time)."""
         return {
             "enable_rydberg_decay": self.rydberg_decay,
             "enable_intermediate_decay": self.intermediate_decay,
@@ -295,7 +295,7 @@ def configure_monte_carlo_runner(runner: "MonteCarloRunner", noise: NoiseModel) 
     conversions (rad/us → Hz for detuning, um → m for position sigmas);
     zero-valued fields call nothing. Decay flags are construction-time
     physics (``NoiseModel.physical_kwargs()`` into
-    ``RydbergSystem.from_lattice``) and are not applied here.
+    ``RydbergSystem.set_atom_level``) and are not applied here.
     """
     raise_for_errors(noise.validate())
     system = runner.system

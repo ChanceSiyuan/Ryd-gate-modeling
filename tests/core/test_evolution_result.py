@@ -14,13 +14,14 @@ from ryd_gate.ir import EvolutionResult
 
 
 def _system() -> RydbergSystem:
-    return RydbergSystem.from_lattice(
-        Register.chain(2),
-        "1r",
-        interaction=InteractionSpec(C6=0.0),
-        protocol=SweepProtocol(
-            t_gate=0.1, omega_half_fn=lambda t: 0.5, delta_fn=lambda t: 0.0, n_steps=10
-        ),
+    return (
+        RydbergSystem.set_atom_level("1r")
+        .set_atom_geom(Register.chain(2), interaction=InteractionSpec(C6=0.0))
+        .set_protocol(
+            SweepProtocol(
+                t_gate=0.1, omega_half_fn=lambda t: 0.5, delta_fn=lambda t: 0.0, n_steps=10
+            )
+        )
     )
 
 

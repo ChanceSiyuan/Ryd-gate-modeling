@@ -79,8 +79,10 @@ def main() -> None:
     if param_set not in {"our", "lukin"}:
         raise SystemExit(f"param_set must be 'our' or 'lukin', got {param_set!r}")
 
-    system = RydbergSystem.from_lattice(
-        Register.chain(2, spacing_um=3.0), "rb87_7", param_set=param_set
+    system = (
+        RydbergSystem.set_atom_level("rb87_7", param_set=param_set)
+        .set_atom_geom(Register.chain(2, spacing_um=3.0))
+        .build()
     )
     protocol = ARProtocol()
     bounds = protocol.get_optimization_bounds()

@@ -34,7 +34,7 @@ def many_body_quench() -> None:
 
     # 2. A continuous-time protocol is the control surface; bind it to a system.
     protocol = TFIMQuenchProtocol(hx=2 * np.pi * 1e6, t_gate=0.5e-6)
-    system = RydbergSystem.from_lattice(register, "1r", protocol=protocol)
+    system = RydbergSystem.set_atom_level("1r").set_atom_geom(register).set_protocol(protocol)
 
     # 3. simulate(): x is optional (this protocol takes none); request observables.
     result = simulate(system, psi0="all_1", observables=["sum_nr"])
@@ -59,8 +59,10 @@ def cz_gate_report_demo() -> None:
         -0.6989301339711643, 1.0296229082590798, 0.3759232324550267,
         1.5710180991068543, 1.4454279613697887, 1.3406239758422793,
     ]
-    system = RydbergSystem.from_lattice(
-        Register.chain(2, spacing_um=3.0), "rb87_7", param_set="our",
+    system = (
+        RydbergSystem.set_atom_level("rb87_7", param_set="our")
+        .set_atom_geom(Register.chain(2, spacing_um=3.0))
+        .build()
     )
     report = cz_gate_report(system, TOProtocol(), x_to_dark, include_error_budget=False)
     print(f"   fidelity={report.fidelity:.7f}  phase_error={report.phase_error_rad:.2e} rad")

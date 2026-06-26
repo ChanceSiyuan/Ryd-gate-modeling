@@ -4,7 +4,7 @@ Contents
 --------
 - ``system``           — RydbergSystem (universal model: lattice + level
   structure + protocol → symbolic blocks + observables) and the
-  ``from_lattice`` construction logic
+  ``set_atom_level``/``set_atom_geom``/``set_protocol`` construction logic
 - ``model``            — BasisSpec, BlockRegistry, ObservableRegistry, and
   the SystemModel ABC consumed by solvers
 - ``level_structures`` — level/transition/interaction specs + presets, plus

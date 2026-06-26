@@ -10,10 +10,11 @@ blocks into matrices, MPOs, or other solver inputs only when needed.
 
 Level-structure/interaction specs live in :mod:`ryd_gate.core.level_structures`
 and the Rb87 physical parameter sets and local matrix blocks in
-:mod:`ryd_gate.core.physical_models`. The ``from_lattice`` construction logic
-(:func:`build_from_lattice`) lives below the class: it registers symbolic
-blocks and observables for a geometry + level structure, with interaction-pair
-and physical-model resolution helpers.
+:mod:`ryd_gate.core.physical_models`. A system is built with the fluent
+``RydbergSystem.set_atom_level(...).set_atom_geom(...).set_protocol(...)``
+builder; the underlying engine (:func:`_build_from_lattice`) lives below the
+class and registers symbolic blocks and observables for a geometry + level
+structure, with interaction-pair and physical-model resolution helpers.
 """
 
 from __future__ import annotations
@@ -59,8 +60,10 @@ if TYPE_CHECKING:
 class RydbergSystem(SystemModel):
     """Universal Rydberg-lattice system: geometry + level structure + protocol.
 
-    Built via :meth:`from_lattice`. Once a protocol is attached (constructor
-    arg or :meth:`with_protocol`), the system can be passed to
+    Built via :meth:`set_atom_level` (then ``.set_atom_geom(...)`` and
+    ``.set_protocol(...)``). Once a protocol is attached (via
+    :meth:`_RydbergSystemBuilder.set_protocol` or :meth:`with_protocol`), the
+    system can be passed to
     :func:`ryd_gate.ir.compile_hamiltonian_ir`. Algorithm packages then lower
     that unified Hamiltonian IR into exact matrices, MPS/MPO data, TTN inputs,
     or external solver payloads.
@@ -176,33 +179,96 @@ class RydbergSystem(SystemModel):
         return self.observables.measure(observable, psi)
 
     @classmethod
-    def from_lattice(
+    def set_atom_level(
         cls,
-        geometry: Register,
         level_structure: str | LevelStructureSpec = "1r",
-        interaction: InteractionSpec | None = None,
         *,
-        protocol: "Protocol | None" = None,
         param_set: str | None = None,
         Omega: float = 1.0,
-        **physical_params,
-    ) -> "RydbergSystem":
-        return build_from_lattice(
-            cls,
-            geometry,
+        **level_kwargs,
+    ) -> "_RydbergSystemBuilder":
+        """Start building a system by declaring the single-atom level structure.
+
+        Returns a builder; chain :meth:`_RydbergSystemBuilder.set_atom_geom`
+        (atom positions + Rydberg interaction) and
+        :meth:`_RydbergSystemBuilder.set_protocol` (the 420/1013 nm drive, which
+        carries the laser parameters ``Delta_Hz`` / ``rabi_420_Hz`` /
+        ``rabi_1013_Hz``).  ``level_kwargs`` are atom-level physics flags
+        (``blackmanflag``, ``detuning_sign``, ``zero_state_model``,
+        ``enable_*_decay`` ...); only the keys you pass are forwarded.
+        """
+        return _RydbergSystemBuilder(
             level_structure,
-            interaction,
-            protocol=protocol,
             param_set=param_set,
             Omega=Omega,
-            **physical_params,
+            level_kwargs=dict(level_kwargs),
         )
 
 
-# ── from_lattice construction ────────────────────────────────────────────────
+class _RydbergSystemBuilder:
+    """Accumulates atom-level + geometry + protocol config, materializing once.
+
+    Returned by :meth:`RydbergSystem.set_atom_level`.  The single-atom numeric
+    blocks depend on the laser parameters carried by the protocol, so the system
+    is materialized only at the terminal step (:meth:`set_protocol` or
+    :meth:`build`).  Re-binding a different protocol afterwards via
+    :meth:`RydbergSystem.with_protocol` swaps the pulse shape but does *not*
+    re-derive the operating point (``rabi_eff`` etc.); rebuild via the builder to
+    change laser parameters.
+    """
+
+    def __init__(
+        self,
+        level_structure: str | LevelStructureSpec,
+        *,
+        param_set: str | None,
+        Omega: float,
+        level_kwargs: dict,
+    ) -> None:
+        self._level_structure = level_structure
+        self._param_set = param_set
+        self._Omega = Omega
+        self._level_kwargs = level_kwargs
+        self._geometry: Register | None = None
+        self._interaction: InteractionSpec | None = None
+        self._protocol: "Protocol | None" = None
+
+    def set_atom_geom(
+        self, geometry: Register, interaction: InteractionSpec | None = None
+    ) -> "_RydbergSystemBuilder":
+        """Place the atoms, adding the Rydberg van der Waals interaction."""
+        self._geometry = geometry
+        self._interaction = interaction
+        return self
+
+    def set_protocol(self, protocol: "Protocol") -> "RydbergSystem":
+        """Attach the 420/1013 nm drive protocol and materialize the system."""
+        self._protocol = protocol
+        return self.build()
+
+    def build(self) -> "RydbergSystem":
+        """Materialize the system (undriven if no protocol was attached)."""
+        geometry = self._geometry if self._geometry is not None else Register.chain(1)
+        # Protocols may be duck-typed (not subclassing Protocol); only physical
+        # protocols carry laser overrides. Absent -> defaults from param_set/preset.
+        get_laser = getattr(self._protocol, "laser_kwargs", None)
+        laser_kwargs = get_laser() if callable(get_laser) else {}
+        return _build_from_lattice(
+            RydbergSystem,
+            geometry,
+            self._level_structure,
+            self._interaction,
+            protocol=self._protocol,
+            param_set=self._param_set,
+            Omega=self._Omega,
+            **{**self._level_kwargs, **laser_kwargs},
+        )
 
 
-def build_from_lattice(
+# ── system construction engine ───────────────────────────────────────────────
+
+
+def _build_from_lattice(
     cls,
     geometry: Register,
     level_structure: str | LevelStructureSpec = "1r",

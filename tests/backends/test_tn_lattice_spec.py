@@ -131,13 +131,10 @@ class TestCreateTNLatticeSpec:
 
 def test_tn_compiler_uses_system_level_spec_and_interactions():
     proto = _sweep(omega=2.0)
-    system = RydbergSystem.from_lattice(
+    system = RydbergSystem.set_atom_level("1r", Omega=2.0).set_atom_geom(
         Register.rectangle(2, 2, spacing_um=10.0),
-        level_structure="1r",
         interaction=InteractionSpec(C6=DEFAULT_C6, mode="nn"),
-        protocol=proto,
-        Omega=2.0,
-    )
+    ).set_protocol(proto)
 
     params = system.unpack_params([])
     ir = TNCompiler().compile(system, params)
@@ -150,13 +147,10 @@ def test_tn_compiler_uses_system_level_spec_and_interactions():
 
 
 def test_incompatible_protocol_level_structure_is_rejected():
-    system = RydbergSystem.from_lattice(
+    system = RydbergSystem.set_atom_level("01r", Omega=2.0).set_atom_geom(
         Register.rectangle(2, 2, spacing_um=10.0),
-        level_structure="01r",
         interaction=InteractionSpec(C6=DEFAULT_C6, mode="nn"),
-        protocol=_sweep(omega=2.0),
-        Omega=2.0,
-    )
+    ).set_protocol(_sweep(omega=2.0))
     params = system.unpack_params([])
 
     with pytest.raises(ValueError, match="channel mismatch"):
@@ -165,13 +159,10 @@ def test_incompatible_protocol_level_structure_is_rejected():
 
 def test_unified_hamiltonian_ir_lowers_to_exact_and_tn():
     proto = _sweep(omega=2.0)
-    system = RydbergSystem.from_lattice(
+    system = RydbergSystem.set_atom_level("1r", Omega=2.0).set_atom_geom(
         Register.rectangle(2, 2, spacing_um=10.0),
-        level_structure="1r",
         interaction=InteractionSpec(C6=DEFAULT_C6, mode="nn"),
-        protocol=proto,
-        Omega=2.0,
-    )
+    ).set_protocol(proto)
     params = system.unpack_params([])
 
     hamiltonian = compile_hamiltonian_ir(system, params)
@@ -190,11 +181,8 @@ def test_unified_hamiltonian_ir_lowers_to_exact_and_tn():
 
 def test_tn_lattice_spec_from_system_rejects_non_rectangular_geometry():
 
-    system = RydbergSystem.from_lattice(
-        Register.triangular(2, 2),
-        level_structure="1r",
-        interaction=InteractionSpec(mode="nn"),
-        protocol=_sweep(),
-    )
+    system = RydbergSystem.set_atom_level("1r").set_atom_geom(
+        Register.triangular(2, 2), interaction=InteractionSpec(mode="nn")
+    ).set_protocol(_sweep())
     with pytest.raises(ValueError, match="rectangular"):
         tn_lattice_spec_from_system(system)

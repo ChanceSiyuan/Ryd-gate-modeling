@@ -114,13 +114,10 @@ class TestSimulateTN:
     @pytest.mark.slow
     def test_unified_simulate_mps_backend(self):
         proto = _sweep(t_gate=1.0, omega=1.0)
-        system = RydbergSystem.from_lattice(
+        system = RydbergSystem.set_atom_level("1r", Omega=1.0).set_atom_geom(
             Register.rectangle(2, 2, spacing_um=1.0),
-            level_structure="1r",
             interaction=InteractionSpec(C6=24.0, mode="nnn"),
-            protocol=proto,
-            Omega=1.0,
-        )
+        ).set_protocol(proto)
 
         params = system.unpack_params([])
         ir = TNCompiler(method="tdvp").compile(system, params)

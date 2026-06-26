@@ -28,10 +28,13 @@ def main() -> None:
     print(noise.summary())
     print("serialized:", noise.to_dict()["schema"])
 
-    system = RydbergSystem.from_lattice(
-        Register.chain(2, spacing_um=3.0), "rb87_7", param_set="our",
-        blackmanflag=False,
-        **noise.physical_kwargs(),       # decay enters at construction time
+    system = (
+        RydbergSystem.set_atom_level(
+            "rb87_7", param_set="our", blackmanflag=False,
+            **noise.physical_kwargs(),       # decay enters at construction time
+        )
+        .set_atom_geom(Register.chain(2, spacing_um=3.0))
+        .build()
     )
     runner = MonteCarloRunner(
         system.with_protocol(TOProtocol()), X_TO_SHORT, backend=SparseExpmBackend(n_steps=24)

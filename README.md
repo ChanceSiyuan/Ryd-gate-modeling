@@ -33,9 +33,8 @@ import numpy as np
 from ryd_gate import Register, RydbergSystem, TFIMQuenchProtocol, simulate
 
 protocol = TFIMQuenchProtocol(hx=2 * np.pi * 1e6, t_gate=0.5e-6)
-system = RydbergSystem.from_lattice(
-    Register.square(2, spacing_um=9.0), "1r", protocol=protocol,
-)
+system = (RydbergSystem.set_atom_level("1r")
+          .set_atom_geom(Register.square(2, spacing_um=9.0)).set_protocol(protocol))
 # x is optional (this protocol carries its own schedule); request observables.
 result = simulate(system, psi0="all_1", observables=["sum_nr"])
 n_r = result.expectation("sum_nr")                 # read straight off the result
@@ -57,10 +56,9 @@ from ryd_gate.gates import TOProtocol, cz_gate_report
 X_TO_DARK = [-0.6989301339711643, 1.0296229082590798, 0.3759232324550267,
              1.5710180991068543, 1.4454279613697887, 1.3406239758422793]
 
-system = RydbergSystem.from_lattice(
-    Register.chain(2, spacing_um=3.0), "rb87_7", param_set="our",
-    blackmanflag=True, detuning_sign=1,
-)
+system = (RydbergSystem
+          .set_atom_level("rb87_7", param_set="our", blackmanflag=True, detuning_sign=1)
+          .set_atom_geom(Register.chain(2, spacing_um=3.0)).build())
 report = cz_gate_report(system, TOProtocol(), X_TO_DARK, include_error_budget=False)
 assert report.infidelity < 1e-4                    # benchmark point: ~7.8e-7
 print(report.fidelity, report.phase_error_rad)

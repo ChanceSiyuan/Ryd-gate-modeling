@@ -29,6 +29,10 @@ if TYPE_CHECKING:
     from ryd_gate.core.system import RydbergSystem
 
 
+_RB87_CLOCK_HYPERFINE = 2 * np.pi * 6.835e9
+_RB87_ZERO_STATE_MODELS = frozenset({"perturbative", "explicit"})
+
+
 # ── Rydberg-Rydberg interactions ─────────────────────────────────────────────
 
 
@@ -99,6 +103,7 @@ class _RB87PhysicalParams:
     enable_intermediate_decay: bool
     enable_0_scattering: bool
     enable_polarization_leakage: bool
+    zero_state_model: str
     n_levels: int = 7
     rydberg_indices: tuple[int, ...] = (5, 6)
     n_atoms: int = 2
@@ -119,10 +124,20 @@ def _rb87_physical_params(
     enable_intermediate_decay: bool,
     enable_0_scattering: bool,
     enable_polarization_leakage: bool,
+    zero_state_model: str,
+    Delta_Hz: float | None = None,
+    rabi_420_Hz: float | None = None,
+    rabi_1013_Hz: float | None = None,
 ) -> _RB87PhysicalParams:
     from arc import Rubidium87
 
     from ryd_gate.physics import _mid_branching_ratios, _rydberg_branching_ratios
+
+    if zero_state_model not in _RB87_ZERO_STATE_MODELS:
+        allowed = ", ".join(sorted(_RB87_ZERO_STATE_MODELS))
+        raise ValueError(
+            f"Unknown zero_state_model {zero_state_model!r}; expected one of: {allowed}."
+        )
 
     atom = Rubidium87()
     if param_set == "our":
@@ -166,6 +181,13 @@ def _rb87_physical_params(
     else:
         raise ValueError(f"Unknown rb87_7 parameter set '{param_set}'.")
 
+    if Delta_Hz is not None:
+        Delta = detuning_sign * 2 * np.pi * float(Delta_Hz)
+    if rabi_420_Hz is not None:
+        rabi_420 = 2 * np.pi * float(rabi_420_Hz)
+    if rabi_1013_Hz is not None:
+        rabi_1013 = 2 * np.pi * float(rabi_1013_Hz)
+
     rabi_420_garbage = rabi_420 * d_mid_ratio
     rabi_1013_garbage = rabi_1013 * d_ryd_ratio
     rabi_eff = rabi_420 * rabi_1013 / (2 * abs(Delta))
@@ -202,6 +224,7 @@ def _rb87_physical_params(
         enable_intermediate_decay=enable_intermediate_decay,
         enable_0_scattering=enable_0_scattering,
         enable_polarization_leakage=enable_polarization_leakage,
+        zero_state_model=zero_state_model,
     )
 
 
@@ -231,6 +254,7 @@ def _metadata_from_rb87_params(system: _RB87PhysicalParams) -> dict[str, Any]:
         "enable_intermediate_decay": system.enable_intermediate_decay,
         "enable_0_scattering": system.enable_0_scattering,
         "enable_polarization_leakage": system.enable_polarization_leakage,
+        "zero_state_model": system.zero_state_model,
     }
 
 
@@ -421,6 +445,10 @@ def _apply_rb87_7_lattice_blocks(
     enable_intermediate_decay: bool = False,
     enable_0_scattering: bool = True,
     enable_polarization_leakage: bool = False,
+    zero_state_model: str = "perturbative",
+    Delta_Hz: float | None = None,
+    rabi_420_Hz: float | None = None,
+    rabi_1013_Hz: float | None = None,
     **unused,
 ) -> None:
     _reject_unused(unused)
@@ -432,6 +460,10 @@ def _apply_rb87_7_lattice_blocks(
         enable_intermediate_decay=enable_intermediate_decay,
         enable_0_scattering=enable_0_scattering,
         enable_polarization_leakage=enable_polarization_leakage,
+        zero_state_model=zero_state_model,
+        Delta_Hz=Delta_Hz,
+        rabi_420_Hz=rabi_420_Hz,
+        rabi_1013_Hz=rabi_1013_Hz,
     )
 
     h_const = _rb87_local_h_const(
@@ -439,18 +471,27 @@ def _apply_rb87_7_lattice_blocks(
         physical.ryd_zeeman_shift,
         physical.mid_state_decay_rate if enable_intermediate_decay else 0.0,
         physical.ryd_state_decay_rate if enable_rydberg_decay else 0.0,
+        zero_state_model=physical.zero_state_model,
     )
-    h420 = _rb87_local_h420(param_set, physical.rabi_420, physical.rabi_420_garbage)
-    h1013 = _rb87_local_h1013(param_set, physical.rabi_1013, physical.rabi_1013_garbage)
-    lightshift_zero = _rb87_local_zero_lightshift(
+    h420 = _rb87_local_h420(
         param_set,
-        physical.Delta,
         physical.rabi_420,
         physical.rabi_420_garbage,
-        physical.mid_state_decay_rate,
-        enable_intermediate_decay,
-        enable_0_scattering,
+        include_zero=(physical.zero_state_model == "explicit"),
     )
+    h1013 = _rb87_local_h1013(param_set, physical.rabi_1013, physical.rabi_1013_garbage)
+    if physical.zero_state_model == "perturbative":
+        lightshift_zero = _rb87_local_zero_lightshift(
+            param_set,
+            physical.Delta,
+            physical.rabi_420,
+            physical.rabi_420_garbage,
+            physical.mid_state_decay_rate,
+            enable_intermediate_decay,
+            enable_0_scattering,
+        )
+    else:
+        lightshift_zero = np.zeros((7, 7), dtype=np.complex128)
 
     _register_local_matrix_block(model.blocks, "H_const", h_const, description="single-atom rb87_7 energies")
     _register_local_matrix_block(model.blocks, "H_1013", h1013, hermitian=False, description="static 1013nm coupling")
@@ -478,8 +519,12 @@ def _rb87_local_h_const(
     ryd_zeeman_shift: float,
     middecay: float,
     ryddecay: float,
+    *,
+    zero_state_model: str = "perturbative",
 ) -> np.ndarray:
     h = np.zeros((7, 7), dtype=np.complex128)
+    if zero_state_model == "explicit":
+        h[0, 0] = -_RB87_CLOCK_HYPERFINE
     h[2, 2] = Delta - 2 * np.pi * 51e6 - 1j * middecay / 2
     h[3, 3] = Delta - 1j * middecay / 2
     h[4, 4] = Delta + 2 * np.pi * 87e6 - 1j * middecay / 2
@@ -488,7 +533,13 @@ def _rb87_local_h_const(
     return h
 
 
-def _rb87_local_h420(param_set: str, rabi_420: float, rabi_420_garbage: float) -> np.ndarray:
+def _rb87_local_h420(
+    param_set: str,
+    rabi_420: float,
+    rabi_420_garbage: float,
+    *,
+    include_zero: bool = False,
+) -> np.ndarray:
     from arc.wigner import CG
 
     h = np.zeros((7, 7), dtype=np.complex128)
@@ -504,6 +555,9 @@ def _rb87_local_h420(param_set: str, rabi_420: float, rabi_420_garbage: float) -
                 rabi_420 * CG(3 / 2, 3 / 2, 3 / 2, -1 / 2, F, 1)
                 + rabi_420_garbage * CG(3 / 2, 1 / 2, 3 / 2, 1 / 2, F, 1)
             ) / 2
+    if include_zero:
+        for row, g_i in zip((2, 3, 4), _rb87_zero_420_couplings(param_set, rabi_420, rabi_420_garbage)):
+            h[row, 0] = g_i
     return h
 
 
@@ -531,9 +585,6 @@ def _rb87_local_zero_lightshift(
     enable_intermediate_decay: bool,
     enable_0_scattering: bool,
 ) -> np.ndarray:
-    from arc.wigner import CG
-
-    E_0 = -2 * np.pi * 6.835e9
     mid_energies = np.array(
         [
             Delta - 2 * np.pi * 51e6,
@@ -542,10 +593,37 @@ def _rb87_local_zero_lightshift(
         ],
         dtype=np.float64,
     )
+    couplings = _rb87_zero_420_couplings(param_set, rabi_420, rabi_420_garbage)
+
+    local = np.zeros((7, 7), dtype=np.complex128)
+    total_shift = 0.0
+    scatter_rate = 0.0
+    gamma = mid_state_decay_rate if enable_intermediate_decay else 0.0
+    for idx, (g_i, E_e) in enumerate(zip(couplings, mid_energies), start=2):
+        detuning = E_e + _RB87_CLOCK_HYPERFINE
+        shift = (np.abs(g_i) ** 2) / detuning
+        local[idx, idx] = shift
+        total_shift += shift
+        scatter_rate += (np.abs(g_i) ** 2) * gamma / (detuning**2)
+    local[0, 0] = -total_shift - 1j * scatter_rate / 2 if enable_0_scattering else -total_shift
+    return local
+
+
+def _rb87_zero_420_couplings(
+    param_set: str,
+    rabi_420: float,
+    rabi_420_garbage: float,
+) -> list[complex]:
+    """Hamiltonian matrix elements for the off-resonant |0> -> |e_F> 420 leg."""
+    from arc.wigner import CG
+
     if param_set == "our":
-        cg_ratio_main = CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 1, 0) / CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 2, 0)
-        cg_ratio_garb = CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 1, 0) / CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 2, 0)
-        couplings = [
+        # The clock-state decomposition is written in the conventional
+        # hyperfine order <I m_I, J m_J | F m_F>; swapping to J-first would
+        # add a (-1) phase for F=1 and flip the explicit |0> leg.
+        cg_ratio_main = CG(3 / 2, 1 / 2, 1 / 2, -1 / 2, 1, 0) / CG(3 / 2, 1 / 2, 1 / 2, -1 / 2, 2, 0)
+        cg_ratio_garb = CG(3 / 2, -1 / 2, 1 / 2, 1 / 2, 1, 0) / CG(3 / 2, -1 / 2, 1 / 2, 1 / 2, 2, 0)
+        return [
             (
                 cg_ratio_main * rabi_420 * CG(3 / 2, -3 / 2, 3 / 2, 1 / 2, F, -1)
                 + cg_ratio_garb * rabi_420_garbage * CG(3 / 2, -1 / 2, 3 / 2, -1 / 2, F, -1)
@@ -553,30 +631,17 @@ def _rb87_local_zero_lightshift(
             / 2
             for F in (1, 2, 3)
         ]
-    else:
-        cg_ratio_main = CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 1, 0) / CG(1 / 2, 1 / 2, 3 / 2, -1 / 2, 2, 0)
-        cg_ratio_garb = CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 1, 0) / CG(1 / 2, -1 / 2, 3 / 2, 1 / 2, 2, 0)
-        couplings = [
-            (
-                cg_ratio_main * rabi_420 * CG(3 / 2, 3 / 2, 3 / 2, -1 / 2, F, 1)
-                + cg_ratio_garb * rabi_420_garbage * CG(3 / 2, 1 / 2, 3 / 2, 1 / 2, F, 1)
-            )
-            / 2
-            for F in (1, 2, 3)
-        ]
 
-    local = np.zeros((7, 7), dtype=np.complex128)
-    total_shift = 0.0
-    scatter_rate = 0.0
-    gamma = mid_state_decay_rate if enable_intermediate_decay else 0.0
-    for idx, (g_i, E_e) in enumerate(zip(couplings, mid_energies), start=2):
-        detuning = E_e - E_0
-        shift = (np.abs(g_i) ** 2) / detuning
-        local[idx, idx] = shift
-        total_shift += shift
-        scatter_rate += (np.abs(g_i) ** 2) * gamma / (detuning**2)
-    local[0, 0] = -total_shift - 1j * scatter_rate / 2 if enable_0_scattering else -total_shift
-    return local
+    cg_ratio_main = CG(3 / 2, -1 / 2, 1 / 2, 1 / 2, 1, 0) / CG(3 / 2, -1 / 2, 1 / 2, 1 / 2, 2, 0)
+    cg_ratio_garb = CG(3 / 2, 1 / 2, 1 / 2, -1 / 2, 1, 0) / CG(3 / 2, 1 / 2, 1 / 2, -1 / 2, 2, 0)
+    return [
+        (
+            cg_ratio_main * rabi_420 * CG(3 / 2, 3 / 2, 3 / 2, -1 / 2, F, 1)
+            + cg_ratio_garb * rabi_420_garbage * CG(3 / 2, 1 / 2, 3 / 2, 1 / 2, F, 1)
+        )
+        / 2
+        for F in (1, 2, 3)
+    ]
 
 
 def _nearest_pair_strength(pairs: tuple) -> float:

@@ -56,7 +56,7 @@ n^{R}_i \;=\; \sum_{\ell \,\in\, \text{rydberg\_levels}} n^{\ell}_i ,
 $$
 
 with the pair list built by `vdw_couplings` over the register coordinates
-(`RydbergSystem.from_lattice` → block `H_vdw`).
+(`RydbergSystem.set_atom_geom` → block `H_vdw`).
 
 ## Two-level lattice (`1r`) — the TFIM workhorse
 
@@ -150,7 +150,7 @@ see [Gate drives](#gate-drive-coefficients)).
 For a fully *symbolic* three-level ladder (every coefficient — including the
 $e \leftrightarrow r$ coupling — chosen by the protocol), hand-build a
 `LevelStructureSpec` with the same transitions and pass it to
-`RydbergSystem.from_lattice`; custom specs never mount physical blocks
+`RydbergSystem.set_atom_level`; custom specs never mount physical blocks
 (Decision D11/D13).
 
 ## Seven-level Rb87 (`rb87_7`) — the gate model
