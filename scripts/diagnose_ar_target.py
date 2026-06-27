@@ -37,8 +37,8 @@ from ryd_gate.analysis.gate_metrics import _solve_state, average_gate_infidelity
 from ryd_gate.protocols.gate_cz import ARProtocol, TOProtocol
 
 X_TO_DARK = [
-    -0.6989301339711643, 1.0296229082590798, 0.3759232324550267,
-    1.5710180991068543, 1.4454279613697887, 1.3406239758422793,
+    -0.6894097925886826, 1.040962607910546, 0.3277877211544321,
+    1.5639989822346387, 0.6689846026179691, 1.3407418093368753,
 ]
 
 _S0 = np.array([1, 0, 0, 0, 0, 0, 0], dtype=complex)

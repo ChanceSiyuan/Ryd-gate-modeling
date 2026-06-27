@@ -253,41 +253,29 @@ def test_rb87_7_hz_overrides_match_defaults_when_omitted():
     assert base.meta("rabi_1013") == pytest.approx(explicit.meta("rabi_1013"))
 
 
-def test_rb87_7_zero_state_model_defaults_to_perturbative():
-    default = RydbergSystem.set_atom_level("rb87_7", param_set="our").set_atom_geom(
+def test_rb87_7_zero_state_is_modeled_explicitly():
+    """|0> is always modeled explicitly: clock-detuned energy + |0>->|e> 420
+    legs in drive_420, with the lightshift_zero block identically zero."""
+    system = RydbergSystem.set_atom_level("rb87_7", param_set="our").set_atom_geom(
         Register.chain(1, spacing_um=3.0)
     ).build()
-    perturbative = RydbergSystem.set_atom_level(
-        "rb87_7", param_set="our", zero_state_model="perturbative"
-    ).set_atom_geom(Register.chain(1, spacing_um=3.0)).build()
 
-    assert default.meta("zero_state_model") == "perturbative"
-    np.testing.assert_allclose(
-        default.blocks.get("H_const").matrix,
-        perturbative.blocks.get("H_const").matrix,
-    )
-    np.testing.assert_allclose(
-        default.blocks.get("drive_420").matrix,
-        perturbative.blocks.get("drive_420").matrix,
-    )
-    assert np.allclose(default.blocks.get("drive_420").matrix[2:5, 0], 0.0)
-    assert not np.allclose(default.blocks.get("lightshift_zero").matrix, 0.0)
+    h_const = system.blocks.get("H_const").matrix
+    h420 = system.blocks.get("drive_420").matrix
+    lightshift_zero = system.blocks.get("lightshift_zero").matrix
 
-
-def test_rb87_7_zero_state_model_explicit_adds_zero_leg_without_lightshift():
-    explicit = RydbergSystem.set_atom_level(
-        "rb87_7", param_set="our", zero_state_model="explicit"
-    ).set_atom_geom(Register.chain(1, spacing_um=3.0)).build()
-
-    h_const = explicit.blocks.get("H_const").matrix
-    h420 = explicit.blocks.get("drive_420").matrix
-    lightshift_zero = explicit.blocks.get("lightshift_zero").matrix
-
-    assert explicit.meta("zero_state_model") == "explicit"
+    assert "zero_state_model" not in system.metadata
     assert h_const[0, 0].real == pytest.approx(-2 * np.pi * 6.835e9)
-    assert not np.allclose(h420[2:5, 0], 0.0)
-    assert not np.allclose(h420[2:5, 1], 0.0)
+    assert not np.allclose(h420[2:5, 0], 0.0)  # off-resonant |0>->|e> legs
+    assert not np.allclose(h420[2:5, 1], 0.0)  # |1>->|e> drive
     assert np.allclose(lightshift_zero, 0.0)
+
+
+def test_rb87_7_zero_state_model_kwarg_is_rejected():
+    with pytest.raises(TypeError, match="zero_state_model"):
+        RydbergSystem.set_atom_level(
+            "rb87_7", param_set="our", zero_state_model="explicit"
+        ).set_atom_geom(Register.chain(1, spacing_um=3.0)).build()
 
 
 def test_rb87_7_zero_state_explicit_couplings_match_tex_phase_convention():
@@ -299,31 +287,6 @@ def test_rb87_7_zero_state_explicit_couplings_match_tex_phase_convention():
     ])
 
     np.testing.assert_allclose(couplings, expected, atol=1e-12)
-
-
-def test_rb87_7_explicit_zero_leg_matches_perturbative_shift_to_second_order():
-    perturbative = RydbergSystem.set_atom_level(
-        "rb87_7", param_set="our", zero_state_model="perturbative"
-    ).set_atom_geom(Register.chain(1, spacing_um=3.0)).build()
-    explicit = RydbergSystem.set_atom_level(
-        "rb87_7", param_set="our", zero_state_model="explicit"
-    ).set_atom_geom(Register.chain(1, spacing_um=3.0)).build()
-
-    h_const = explicit.blocks.get("H_const").matrix
-    h420 = explicit.blocks.get("drive_420").matrix
-    denominators = np.diag(h_const)[2:5] - h_const[0, 0]
-    second_order_shift = -np.sum(np.abs(h420[2:5, 0]) ** 2 / denominators)
-
-    assert second_order_shift == pytest.approx(
-        perturbative.blocks.get("lightshift_zero").matrix[0, 0],
-    )
-
-
-def test_rb87_7_zero_state_model_rejects_unknown_value():
-    with pytest.raises(ValueError, match="zero_state_model"):
-        RydbergSystem.set_atom_level(
-            "rb87_7", param_set="our", zero_state_model="full"
-        ).set_atom_geom(Register.chain(1, spacing_um=3.0)).build()
 
 
 def test_rb87_7_hz_overrides_rescale_rabi_eff():

@@ -14,8 +14,8 @@ from ryd_gate import NoiseModel, Register, RydbergSystem, configure_monte_carlo_
 from ryd_gate.backends.exact import MonteCarloRunner, SparseExpmBackend
 from ryd_gate.gates import TOProtocol
 
-X_TO_SHORT = [-0.6989301339711643, 1.0296229082590798, 0.3759232324550267,
-              1.5710180991068543, 1.4454279613697887, 0.13]
+X_TO_SHORT = [-0.6894097925886826, 1.040962607910546, 0.3277877211544321,
+              1.5639989822346387, 0.6689846026179691, 0.13]
 
 
 def main() -> None:

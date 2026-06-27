@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """CZ gate report demo: the flagship benchmark point in one call.
 
-Reproduces the TO dark-detuning benchmark (infidelity ~7.8e-7). Runtime is a
+Reproduces the TO dark-detuning benchmark (infidelity ~3.7e-7). Runtime is a
 few exact 49-dim solves (~15 s single-threaded).
 
 Usage:
@@ -13,8 +13,8 @@ import json
 from ryd_gate import Register, RydbergSystem
 from ryd_gate.gates import TOProtocol, cz_gate_report
 
-X_TO_DARK = [-0.6989301339711643, 1.0296229082590798, 0.3759232324550267,
-             1.5710180991068543, 1.4454279613697887, 1.3406239758422793]
+X_TO_DARK = [-0.6894097925886826, 1.040962607910546, 0.3277877211544321,
+             1.5639989822346387, 0.6689846026179691, 1.3407418093368753]
 
 
 def main() -> None:

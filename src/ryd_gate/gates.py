@@ -21,18 +21,25 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from ryd_gate.analysis import gate_metrics
-from ryd_gate.analysis.gate_metrics import average_gate_infidelity, error_budget
+from ryd_gate.analysis.gate_metrics import (
+    CZOptimizeResult,
+    average_gate_infidelity,
+    error_budget,
+    optimize_cz_parameters,
+)
 from ryd_gate.core.serialization import check_schema, json_ready, schema_tag
 from ryd_gate.protocols.gate_cz import ARProtocol, DoubleARPProtocol, TOProtocol
 
 __all__ = [
     "ARProtocol",
     "CZGateReport",
+    "CZOptimizeResult",
     "DoubleARPProtocol",
     "TOProtocol",
     "average_gate_infidelity",
     "cz_gate_report",
     "error_budget",
+    "optimize_cz_parameters",
 ]
 
 
