@@ -55,14 +55,60 @@ class _LaserCarrier:
 class CZProtocol(_LaserCarrier, Protocol):
     """A CZ pulse is two time functions: a 420 nm Rabi envelope ``amplitude(t)``
     and an optical phase ``optical_phase(t)``.  The 420 nm drive is
-    ``amplitude(t) · exp(-i·optical_phase(t))`` (+ h.c.); a subclass supplies only
-    those two functions.  ``optical_phase`` carries the pulse schedule -- its free
-    knobs are the ``x`` vector for optimizable protocols (``n_params > 0``), or it
-    is fixed (``n_params = 0``, e.g. Double-ARP).
+    ``amplitude(t) · exp(-i·optical_phase(t))`` (+ h.c.).
+
+    Two ways to make one:
+
+    1. **Pass the two functions** (a fixed, non-optimized pulse)::
+
+           CZProtocol(optical_phase=lambda t: 5e6 * t,
+                      amplitude=lambda t: np.sin(np.pi * t / T) ** 2, t_gate=T)
+
+       (omit ``amplitude`` for a flat envelope; ``theta`` is the single-qubit Z to
+       factor out, default 0).
+
+    2. **Subclass** and override :meth:`optical_phase` / :meth:`amplitude`.  For an
+       ``x``-parameterized, *optimizable* pulse also override ``n_params`` /
+       ``unpack_params`` (see :class:`TOProtocol`); to reuse the ARP machinery,
+       subclass :class:`DoubleARPProtocol`.
     """
 
+    def __init__(
+        self,
+        *,
+        optical_phase=None,
+        amplitude=None,
+        t_gate: float | None = None,
+        theta: float = 0.0,
+        Delta_Hz=None,
+        rabi_420_Hz=None,
+        rabi_1013_Hz=None,
+    ) -> None:
+        self._phase_fn = optical_phase      # callable t -> phi(t), or None (subclass overrides)
+        self._amplitude_fn = amplitude      # callable t -> A(t),  or None (-> Blackman/flat)
+        self._t_gate = None if t_gate is None else float(t_gate)
+        self._theta = float(theta)
+        super().__init__(Delta_Hz=Delta_Hz, rabi_420_Hz=rabi_420_Hz, rabi_1013_Hz=rabi_1013_Hz)
+
+    @property
+    def n_params(self) -> int:
+        return 0
+
+    def validate_params(self, x) -> None:
+        if len(x):
+            raise ValueError(f"{type(self).__name__} takes no x parameters; got {len(x)}.")
+
+    def unpack_params(self, x, system) -> dict:
+        self.validate_params(x)
+        if self._t_gate is None:
+            raise ValueError("CZProtocol(...) needs t_gate=... (or a subclass that builds params).")
+        return {"t_gate": self._t_gate, "theta": self._theta, "t_rise": 0.0, "blackmanflag": False}
+
     def amplitude(self, t: float, params: dict) -> float:
-        """Dimensionless 420 nm envelope A(t).  Default: Blackman flat-top."""
+        """Dimensionless 420 nm envelope A(t): the ``amplitude=`` callable if
+        given, else Blackman flat-top when ``blackmanflag`` is set, else flat 1."""
+        if self._amplitude_fn is not None:
+            return float(self._amplitude_fn(t))
         from ryd_gate.physics import blackman_pulse
 
         if params.get("blackmanflag", True):
@@ -70,8 +116,11 @@ class CZProtocol(_LaserCarrier, Protocol):
         return 1.0
 
     def optical_phase(self, t: float, params: dict) -> float:
-        """420 nm optical phase φ(t).  Subclasses must override."""
-        raise NotImplementedError
+        """420 nm optical phase φ(t): the ``optical_phase=`` callable if given;
+        subclasses override this instead."""
+        if self._phase_fn is not None:
+            return float(self._phase_fn(t))
+        raise NotImplementedError("pass optical_phase=... to CZProtocol(...) or override optical_phase().")
 
     def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
         c = self.amplitude(t, params) * np.exp(-1j * self.optical_phase(t, params))
