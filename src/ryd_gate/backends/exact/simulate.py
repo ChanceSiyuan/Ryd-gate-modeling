@@ -57,6 +57,16 @@ def _select_backend(system, ir, n_steps):
     return make_forced_expm_backend("sparse", n_steps=n_steps)
 
 
+def _resolve_backend(system, ir, opts, backend, force_kind):
+    """Pick the solver: explicit ``backend`` > forced ``force_kind`` > auto-select."""
+    if backend is not None:
+        return backend
+    n_steps = resolve_n_steps(system, opts)
+    if force_kind is not None:
+        return make_forced_expm_backend(force_kind, n_steps=n_steps)
+    return _select_backend(system, ir, n_steps)
+
+
 def make_forced_expm_backend(kind: str, *, n_steps: int) -> "SolverBackend":
     """Build a piecewise-exponential backend, bypassing auto-selection.
 
@@ -91,6 +101,7 @@ def simulate(
     psi0="all_ground",
     t_eval: np.ndarray | bool | None = None,
     backend: "SolverBackend | None" = None,
+    force_kind: str | None = None,
     compiler=None,
     backend_options: "dict | ExactOptions | None" = None,
 ) -> EvolutionResult:
@@ -100,11 +111,14 @@ def simulate(
     selected automatically: sparse piecewise-exponential evolution for a sparse
     Hamiltonian IR, a dense piecewise matrix-exponential for the small physical-ladder
     models (``rb87_7``/``analog_3``, whose ~GHz intermediate manifold makes
-    ``expm_multiply`` pathologically slow), otherwise a dense ODE integrator. Pass a concrete
-    :class:`~ryd_gate.backends.exact.compiler.SolverBackend` to override. Backend
-    dispatch by name lives in :func:`ryd_gate.simulate`; tensor-network and
-    external algorithms live under ``ryd_gate.backends``. ``backend_options``
-    accepts a dict or an :class:`ExactOptions`.
+    ``expm_multiply`` pathologically slow), otherwise a dense ODE integrator. Pass
+    ``force_kind="dense"``/``"sparse"`` to force a piecewise-``expm`` solver (this is
+    how :func:`ryd_gate.simulate`'s ``exact_dense``/``exact_sparse`` keys route here),
+    or a concrete :class:`~ryd_gate.backends.exact.compiler.SolverBackend` as
+    ``backend`` to override entirely. Backend dispatch by name lives in
+    :func:`ryd_gate.simulate`; tensor-network and external algorithms live under
+    ``ryd_gate.backends``. ``backend_options`` accepts a dict or an
+    :class:`ExactOptions`.
     """
     from ryd_gate.backends.exact.compiler import ExactSparseCompiler
     from ryd_gate.core.system import RydbergSystem
@@ -122,8 +136,7 @@ def simulate(
     compiler = compiler or ExactSparseCompiler()
     ir = compiler.compile(system, params)
 
-    if backend is None:
-        backend = _select_backend(system, ir, resolve_n_steps(system, opts))
+    backend = _resolve_backend(system, ir, opts, backend, force_kind)
 
     return backend.evolve(ir, _exact_initial_state(system, psi0), params["t_gate"], t_eval)
 
@@ -135,13 +148,15 @@ def simulate_states(
     t_eval=None,
     backend_options=None,
     backend: "SolverBackend | None" = None,
+    force_kind: str | None = None,
 ):
     """Evolve several initial states under the same bound protocol, sharing work.
 
     The dense ladder backend (``rb87_7``/``analog_3``) computes each step's propagator
     once and applies it to all states, so evolving N basis states costs ~the same as
     one -- far faster than calling :func:`simulate` per state. Other backends fall back
-    to a per-state loop over the single compiled IR. Returns a list of
+    to a per-state loop over the single compiled IR. ``backend``/``force_kind`` select
+    the solver exactly as in :func:`simulate`. Returns a list of
     :class:`~ryd_gate.ir.EvolutionResult`, one per entry of *states*.
     """
     from ryd_gate.backends.exact.compiler import ExactSparseCompiler
@@ -153,8 +168,7 @@ def simulate_states(
     params = system.unpack_params(x)
     opts = as_backend_options(backend_options)
     ir = ExactSparseCompiler().compile(system, params)
-    if backend is None:
-        backend = _select_backend(system, ir, resolve_n_steps(system, opts))
+    backend = _resolve_backend(system, ir, opts, backend, force_kind)
     psis = [_exact_initial_state(system, s) for s in states]
     t_gate = params["t_gate"]
     if hasattr(backend, "evolve_many"):
