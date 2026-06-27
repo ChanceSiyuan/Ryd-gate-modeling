@@ -194,8 +194,8 @@ class RydbergSystem(SystemModel):
         :meth:`_RydbergSystemBuilder.set_protocol` (the 420/1013 nm drive, which
         carries the laser parameters ``Delta_Hz`` / ``rabi_420_Hz`` /
         ``rabi_1013_Hz``).  ``level_kwargs`` are atom-level physics flags
-        (``blackmanflag``, ``detuning_sign``, ``zero_state_model``,
-        ``enable_*_decay`` ...); only the keys you pass are forwarded.
+        (``blackmanflag``, ``detuning_sign``, ``enable_*_decay`` ...);
+        only the keys you pass are forwarded.
         """
         return _RydbergSystemBuilder(
             level_structure,

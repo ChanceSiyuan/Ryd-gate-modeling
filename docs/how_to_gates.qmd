@@ -11,6 +11,7 @@ from ryd_gate.gates import (
     ARProtocol, DoubleARPProtocol, TOProtocol,      # the kernel protocol classes
     average_gate_infidelity, error_budget,           # the analysis functions
     CZGateReport, cz_gate_report,                    # the stable report surface
+    optimize_cz_parameters,                          # parameter optimization
 )
 ```
 
@@ -22,15 +23,15 @@ not a second implementation.
 ```python
 from ryd_gate import Register, RydbergSystem
 
-X_TO_DARK = [-0.6989301339711643, 1.0296229082590798, 0.3759232324550267,
-             1.5710180991068543, 1.4454279613697887, 1.3406239758422793]
+X_TO_DARK = [-0.6894097925886826, 1.040962607910546, 0.3277877211544321,
+             1.5639989822346387, 0.6689846026179691, 1.3407418093368753]
 
 system = (RydbergSystem
           .set_atom_level("rb87_7", param_set="our", blackmanflag=True, detuning_sign=1)
           .set_atom_geom(Register.chain(2, spacing_um=3.0)).build())
 report = cz_gate_report(system, TOProtocol(), X_TO_DARK, include_error_budget=False)
 
-report.infidelity        # ~7.8e-7 (benchmark pin)
+report.infidelity        # ~3.7e-7 (benchmark pin)
 report.fidelity          # 1 - infidelity (derived, never stored)
 report.phase_error_rad   # residual conditional-phase error, wrapped to [-pi, pi]
 report.theta_rad         # the single-qubit Rz phase the protocol targets
@@ -41,6 +42,35 @@ report.to_dict()         # "ryd-gate/cz-gate-report/v1"
 The report evolves |00⟩, |01⟩, |11⟩ **once** through the same machinery as
 `average_gate_infidelity` (shared overlap core); it never calls a backend
 directly.
+
+## Re-optimizing parameters
+
+`optimize_cz_parameters` minimizes `average_gate_infidelity` with a
+**theta-projection warm start**. Under the explicit |0⟩ model the single-qubit Z
+correction (`theta = x[protocol.theta_index]`) is hyper-sensitive to the gate
+time — |0⟩ sits at the 6.835 GHz clock splitting, so the optimal theta winds
+rapidly with `T` and severely ill-conditions a *joint* search (a wrong theta
+dominates the objective and masks the leakage / conditional-phase gradients). So
+it re-fits theta alone first — a cheap 1-D projection onto the optimal-theta
+ridge — then polishes all parameters:
+
+```python
+# a perturbative-era optimum whose single-qubit phase went stale under explicit |0⟩
+x_seed = [-0.6989301339711643, 1.0296229082590798, 0.3759232324550267,
+          1.5710180991068543, 1.4454279613697887, 1.3406239758422793]
+
+result = optimize_cz_parameters(system, TOProtocol(), x_seed)
+result.seed_infidelity    # ~2.2e-2  (seed: a real gate with a stale theta)
+result.theta_infidelity   # ~2.4e-6  (after the 1-D theta re-fit alone)
+result.infidelity         # ~3.7e-7  (after the full Nelder-Mead polish)
+result.x                  # the optimized parameter vector
+```
+
+Pass `polish=False` to stop after the theta projection (e.g. to re-calibrate only
+the single-qubit phase). Protocols without a single-qubit phase
+(`theta_index is None`) skip the projection. Multi-start search **loops** live in
+`scripts/` (`scripts/reoptimize_explicit.py`, `scripts/optimize_ar_cz.py`), which
+call this once per start.
 
 ## Error budgets
 
@@ -59,12 +89,12 @@ report.error_budget["rydberg_decay"]    # {"total": ..., "XYZ": ..., "AL": ..., 
 ## Benchmark status (pinned in tests/gates/test_cz_benchmark_pins.py)
 
 - **TO dark** (`X_TO_DARK`, blackman flat-top, detuning_sign=+1): infidelity
-  ≈ 7.8e-7 — the validated high-fidelity TO operating point.
+  ≈ 3.7e-7 — the validated high-fidelity TO operating point.
 - **AR re-optimized**: genuine high-fidelity amplitude-robust CZ gates on
-  **both** parameter sets, found by `scripts/optimize_ar_cz.py`:
-  `X_AR_OUR_OPT` → ≈ 9.5e-6 (fidelity 0.99999) on `param_set="our"`, and
-  `X_AR_LUKIN` → ≈ 2.1e-4 on `param_set="lukin"` (the lukin pin is
-  `slow`-marked; its exact evaluation costs ~400 s).
+  **both** parameter sets, found by `scripts/reoptimize_explicit.py` /
+  `scripts/optimize_ar_cz.py`: `X_AR_OUR_OPT` → ≈ 7.2e-6 on `param_set="our"`,
+  and `X_AR_LUKIN` → ≈ 1.6e-6 on `param_set="lukin"` (the lukin pin is
+  `slow`-marked).
 - The *legacy* `X_AR` parameters and the Saffman-constants Double-ARP
   configuration are **not** high-fidelity optima as written; their pins guard
   the computation path, not gate quality.
@@ -72,11 +102,11 @@ report.error_budget["rydberg_decay"]    # {"total": ..., "XYZ": ..., "AL": ..., 
 > **Why the legacy AR seed looks bad.** The legacy `X_AR` single-start gets
 > trapped at infidelity ~0.45 on "our" — a *non-entangling local minimum*
 > (low leakage, but conditional phase ≈ 0 instead of π), **not** a protocol or
-> target bug: the TO gate reaches 7.8e-7 on the same system with the same
+> target bug: the TO gate reaches 3.7e-7 on the same system with the same
 > `average_gate_infidelity`, and `scripts/diagnose_ar_target.py` confirms the
 > 01↔10 symmetry is exact. A **multi-start** search (`--restarts`) escapes the
-> local minimum and reaches the high-fidelity points above. Use multi-start,
-> not a single seed, when re-optimizing AR.
+> local minimum; `optimize_cz_parameters` then makes each start effective via the
+> theta projection. Use multi-start, not a single seed, when re-optimizing AR.
 
 Noisy gate statistics combine this with the [NoiseModel](how_to_noise.qmd)
 Monte Carlo runner.

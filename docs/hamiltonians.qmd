@@ -166,14 +166,17 @@ with the `our` / `lukin` parameter sets.
 **Static single-atom energies** (`_rb87_local_h_const`):
 
 $$
-h_{\text{const}} = \sum_{k=1}^{3} \big(\Delta + \epsilon_k - \tfrac{i}{2}\gamma_e\big)
+h_{\text{const}} = -\omega_{\text{clock}}\,\lvert 0\rangle\langle 0\rvert
+\;+\; \sum_{k=1}^{3} \big(\Delta + \epsilon_k - \tfrac{i}{2}\gamma_e\big)
 \lvert e_k\rangle\langle e_k\rvert
 \;-\; \tfrac{i}{2}\gamma_r \lvert r\rangle\langle r\rvert
 \;+\; \big(\delta_Z - \tfrac{i}{2}\gamma_r\big) \lvert r'\rangle\langle r'\rvert ,
 $$
 
-with hyperfine offsets
-$\epsilon_{1,2,3} = 2\pi \times (-51, 0, +87)\,\text{MHz}$ and the Zeeman
+with the clock-qubit hyperfine splitting
+$\omega_{\text{clock}} = 2\pi \times 6.835\,\text{GHz}$ placing the spectator
+state $\lvert 0\rangle$ below $\lvert 1\rangle$, hyperfine offsets
+$\epsilon_{1,2,3} = 2\pi \times (-51, 0, +87)\,\text{MHz}$, and the Zeeman
 splitting $\delta_Z$ of the garbage Rydberg state.
 
 **420-nm drive** (`_rb87_local_h420`, block `drive_420`; time dependence
@@ -181,13 +184,17 @@ comes from the protocol coefficient $c_{420}(t)$):
 
 $$
 h_{420} = \sum_{k=1}^{3} \frac{\Omega_{420}\, C_k + \Omega'_{420}\, C'_k}{2}\;
-\lvert e_k\rangle\langle 1\rvert ,
+\lvert e_k\rangle\langle 1\rvert
+\;+\; \sum_{k=1}^{3} g_k \,\lvert e_k\rangle\langle 0\rvert ,
 $$
 
 where $C_k, C'_k$ are Clebsch–Gordan coefficients of the main and
 leakage polarization components and
 $\Omega'_{420} = \Omega_{420} \cdot d_{\text{mid}}$ is the
 polarization-leakage Rabi frequency (ARC dipole-matrix-element ratio).
+The second sum is the spectator leg: the same 420-nm field off-resonantly
+couples $\lvert 0\rangle \to \lvert e_k\rangle$ with matrix elements $g_k$
+(`_rb87_zero_420_couplings`), detuned by $\Delta + \omega_{\text{clock}}$.
 
 **Static 1013-nm coupling** (`_rb87_local_h1013`, blocks `H_1013` +
 conjugate):
@@ -199,14 +206,17 @@ h_{1013} = \sum_{k=1}^{3} \Big[
 \Big] + \text{h.c.}
 $$
 
-**AC-Stark / scattering of the spectator qubit state**
-(`_rb87_local_zero_lightshift`, block `lightshift_zero`, coefficient
-$A(t)^2$): the off-resonant 420-nm light shifts $\lvert 0\rangle$ and the
-intermediate manifold by second-order couplings
-$g_k^2/(E_{e_k} - E_0)$ and adds the elastic-scattering loss
-$-\tfrac{i}{2}\sum_k g_k^2 \gamma_e / (E_{e_k}-E_0)^2$ on
-$\lvert 0\rangle$, with $E_0 = -2\pi\times 6.835\,\text{GHz}$ the qubit
-hyperfine splitting.
+**Spectator qubit state $\lvert 0\rangle$.** The off-resonant 420-nm coupling
+of $\lvert 0\rangle$ is modeled *explicitly* — the $g_k\lvert e_k\rangle\langle
+0\rvert$ legs of $h_{420}$ above, with $\lvert 0\rangle$ at energy
+$-\omega_{\text{clock}}$ in $h_{\text{const}}$. The resulting AC-Stark shift,
+**leakage, and Raman coupling of $\lvert 0\rangle$ to the intermediate manifold
+build up dynamically** from the full Hamiltonian; nothing is added by hand.
+(A former `perturbative` option replaced these legs with a second-order diagonal
+$\lvert 0\rangle$ shift $-\sum_k g_k^2/(E_{e_k}-E_0)$; it was removed because it
+silently dropped the $O(\Omega_{420}^4)$ Raman shift and the $\lvert 0\rangle$
+leakage, overstating gate fidelity. The `lightshift_zero` block is now
+identically zero, kept only as a protocol channel.)
 
 **Interaction:** $H_{\text{vdW}}$ with
 $n^{R} = \lvert r\rangle\langle r\rvert + \lvert r'\rangle\langle r'\rvert$.

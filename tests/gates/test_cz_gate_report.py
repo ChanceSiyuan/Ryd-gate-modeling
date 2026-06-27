@@ -10,14 +10,14 @@ import pytest
 
 from ryd_gate import Register, RydbergSystem
 from ryd_gate.analysis import gate_metrics
-from ryd_gate.gates import CZGateReport, TOProtocol, cz_gate_report
+from ryd_gate.gates import CZGateReport, TOProtocol, cz_gate_report, optimize_cz_parameters
 
 X_FAST = [
-    -0.6989301339711643,
-    1.0296229082590798,
-    0.3759232324550267,
-    1.5710180991068543,
-    1.4454279613697887,
+    -0.6894097925886826,
+    1.040962607910546,
+    0.3277877211544321,
+    1.5639989822346387,
+    0.6689846026179691,
     0.13,  # short gate window keeps the stiff rb87_7 solves cheap
 ]
 
@@ -109,3 +109,37 @@ class TestAssemblyRules:
             _system(), TOProtocol(), X_FAST
         )
         assert report.infidelity == pytest.approx(float(direct), rel=1e-12)
+
+
+def _coarse_proto():
+    """TO protocol with a coarse step count -- keeps the optimizer-loop tests
+    cheap (the theta mechanism is n_steps-independent)."""
+    p = TOProtocol(); p.n_steps = 40
+    return p
+
+
+class TestOptimizeCZParameters:
+    def test_theta_projection_recovers_mis_set_phase(self):
+        """polish=False: the 1-D theta re-fit recovers a deliberately wrong
+        single-qubit Z, the dominant ill-conditioned direction under explicit |0>."""
+        system = _system()
+        ti = _coarse_proto().theta_index
+        good_infid = float(gate_metrics.average_gate_infidelity(system, _coarse_proto(), X_FAST))
+
+        bad = list(X_FAST)
+        bad[ti] += 1.5  # detune only the single-qubit phase
+        res = optimize_cz_parameters(system, _coarse_proto(), bad, polish=False)
+
+        assert res.n_eval == 0 and len(res.x) == len(X_FAST)  # no polish, full vector
+        assert res.seed_infidelity > res.theta_infidelity     # theta-only strictly improved
+        # re-fitting theta is at least as good as the original (good) theta
+        assert res.theta_infidelity <= good_infid + 1e-9
+        assert res.infidelity == res.theta_infidelity         # polish skipped
+
+    def test_polish_returns_improved_point(self):
+        """A short polish from a near-optimal seed does not worsen the gate."""
+        system = _system()
+        res = optimize_cz_parameters(system, _coarse_proto(), X_FAST, maxiter=40)
+        seed_infid = float(gate_metrics.average_gate_infidelity(system, _coarse_proto(), X_FAST))
+        assert res.infidelity <= seed_infid + 1e-12
+        assert res.n_eval > 0

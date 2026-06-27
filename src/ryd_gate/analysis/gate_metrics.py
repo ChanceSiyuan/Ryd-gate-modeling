@@ -6,10 +6,11 @@ plus error_budget, state_infidelity, and population_evolution.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
-from scipy import integrate, interpolate
+from scipy import integrate, interpolate, optimize
 
 from ryd_gate.core.operators import build_occ_operator, build_sss_state_map
 
@@ -199,6 +200,82 @@ def average_gate_infidelity(
         return float(infidelity), residuals
 
     return infidelity
+
+
+@dataclass(frozen=True)
+class CZOptimizeResult:
+    """Outcome of :func:`optimize_cz_parameters`.
+
+    ``x`` is the optimized parameter vector and ``infidelity`` its average gate
+    infidelity. ``seed_infidelity`` / ``theta_infidelity`` expose the
+    theta-projection warm start (infidelity at the seed, and after re-fitting
+    the single-qubit phase alone) so callers can report the recovery.
+    """
+
+    x: list[float]
+    infidelity: float
+    seed_infidelity: float
+    theta_infidelity: float
+    n_eval: int
+
+
+def optimize_cz_parameters(
+    system,
+    protocol: "Protocol",
+    x0,
+    *,
+    polish: bool = True,
+    maxiter: int = 4000,
+    xatol: float = 1e-8,
+    fatol: float = 1e-13,
+) -> CZOptimizeResult:
+    """Minimize ``average_gate_infidelity`` with a theta-projection warm start.
+
+    Under the explicit |0> model the single-qubit Z correction
+    ``theta = x[protocol.theta_index]`` is hyper-sensitive to the pulse timing:
+    |0> sits at the 6.835 GHz clock splitting, so ``d(theta*)/d(T)`` ~ that
+    splitting and the optimal theta winds rapidly with the gate time. That
+    severely ill-conditions a *joint* search -- a wrong theta dominates the
+    objective (~1e-2) and masks the ~1e-6 leakage / conditional-phase gradients,
+    trapping Nelder-Mead far from the optimum.
+
+    So this projects theta out first: a cheap 1-D bounded minimization snaps
+    onto the optimal-theta ridge (typically 1e-2 -> 1e-6 in ~20 evaluations),
+    then a Nelder-Mead polish refines all parameters from that warm start.
+    Protocols without a single-qubit phase (``theta_index is None``) skip the
+    projection and go straight to the joint polish.
+    """
+    x = [float(v) for v in x0]
+    f = lambda xv: float(average_gate_infidelity(system, protocol, list(xv)))
+    seed_infidelity = f(x)
+
+    ti = protocol.theta_index
+    if ti is not None:
+        res_t = optimize.minimize_scalar(
+            lambda t: f([*x[:ti], float(t), *x[ti + 1:]]),
+            bounds=(x[ti] - np.pi, x[ti] + np.pi),
+            method="bounded",
+            options={"xatol": 1e-10},
+        )
+        x = [*x[:ti], float(res_t.x), *x[ti + 1:]]
+        theta_infidelity = float(res_t.fun)
+    else:
+        theta_infidelity = seed_infidelity
+
+    if not polish:
+        return CZOptimizeResult(
+            x=x, infidelity=theta_infidelity, seed_infidelity=seed_infidelity,
+            theta_infidelity=theta_infidelity, n_eval=0,
+        )
+
+    res = optimize.minimize(
+        f, x, method="Nelder-Mead",
+        options={"xatol": xatol, "fatol": fatol, "maxiter": maxiter},
+    )
+    return CZOptimizeResult(
+        x=res.x.tolist(), infidelity=float(res.fun), seed_infidelity=seed_infidelity,
+        theta_infidelity=theta_infidelity, n_eval=int(res.nfev),
+    )
 
 
 def sss_infidelity(
