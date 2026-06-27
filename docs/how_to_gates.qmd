@@ -8,7 +8,7 @@ budgets — none of which has a Pulser equivalent.
 
 ```python
 from ryd_gate.gates import (
-    ARProtocol, DoubleARPProtocol, TOProtocol,      # the kernel protocol classes
+    CZProtocol, ARProtocol, DoubleARPProtocol, TOProtocol,   # the kernel protocol classes
     average_gate_infidelity, error_budget,           # the analysis functions
     CZGateReport, cz_gate_report,                    # the stable report surface
     optimize_cz_parameters,                          # parameter optimization
@@ -17,6 +17,84 @@ from ryd_gate.gates import (
 
 `ryd_gate.gates` re-exports kernel objects — it is a documented namespace,
 not a second implementation.
+
+## Protocols: a pulse is two functions
+
+Every CZ pulse is two time functions — a 420 nm Rabi **envelope** $A(t)$ and an
+**optical phase** $\varphi(t)$ — and the 420 nm drive is $A(t)\,e^{-i\varphi(t)}$
+(+ h.c.). `CZProtocol` writes that `get_drive_coefficients` **once**; a subclass
+supplies only the two functions:
+
+```python
+class CZProtocol(Protocol):
+    def amplitude(self, t, params): ...      # A(t); default = Blackman flat-top
+    def optical_phase(self, t, params): ...  # phi(t); subclass must override
+    def get_drive_coefficients(self, t, params):
+        c = self.amplitude(t, params) * exp(-1j * self.optical_phase(t, params))
+        return {"drive_420": c, "drive_420_dag": conj(c)}
+```
+
+The three built-ins differ **only** in how `optical_phase` is supplied:
+
+| protocol | `optical_phase` $\varphi(t)$ | `n_params` |
+|---|---|---:|
+| `TOProtocol` | $A\cos(\omega t+\varphi_0)+\delta t$ | 6 |
+| `ARProtocol` | $A_1\sin(\omega t+\varphi_1)+A_2\sin(2\omega t+\varphi_2)+\delta t$ | 8 |
+| `DoubleARPProtocol` | precomputed ARP phase table | 0 |
+
+One rule, not two: `n_params > 0` is a **parameterized** phase you optimize over `x`;
+`n_params = 0` is a **fixed** phase.
+
+### (a) Optimize a CZ gate → use a parameterized protocol
+
+`TOProtocol` / `ARProtocol` read the `x` knobs inside their `optical_phase`. Hand one to
+`optimize_cz_parameters`, which varies `x`:
+
+```python
+from ryd_gate.gates import TOProtocol, optimize_cz_parameters
+
+# x = [A, omega/Omega_eff, phi0, delta/Omega_eff, theta, T/T_scale]
+x0 = [-0.70, 1.04, 0.38, 1.57, 1.45, 1.34]
+result = optimize_cz_parameters(system, TOProtocol(), x0)
+result.x            # optimized knobs
+result.infidelity   # average gate infidelity at result.x
+```
+
+`unpack_params(x, system)` decodes `x` (scaling by the system's `rabi_eff` /
+`time_scale`) into the named `params` that `optical_phase` reads — that is the whole
+"x → pulse" map. (See *Re-optimizing parameters* below for the theta projection.)
+
+### (b) Hand-write the pulse → supply the two functions yourself
+
+For *arbitrary* waveforms (not an `x` form), subclass `CZProtocol` and override the two
+functions. No `x` vector — `n_params = 0`, and `unpack_params` just returns `t_gate`
+plus the single-qubit `theta` to factor out:
+
+```python
+import numpy as np
+from ryd_gate.gates import CZProtocol, cz_gate_report
+
+class MyPulse(CZProtocol):
+    n_params = 0
+    def __init__(self, t_gate, **laser):       # laser = Delta_Hz / rabi_420_Hz / rabi_1013_Hz
+        self.t_gate = float(t_gate)
+        super().__init__(**laser)
+    def validate_params(self, x):
+        if x: raise ValueError("MyPulse takes no x")
+    def unpack_params(self, x, system):
+        return {"t_gate": self.t_gate, "theta": 0.0}
+    def amplitude(self, t, p):                  # your A(t)
+        return np.sin(np.pi * t / p["t_gate"]) ** 2
+    def optical_phase(self, t, p):              # your phi(t)
+        return 5e6 * t
+
+report = cz_gate_report(system, MyPulse(t_gate=0.3e-6), [], include_error_budget=False)
+```
+
+To keep the Double-ARP machinery (phase table + dynamic Stark compensation) but change
+the envelope or sweep, instead subclass `DoubleARPProtocol` and override `envelope(t)` /
+`detuning(t)` — they flow into `amplitude` / `optical_phase` for free. That is exactly
+what `find_phase.ipynb`'s `SweepARP` does.
 
 ## One-call gate report
 

@@ -28,12 +28,13 @@ from ryd_gate.analysis.gate_metrics import (
     optimize_cz_parameters,
 )
 from ryd_gate.core.serialization import check_schema, json_ready, schema_tag
-from ryd_gate.protocols.gate_cz import ARProtocol, DoubleARPProtocol, TOProtocol
+from ryd_gate.protocols.gate_cz import ARProtocol, CZProtocol, DoubleARPProtocol, TOProtocol
 
 __all__ = [
     "ARProtocol",
     "CZGateReport",
     "CZOptimizeResult",
+    "CZProtocol",
     "DoubleARPProtocol",
     "TOProtocol",
     "average_gate_infidelity",
