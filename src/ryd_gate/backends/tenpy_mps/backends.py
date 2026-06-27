@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -18,9 +17,6 @@ from ryd_gate.core.level_structures import (
     two_level_drive_and_detuning_from_coeffs,
 )
 from ryd_gate.ir import EvolutionResult
-
-if TYPE_CHECKING:
-    from ryd_gate.protocols.base import Protocol
 
 
 def measure_mps_observable(psi_mps: object, spec: TNLatticeSpec, name: str):
@@ -237,36 +233,21 @@ class TenpyTDVPBackend:
         """
         from .state import product_state_mps
 
-        psi0 = (
-            initial_state
-            if hasattr(initial_state, "expectation_value")
-            else product_state_mps(ir.spec, initial_state)
-        )
-        return self.evolve_compiled(
-            ir.spec,
-            ir.protocol,
-            ir.params,
-            psi0,
-            t_eval=t_eval,
-            observables=observables,
-            metadata=ir.metadata,
-        )
-
-    def evolve_compiled(
-        self,
-        spec: TNLatticeSpec,
-        protocol: Protocol,
-        params: dict,
-        psi0: object,
-        t_eval: np.ndarray | None = None,
-        observables: list[str] | None = None,
-        metadata: dict | None = None,
-    ) -> EvolutionResult:
-        """Evolve MPS with already-unpacked protocol parameters."""
         _require_tenpy()
         from tenpy.algorithms.tdvp import TwoSiteTDVPEngine
 
         from .model import build_tenpy_model
+
+        spec = ir.spec
+        protocol = ir.protocol
+        params = ir.params
+        metadata = ir.metadata
+        psi0 = (
+            initial_state
+            if hasattr(initial_state, "expectation_value")
+            else product_state_mps(spec, initial_state)
+        )
+
         if observables is None and t_eval is not None:
             observables = ["m_s", "n_mean"]
 

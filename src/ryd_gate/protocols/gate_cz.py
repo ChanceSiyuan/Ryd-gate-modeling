@@ -196,6 +196,19 @@ class DoubleARPProtocol(CZProtocol):
     the system's nominal ``rabi_eff`` is used.  The laser overrides ``Delta_Hz`` /
     ``rabi_420_Hz`` / ``rabi_1013_Hz`` set the rb87/analog operating point when
     this protocol is attached via ``set_protocol``.
+
+    Schedule / where the formula lives
+    ----------------------------------
+    The pulse is defined by two methods: :meth:`envelope` (the dimensionless
+    super-Gaussian amplitude) and :meth:`detuning` (the ARP frequency sweep),
+    optionally Stark-compensated by :meth:`chirp_detuning`.  The 420nm phase
+    ``phi(t)`` is the *time integral* of that chirp, so it is not evaluated
+    analytically per step: :meth:`unpack_params` pre-integrates it once into a
+    ``(phase_t, phase_values)`` table via :meth:`_build_phase_table`, and
+    :meth:`phase` / the inherited ``get_drive_coefficients`` then read it back with
+    ``np.interp`` (O(1) per step).  To read the actual schedule, look at
+    :meth:`envelope` / :meth:`detuning` / :meth:`chirp_detuning`, not the
+    table lookup in :meth:`phase`.
     """
 
     def __init__(

@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ryd_gate.backends.tn_common.initial_state import level_labels
+
 if TYPE_CHECKING:
     from ryd_gate.backends.tn_common.lattice_spec import TNLatticeSpec
 
@@ -60,50 +62,8 @@ def product_state_mps(
 
 
 def _state_labels_2d(spec: TNLatticeSpec, config: np.ndarray | Sequence[str] | str) -> list[str]:
-    if isinstance(config, str):
-        return _named_state_labels_2d(spec, config)
-
-    arr = np.asarray(config)
-    if arr.shape != (spec.N,):
-        raise ValueError(f"config must have shape ({spec.N},), got {arr.shape}.")
-
-    if arr.dtype.kind in {"U", "S", "O"}:
-        labels = [str(x) for x in arr]
-        _validate_level_labels(spec, labels)
-        return [_tenpy_label(spec, label) for label in labels]
-
-    occ = arr.astype(int)
-    non_rydberg = spec.level_spec.initial_level_or_default()
-    labels = ["r" if c == 1 else non_rydberg for c in occ]
-    return [_tenpy_label(spec, label) for label in labels]
-
-
-def _named_state_labels_2d(spec: TNLatticeSpec, name: str) -> list[str]:
-    ground = spec.level_spec.initial_level_or_default()
-    if name == "all_ground":
-        labels = [ground] * spec.N
-    elif name == "all_1":
-        labels = ["1"] * spec.N
-    elif name in {"all_0", "all_zero"}:
-        if "0" not in spec.level_spec.levels:
-            raise ValueError("'all_0' requires a TN lattice spec with a |0> level.")
-        labels = ["0"] * spec.N
-    elif name == "all_r":
-        labels = ["r"] * spec.N
-    elif name == "af1":
-        labels = ["r" if s > 0 else ground for s in spec.sublattice]
-    elif name == "af2":
-        labels = ["r" if s < 0 else ground for s in spec.sublattice]
-    else:
-        raise ValueError(f"Unknown config string: {name!r}")
-    return [_tenpy_label(spec, label) for label in labels]
-
-
-def _validate_level_labels(spec: TNLatticeSpec, labels: Sequence[str]) -> None:
-    allowed = set(spec.level_spec.levels)
-    unknown = sorted(set(labels) - allowed)
-    if unknown:
-        raise ValueError(f"Unknown level label(s) for {spec.level_structure}: {unknown}.")
+    # Shared resolution yields generic level labels; remap to TeNPy site labels.
+    return [_tenpy_label(spec, label) for label in level_labels(spec, config)]
 
 
 def _tenpy_label(spec: TNLatticeSpec, label: str) -> str:

@@ -40,24 +40,6 @@ def _is_state_batch(psi0) -> bool:
     )
 
 
-def _forced_expm_kind(backend_key: str) -> str:
-    """Map a public exact routing key to a forced expm kind (``dense``/``sparse``)."""
-    try:
-        return _EXACT_KINDS[backend_key]
-    except KeyError:
-        raise ValueError(f"Unknown exact backend {backend_key!r}.") from None
-
-
-def _resolve_exact_solver_backend(system, backend_key: str, backend_options):
-    """Return a concrete :class:`SolverBackend` for the forced exact routing key."""
-    kind = _forced_expm_kind(backend_key)
-    from ryd_gate.backends._options import as_backend_options
-    from ryd_gate.backends.exact.simulate import make_forced_expm_backend, resolve_n_steps
-
-    opts = as_backend_options(backend_options)
-    return make_forced_expm_backend(kind, n_steps=resolve_n_steps(system, opts))
-
-
 def simulate(
     system,
     x=(),
@@ -123,14 +105,11 @@ def simulate(
         if key in _EXACT_KINDS:
             from ryd_gate.backends.exact import simulate_states as simulate_exact_states
 
-            solver = _resolve_exact_solver_backend(
-                system, key, kwargs.get("backend_options"),
-            )
             results = simulate_exact_states(
                 system, list(psi0), x,
                 t_eval=kwargs.get("t_eval"),
                 backend_options=kwargs.get("backend_options"),
-                backend=solver,
+                force_kind=_EXACT_KINDS[key],
             )
             return [_attach_measurement(r, system, observables) for r in results]
         # Tensor-network backends gain no per-step speedup from batching (per-state
@@ -143,10 +122,7 @@ def simulate(
     if key in _EXACT_KINDS:
         from ryd_gate.backends.exact import simulate as simulate_exact
 
-        solver = _resolve_exact_solver_backend(
-            system, key, kwargs.get("backend_options"),
-        )
-        result = simulate_exact(system, x, psi0, backend=solver, **kwargs)
+        result = simulate_exact(system, x, psi0, force_kind=_EXACT_KINDS[key], **kwargs)
         return _attach_measurement(result, system, observables)
 
     # TN dispatch is not terminal: ``key`` selects the engine inside simulate_tn,
