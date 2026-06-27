@@ -10,6 +10,12 @@
   mapped onto the dimensionless 420nm amplitude scale via the system metadata
   ``rabi_eff``, and the detuning sweep is encoded as the time derivative of
   the 420nm optical phase, matching the TO/AR convention.
+
+All three subclass :class:`CZProtocol`: a CZ pulse is just a Rabi envelope
+``amplitude(t)`` and an optical phase ``optical_phase(t)`` (the 420nm drive is
+``amplitude·exp(-i·optical_phase)``), so each subclass overrides only those two
+functions — TO/AR with an ``x``-parameterized analytic phase, Double-ARP with a
+precomputed ARP phase table.
 """
 
 from __future__ import annotations
@@ -17,25 +23,6 @@ from __future__ import annotations
 import numpy as np
 
 from ryd_gate.protocols.base import Protocol
-
-
-def _blackman_drive_coefficients(phase: complex, t: float, params: dict) -> dict[str, complex]:
-    """Shared TO/AR drive: Blackman-enveloped 420 nm drive + its lightshift.
-
-    ``phase`` is the protocol's ``exp(-i phi(t))`` -- the only piece that differs
-    between the time-optimal (cosine) and amplitude-robust (dual-sine) schedules.
-    """
-    from ryd_gate.physics import blackman_pulse
-
-    amplitude = (
-        blackman_pulse(t, params["t_rise"], params["t_gate"])
-        if params.get("blackmanflag", True)
-        else 1.0
-    )
-    return {
-        "drive_420": amplitude * phase,
-        "drive_420_dag": amplitude * np.conjugate(phase),
-    }
 
 
 class _LaserCarrier:
@@ -65,7 +52,36 @@ class _LaserCarrier:
         }
 
 
-class TOProtocol(_LaserCarrier, Protocol):
+class CZProtocol(_LaserCarrier, Protocol):
+    """A CZ pulse is two time functions: a 420 nm Rabi envelope ``amplitude(t)``
+    and an optical phase ``optical_phase(t)``.  The 420 nm drive is
+    ``amplitude(t) · exp(-i·optical_phase(t))`` (+ h.c.); a subclass supplies only
+    those two functions.  ``optical_phase`` carries the pulse schedule -- its free
+    knobs are the ``x`` vector for optimizable protocols (``n_params > 0``), or it
+    is fixed (``n_params = 0``, e.g. Double-ARP).
+    """
+
+    def amplitude(self, t: float, params: dict) -> float:
+        """Dimensionless 420 nm envelope A(t).  Default: Blackman flat-top."""
+        from ryd_gate.physics import blackman_pulse
+
+        if params.get("blackmanflag", True):
+            return blackman_pulse(t, params["t_rise"], params["t_gate"])
+        return 1.0
+
+    def optical_phase(self, t: float, params: dict) -> float:
+        """420 nm optical phase φ(t).  Subclasses must override."""
+        raise NotImplementedError
+
+    def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
+        c = self.amplitude(t, params) * np.exp(-1j * self.optical_phase(t, params))
+        return {"drive_420": c, "drive_420_dag": np.conjugate(c)}
+
+    def phase_420(self, t: float, params: dict) -> complex:
+        return np.exp(-1j * self.optical_phase(t, params))
+
+
+class TOProtocol(CZProtocol):
     """Time-Optimal pulse protocol with cosine phase modulation."""
 
     @property
@@ -100,15 +116,9 @@ class TOProtocol(_LaserCarrier, Protocol):
             "blackmanflag": system.meta("blackmanflag", True),
         }
 
-    def phase_420(self, t: float, params: dict) -> complex:
-        return np.exp(
-            -1j * (params["phase_amp"] * np.cos(params["omega"] * t + params["phase_init"])
-                   + params["delta"] * t)
-        )
-
-    def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
-        """Blackman-enveloped 420 nm drive for the time-optimal / AR schedule."""
-        return _blackman_drive_coefficients(self.phase_420(t, params), t, params)
+    def optical_phase(self, t: float, params: dict) -> float:
+        return (params["phase_amp"] * np.cos(params["omega"] * t + params["phase_init"])
+                + params["delta"] * t)
 
     def get_optimization_bounds(self) -> tuple:
         return (
@@ -121,7 +131,7 @@ class TOProtocol(_LaserCarrier, Protocol):
         )
 
 
-class ARProtocol(_LaserCarrier, Protocol):
+class ARProtocol(CZProtocol):
     """Amplitude-Robust pulse protocol with dual-sine phase modulation."""
 
     @property
@@ -158,18 +168,12 @@ class ARProtocol(_LaserCarrier, Protocol):
             "blackmanflag": system.meta("blackmanflag", True),
         }
 
-    def phase_420(self, t: float, params: dict) -> complex:
-        return np.exp(
-            -1j * (
-                params["phase_amp1"] * np.sin(params["omega"] * t + params["phase_init1"])
-                + params["phase_amp2"] * np.sin(2 * params["omega"] * t + params["phase_init2"])
-                + params["delta"] * t
-            )
+    def optical_phase(self, t: float, params: dict) -> float:
+        return (
+            params["phase_amp1"] * np.sin(params["omega"] * t + params["phase_init1"])
+            + params["phase_amp2"] * np.sin(2 * params["omega"] * t + params["phase_init2"])
+            + params["delta"] * t
         )
-
-    def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
-        """Blackman-enveloped 420 nm drive for the time-optimal / AR schedule."""
-        return _blackman_drive_coefficients(self.phase_420(t, params), t, params)
 
     def get_optimization_bounds(self) -> tuple:
         return (
@@ -184,7 +188,7 @@ class ARProtocol(_LaserCarrier, Protocol):
         )
 
 
-class DoubleARPProtocol(_LaserCarrier, Protocol):
+class DoubleARPProtocol(CZProtocol):
     """Two consecutive rapid-adiabatic-passage pulses for a Rydberg CZ gate.
 
     Parameters are angular frequencies in rad/s and time in seconds.
@@ -339,16 +343,11 @@ class DoubleARPProtocol(_LaserCarrier, Protocol):
         arp_part = -float(delta_max) * self.t_pulse / np.pi * np.sin(np.pi * u / self.t_pulse)
         return arp_part + float(delta_offset) * t_clamped
 
-    def phase_420(self, t: float, params: dict) -> complex:
-        return np.exp(-1j * self.phase(t, params))
+    def amplitude(self, t: float, params: dict) -> float:
+        return self.effective_omega(t, params) / float(params["rabi_eff"])
 
-    def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
-        phase = self.phase_420(t, params)
-        amplitude = self.effective_omega(t, params) / float(params["rabi_eff"])
-        return {
-            "drive_420": amplitude * phase,
-            "drive_420_dag": amplitude * np.conjugate(phase),
-        }
+    def optical_phase(self, t: float, params: dict) -> float:
+        return self.phase(t, params)
 
     def _build_phase_table(self, params: dict) -> tuple[np.ndarray, np.ndarray]:
         n = self.phase_samples or max(4 * self.n_steps + 1, 1001)
