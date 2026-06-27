@@ -35,7 +35,6 @@ def _blackman_drive_coefficients(phase: complex, t: float, params: dict) -> dict
     return {
         "drive_420": amplitude * phase,
         "drive_420_dag": amplitude * np.conjugate(phase),
-        "lightshift_zero": amplitude * amplitude,
     }
 
 
@@ -281,7 +280,7 @@ class DoubleARPProtocol(_LaserCarrier, Protocol):
 
     @property
     def required_channels(self) -> frozenset[str]:
-        return frozenset({"drive_420", "drive_420_dag", "lightshift_zero"})
+        return frozenset({"drive_420", "drive_420_dag"})
 
     def local_time(self, t: float) -> float:
         t_clamped = float(np.clip(t, 0.0, self.t_gate))
@@ -349,7 +348,6 @@ class DoubleARPProtocol(_LaserCarrier, Protocol):
         return {
             "drive_420": amplitude * phase,
             "drive_420_dag": amplitude * np.conjugate(phase),
-            "lightshift_zero": amplitude * amplitude,
         }
 
     def _build_phase_table(self, params: dict) -> tuple[np.ndarray, np.ndarray]:

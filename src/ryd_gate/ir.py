@@ -174,8 +174,6 @@ def compile_hamiltonian_ir(system, params: dict) -> HamiltonianIR:
         def coeff_fn(t, channel=channel):
             coeffs = protocol.get_drive_coefficients(t, params)
             coeff = coeffs.get(channel, 0.0)
-            if channel == "lightshift_zero":
-                return amplitude_scale**2 * coeff
             return amplitude_scale * coeff
 
         drive_terms.append(

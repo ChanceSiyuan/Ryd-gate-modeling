@@ -100,7 +100,6 @@ class _RB87PhysicalParams:
     blackmanflag: bool
     enable_rydberg_decay: bool
     enable_intermediate_decay: bool
-    enable_0_scattering: bool
     enable_polarization_leakage: bool
     n_levels: int = 7
     rydberg_indices: tuple[int, ...] = (5, 6)
@@ -120,7 +119,6 @@ def _rb87_physical_params(
     blackmanflag: bool,
     enable_rydberg_decay: bool,
     enable_intermediate_decay: bool,
-    enable_0_scattering: bool,
     enable_polarization_leakage: bool,
     Delta_Hz: float | None = None,
     rabi_420_Hz: float | None = None,
@@ -213,7 +211,6 @@ def _rb87_physical_params(
         blackmanflag=blackmanflag,
         enable_rydberg_decay=enable_rydberg_decay,
         enable_intermediate_decay=enable_intermediate_decay,
-        enable_0_scattering=enable_0_scattering,
         enable_polarization_leakage=enable_polarization_leakage,
     )
 
@@ -242,7 +239,6 @@ def _metadata_from_rb87_params(system: _RB87PhysicalParams) -> dict[str, Any]:
         "rydberg_indices": system.rydberg_indices,
         "enable_rydberg_decay": system.enable_rydberg_decay,
         "enable_intermediate_decay": system.enable_intermediate_decay,
-        "enable_0_scattering": system.enable_0_scattering,
         "enable_polarization_leakage": system.enable_polarization_leakage,
     }
 
@@ -383,14 +379,12 @@ def _apply_analog_3_lattice_blocks(
     )
     ryd_RD_rate = 1 / 410.41e-6
     ryd_BBR_rate = _ANALOG3_RYD_DECAY_RATE - ryd_RD_rate
-    lightshift_zero = np.zeros((3, 3), dtype=np.complex128)
 
     _register_local_matrix_block(model.blocks, "H_const", blk.h_const, description="single-atom ger energies")
     _register_local_matrix_block(model.blocks, "H_1013", blk.h_1013, hermitian=False, description="static e-r coupling")
     _register_local_matrix_block(model.blocks, "H_1013_conj", blk.h_1013.conj().T, hermitian=False)
     _register_local_matrix_block(model.blocks, "drive_420", blk.drive_420, hermitian=False, description="g-e drive")
     _register_local_matrix_block(model.blocks, "drive_420_dag", blk.drive_420.conj().T, hermitian=False)
-    _register_local_matrix_block(model.blocks, "lightshift_zero", lightshift_zero)
 
     model.metadata.update(
         {
@@ -418,7 +412,6 @@ def _apply_analog_3_lattice_blocks(
             "rydberg_indices": (2,),
             "enable_rydberg_decay": enable_rydberg_decay,
             "enable_intermediate_decay": enable_intermediate_decay,
-            "enable_0_scattering": False,
             "enable_polarization_leakage": False,
         }
     )
@@ -432,7 +425,6 @@ def _apply_rb87_7_lattice_blocks(
     blackmanflag: bool = True,
     enable_rydberg_decay: bool = False,
     enable_intermediate_decay: bool = False,
-    enable_0_scattering: bool = True,
     enable_polarization_leakage: bool = False,
     Delta_Hz: float | None = None,
     rabi_420_Hz: float | None = None,
@@ -446,7 +438,6 @@ def _apply_rb87_7_lattice_blocks(
         blackmanflag=blackmanflag,
         enable_rydberg_decay=enable_rydberg_decay,
         enable_intermediate_decay=enable_intermediate_decay,
-        enable_0_scattering=enable_0_scattering,
         enable_polarization_leakage=enable_polarization_leakage,
         Delta_Hz=Delta_Hz,
         rabi_420_Hz=rabi_420_Hz,
@@ -465,14 +456,12 @@ def _apply_rb87_7_lattice_blocks(
         physical.rabi_420_garbage,
     )
     h1013 = _rb87_local_h1013(param_set, physical.rabi_1013, physical.rabi_1013_garbage)
-    lightshift_zero = np.zeros((7, 7), dtype=np.complex128)
 
     _register_local_matrix_block(model.blocks, "H_const", h_const, description="single-atom rb87_7 energies")
     _register_local_matrix_block(model.blocks, "H_1013", h1013, hermitian=False, description="static 1013nm coupling")
     _register_local_matrix_block(model.blocks, "H_1013_conj", h1013.conj().T, hermitian=False)
     _register_local_matrix_block(model.blocks, "drive_420", h420, hermitian=False, description="420nm drive")
     _register_local_matrix_block(model.blocks, "drive_420_dag", h420.conj().T, hermitian=False)
-    _register_local_matrix_block(model.blocks, "lightshift_zero", lightshift_zero)
 
     model.metadata.update(_metadata_from_rb87_params(physical))
     model.metadata.update(

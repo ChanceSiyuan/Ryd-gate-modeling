@@ -51,7 +51,7 @@ def test_double_arp_protocol_channels_and_envelope():
     params = protocol.unpack_params([], _FakeSystem())
 
     assert protocol.required_channels == frozenset(
-        {"drive_420", "drive_420_dag", "lightshift_zero"}
+        {"drive_420", "drive_420_dag"}
     )
     assert np.isclose(protocol.envelope(0.0), 0.0)
     assert np.isclose(protocol.envelope(0.5), 1.0)
@@ -60,9 +60,8 @@ def test_double_arp_protocol_channels_and_envelope():
     assert np.isclose(protocol.envelope(2.0), 0.0)
 
     coeffs = protocol.get_drive_coefficients(0.5, params)
-    assert set(coeffs) == {"drive_420", "drive_420_dag", "lightshift_zero"}
+    assert set(coeffs) == {"drive_420", "drive_420_dag"}
     assert np.isclose(coeffs["drive_420_dag"], np.conjugate(coeffs["drive_420"]))
-    assert np.isclose(coeffs["lightshift_zero"], 4.0)
 
 
 def test_double_arp_detuning_resets_each_half():

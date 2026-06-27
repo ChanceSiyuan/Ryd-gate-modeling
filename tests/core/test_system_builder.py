@@ -99,7 +99,7 @@ def test_bare_protocol_falls_back_to_preset_defaults():
 
 def test_analog_3_only_receives_user_supplied_level_flags():
     # The builder forwards only the flags the user actually passed, so an
-    # analog_3 build never sees an rb87-only default (e.g. enable_0_scattering)
+    # analog_3 build never sees an rb87-only default (e.g. enable_polarization_leakage)
     # that ``_apply_analog_3_lattice_blocks`` would reject.
     system = (
         RydbergSystem.set_atom_level("analog_3", detuning_sign=1)
