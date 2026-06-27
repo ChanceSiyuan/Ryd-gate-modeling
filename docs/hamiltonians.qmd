@@ -43,7 +43,7 @@ $$
 
 where $c_c(t)$ is the protocol's drive coefficient for channel $c$, $B_c$
 the registered operator block, and $s$ the `amplitude_scale` of the system
-(noise sweeps; the `lightshift_zero` channel scales as $s^2$). The h.c.
+(noise sweeps). The h.c.
 term is added only for non-Hermitian transition blocks. The last two sums
 are the optional static overlays (`pin_deltas`, `scatter_rates`).
 
@@ -215,8 +215,7 @@ build up dynamically** from the full Hamiltonian; nothing is added by hand.
 (A former `perturbative` option replaced these legs with a second-order diagonal
 $\lvert 0\rangle$ shift $-\sum_k g_k^2/(E_{e_k}-E_0)$; it was removed because it
 silently dropped the $O(\Omega_{420}^4)$ Raman shift and the $\lvert 0\rangle$
-leakage, overstating gate fidelity. The `lightshift_zero` block is now
-identically zero, kept only as a protocol channel.)
+leakage, overstating gate fidelity.)
 
 **Interaction:** $H_{\text{vdW}}$ with
 $n^{R} = \lvert r\rangle\langle r\rvert + \lvert r'\rangle\langle r'\rvert$.
@@ -235,12 +234,11 @@ $n^{R} = \lvert r\rangle\langle r\rvert + \lvert r'\rangle\langle r'\rvert$.
 
 ## Gate drive coefficients
 
-The CZ protocols drive only the `drive_420` (+ dagger) and
-`lightshift_zero` channels (`protocols/gate_cz.py`):
+The CZ protocols drive only the `drive_420` (+ dagger) channels
+(`protocols/gate_cz.py`):
 
 $$
-c_{420}(t) = A(t)\, e^{-i\varphi(t)}, \qquad
-c_{\text{ls}}(t) = A(t)^2 ,
+c_{420}(t) = A(t)\, e^{-i\varphi(t)} ,
 $$
 
 with $A(t)$ the Blackman flat-top envelope

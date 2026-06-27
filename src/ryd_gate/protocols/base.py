@@ -56,9 +56,9 @@ class Protocol(ABC):
         """Channel names this protocol drives.
 
         Used by the compiler to validate system-protocol compatibility.
-        Default assumes two-photon Raman (420nm + lightshift).
+        Default assumes the two-photon 420nm drive channels.
         """
-        return frozenset({"drive_420", "drive_420_dag", "lightshift_zero"})
+        return frozenset({"drive_420", "drive_420_dag"})
 
     def drive_channels(self, system) -> frozenset[str]:
         """Channel names wired into the Hamiltonian for *system*.

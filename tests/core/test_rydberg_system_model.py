@@ -255,20 +255,18 @@ def test_rb87_7_hz_overrides_match_defaults_when_omitted():
 
 def test_rb87_7_zero_state_is_modeled_explicitly():
     """|0> is always modeled explicitly: clock-detuned energy + |0>->|e> 420
-    legs in drive_420, with the lightshift_zero block identically zero."""
+    legs in drive_420 (no separate lightshift_zero block)."""
     system = RydbergSystem.set_atom_level("rb87_7", param_set="our").set_atom_geom(
         Register.chain(1, spacing_um=3.0)
     ).build()
 
     h_const = system.blocks.get("H_const").matrix
     h420 = system.blocks.get("drive_420").matrix
-    lightshift_zero = system.blocks.get("lightshift_zero").matrix
 
     assert "zero_state_model" not in system.metadata
     assert h_const[0, 0].real == pytest.approx(-2 * np.pi * 6.835e9)
     assert not np.allclose(h420[2:5, 0], 0.0)  # off-resonant |0>->|e> legs
     assert not np.allclose(h420[2:5, 1], 0.0)  # |1>->|e> drive
-    assert np.allclose(lightshift_zero, 0.0)
 
 
 def test_rb87_7_zero_state_model_kwarg_is_rejected():

@@ -16,7 +16,6 @@
     "AL": 0.0,
     "LG": 0.001078243323298856
   },
-  "scattering_0_extra_infidelity": 0.0,
   "polarization_leakage": {
     "infidelity": 6.956736839534387e-05,
     "total": 1.58363538199784e-05,

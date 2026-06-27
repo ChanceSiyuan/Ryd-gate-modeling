@@ -42,10 +42,10 @@ class _AnalogProtocol:
         return {"t_gate": 0.1, "pin_deltas": {}, "scatter_rates": {}, "static_overlays": []}
 
     def drive_channels(self, system):
-        return frozenset({"drive_420", "drive_420_dag", "lightshift_zero"})
+        return frozenset({"drive_420", "drive_420_dag"})
 
     def get_drive_coefficients(self, t, params):
-        return {"drive_420": 1.0, "drive_420_dag": 1.0, "lightshift_zero": 0.0}
+        return {"drive_420": 1.0, "drive_420_dag": 1.0}
 
 
 class TestPresets:
