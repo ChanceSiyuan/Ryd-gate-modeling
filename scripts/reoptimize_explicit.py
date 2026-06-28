@@ -36,7 +36,7 @@ X_AR_LUKIN = [1.152444475742163, 0.5298612474274744, 1.0463537649409957,
 
 # (name, protocol_cls, set_atom_level kwargs, seed)
 GATES = [
-    ("to_dark", TOProtocol, dict(param_set="our", blackmanflag=True, detuning_sign=1), X_TO_DARK),
+    ("to_dark", TOProtocol, dict(param_set="our", detuning_sign=1), X_TO_DARK),
     ("ar_our", ARProtocol, dict(param_set="our"), X_AR_OUR),
     ("ar_lukin", ARProtocol, dict(param_set="lukin"), X_AR_LUKIN),
 ]

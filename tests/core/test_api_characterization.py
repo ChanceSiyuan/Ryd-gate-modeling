@@ -85,17 +85,16 @@ def test_simulate_unknown_backend_raises():
 
 
 def test_rb87_physical_metadata_present():
-    """rb87_7 systems expose rabi_eff / time_scale / t_rise via metadata.
-
-    The gate (gate_cz) and addressing layers depend on these; this pins that
-    they live in metadata (read through .meta(...)), which the addressing fix
-    in the reframe relies on.
+    """rb87_7 systems expose t_rise / Delta via metadata (pulse-shaping + static
+    energies).  The Rabi scale (rabi_eff / time_scale) now lives in the CZ protocol,
+    not the system, since the 420/1013 blocks are unit-normalized.
     """
     system = (
         RydbergSystem.set_atom_level("rb87_7", param_set="our")
         .set_atom_geom(Register.chain(2, spacing_um=3.0))
         .build()
     )
-    assert system.meta("rabi_eff", 0.0) > 0.0
-    assert system.meta("time_scale", 0.0) > 0.0
     assert system.meta("t_rise", None) is not None
+    assert system.meta("Delta", 0.0) != 0.0
+    assert system.meta("rabi_eff") is None
+    assert system.meta("time_scale") is None

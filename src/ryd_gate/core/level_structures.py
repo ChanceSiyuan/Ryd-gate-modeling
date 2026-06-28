@@ -229,6 +229,9 @@ def level_structure(name: str) -> LevelStructureSpec:
             transitions=(
                 TransitionSpec("R", "1", "r", "drive_R"),
                 TransitionSpec("hf", "0", "1", "drive_hf"),
+                # |0>-|r> (K0r) leg of the full effective CZ Hamiltonian.  Exact
+                # backend only; the TN 01r lowering rejects a nonzero drive_0r.
+                TransitionSpec("0r", "0", "r", "drive_0r"),
             ),
             detuning_levels={"delta_R": "r", "delta_hf": "1"},
             initial_level="1",
@@ -264,8 +267,8 @@ def level_structure(name: str) -> LevelStructureSpec:
 
 # ── Protocol-channel lowering helpers ────────────────────────────────────────
 
-_HC_CHANNELS = frozenset({"global_X", "drive_R", "drive_hf"})
-_HC_CHANNEL_PREFIXES = ("global_X_", "drive_R_", "drive_hf_")
+_HC_CHANNELS = frozenset({"global_X", "drive_R", "drive_hf", "drive_0r"})
+_HC_CHANNEL_PREFIXES = ("global_X_", "drive_R_", "drive_hf_", "drive_0r_")
 
 
 def split_site_channel(channel: str) -> tuple[str, int | None]:
@@ -411,6 +414,17 @@ def three_level_profiles_from_coeffs(
         level_spec,
         level_structure_name=getattr(spec, "level_structure", level_spec.name),
     )
+    drive_0r = transition_channel(level_spec, "0", "r")
+    if drive_0r is not None and any(
+        abs(complex(v)) > 0
+        for k, v in coeffs.items()
+        if split_site_channel(k)[0] == drive_0r
+    ):
+        raise ValueError(
+            "TN backends do not support the |0>-|r> (K0r) coupling; "
+            "use the exact backend (e.g. EffectiveCZProtocol from "
+            "lower_cz_to_effective_01r runs exact-only)."
+        )
     drive_r = transition_channel(level_spec, "1", "r")
     drive_hf = transition_channel(level_spec, "0", "1")
     delta_r = detuning_channel(level_spec, "r")

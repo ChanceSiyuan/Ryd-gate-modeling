@@ -1,94 +1,163 @@
-"""CZ gate pulse protocols: Time-Optimal, Amplitude-Robust, and Double-ARP.
+"""CZ gate pulse protocols: a clean pulse container + Time-Optimal / Amplitude-
+Robust builders + Double-ARP.
 
-- :class:`TOProtocol` — Time-Optimal: φ(t) = A·cos(ωt + φ₀) + δ·t,
-  parameters x = [A, ω/Ω_eff, φ₀, δ/Ω_eff, θ, T/T_scale]
-- :class:`ARProtocol` — Amplitude-Robust:
-  φ(t) = A₁·sin(ωt + φ₁) + A₂·sin(2ωt + φ₂) + δ·t,
-  parameters x = [ω/Ω_eff, A₁, φ₁, A₂, φ₂, δ/Ω_eff, T/T_scale, θ]
-- :class:`DoubleARPProtocol` — two consecutive rapid-adiabatic-passage pulses
-  for the seven-level Rb87 model; the effective two-photon Rabi envelope is
-  mapped onto the dimensionless 420nm amplitude scale via the system metadata
-  ``rabi_eff``, and the detuning sweep is encoded as the time derivative of
-  the 420nm optical phase, matching the TO/AR convention.
+A CZ pulse is the complex 420 nm and 1013 nm laser drives.  The rb87_7 system now
+builds *unit-Rabi, phase-free* transition blocks (relative CG/dipole ratios only),
+so the protocol owns the laser amplitudes and phases:
 
-All three subclass :class:`CZProtocol`: a CZ pulse is just a Rabi envelope
-``amplitude(t)`` and an optical phase ``optical_phase(t)`` (the 420nm drive is
-``amplitude·exp(-i·optical_phase)``), so each subclass overrides only those two
-functions — TO/AR with an ``x``-parameterized analytic phase, Double-ARP with a
-precomputed ARP phase table.
+    Omega_420(t)  = omega_420_max  * A_420(s)  * exp(-i * phi_420(s))
+    Omega_1013(t) = omega_1013_max * A_1013(s) * exp(-i * phi_1013(s))
+
+with normalized time ``s = t/t_gate in [0, 1]``, ``A_* in [0,1]`` and ``phi_*`` in
+radians.  These coefficients multiply the unit blocks at compile time.
+
+- :class:`CZProtocol` — the container, and the **only** rb87_7 laser-domain
+  protocol: four normalized functions + the two max Rabi amplitudes + ``t_gate``.
+  It also runs on ``analog_3`` (where the 1013 leg is a static coupling, not a
+  driven block).  An adiabatic pulse is just a ``CZProtocol`` whose 420 phase is the
+  chirp integral :func:`phase_from_chirp` — no dedicated class.
+- :class:`TOProtocol` / :class:`ARProtocol` — *builders* ``x -> CZProtocol``
+  (Time-Optimal cosine phase / Amplitude-Robust dual-sine phase) for the optimizer.
+- :func:`phase_from_chirp` — integrate a chirp ``f(t)`` into an optical phase (pure
+  pulse construction; no system, no effective theory).
+- :class:`EffectiveCZProtocol` — drives the *full* 3x3 ``{0,1,r}`` effective
+  Hamiltonian (incl. the ``|0>-|r>`` ``K0r`` leg) directly.  Built by
+  :func:`ryd_gate.core.effective_theory.lower_cz_to_effective_01r`.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
+from ryd_gate.core.physical_models import rb87_default_rabis
 from ryd_gate.protocols.base import Protocol
 
 
-class _LaserCarrier:
-    """Mixin: optional rb87/analog laser overrides carried on a protocol.
+def _has_unit_1013(system) -> bool:
+    """True when *system* exposes a unit-Rabi ``drive_1013`` block (rb87_7).
 
-    ``Delta_Hz`` / ``rabi_420_Hz`` / ``rabi_1013_Hz`` are the laser intensity /
-    frequency knobs.  ``set_protocol`` reads :meth:`laser_kwargs` to forward the
-    non-``None`` ones into system materialization; ``None`` means "use the
-    ``param_set`` / preset default".
+    On ``analog_3`` / duck-typed systems the 1013 leg is a static coupling, so the
+    laser-domain protocols hold it constant rather than driving a channel.
     """
-
-    def __init__(self, *, Delta_Hz=None, rabi_420_Hz=None, rabi_1013_Hz=None, **kwargs) -> None:
-        self.Delta_Hz = Delta_Hz
-        self.rabi_420_Hz = rabi_420_Hz
-        self.rabi_1013_Hz = rabi_1013_Hz
-        super().__init__(**kwargs)
-
-    def laser_kwargs(self) -> dict:
-        return {
-            k: v
-            for k, v in (
-                ("Delta_Hz", self.Delta_Hz),
-                ("rabi_420_Hz", self.rabi_420_Hz),
-                ("rabi_1013_Hz", self.rabi_1013_Hz),
-            )
-            if v is not None
-        }
+    blocks = getattr(system, "blocks", None)
+    return bool(blocks) and hasattr(blocks, "has") and blocks.has("drive_1013")
 
 
-class CZProtocol(_LaserCarrier, Protocol):
-    """A CZ pulse is two time functions: a 420 nm Rabi envelope ``amplitude(t)``
-    and an optical phase ``optical_phase(t)``.  The 420 nm drive is
-    ``amplitude(t) · exp(-i·optical_phase(t))`` (+ h.c.).
+# ── Rabi-scale resolvers ─────────────────────────────────────────────────────
 
-    Two ways to make one:
 
-    1. **Pass the two functions** (a fixed, non-optimized pulse)::
+def cz_rabi_maxes(system, omega_420_max=None, omega_1013_max=None) -> tuple[float, float]:
+    """Resolve ``(omega_420_max, omega_1013_max)`` in rad/s.
 
-           CZProtocol(optical_phase=lambda t: 5e6 * t,
-                      amplitude=lambda t: np.sin(np.pi * t / T) ** 2, t_gate=T)
+    Defaults to the system ``param_set``'s canonical rb87_7 Rabis; falls back to
+    ``(1.0, 1.0)`` when the param set is unknown (analog systems whose blocks
+    already carry the full Rabi, or duck-typed test systems) so the scaling is a
+    no-op there.
+    """
+    ps = getattr(system, "param_set", None)
+    try:
+        d420, d1013 = rb87_default_rabis(ps)
+    except ValueError:
+        d420, d1013 = 1.0, 1.0
+    o420 = d420 if omega_420_max is None else float(omega_420_max)
+    o1013 = d1013 if omega_1013_max is None else float(omega_1013_max)
+    return o420, o1013
 
-       (omit ``amplitude`` for a flat envelope; ``theta`` is the single-qubit Z to
-       factor out, default 0).
 
-    2. **Subclass** and override :meth:`optical_phase` / :meth:`amplitude`.  For an
-       ``x``-parameterized, *optimizable* pulse also override ``n_params`` /
-       ``unpack_params`` (see :class:`TOProtocol`); to reuse the ARP machinery,
-       subclass :class:`DoubleARPProtocol`.
+def cz_effective_rabi(system, omega_420_max: float, omega_1013_max: float) -> tuple[float, float]:
+    """``(rabi_eff, time_scale)`` from the two max Rabis and the system's Delta.
+
+    Reproduces the old build-time ``rabi_eff = rabi_420*rabi_1013/(2|Delta|)`` /
+    ``time_scale = 2*pi/rabi_eff`` (same operands and order), now that the Rabi
+    scale lives in the protocol rather than the Hamiltonian blocks.
+    """
+    rabi_eff = omega_420_max * omega_1013_max / (2 * abs(float(system.meta("Delta"))))
+    return rabi_eff, 2 * np.pi / rabi_eff
+
+
+# ── builder closure factories (default-arg capture, no late binding) ──────────
+
+
+def _flat_envelope():
+    return lambda s: 1.0
+
+
+def _blackman_envelope(t_rise: float, t_gate: float):
+    from ryd_gate.physics import blackman_pulse
+
+    return lambda s: float(blackman_pulse(s * t_gate, t_rise, t_gate))
+
+
+def _to_phase(phase_amp: float, omega: float, phase_init: float, delta: float, t_gate: float):
+    return lambda s: phase_amp * np.cos(omega * (s * t_gate) + phase_init) + delta * (s * t_gate)
+
+
+def _ar_phase(
+    phase_amp1: float,
+    phase_init1: float,
+    phase_amp2: float,
+    phase_init2: float,
+    omega: float,
+    delta: float,
+    t_gate: float,
+):
+    return lambda s: (
+        phase_amp1 * np.sin(omega * (s * t_gate) + phase_init1)
+        + phase_amp2 * np.sin(2 * omega * (s * t_gate) + phase_init2)
+        + delta * (s * t_gate)
+    )
+
+
+class CZProtocol(Protocol):
+    """A concrete CZ pulse: four normalized functions of ``s = t/t_gate in [0,1]``
+    (420 amplitude/phase, 1013 amplitude/phase), the two max Rabi amplitudes, and
+    ``t_gate``.
+
+    The 420/1013 drives are ``omega_*_max * A_*(s) * exp(-i*phi_*(s))`` (+ h.c.);
+    they multiply the unit-Rabi system blocks at compile time.  Omit ``A_1013`` /
+    ``phi_1013`` for a constant 1013 coupling (``A_1013 = 1``, ``phi_1013 = 0``).
+    ``omega_*_max`` default to the system ``param_set``'s canonical Rabis when left
+    ``None``.
     """
 
     def __init__(
         self,
         *,
-        optical_phase=None,
-        amplitude=None,
-        t_gate: float | None = None,
-        theta: float = 0.0,
-        Delta_Hz=None,
-        rabi_420_Hz=None,
-        rabi_1013_Hz=None,
+        t_gate: float,
+        A_420,
+        phi_420,
+        A_1013=None,
+        phi_1013=None,
+        omega_420_max: float | None = None,
+        omega_1013_max: float | None = None,
+        n_steps: int = 200,
     ) -> None:
-        self._phase_fn = optical_phase      # callable t -> phi(t), or None (subclass overrides)
-        self._amplitude_fn = amplitude      # callable t -> A(t),  or None (-> Blackman/flat)
-        self._t_gate = None if t_gate is None else float(t_gate)
-        self._theta = float(theta)
-        super().__init__(Delta_Hz=Delta_Hz, rabi_420_Hz=rabi_420_Hz, rabi_1013_Hz=rabi_1013_Hz)
+        if t_gate <= 0:
+            raise ValueError("t_gate must be positive.")
+        self._t_gate = float(t_gate)
+        self._A_420 = A_420
+        self._phi_420 = phi_420
+        self._A_1013 = A_1013 if A_1013 is not None else (lambda s: 1.0)
+        self._phi_1013 = phi_1013 if phi_1013 is not None else (lambda s: 0.0)
+        self._omega_420_max = None if omega_420_max is None else float(omega_420_max)
+        self._omega_1013_max = None if omega_1013_max is None else float(omega_1013_max)
+        self.n_steps = int(n_steps)
+
+    @property
+    def t_gate(self) -> float:
+        return self._t_gate
+
+    @property
+    def required_channels(self) -> frozenset[str]:
+        return frozenset({"drive_420", "drive_420_dag", "drive_1013", "drive_1013_dag"})
+
+    def drive_channels(self, system) -> frozenset[str]:
+        """Drive the 1013 channel only when the system exposes a unit ``drive_1013``
+        block (rb87_7); on analog_3 the 1013 leg stays a static coupling."""
+        channels = {"drive_420", "drive_420_dag"}
+        if _has_unit_1013(system):
+            channels |= {"drive_1013", "drive_1013_dag"}
+        return frozenset(channels)
 
     @property
     def n_params(self) -> int:
@@ -100,74 +169,102 @@ class CZProtocol(_LaserCarrier, Protocol):
 
     def unpack_params(self, x, system) -> dict:
         self.validate_params(x)
-        if self._t_gate is None:
-            raise ValueError("CZProtocol(...) needs t_gate=... (or a subclass that builds params).")
-        return {"t_gate": self._t_gate, "theta": self._theta, "t_rise": 0.0, "blackmanflag": False}
-
-    def amplitude(self, t: float, params: dict) -> float:
-        """Dimensionless 420 nm envelope A(t): the ``amplitude=`` callable if
-        given, else Blackman flat-top when ``blackmanflag`` is set, else flat 1."""
-        if self._amplitude_fn is not None:
-            return float(self._amplitude_fn(t))
-        from ryd_gate.physics import blackman_pulse
-
-        if params.get("blackmanflag", True):
-            return blackman_pulse(t, params["t_rise"], params["t_gate"])
-        return 1.0
-
-    def optical_phase(self, t: float, params: dict) -> float:
-        """420 nm optical phase φ(t): the ``optical_phase=`` callable if given;
-        subclasses override this instead."""
-        if self._phase_fn is not None:
-            return float(self._phase_fn(t))
-        raise NotImplementedError("pass optical_phase=... to CZProtocol(...) or override optical_phase().")
+        o420, o1013 = cz_rabi_maxes(system, self._omega_420_max, self._omega_1013_max)
+        return {
+            "t_gate": self._t_gate,
+            "theta": 0.0,
+            "omega_420_max": o420,
+            "omega_1013_max": o1013,
+            "drive_1013_active": _has_unit_1013(system),
+        }
 
     def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
-        c = self.amplitude(t, params) * np.exp(-1j * self.optical_phase(t, params))
-        return {"drive_420": c, "drive_420_dag": np.conjugate(c)}
+        s = t / params["t_gate"]
+        c420 = params["omega_420_max"] * self._A_420(s) * np.exp(-1j * self._phi_420(s))
+        coeffs = {"drive_420": c420, "drive_420_dag": np.conjugate(c420)}
+        if params.get("drive_1013_active", True):
+            c1013 = params["omega_1013_max"] * self._A_1013(s) * np.exp(-1j * self._phi_1013(s))
+            coeffs["drive_1013"] = c1013
+            coeffs["drive_1013_dag"] = np.conjugate(c1013)
+        return coeffs
 
     def phase_420(self, t: float, params: dict) -> complex:
-        return np.exp(-1j * self.optical_phase(t, params))
+        return np.exp(-1j * self._phi_420(t / params["t_gate"]))
+
+    @staticmethod
+    def _dot_phi(phi_fn, s: float, t_gate: float, eps_s: float = 1e-5) -> float:
+        """Instantaneous chirp ``dot_phi(t) = d/dt phi(s) = (d phi/ds) / t_gate`` (rad/s).
+
+        ``phi`` is the optical phase in ``Omega(t) = Omega_max * A(s) * exp(-i phi(s))``
+        with ``s = t / t_gate``; this is the time derivative of that phase, i.e. the
+        instantaneous laser frequency offset / chirp.  Central finite difference away
+        from the boundaries, one-sided within ``eps_s`` of ``s=0`` / ``s=1``; ``s`` is
+        clamped to ``[0, 1]``.
+        """
+        s = float(np.clip(s, 0.0, 1.0))
+        eps = float(eps_s)
+        if s <= eps:
+            d_ds = (float(phi_fn(s + eps)) - float(phi_fn(s))) / eps
+        elif s >= 1.0 - eps:
+            d_ds = (float(phi_fn(s)) - float(phi_fn(s - eps))) / eps
+        else:
+            d_ds = (float(phi_fn(s + eps)) - float(phi_fn(s - eps))) / (2.0 * eps)
+        return d_ds / float(t_gate)
+
+    def pulse_traces(self, t: float, params: dict) -> dict[str, float]:
+        """The 420/1013 laser amplitudes **and** chirps (all in rad/s).
+
+        The ``dot_phi_*`` traces are the time derivative of each optical phase
+        ``phi_*`` in ``Omega(t) = Omega_max * A(t) * exp(-i phi(t))`` — the
+        instantaneous laser frequency offset (e.g. the 420 detuning sweep of a
+        chirped pulse), computed by finite difference (:meth:`_dot_phi`).
+        """
+        t_gate = params["t_gate"]
+        s = t / t_gate
+        return {
+            r"$\Omega_{420}$": params["omega_420_max"] * float(self._A_420(s)),
+            r"$\Omega_{1013}$": params["omega_1013_max"] * float(self._A_1013(s)),
+            r"$\dot\phi_{420}$": self._dot_phi(self._phi_420, s, t_gate),
+            r"$\dot\phi_{1013}$": self._dot_phi(self._phi_1013, s, t_gate),
+        }
+
+    def plot(self, system=None, **kwargs):
+        """Stacked plot: the two amplitudes and the two phase chirps each get their
+        own subplot (shared time axis), since amplitudes (MHz) and chirps live on
+        different scales.  Pass ``stacked=False`` for the single-axis view.  See
+        :meth:`ryd_gate.protocols.base.Protocol.plot`.
+        """
+        kwargs.setdefault("stacked", True)
+        return super().plot(system, **kwargs)
 
 
-class TOProtocol(CZProtocol):
-    """Time-Optimal pulse protocol with cosine phase modulation."""
+class TOProtocol:
+    """Time-Optimal CZ *builder*: ``x -> CZProtocol`` with cosine phase modulation.
 
-    @property
-    def n_params(self) -> int:
-        return 6
+    ``x = [A, omega/Omega_eff, phi0, delta/Omega_eff, theta, T/T_scale]``.  Holds
+    only optimization metadata; :meth:`build` constructs the concrete pulse.
+    """
 
-    @property
-    def theta_index(self) -> int:
-        return 4
+    n_params = 6
+    theta_index = 4
+    t_gate_index = 5
 
-    @property
-    def t_gate_index(self) -> int:
-        return 5
+    def __init__(
+        self,
+        *,
+        omega_420_max: float | None = None,
+        omega_1013_max: float | None = None,
+        blackman: bool = True,
+        n_steps: int = 200,
+    ) -> None:
+        self._omega_420_max = omega_420_max
+        self._omega_1013_max = omega_1013_max
+        self._blackman = bool(blackman)
+        self.n_steps = n_steps
 
-    def validate_params(self, x: list[float]) -> None:
+    def validate_params(self, x) -> None:
         if len(x) != 6:
-            raise ValueError(
-                f"TO parameters must be a list of 6 elements. Got {len(x)} elements."
-            )
-
-    def unpack_params(self, x: list[float], system) -> dict:
-        rabi_eff = system.meta("rabi_eff")
-        time_scale = system.meta("time_scale")
-        return {
-            "phase_amp": x[0],
-            "omega": x[1] * rabi_eff,
-            "phase_init": x[2],
-            "delta": x[3] * rabi_eff,
-            "theta": x[4],
-            "t_gate": x[5] * time_scale,
-            "t_rise": system.meta("t_rise", 0.0),
-            "blackmanflag": system.meta("blackmanflag", True),
-        }
-
-    def optical_phase(self, t: float, params: dict) -> float:
-        return (params["phase_amp"] * np.cos(params["omega"] * t + params["phase_init"])
-                + params["delta"] * t)
+            raise ValueError(f"TO parameters must be a list of 6 elements. Got {len(x)} elements.")
 
     def get_optimization_bounds(self) -> tuple:
         return (
@@ -179,50 +276,57 @@ class TOProtocol(CZProtocol):
             (-np.pi, np.pi),
         )
 
+    def unpack_params(self, x, system) -> dict:
+        """Back-compat surface: report/MC read ``theta``/``t_gate`` off the builder."""
+        self.validate_params(x)
+        o420, o1013 = cz_rabi_maxes(system, self._omega_420_max, self._omega_1013_max)
+        _, time_scale = cz_effective_rabi(system, o420, o1013)
+        return {"t_gate": x[5] * time_scale, "theta": x[4]}
 
-class ARProtocol(CZProtocol):
-    """Amplitude-Robust pulse protocol with dual-sine phase modulation."""
+    def build(self, x, system) -> CZProtocol:
+        self.validate_params(x)
+        o420, o1013 = cz_rabi_maxes(system, self._omega_420_max, self._omega_1013_max)
+        rabi_eff, time_scale = cz_effective_rabi(system, o420, o1013)
+        t_gate = x[5] * time_scale
+        t_rise = system.meta("t_rise", 0.0)
+        omega = x[1] * rabi_eff
+        delta = x[3] * rabi_eff
+        return CZProtocol(
+            t_gate=t_gate,
+            A_420=_blackman_envelope(t_rise, t_gate) if self._blackman else _flat_envelope(),
+            phi_420=_to_phase(x[0], omega, x[2], delta, t_gate),
+            omega_420_max=o420,
+            omega_1013_max=o1013,
+            n_steps=self.n_steps,
+        )
 
-    @property
-    def n_params(self) -> int:
-        return 8
 
-    @property
-    def theta_index(self) -> int:
-        return 7
+class ARProtocol:
+    """Amplitude-Robust CZ *builder*: ``x -> CZProtocol`` with dual-sine phase.
 
-    @property
-    def t_gate_index(self) -> int:
-        return 6
+    ``x = [omega/Omega_eff, A1, phi1, A2, phi2, delta/Omega_eff, T/T_scale, theta]``.
+    """
 
-    def validate_params(self, x: list[float]) -> None:
+    n_params = 8
+    theta_index = 7
+    t_gate_index = 6
+
+    def __init__(
+        self,
+        *,
+        omega_420_max: float | None = None,
+        omega_1013_max: float | None = None,
+        blackman: bool = True,
+        n_steps: int = 200,
+    ) -> None:
+        self._omega_420_max = omega_420_max
+        self._omega_1013_max = omega_1013_max
+        self._blackman = bool(blackman)
+        self.n_steps = n_steps
+
+    def validate_params(self, x) -> None:
         if len(x) != 8:
-            raise ValueError(
-                f"AR parameters must be a list of 8 elements. Got {len(x)} elements."
-            )
-
-    def unpack_params(self, x: list[float], system) -> dict:
-        rabi_eff = system.meta("rabi_eff")
-        time_scale = system.meta("time_scale")
-        return {
-            "omega": x[0] * rabi_eff,
-            "phase_amp1": x[1],
-            "phase_init1": x[2],
-            "phase_amp2": x[3],
-            "phase_init2": x[4],
-            "delta": x[5] * rabi_eff,
-            "t_gate": x[6] * time_scale,
-            "theta": x[7],
-            "t_rise": system.meta("t_rise", 0.0),
-            "blackmanflag": system.meta("blackmanflag", True),
-        }
-
-    def optical_phase(self, t: float, params: dict) -> float:
-        return (
-            params["phase_amp1"] * np.sin(params["omega"] * t + params["phase_init1"])
-            + params["phase_amp2"] * np.sin(2 * params["omega"] * t + params["phase_init2"])
-            + params["delta"] * t
-        )
+            raise ValueError(f"AR parameters must be a list of 8 elements. Got {len(x)} elements.")
 
     def get_optimization_bounds(self) -> tuple:
         return (
@@ -236,72 +340,148 @@ class ARProtocol(CZProtocol):
             (-np.pi, np.pi),
         )
 
+    def unpack_params(self, x, system) -> dict:
+        self.validate_params(x)
+        o420, o1013 = cz_rabi_maxes(system, self._omega_420_max, self._omega_1013_max)
+        _, time_scale = cz_effective_rabi(system, o420, o1013)
+        return {"t_gate": x[6] * time_scale, "theta": x[7]}
 
-class DoubleARPProtocol(CZProtocol):
-    """Two consecutive rapid-adiabatic-passage pulses for a Rydberg CZ gate.
+    def build(self, x, system) -> CZProtocol:
+        self.validate_params(x)
+        o420, o1013 = cz_rabi_maxes(system, self._omega_420_max, self._omega_1013_max)
+        rabi_eff, time_scale = cz_effective_rabi(system, o420, o1013)
+        t_gate = x[6] * time_scale
+        t_rise = system.meta("t_rise", 0.0)
+        omega = x[0] * rabi_eff
+        delta = x[5] * rabi_eff
+        return CZProtocol(
+            t_gate=t_gate,
+            A_420=_blackman_envelope(t_rise, t_gate) if self._blackman else _flat_envelope(),
+            phi_420=_ar_phase(x[1], x[2], x[3], x[4], omega, delta, t_gate),
+            omega_420_max=o420,
+            omega_1013_max=o1013,
+            n_steps=self.n_steps,
+        )
 
-    Parameters are angular frequencies in rad/s and time in seconds.
-    ``omega_max`` is the target effective two-photon Rabi frequency.  If omitted,
-    the system's nominal ``rabi_eff`` is used.  The laser overrides ``Delta_Hz`` /
-    ``rabi_420_Hz`` / ``rabi_1013_Hz`` set the rb87/analog operating point when
-    this protocol is attached via ``set_protocol``.
 
-    Schedule / where the formula lives
-    ----------------------------------
-    The pulse is defined by two methods: :meth:`envelope` (the dimensionless
-    super-Gaussian amplitude) and :meth:`detuning` (the ARP frequency sweep),
-    optionally Stark-compensated by :meth:`chirp_detuning`.  The 420nm phase
-    ``phi(t)`` is the *time integral* of that chirp, so it is not evaluated
-    analytically per step: :meth:`unpack_params` pre-integrates it once into a
-    ``(phase_t, phase_values)`` table via :meth:`_build_phase_table`, and
-    :meth:`phase` / the inherited ``get_drive_coefficients`` then read it back with
-    ``np.interp`` (O(1) per step).  To read the actual schedule, look at
-    :meth:`envelope` / :meth:`detuning` / :meth:`chirp_detuning`, not the
-    table lookup in :meth:`phase`.
+def phase_from_chirp(chirp_fn, t_gate: float, n_samples: int = 1001):
+    """Integrate an instantaneous chirp into an optical phase.
+
+    Returns ``phi(t) = ∫₀^t chirp(t') dt'`` as an O(1) interpolating callable over
+    ``t in [0, t_gate]`` (trapezoidal cumulative integral on ``n_samples`` points).
+    Use it for a :class:`CZProtocol` phase via ``phi_420 = lambda s: phi(s * t_gate)``.
+
+    This is pure *pulse construction* — ``chirp_fn`` is a plain ``f(t)`` in rad/s
+    (e.g. a bare detuning sweep, or a detuning-plus-compensation sum).  It holds no
+    physics and needs no system; effective-theory / Stark logic lives elsewhere
+    (see :func:`ryd_gate.core.effective_theory.lower_cz_to_effective_01r`).
+    """
+    t_gate = float(t_gate)
+    n = int(n_samples)
+    if t_gate <= 0:
+        raise ValueError("t_gate must be positive.")
+    if n < 2:
+        raise ValueError("n_samples must be at least 2.")
+    grid = np.linspace(0.0, t_gate, n)
+    chirp = np.array([float(chirp_fn(float(t))) for t in grid], dtype=float)
+    phase = np.zeros_like(grid)
+    phase[1:] = np.cumsum(0.5 * (chirp[:-1] + chirp[1:]) * np.diff(grid))
+
+    def phi(t, _g=grid, _p=phase, _tg=t_gate):
+        return float(np.interp(float(np.clip(t, 0.0, _tg)), _g, _p))
+
+    return phi
+
+
+class EffectiveCZProtocol(Protocol):
+    """Drive the *full* 3x3 ``{0,1,r}`` effective Hamiltonian directly.
+
+    The effective pulse is a single matrix-valued callable ``h_eff(t)`` returning
+    the 3x3 single-atom Hamiltonian in ``{|0>, |1>, |r>}`` order (the endpoint of
+    the 7-level -> ``{0,1,r}`` reduction; build it with
+    :func:`ryd_gate.core.effective_theory.lower_cz_to_effective_01r`).  It is
+    realized faithfully on the ``01r`` level structure via its
+    ``drive_R`` / ``drive_hf`` / ``drive_0r`` transition channels and
+    ``delta_R`` / ``delta_hf`` detuning channels — the off-diagonals are the
+    ``[upper, lower]`` matrix elements (the compiler adds the h.c.) and the diagonal
+    is referenced to ``|0>`` (the global / clock phase is an unobservable
+    single-qubit Z):
+
+        drive_R  = M[2, 1]   (|r><1|, K1r)        delta_hf = M[1, 1] - M[0, 0]
+        drive_hf = M[1, 0]   (|1><0|, K01)        delta_R  = M[2, 2] - M[0, 0]
+        drive_0r = M[2, 0]   (|r><0|, K0r)
+
+    ``has_K01`` / ``has_K0r`` declare whether the ``|0>-|1>`` / ``|0>-|r>`` legs are
+    driven (so the resonant-flop case stays a pure ``|1>-|r>`` drive).  The full
+    effective model (nonzero K0r) is **exact-backend only**.
     """
 
     def __init__(
         self,
         *,
-        omega_max: float | None = None,
-        delta_max: float,
         t_gate: float,
-        sigma: float | None = None,
-        omega_scale: float = 1.0,
-        delta_offset: float = 0.0,
-        theta: float = np.pi,
-        n_steps: int = 320,
-        compensate_stark: bool = False,
-        stark_compensation_sign: float = -1.0,
-        phase_samples: int | None = None,
-        Delta_Hz: float | None = None,
-        rabi_420_Hz: float | None = None,
-        rabi_1013_Hz: float | None = None,
+        h_eff,
+        n_steps: int = 200,
+        has_K01: bool = True,
+        has_K0r: bool = True,
     ) -> None:
         if t_gate <= 0:
             raise ValueError("t_gate must be positive.")
-        if delta_max <= 0:
-            raise ValueError("delta_max must be positive.")
-        if n_steps < 1:
-            raise ValueError("n_steps must be positive.")
-
-        self.omega_max = None if omega_max is None else float(omega_max)
-        self.delta_max = float(delta_max)
         self.t_gate = float(t_gate)
-        self.sigma = float(0.175 * t_gate if sigma is None else sigma)
-        if self.sigma <= 0:
-            raise ValueError("sigma must be positive.")
-        self.omega_scale = float(omega_scale)
-        self.delta_offset = float(delta_offset)
-        self.theta = float(theta)
         self.n_steps = int(n_steps)
-        self.compensate_stark = bool(compensate_stark)
-        self.stark_compensation_sign = float(stark_compensation_sign)
-        self.phase_samples = None if phase_samples is None else int(phase_samples)
-        self.t_pulse = 0.5 * self.t_gate
-        self.offset_a = np.exp(-((self.t_pulse / 2.0) ** 4) / self.sigma**4)
-        super().__init__(
-            Delta_Hz=Delta_Hz, rabi_420_Hz=rabi_420_Hz, rabi_1013_Hz=rabi_1013_Hz
+        self._h_eff = h_eff
+        self._has_K01 = bool(has_K01)
+        self._has_K0r = bool(has_K0r)
+        self._cache_t: float | None = None
+        self._cache_M = None
+
+    @classmethod
+    def from_components(
+        cls,
+        *,
+        t_gate: float,
+        omega_eff_fn,
+        phi_fn,
+        delta_R_fn=None,
+        D0_fn=None,
+        D1_fn=None,
+        Dr_fn=None,
+        K01_fn=None,
+        K0r_fn=None,
+        n_steps: int = 200,
+    ) -> "EffectiveCZProtocol":
+        """Build from the individual effective components (hand-construction).
+
+        Off-diagonals: ``M[2,1] = (Omega_eff/2) e^{-i phi}`` (K1r), ``M[1,0] = K01``,
+        ``M[2,0] = K0r``.  Diagonal: ``M[0,0]=D0``, ``M[1,1]=D1``,
+        ``M[2,2]=Dr - delta_R``.  ``has_K01`` / ``has_K0r`` follow from whether
+        ``K01_fn`` / ``K0r_fn`` are given.
+        """
+
+        def _call(fn, t):
+            return 0.0 if fn is None else complex(fn(t))
+
+        def h_eff(t):
+            M = np.zeros((3, 3), dtype=complex)
+            M[0, 0] = _call(D0_fn, t)
+            M[1, 1] = _call(D1_fn, t)
+            M[2, 2] = _call(Dr_fn, t) - _call(delta_R_fn, t)
+            k1r = 0.5 * complex(omega_eff_fn(t)) * np.exp(-1j * float(phi_fn(t)))
+            M[2, 1], M[1, 2] = k1r, np.conjugate(k1r)
+            if K01_fn is not None:
+                k01 = complex(K01_fn(t))
+                M[1, 0], M[0, 1] = k01, np.conjugate(k01)
+            if K0r_fn is not None:
+                k0r = complex(K0r_fn(t))
+                M[2, 0], M[0, 2] = k0r, np.conjugate(k0r)
+            return M
+
+        return cls(
+            t_gate=t_gate,
+            h_eff=h_eff,
+            n_steps=n_steps,
+            has_K01=K01_fn is not None,
+            has_K0r=K0r_fn is not None,
         )
 
     @property
@@ -309,152 +489,46 @@ class DoubleARPProtocol(CZProtocol):
         return 0
 
     def validate_params(self, x) -> None:
-        if len(x) != 0:
-            raise ValueError(
-                f"DoubleARPProtocol takes no x parameters; got {len(x)}."
-            )
+        if len(x):
+            raise ValueError(f"EffectiveCZProtocol takes no x parameters; got {len(x)}.")
 
     def unpack_params(self, x, system) -> dict:
         self.validate_params(x)
-        rabi_eff = system.meta("rabi_eff", None) if hasattr(system, "meta") else None
-        if rabi_eff is None or float(rabi_eff) == 0.0:
-            raise ValueError(
-                "DoubleARPProtocol requires system metadata 'rabi_eff' to map "
-                "effective Rabi frequency onto the 420nm amplitude scale."
-            )
-        omega_max = float(rabi_eff) if self.omega_max is None else self.omega_max
-        params = {
-            "t_gate": self.t_gate,
-            "theta": self.theta,
-            "omega_max": omega_max,
-            "delta_max": self.delta_max,
-            "delta_offset": self.delta_offset,
-            "rabi_eff": float(rabi_eff),
-            "n_steps": self.n_steps,
-            "compensate_stark": self.compensate_stark,
-            "stark_compensation_sign": self.stark_compensation_sign,
-            "n_sites": getattr(system, "N", None),
-            "pin_deltas": {},
-            "scatter_rates": {},
-            "static_overlays": [],
-        }
-        params.update(self._stark_params(system) if self.compensate_stark else self._empty_stark_params())
-        phase_t, phase_values = self._build_phase_table(params)
-        params["phase_t"] = phase_t
-        params["phase_values"] = phase_values
-        return params
+        return {"t_gate": self.t_gate, "theta": 0.0, "n_sites": getattr(system, "N", None)}
 
     @property
     def required_channels(self) -> frozenset[str]:
-        return frozenset({"drive_420", "drive_420_dag"})
+        channels = {"drive_R", "delta_R", "delta_hf"}
+        if self._has_K01:
+            channels.add("drive_hf")
+        if self._has_K0r:
+            channels.add("drive_0r")
+        return frozenset(channels)
 
-    def local_time(self, t: float) -> float:
-        t_clamped = float(np.clip(t, 0.0, self.t_gate))
-        return t_clamped if t_clamped < self.t_pulse else t_clamped - self.t_pulse
+    def _matrix(self, t: float) -> np.ndarray:
+        # The IR calls get_drive_coefficients once per channel per step (same t);
+        # cache the last evaluation so h_eff (two SW reductions) runs once per t.
+        if self._cache_t is None or t != self._cache_t:
+            self._cache_M = np.asarray(self._h_eff(t), dtype=complex)
+            self._cache_t = t
+        return self._cache_M
 
-    def envelope(self, t: float) -> float:
-        """Dimensionless super-Gaussian envelope with zero endpoints."""
-        u = self.local_time(t)
-        return float(
-            (np.exp(-((u - self.t_pulse / 2.0) ** 4) / self.sigma**4) - self.offset_a)
-            / (1.0 - self.offset_a)
-        )
-
-    def effective_omega(self, t: float, params: dict | None = None) -> float:
-        omega_max = self.omega_max if params is None else params["omega_max"]
-        if omega_max is None:
-            raise ValueError("effective_omega() needs params when omega_max=None.")
-        return self.omega_scale * float(omega_max) * self.envelope(t)
-
-    def detuning(self, t: float, params: dict | None = None) -> float:
-        delta_max = self.delta_max if params is None else params["delta_max"]
-        delta_offset = self.delta_offset if params is None else params["delta_offset"]
-        u = self.local_time(t)
-        return float(delta_max) * np.sin(np.pi * (u / self.t_pulse - 0.5)) + float(delta_offset)
+    def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
+        M = self._matrix(t)
+        coeffs = {
+            "drive_R": complex(M[2, 1]),
+            "delta_hf": complex(M[1, 1] - M[0, 0]),
+            "delta_R": complex(M[2, 2] - M[0, 0]),
+        }
+        if self._has_K01:
+            coeffs["drive_hf"] = complex(M[1, 0])
+        if self._has_K0r:
+            coeffs["drive_0r"] = complex(M[2, 0])
+        return coeffs
 
     def pulse_traces(self, t: float, params: dict) -> dict[str, float]:
-        """Physical effective Rabi and ARP detuning sweep at time *t*."""
+        M = self._matrix(t)
         return {
-            r"$\Omega_{\rm eff}$": self.effective_omega(t, params),
-            r"$\Delta$": self.detuning(t, params),
-        }
-
-    def stark_shift(self, t: float, params: dict) -> float:
-        """Second-order differential Stark shift ``E_r - E_1``."""
-        amplitude = self.effective_omega(t, params) / float(params["rabi_eff"])
-        return float(params["stark_r"]) - float(params["stark_1_per_amp2"]) * amplitude * amplitude
-
-    def chirp_detuning(self, t: float, params: dict) -> float:
-        """420 phase derivative after optional dynamic Stark compensation."""
-        desired = self.detuning(t, params)
-        if not params.get("compensate_stark", False):
-            return desired
-        return desired + float(params.get("stark_compensation_sign", -1.0)) * self.stark_shift(t, params)
-
-    def phase(self, t: float, params: dict | None = None) -> float:
-        """Return phase whose derivative is the compensated ARP chirp."""
-        if params is not None and "phase_t" in params and "phase_values" in params:
-            t_clamped = float(np.clip(t, 0.0, self.t_gate))
-            return float(np.interp(t_clamped, params["phase_t"], params["phase_values"]))
-
-        # Analytic fallback for plotting before a system-bound params dict exists.
-        delta_max = self.delta_max if params is None else params["delta_max"]
-        delta_offset = self.delta_offset if params is None else params["delta_offset"]
-        t_clamped = float(np.clip(t, 0.0, self.t_gate))
-        u = self.local_time(t_clamped)
-        arp_part = -float(delta_max) * self.t_pulse / np.pi * np.sin(np.pi * u / self.t_pulse)
-        return arp_part + float(delta_offset) * t_clamped
-
-    def amplitude(self, t: float, params: dict) -> float:
-        return self.effective_omega(t, params) / float(params["rabi_eff"])
-
-    def optical_phase(self, t: float, params: dict) -> float:
-        return self.phase(t, params)
-
-    def _build_phase_table(self, params: dict) -> tuple[np.ndarray, np.ndarray]:
-        n = self.phase_samples or max(4 * self.n_steps + 1, 1001)
-        if n < 2:
-            raise ValueError("phase_samples must be at least 2.")
-        t_grid = np.linspace(0.0, self.t_gate, int(n))
-        chirp = np.array([self.chirp_detuning(t, params) for t in t_grid], dtype=float)
-        dt = np.diff(t_grid)
-        phase = np.zeros_like(t_grid)
-        phase[1:] = np.cumsum(0.5 * (chirp[:-1] + chirp[1:]) * dt)
-        return t_grid, phase
-
-    def _empty_stark_params(self) -> dict[str, float]:
-        return {
-            "stark_1_per_amp2": 0.0,
-            "stark_r": 0.0,
-            "stark_garb": 0.0,
-        }
-
-    def _stark_params(self, system) -> dict[str, float]:
-        try:
-            h_const = system.blocks.get("H_const").matrix
-            h420 = system.blocks.get("drive_420").matrix
-            h1013 = system.blocks.get("H_1013").matrix
-        except Exception as exc:  # pragma: no cover - defensive message
-            raise ValueError(
-                "Stark compensation requires rb87_7 local matrix blocks "
-                "'H_const', 'drive_420', and 'H_1013'."
-            ) from exc
-
-        h_const = np.asarray(h_const)
-        h420 = np.asarray(h420)
-        h1013 = np.asarray(h1013)
-        if h_const.shape[0] < 7 or h420.shape[0] < 7 or h1013.shape[0] < 7:
-            raise ValueError("Stark compensation currently targets the rb87_7 level structure.")
-
-        mid_energies = np.real(np.diag(h_const)[2:5])
-        if np.any(np.abs(mid_energies) < 1e-15):
-            raise ValueError("Intermediate-state energy denominator is zero; cannot compensate Stark shift.")
-
-        stark_1_per_amp2 = -sum(abs(h420[e, 1]) ** 2 / mid_energies[e - 2] for e in (2, 3, 4))
-        stark_r = -sum(abs(h1013[5, e]) ** 2 / mid_energies[e - 2] for e in (2, 3, 4))
-        stark_garb = -sum(abs(h1013[6, e]) ** 2 / mid_energies[e - 2] for e in (2, 3, 4))
-        return {
-            "stark_1_per_amp2": float(np.real(stark_1_per_amp2)),
-            "stark_r": float(np.real(stark_r)),
-            "stark_garb": float(np.real(stark_garb)),
+            r"$|K_{1r}|$": float(abs(M[2, 1])),
+            r"$\Delta_R$": float(np.real(M[2, 2] - M[0, 0])),
         }

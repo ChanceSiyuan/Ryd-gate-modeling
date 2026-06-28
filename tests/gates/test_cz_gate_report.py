@@ -24,7 +24,7 @@ X_FAST = [
 
 def _system(**kwargs):
     return (
-        RydbergSystem.set_atom_level("rb87_7", param_set="our", blackmanflag=False, **kwargs)
+        RydbergSystem.set_atom_level("rb87_7", param_set="our", **kwargs)
         .set_atom_geom(Register.chain(2, spacing_um=3.0))
         .build()
     )
@@ -33,7 +33,7 @@ def _system(**kwargs):
 @pytest.fixture(scope="module")
 def report():
     return cz_gate_report(
-        _system(), TOProtocol(), X_FAST, include_error_budget=False
+        _system(), TOProtocol(blackman=False), X_FAST, include_error_budget=False
     )
 
 
@@ -76,21 +76,21 @@ class TestAssemblyRules:
 
         monkeypatch.setattr(gate_metrics, "error_budget", boom)
         report = cz_gate_report(
-            _system(), TOProtocol(), X_FAST, include_error_budget=False
+            _system(), TOProtocol(blackman=False), X_FAST, include_error_budget=False
         )
         assert report.error_budget == {}
 
     def test_include_residuals_false_gives_empty_map(self):
         report = cz_gate_report(
-            _system(), TOProtocol(), X_FAST,
+            _system(), TOProtocol(blackman=False), X_FAST,
             include_error_budget=False, include_residuals=False,
         )
         assert report.residuals == {}
 
     def test_error_budget_matches_direct_call(self):
         system = _system(enable_rydberg_decay=True)
-        report = cz_gate_report(system, TOProtocol(), X_FAST)
-        direct = gate_metrics.error_budget(system, TOProtocol(), X_FAST)
+        report = cz_gate_report(system, TOProtocol(blackman=False), X_FAST)
+        direct = gate_metrics.error_budget(system, TOProtocol(blackman=False), X_FAST)
         assert report.error_budget == direct
 
     def test_non_cz_protocol_raises(self):
@@ -106,7 +106,7 @@ class TestAssemblyRules:
 
     def test_infidelity_matches_average_gate_infidelity(self, report):
         direct = gate_metrics.average_gate_infidelity(
-            _system(), TOProtocol(), X_FAST
+            _system(), TOProtocol(blackman=False), X_FAST
         )
         assert report.infidelity == pytest.approx(float(direct), rel=1e-12)
 
@@ -114,7 +114,7 @@ class TestAssemblyRules:
 def _coarse_proto():
     """TO protocol with a coarse step count -- keeps the optimizer-loop tests
     cheap (the theta mechanism is n_steps-independent)."""
-    p = TOProtocol(); p.n_steps = 40
+    p = TOProtocol(blackman=False); p.n_steps = 40
     return p
 
 

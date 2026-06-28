@@ -97,7 +97,6 @@ class _RB87PhysicalParams:
     ryd_branch: dict
     mid_branch: dict
     t_rise: float
-    blackmanflag: bool
     enable_rydberg_decay: bool
     enable_intermediate_decay: bool
     enable_polarization_leakage: bool
@@ -112,17 +111,32 @@ def _rb87_default_c6(param_set: str) -> float:
     return DEFAULT_C6
 
 
+# Canonical (rabi_420, rabi_1013) per rb87_7 param_set, in rad/s.  Single source
+# of truth: used to seed the param-set defaults below and exposed via
+# ``rb87_default_rabis`` so CZ protocols can supply the laser Rabi scale that the
+# (now unit-normalized) 420/1013 Hamiltonian blocks no longer carry.
+_RB87_DEFAULT_RABIS: dict[str, tuple[float, float]] = {
+    "our": (2 * np.pi * 491e6, 2 * np.pi * 185e6),
+    "lukin": (2 * np.pi * 237e6, 2 * np.pi * 303e6),
+}
+
+
+def rb87_default_rabis(param_set: str) -> tuple[float, float]:
+    """Canonical ``(rabi_420, rabi_1013)`` (rad/s) for an rb87_7 param set."""
+    try:
+        return _RB87_DEFAULT_RABIS[param_set]
+    except KeyError:
+        raise ValueError(f"Unknown rb87_7 parameter set '{param_set}'.") from None
+
+
 def _rb87_physical_params(
     param_set: str,
     *,
     detuning_sign: int,
-    blackmanflag: bool,
     enable_rydberg_decay: bool,
     enable_intermediate_decay: bool,
     enable_polarization_leakage: bool,
     Delta_Hz: float | None = None,
-    rabi_420_Hz: float | None = None,
-    rabi_1013_Hz: float | None = None,
 ) -> _RB87PhysicalParams:
     from arc import Rubidium87
 
@@ -132,8 +146,7 @@ def _rb87_physical_params(
     if param_set == "our":
         ryd_level = 70
         Delta = detuning_sign * 2 * np.pi * 9.1e9
-        rabi_420 = 2 * np.pi * 491e6
-        rabi_1013 = 2 * np.pi * 185e6
+        rabi_420, rabi_1013 = _RB87_DEFAULT_RABIS["our"]
         d_mid_ratio = atom.getDipoleMatrixElement(5, 0, 0.5, 0.5, 6, 1, 1.5, -0.5, -1) / atom.getDipoleMatrixElement(
             5, 0, 0.5, -0.5, 6, 1, 1.5, -1.5, -1
         )
@@ -151,8 +164,7 @@ def _rb87_physical_params(
     elif param_set == "lukin":
         ryd_level = 53
         Delta = detuning_sign * 2 * np.pi * 7.8e9
-        rabi_420 = 2 * np.pi * 237e6
-        rabi_1013 = 2 * np.pi * 303e6
+        rabi_420, rabi_1013 = _RB87_DEFAULT_RABIS["lukin"]
         d_mid_ratio = atom.getDipoleMatrixElement(5, 0, 0.5, -0.5, 6, 1, 1.5, 0.5, 1) / atom.getDipoleMatrixElement(
             5, 0, 0.5, 0.5, 6, 1, 1.5, 1.5, 1
         )
@@ -172,10 +184,6 @@ def _rb87_physical_params(
 
     if Delta_Hz is not None:
         Delta = detuning_sign * 2 * np.pi * float(Delta_Hz)
-    if rabi_420_Hz is not None:
-        rabi_420 = 2 * np.pi * float(rabi_420_Hz)
-    if rabi_1013_Hz is not None:
-        rabi_1013 = 2 * np.pi * float(rabi_1013_Hz)
 
     rabi_420_garbage = rabi_420 * d_mid_ratio
     rabi_1013_garbage = rabi_1013 * d_ryd_ratio
@@ -208,7 +216,6 @@ def _rb87_physical_params(
         ryd_branch=ryd_branch,
         mid_branch=mid_branch,
         t_rise=20e-9,
-        blackmanflag=blackmanflag,
         enable_rydberg_decay=enable_rydberg_decay,
         enable_intermediate_decay=enable_intermediate_decay,
         enable_polarization_leakage=enable_polarization_leakage,
@@ -216,17 +223,13 @@ def _rb87_physical_params(
 
 
 def _metadata_from_rb87_params(system: _RB87PhysicalParams) -> dict[str, Any]:
+    # The laser Rabi scale (rabi_420/rabi_1013/rabi_eff/time_scale/garbage) is no
+    # longer a system property — the unit-normalized blocks carry no Rabi, and the
+    # CZ protocol owns the 420/1013 amplitudes.  Delta stays here (static energies).
     return {
-        "rabi_eff": system.rabi_eff,
-        "time_scale": system.time_scale,
         "t_rise": system.t_rise,
-        "blackmanflag": system.blackmanflag,
         "n_atoms": system.n_atoms,
         "n_levels": system.n_levels,
-        "rabi_420": system.rabi_420,
-        "rabi_1013": system.rabi_1013,
-        "rabi_420_garbage": system.rabi_420_garbage,
-        "rabi_1013_garbage": system.rabi_1013_garbage,
         "Delta": system.Delta,
         "v_ryd": system.v_ryd,
         "v_ryd_garb": system.v_ryd_garb,
@@ -359,7 +362,6 @@ def _apply_analog_3_lattice_blocks(
     model: "RydbergSystem",
     *,
     detuning_sign: int = 1,
-    blackmanflag: bool = True,
     enable_rydberg_decay: bool = False,
     enable_intermediate_decay: bool = False,
     Delta_Hz: float | None = None,
@@ -392,7 +394,6 @@ def _apply_analog_3_lattice_blocks(
             "rabi_eff": blk.rabi_eff,
             "time_scale": blk.time_scale,
             "t_rise": 20e-9,
-            "blackmanflag": blackmanflag,
             "n_atoms": model.N,
             "n_levels": 3,
             "rabi_420": blk.rabi_420,
@@ -422,26 +423,20 @@ def _apply_rb87_7_lattice_blocks(
     param_set: str,
     *,
     detuning_sign: int = 1,
-    blackmanflag: bool = True,
     enable_rydberg_decay: bool = False,
     enable_intermediate_decay: bool = False,
     enable_polarization_leakage: bool = False,
     Delta_Hz: float | None = None,
-    rabi_420_Hz: float | None = None,
-    rabi_1013_Hz: float | None = None,
     **unused,
 ) -> None:
     _reject_unused(unused)
     physical = _rb87_physical_params(
         param_set,
         detuning_sign=detuning_sign,
-        blackmanflag=blackmanflag,
         enable_rydberg_decay=enable_rydberg_decay,
         enable_intermediate_decay=enable_intermediate_decay,
         enable_polarization_leakage=enable_polarization_leakage,
         Delta_Hz=Delta_Hz,
-        rabi_420_Hz=rabi_420_Hz,
-        rabi_1013_Hz=rabi_1013_Hz,
     )
 
     h_const = _rb87_local_h_const(
@@ -450,16 +445,16 @@ def _apply_rb87_7_lattice_blocks(
         physical.mid_state_decay_rate if enable_intermediate_decay else 0.0,
         physical.ryd_state_decay_rate if enable_rydberg_decay else 0.0,
     )
-    h420 = _rb87_local_h420(
-        param_set,
-        physical.rabi_420,
-        physical.rabi_420_garbage,
-    )
-    h1013 = _rb87_local_h1013(param_set, physical.rabi_1013, physical.rabi_1013_garbage)
+    # Unit-Rabi, phase-free transition blocks: encode only which transitions are
+    # driven and their relative CG/dipole ratios (garbage leg -> the ratio).  The
+    # physical Rabi scale and phase are supplied by the CZ protocol coefficient at
+    # compile time (drive_420/drive_1013 are unit-valued here).
+    h420 = _rb87_local_h420(param_set, 1.0, physical.d_mid_ratio)
+    h1013 = _rb87_local_h1013(param_set, 1.0, physical.d_ryd_ratio)
 
     _register_local_matrix_block(model.blocks, "H_const", h_const, description="single-atom rb87_7 energies")
-    _register_local_matrix_block(model.blocks, "H_1013", h1013, hermitian=False, description="static 1013nm coupling")
-    _register_local_matrix_block(model.blocks, "H_1013_conj", h1013.conj().T, hermitian=False)
+    _register_local_matrix_block(model.blocks, "drive_1013", h1013, hermitian=False, description="1013nm coupling (static by default; drivable)")
+    _register_local_matrix_block(model.blocks, "drive_1013_dag", h1013.conj().T, hermitian=False)
     _register_local_matrix_block(model.blocks, "drive_420", h420, hermitian=False, description="420nm drive")
     _register_local_matrix_block(model.blocks, "drive_420_dag", h420.conj().T, hermitian=False)
 

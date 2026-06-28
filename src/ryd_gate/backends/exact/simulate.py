@@ -95,6 +95,17 @@ def resolve_n_steps(system, opts) -> int:
     return opts.get("n_steps", getattr(system.protocol, "n_steps", 200))
 
 
+def _build_cz_builder(system, x):
+    """If a CZ *builder* (TO/AR, exposing ``build``) is bound, materialize a concrete
+    pulse from ``x`` and rebind it, returning ``(system, ())``.  Otherwise pass through.
+    Keeps the public ``simulate(system, x, ...)`` surface while leaving the runtime
+    protocol free of the ``x`` vector."""
+    proto = getattr(system, "protocol", None)
+    if proto is not None and hasattr(proto, "build"):
+        return system.with_protocol(proto.build(list(x), system)), ()
+    return system, x
+
+
 def simulate(
     system,
     x=(),
@@ -130,6 +141,7 @@ def simulate(
             "or call .with_protocol(...) before simulation."
         )
 
+    system, x = _build_cz_builder(system, x)
     params = system.unpack_params(x)
     opts = as_backend_options(backend_options)
 
@@ -165,6 +177,7 @@ def simulate_states(
     if not isinstance(system, RydbergSystem):
         raise TypeError("simulate_states() requires a RydbergSystem with a bound protocol.")
 
+    system, x = _build_cz_builder(system, x)
     params = system.unpack_params(x)
     opts = as_backend_options(backend_options)
     ir = ExactSparseCompiler().compile(system, params)

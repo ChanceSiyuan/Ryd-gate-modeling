@@ -8,7 +8,11 @@ budgets — none of which has a Pulser equivalent.
 
 ```python
 from ryd_gate.gates import (
-    CZProtocol, ARProtocol, DoubleARPProtocol, TOProtocol,   # the kernel protocol classes
+    CZProtocol, ARProtocol, TOProtocol,              # the laser pulse + optimizer builders
+    phase_from_chirp,                                # chirp -> optical phase (pulse construction)
+    EffectiveCZProtocol,                             # the {0,1,r} effective endpoint
+    lower_cz_to_effective_01r,                       # the public 7-level -> {0,1,r} converter
+    schrieffer_wolff, shift_coefficients, reverse_amplitude_split,  # the 7<->{0,1,r} map
     average_gate_infidelity, error_budget,           # the analysis functions
     CZGateReport, cz_gate_report,                    # the stable report surface
     optimize_cz_parameters,                          # parameter optimization
@@ -18,37 +22,46 @@ from ryd_gate.gates import (
 `ryd_gate.gates` re-exports kernel objects — it is a documented namespace,
 not a second implementation.
 
-## Protocols: a pulse is two functions
+## Protocols: a pulse is the 420/1013 laser drive
 
-Every CZ pulse is two time functions — a 420 nm Rabi **envelope** $A(t)$ and an
-**optical phase** $\varphi(t)$ — and the 420 nm drive is $A(t)\,e^{-i\varphi(t)}$
-(+ h.c.). `CZProtocol` writes that `get_drive_coefficients` **once**; a subclass
-supplies only the two functions:
+The `rb87_7` system builds **unit-Rabi, phase-free** transition blocks — they encode only
+which transitions are driven and their relative CG/dipole ratios. The CZ **protocol** owns
+the laser amplitudes and phases, supplying the complex drives that multiply those blocks:
+
+$$\Omega_{420}(t)=\Omega_{420}^{\max}\,A_{420}(s)\,e^{-i\varphi_{420}(s)},\qquad
+  \Omega_{1013}(t)=\Omega_{1013}^{\max}\,A_{1013}(s)\,e^{-i\varphi_{1013}(s)}$$
+
+with normalized time $s=t/t_{\rm gate}\in[0,1]$, amplitudes $A_*\in[0,1]$, and phases in
+radians. `CZProtocol` is the container for exactly that — four normalized functions, the two
+max Rabi amplitudes, and `t_gate`:
 
 ```python
 class CZProtocol(Protocol):
-    def amplitude(self, t, params): ...      # A(t); default = Blackman flat-top
-    def optical_phase(self, t, params): ...  # phi(t); subclass must override
-    def get_drive_coefficients(self, t, params):
-        c = self.amplitude(t, params) * exp(-1j * self.optical_phase(t, params))
-        return {"drive_420": c, "drive_420_dag": conj(c)}
+    def __init__(self, *, t_gate, A_420, phi_420, A_1013=None, phi_1013=None,
+                 omega_420_max=None, omega_1013_max=None, n_steps=200): ...
 ```
 
-The three built-ins differ **only** in how `optical_phase` is supplied:
+`A_1013` / `phi_1013` default to a constant 1013 coupling ($A_{1013}=1$, $\varphi_{1013}=0$);
+`omega_*_max` default to the system `param_set`'s canonical Rabis. The intermediate detuning
+$\Delta_e$ is an atomic property and lives on `set_atom_level(..., Delta_Hz=…)`.
 
-| protocol | `optical_phase` $\varphi(t)$ | `n_params` |
+The three built-ins differ **only** in how the 420 phase is supplied:
+
+| builder | 420 phase $\varphi_{420}$ | parameters |
 |---|---|---:|
-| `TOProtocol` | $A\cos(\omega t+\varphi_0)+\delta t$ | 6 |
-| `ARProtocol` | $A_1\sin(\omega t+\varphi_1)+A_2\sin(2\omega t+\varphi_2)+\delta t$ | 8 |
-| `DoubleARPProtocol` | precomputed ARP phase table | 0 |
+| `TOProtocol` | $A\cos(\omega t+\varphi_0)+\delta t$ | 6 (`x`) |
+| `ARProtocol` | $A_1\sin(\omega t+\varphi_1)+A_2\sin(2\omega t+\varphi_2)+\delta t$ | 8 (`x`) |
 
-One rule, not two: `n_params > 0` is a **parameterized** phase you optimize over `x`;
-`n_params = 0` is a **fixed** phase.
+`TOProtocol` / `ARProtocol` are **builders**: `build(x, system)` constructs a concrete
+`CZProtocol`. The pulse *shape* — cosine/dual-sine/blackman-vs-flat envelope — lives on the
+builder, never on `set_atom_level` (e.g. `TOProtocol(blackman=False)`). An *adiabatic* ARP
+pulse needs no builder at all — it is a `CZProtocol` whose 420 phase is the chirp integral
+$\int_0^t\Delta_R\,dt'$ (see (b)).
 
-### (a) Optimize a CZ gate → use a parameterized protocol
+### (a) Optimize a CZ gate → use a builder protocol
 
-`TOProtocol` / `ARProtocol` read the `x` knobs inside their `optical_phase`. Hand one to
-`optimize_cz_parameters`, which varies `x`:
+`TOProtocol` / `ARProtocol` turn `x` into a concrete pulse. Hand one to
+`optimize_cz_parameters`, which varies `x` (rebuilding the pulse each step):
 
 ```python
 from ryd_gate.gates import TOProtocol, optimize_cz_parameters
@@ -60,35 +73,123 @@ result.x            # optimized knobs
 result.infidelity   # average gate infidelity at result.x
 ```
 
-`unpack_params(x, system)` decodes `x` (scaling by the system's `rabi_eff` /
-`time_scale`) into the named `params` that `optical_phase` reads — that is the whole
-"x → pulse" map. (See *Re-optimizing parameters* below for the theta projection.)
+`build(x, system)` decodes `x` (scaling by $\Omega_{\rm eff}=\Omega_{420}^{\max}\Omega_{1013}^{\max}/2\Delta$
+and `time_scale = 2π/Ω_eff`) into a concrete `CZProtocol` — that is the whole "x → pulse"
+map. Pass `omega_420_max` / `omega_1013_max` to a builder to override the canonical laser
+power. (See *Re-optimizing parameters* below for the theta projection.)
 
-### (b) Hand-write the pulse → pass the two functions
+### (b) Hand-write the pulse → pass the four functions
 
-For *arbitrary* waveforms (not an `x` form), just hand the two functions to
-`CZProtocol` — no subclass:
+For *arbitrary* waveforms (not an `x` form), build a `CZProtocol` directly — no subclass:
 
 ```python
 import numpy as np
 from ryd_gate.gates import CZProtocol, cz_gate_report
 
 proto = CZProtocol(
-    optical_phase=lambda t: 5e6 * t,                      # your phi(t)
-    amplitude=lambda t: np.sin(np.pi * t / 0.3e-6) ** 2,  # your A(t) (omit -> flat envelope)
-    t_gate=0.3e-6,                                        # theta=... optionally factors out a single-qubit Z
+    t_gate=0.3e-6,
+    A_420=lambda s: np.sin(np.pi * s) ** 2,   # 420 envelope in [0,1], s = t/t_gate
+    phi_420=lambda s: 5.0 * s,                # 420 phase (rad)
+    # A_1013 / phi_1013 omitted -> constant 1013 coupling
+    # omega_*_max omitted -> param_set canonical Rabis
 )
 report = cz_gate_report(system, proto, [], include_error_budget=False)
 ```
 
-That is the whole "two functions in" path: `n_params = 0`, no `x`. Subclass `CZProtocol`
-and override `optical_phase` / `amplitude` only when your functions need the per-run
-`params` (e.g. the system's `rabi_eff`).
+That is the whole container: `n_params = 0`, no `x`. Pass `A_1013` / `phi_1013` to also
+modulate the 1013 nm drive.
 
-To instead keep the Double-ARP machinery (phase table + dynamic Stark compensation) and
-change only the envelope or sweep, subclass `DoubleARPProtocol` and override `envelope(t)`
-/ `detuning(t)` — they flow into `amplitude` / `optical_phase` for free. That is exactly
-what `find_phase.ipynb`'s `SweepARP` does.
+`proto.plot(system)` shows the full pulse as **four stacked subplots** (shared time axis):
+the two laser **amplitudes** ($\Omega_{420}$, $\Omega_{1013}$) and the two **chirps**
+($\dot\phi_{420}$, $\dot\phi_{1013}$ — the time derivative of each optical phase $\varphi$
+in $\Omega(t)=\Omega^{\max}A(t)e^{-i\varphi(t)}$, i.e. the instantaneous laser frequency /
+detuning sweep). Each panel autoscales, so a chirped pulse's 420 frequency sweep is visible
+alongside the envelope rather than dwarfed by it (`unit_scale=1/(2*np.pi*1e6)` labels them in
+MHz; pass `stacked=False` for the legacy single-axis view).
+
+An **adiabatic ARP** gate is just this container with a chirped 420 phase: the phase is the
+time integral of the detuning sweep, $\varphi_{420}(t)=\int_0^t\Delta_R\,dt'$, which
+`phase_from_chirp` builds for you (so you never hand-roll a phase table):
+
+```python
+chirp = lambda t: -D_AMP * np.cos(2 * np.pi * t / T)       # the Rydberg detuning sweep
+phi   = phase_from_chirp(chirp, t_gate=T, n_samples=4 * N + 1)
+
+proto = CZProtocol(
+    t_gate=T,
+    A_420=lambda s: smooth_env(s * T, T),                  # 420 envelope A(t)
+    phi_420=lambda s: phi(s * T),                          # 420 phase = ∫ chirp
+    omega_420_max=omega_420, omega_1013_max=omega_1013,
+    n_steps=N,
+)
+```
+
+That is how `find_phase.ipynb` builds its digital-analog gate — no dedicated protocol class.
+`phase_from_chirp` is pure pulse construction (no system, no effective theory): the 420 phase
+is just the integral of the requested chirp. To compare against the `{0,1,r}` effective
+dynamics, lower the pulse with `lower_cz_to_effective_01r` (next section) — that is where the
+Stark / Schrieffer–Wolff bookkeeping lives.
+
+### (c) The 7-level → {0,1,r} converter
+
+A Rb87 CZ gate lives at two levels: the full **7-level** `rb87_7` model
+$\{0,1,e_1,e_2,e_3,r,r'\}$ (the 420 nm and 1013 nm drives) and the effective **{0,1,r}**
+3-level model obtained by 2nd-order Schrieffer–Wolff elimination. The public converter
+turns *any* concrete `rb87_7` CZ pulse into an effective `01r` protocol you can simulate
+like any other:
+
+```python
+proto7    = CZProtocol(...)                        # any concrete CZProtocol on rb87_7
+proto_eff = lower_cz_to_effective_01r(proto7, sys7)
+
+sys_eff = (rg.RydbergSystem
+    .set_atom_level("01r")
+    .set_atom_geom(Register.chain(2, spacing_um=SPACING_UM))
+    .set_protocol(proto_eff))
+results = rg.simulate(sys_eff, psi0=cfgs, t_eval=t_eval)
+```
+
+At each `t` the converter reads $c_{420}(t), c_{1013}(t)$ off `proto7`, rebuilds $H_7(t)$
+from the registered blocks, and does a **two-stage** reduction: first eliminate the `6P`
+manifold $\{e_1,e_2,e_3\}$, **then** eliminate the garbage Rydberg $r'$ (`r_garb`) — both via
+`schrieffer_wolff` (Theorem 1 + Lemma 1 of `Rydberg_sim.tex`). The result is the **full**
+$3\times3$ effective Hamiltonian on $\{0,1,r\}$ — diagonals $D_0,D_1,D_r$ and *all three*
+off-diagonals $K_{1r}, K_{01}, K_{0r}$ (the $|0\rangle$–$|r\rangle$ leg is **not** dropped),
+with the $r'$ second-order corrections folded in by the second stage.
+
+`EffectiveCZProtocol` carries that matrix and realizes it faithfully on the `01r` channels.
+Its canonical form takes a single matrix callable; a `from_components` classmethod is the
+convenience for hand-construction:
+
+```python
+EffectiveCZProtocol(t_gate=T, h_eff=lambda t: M3x3)              # what the converter returns
+EffectiveCZProtocol.from_components(t_gate=T, omega_eff_fn=...,   # hand-built effective pulse
+    phi_fn=..., D0_fn=..., D1_fn=..., Dr_fn=..., K01_fn=..., K0r_fn=...)
+```
+
+The lower-level pieces of the map remain available for analytic work:
+
+```python
+shift_coefficients(h_const, h420, h1013)             # D0, D1, Dr (per-nominal-amplitude)
+schrieffer_wolff(h_local, keep, elim)                # one 2nd-order projection stage
+alpha, beta = reverse_amplitude_split(omega_eff_fn, omega_eff_nom=..., hold="1013")
+```
+
+**What is exact vs approximate.** The converter is **exact** against the instantaneous
+two-stage Löwdin projection — the matrix-level test
+(`tests/physics/test_effective_theory.py::test_converter_matrix_level_reduction`) pins the
+reconstructed $H_{\rm eff}(t)$ to machine precision. Against the *full 7-level* dynamics it
+is a 2nd-order theory: populations and single-qubit phase agree to $\sim10^{-3}$, but the
+entangling ZZ phase carries a $\sim2\%$ residual (the next-order Stark correction; validated
+in `find_phase.ipynb` §4). Do **not** treat the effective ZZ phase as machine-accurate
+against 7-level.
+
+**Backend support.** The full effective Hamiltonian (nonzero $K_{0r}$ / $K_{01}$) is
+**exact-backend only**: `set_atom_level("01r")` declares the `drive_0r` channel for the exact
+compiler, but the TN (`mps`/`peps`) `01r` lowering supports only the `|1\rangle`–$|r\rangle$
+subspace and **rejects** a nonzero $K_{0r}$ with a clear error. The reverse map is 2-DOF:
+with only two lasers `D_0` is locked to `D_1`, so you can realize at most two of
+{Ω_eff, D_1, D_r} independently.
 
 ## One-call gate report
 
@@ -99,7 +200,7 @@ X_TO_DARK = [-0.6894097925886826, 1.040962607910546, 0.3277877211544321,
              1.5639989822346387, 0.6689846026179691, 1.3407418093368753]
 
 system = (RydbergSystem
-          .set_atom_level("rb87_7", param_set="our", blackmanflag=True, detuning_sign=1)
+          .set_atom_level("rb87_7", param_set="our", detuning_sign=1)
           .set_atom_geom(Register.chain(2, spacing_um=3.0)).build())
 report = cz_gate_report(system, TOProtocol(), X_TO_DARK, include_error_budget=False)
 
@@ -151,7 +252,7 @@ infidelity by physical source and decay channel class:
 
 ```python
 system_decay = (RydbergSystem
-                .set_atom_level("rb87_7", param_set="our", blackmanflag=True,
+                .set_atom_level("rb87_7", param_set="our",
                                 detuning_sign=1, enable_rydberg_decay=True)
                 .set_atom_geom(Register.chain(2, spacing_um=3.0)).build())
 report = cz_gate_report(system_decay, TOProtocol(), X_TO_DARK)
@@ -167,7 +268,7 @@ report.error_budget["rydberg_decay"]    # {"total": ..., "XYZ": ..., "AL": ..., 
   `scripts/optimize_ar_cz.py`: `X_AR_OUR_OPT` → ≈ 7.2e-6 on `param_set="our"`,
   and `X_AR_LUKIN` → ≈ 1.6e-6 on `param_set="lukin"` (the lukin pin is
   `slow`-marked).
-- The *legacy* `X_AR` parameters and the Saffman-constants Double-ARP
+- The *legacy* `X_AR` parameters and the Saffman-constants adiabatic-ARP
   configuration are **not** high-fidelity optima as written; their pins guard
   the computation path, not gate quality.
 

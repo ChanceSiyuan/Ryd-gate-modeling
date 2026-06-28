@@ -1,9 +1,10 @@
 """Tests for the RydbergSystem fluent builder.
 
 ``set_atom_level(...)`` → ``set_atom_geom(...)`` → ``set_protocol(...)`` replaces
-the old monolithic ``from_lattice`` constructor.  Atom-level flags live on
-``set_atom_level``; the geometry + Rydberg interaction on ``set_atom_geom``; and
-the laser parameters travel on the protocol, entering at ``set_protocol``.
+the old monolithic ``from_lattice`` constructor.  Atom-level flags and the laser
+parameters (``Delta_Hz`` and, for analog_3, ``rabi_420_Hz``/``rabi_1013_Hz``) live
+on ``set_atom_level``; the geometry + Rydberg interaction on ``set_atom_geom``; and
+the pulse protocol enters at ``set_protocol``.
 """
 
 from __future__ import annotations
@@ -69,13 +70,14 @@ def test_interaction_is_forwarded_to_geom():
     assert len(nn_pairs.meta("interaction_pairs")) == 4  # square edges only
 
 
-def test_laser_params_on_protocol_set_the_operating_point():
+def test_laser_params_on_set_atom_level_set_the_operating_point():
     geom = Register.chain(2, spacing_um=5.0)
-    proto = TOProtocol(Delta_Hz=5.0e9, rabi_420_Hz=300e6, rabi_1013_Hz=200e6)
     system = (
-        RydbergSystem.set_atom_level("analog_3", detuning_sign=1)
+        RydbergSystem.set_atom_level(
+            "analog_3", detuning_sign=1, Delta_Hz=5.0e9, rabi_420_Hz=300e6, rabi_1013_Hz=200e6
+        )
         .set_atom_geom(geom)
-        .set_protocol(proto)
+        .set_protocol(TOProtocol())
     )
 
     expected = (2 * np.pi * 300e6) * (2 * np.pi * 200e6) / (2 * abs(2 * np.pi * 5.0e9))
@@ -112,10 +114,11 @@ def test_analog_3_only_receives_user_supplied_level_flags():
 
 def test_builder_matches_direct_engine():
     geom = Register.chain(2, spacing_um=5.0)
-    proto = TOProtocol(Delta_Hz=5.0e9, rabi_420_Hz=300e6, rabi_1013_Hz=200e6)
+    proto = TOProtocol()
+    laser = dict(Delta_Hz=5.0e9, rabi_420_Hz=300e6, rabi_1013_Hz=200e6)
 
     built = (
-        RydbergSystem.set_atom_level("analog_3", detuning_sign=1)
+        RydbergSystem.set_atom_level("analog_3", detuning_sign=1, **laser)
         .set_atom_geom(geom)
         .set_protocol(proto)
     )
@@ -128,7 +131,7 @@ def test_builder_matches_direct_engine():
         param_set=None,
         Omega=1.0,
         detuning_sign=1,
-        **proto.laser_kwargs(),
+        **laser,
     )
 
     assert built.basis.local_levels == direct.basis.local_levels
@@ -176,4 +179,7 @@ def test_builder_rb87_7_default_operating_point():
     assert system.basis.local_dim == 7
     assert system.blocks.has("H_const")
     assert system.blocks.has("drive_420")
-    assert system.meta("rabi_eff") > 0
+    assert system.blocks.has("drive_1013")
+    assert system.meta("Delta") != 0
+    # The Rabi scale now lives in the CZ protocol, not in system metadata.
+    assert system.meta("rabi_eff") is None

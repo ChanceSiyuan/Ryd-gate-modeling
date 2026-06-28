@@ -36,7 +36,7 @@ from ryd_gate.backends.exact import MonteCarloRunner
 from ryd_gate.gates import TOProtocol
 
 system = (RydbergSystem
-          .set_atom_level("rb87_7", param_set="our", blackmanflag=True, detuning_sign=1)
+          .set_atom_level("rb87_7", param_set="our", detuning_sign=1)
           .set_atom_geom(Register.chain(2, spacing_um=3.0)).build())
 runner = MonteCarloRunner(system.with_protocol(TOProtocol()), X_TO_DARK)
 configure_monte_carlo_runner(runner, noise)            # exact unit conversions

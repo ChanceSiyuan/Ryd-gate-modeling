@@ -144,7 +144,7 @@ class TestRunnerStatistics:
         x_fast = list(X_TO)
         x_fast[5] = 0.13
         manual = MonteCarloRunner(
-            _system(blackmanflag=False).with_protocol(TOProtocol()),
+            _system().with_protocol(TOProtocol(blackman=False)),
             x_fast,
             backend=SparseExpmBackend(n_steps=24),
         )
@@ -153,7 +153,7 @@ class TestRunnerStatistics:
         result_manual = manual.run_gate_fidelity(n_shots=2, seed=11)
 
         configured = MonteCarloRunner(
-            _system(blackmanflag=False).with_protocol(TOProtocol()),
+            _system().with_protocol(TOProtocol(blackman=False)),
             x_fast,
             backend=SparseExpmBackend(n_steps=24),
         )

@@ -235,22 +235,24 @@ def test_rb87_7_lattice_constructs_our_model():
     assert model.basis.local_levels == ("0", "1", "e1", "e2", "e3", "r", "r_garb")
     assert model.blocks.has("H_const")
     assert model.blocks.has("drive_420")
-    assert model.meta("rabi_eff") > 0
+    assert model.blocks.has("drive_1013")
+    # The Rabi scale lives in the CZ protocol now; only Delta is a system property.
+    assert model.meta("Delta") != 0
+    assert model.meta("rabi_eff") is None
 
 
-def test_rb87_7_hz_overrides_match_defaults_when_omitted():
-    base = RydbergSystem.set_atom_level("rb87_7", param_set="our").set_atom_geom(
+def test_rb87_7_protocol_rabi_defaults_match_canonical():
+    """rb87_7 builds unit blocks; the CZ protocol's default Rabis are the canonical
+    param-set values, and cz_effective_rabi reproduces the operating point."""
+    from ryd_gate.protocols.gate_cz import cz_effective_rabi, cz_rabi_maxes
+
+    system = RydbergSystem.set_atom_level("rb87_7", param_set="our").set_atom_geom(
         Register.chain(2, spacing_um=3.0)
-    ).build()
-    explicit = RydbergSystem.set_atom_level("rb87_7", param_set="our").set_atom_geom(
-        Register.chain(2, spacing_um=3.0)
-    ).set_protocol(
-        TOProtocol(Delta_Hz=9.1e9, rabi_420_Hz=491e6, rabi_1013_Hz=185e6)
-    )
-    assert base.meta("rabi_eff") == pytest.approx(explicit.meta("rabi_eff"))
-    assert base.meta("Delta") == pytest.approx(explicit.meta("Delta"))
-    assert base.meta("rabi_420") == pytest.approx(explicit.meta("rabi_420"))
-    assert base.meta("rabi_1013") == pytest.approx(explicit.meta("rabi_1013"))
+    ).set_protocol(TOProtocol())
+    o420, o1013 = cz_rabi_maxes(system)
+    assert (o420, o1013) == pytest.approx((2 * np.pi * 491e6, 2 * np.pi * 185e6))
+    rabi_eff, _ = cz_effective_rabi(system, o420, o1013)
+    assert rabi_eff == pytest.approx(o420 * o1013 / (2 * abs(float(system.meta("Delta")))))
 
 
 def test_rb87_7_zero_state_is_modeled_explicitly():
@@ -287,15 +289,18 @@ def test_rb87_7_zero_state_explicit_couplings_match_tex_phase_convention():
     np.testing.assert_allclose(couplings, expected, atol=1e-12)
 
 
-def test_rb87_7_hz_overrides_rescale_rabi_eff():
-    import numpy as np
-
+def test_protocol_rabi_overrides_rescale_effective_rabi():
+    """Per-protocol ``omega_*_max`` overrides set the operating point used to
+    de-dimensionalize ``x`` (the Rabi knob moved from the system to the protocol)."""
     system = RydbergSystem.set_atom_level("rb87_7", param_set="lukin").set_atom_geom(
         Register.chain(2, spacing_um=3.0)
-    ).set_protocol(TOProtocol(rabi_420_Hz=300e6, rabi_1013_Hz=300e6))
-    Delta = float(system.meta("Delta"))
-    rabi_420 = float(system.meta("rabi_420"))
-    rabi_1013 = float(system.meta("rabi_1013"))
-    expected = rabi_420 * rabi_1013 / (2 * abs(Delta))
-    assert system.meta("rabi_eff") == pytest.approx(expected)
-    assert rabi_420 == pytest.approx(2 * np.pi * 300e6)
+    ).build()
+    o420 = o1013 = 2 * np.pi * 300e6
+    over = TOProtocol(omega_420_max=o420, omega_1013_max=o1013)
+    default = TOProtocol()
+    x = [0.0, 0.0, 0.0, 0.0, 0.0, 1.0]  # t_gate = 1.0 * time_scale
+    Delta = abs(float(system.meta("Delta")))
+    expected_ts = 2 * np.pi / (o420 * o1013 / (2 * Delta))
+    assert over.unpack_params(x, system)["t_gate"] == pytest.approx(expected_ts)
+    # the bare protocol uses the canonical lukin Rabis -> a different time scale
+    assert default.unpack_params(x, system)["t_gate"] != pytest.approx(expected_ts)

@@ -14,8 +14,8 @@ from ryd_gate.backends.tn_common.compiler import TNEvolutionIR, tn_lattice_spec_
 from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
 from ryd_gate.backends.tn_common.protocol_context import TNProtocolContext
 from ryd_gate.core.system import RydbergSystem
+from ryd_gate.gates import CZProtocol, phase_from_chirp
 from ryd_gate.lattice import Register
-from ryd_gate.protocols.gate_cz import DoubleARPProtocol
 from ryd_gate.simulate import simulate
 
 
@@ -24,18 +24,37 @@ def _analog3_spec():
 
 
 def _short_arp(t_gate, n_steps=64):
-    return DoubleARPProtocol(
-        delta_max=2 * np.pi * 23e6, t_gate=t_gate, n_steps=n_steps, compensate_stark=False
+    """A short uncompensated ARP pulse as a plain CZProtocol (analog_3-compatible:
+    only the 420 leg is driven; 1013 is the static analog coupling)."""
+    delta_max, t_pulse, sigma = 2 * np.pi * 23e6, 0.5 * t_gate, 0.175 * t_gate
+    offset = np.exp(-((t_pulse / 2) ** 4) / sigma**4)
+
+    def env(t):
+        tc = float(np.clip(t, 0.0, t_gate)); u = tc if tc < t_pulse else tc - t_pulse
+        return (np.exp(-((u - t_pulse / 2) ** 4) / sigma**4) - offset) / (1 - offset)
+
+    def sweep(t):
+        tc = float(np.clip(t, 0.0, t_gate)); u = tc if tc < t_pulse else tc - t_pulse
+        return delta_max * np.sin(np.pi * (u / t_pulse - 0.5))
+
+    phi = phase_from_chirp(sweep, t_gate, 4 * n_steps + 1)
+    return CZProtocol(
+        t_gate=t_gate,
+        A_420=lambda s: env(float(np.clip(s, 0.0, 1.0)) * t_gate),
+        phi_420=lambda s: phi(float(np.clip(s, 0.0, 1.0)) * t_gate),
+        n_steps=n_steps,
     )
 
 
 def _ir(spec, proto):
-    params = proto.unpack_params([], TNProtocolContext(spec))
-    return TNEvolutionIR(spec=spec, protocol=proto, params=params, method="peps_yastn")
+    ctx = TNProtocolContext(spec)
+    pulse = proto.build([], ctx) if hasattr(proto, "build") else proto
+    params = pulse.unpack_params([], ctx)
+    return TNEvolutionIR(spec=spec, protocol=pulse, params=params, method="peps_yastn")
 
 
 def _analog3_chain(n=2, spacing_um=5.0, t_gate_scale=2.0):
-    """A 2-atom analog_3 system bound to a short uncompensated double-ARP pulse."""
+    """A 2-atom analog_3 system bound to a short uncompensated ARP pulse builder."""
     sys0 = RydbergSystem.set_atom_level("analog_3", detuning_sign=1).set_atom_geom(
         Register.chain(n, spacing_um=spacing_um)
     ).build()

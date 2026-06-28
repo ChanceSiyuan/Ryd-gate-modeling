@@ -135,7 +135,18 @@ class HamiltonianIR:
     params: dict | None = None
 
 
-_STATIC_BLOCKS = ("H_const", "H_vdw", "H_1013", "H_1013_conj")
+# Summed into the static Hamiltonian *unless* a protocol drives a channel of the
+# same name (then the drive loop picks it up). rb87_7's 1013 coupling is
+# registered as drive_1013/drive_1013_dag so it is static by default but can be
+# modulated; analog_3 keeps the H_1013/H_1013_conj names.
+_STATIC_BLOCKS = (
+    "H_const",
+    "H_vdw",
+    "H_1013",
+    "H_1013_conj",
+    "drive_1013",
+    "drive_1013_dag",
+)
 
 
 def compile_hamiltonian_ir(system, params: dict) -> HamiltonianIR:

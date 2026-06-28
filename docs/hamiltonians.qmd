@@ -249,7 +249,7 @@ protocol-specific phase:
 |---|---|
 | `TOProtocol` (time-optimal, 6 params) | $A\cos(\omega t + \varphi_0) + \delta t$ |
 | `ARProtocol` (amplitude-robust, 8 params) | $A_1\sin(\omega t + \varphi_1) + A_2\sin(2\omega t + \varphi_2) + \delta t$ |
-| `DoubleARPProtocol` | $\dot\varphi(t) = \Delta_{\text{ARP}}(t)$, two super-Gaussian rapid-adiabatic passes; amplitude $A(t) = \Omega_{\text{eff}}(t)/\Omega_{\text{eff}}^{\text{nom}}$, optional dynamic Stark compensation added to the chirp |
+| adiabatic ARP (a plain `CZProtocol`) | $\varphi(t) = \int_0^t \Delta_{\text{ARP}}(t')\,dt'$ via `phase_from_chirp` (bare chirp, no Stark compensation); 420 amplitude follows the envelope |
 
 The effective two-photon picture behind these pulses is
 $\Omega_{\text{eff}} = \Omega_{420}\Omega_{1013} / (2\lvert\Delta\rvert)$

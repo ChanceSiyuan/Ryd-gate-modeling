@@ -80,6 +80,23 @@ def _solve_trajectory(system, protocol, x, state, t_eval):
     return list(np.asarray(res.states)), np.asarray(res.times)
 
 
+def _bind_cz(system, protocol, x) -> "tuple[Protocol, list[float], float]":
+    """Resolve ``(pulse, eval_x, theta)`` for a metric evaluation.
+
+    CZ *builders* (TO/AR, exposing ``build``) construct a fresh concrete
+    :class:`~ryd_gate.protocols.gate_cz.CZProtocol` from ``x`` and take the
+    single-qubit Z ``theta`` from ``x[theta_index]`` (theta is a scoring param,
+    not part of the pulse).  Direct protocols pass through with their own theta.
+    """
+    if hasattr(protocol, "build"):
+        pulse = protocol.build(list(x), system)
+        ti = getattr(protocol, "theta_index", None)
+        theta = float(x[ti]) if ti is not None else 0.0
+        return pulse, [], theta
+    params = protocol.unpack_params(list(x), system)
+    return protocol, list(x), float(params.get("theta", 0.0))
+
+
 def _cz_overlaps(
     system,
     protocol: "Protocol",
@@ -98,8 +115,7 @@ def _cz_overlaps(
     ``residuals`` is the per-level population average over the three
     trajectories when *collect_residuals*, else ``None``.
     """
-    params = protocol.unpack_params(x, system)
-    theta = params["theta"]
+    pulse, eval_x, theta = _bind_cz(system, protocol, x)
     solve_kw = dict(ham_const_override=ham_const_override, amplitude_scale=amplitude_scale)
 
     basis = {
@@ -128,7 +144,7 @@ def _cz_overlaps(
 
     overlaps: dict[str, complex] = {}
     for label, ini_state in basis.items():
-        res = _solve_state(system, protocol, x, ini_state, **solve_kw)
+        res = _solve_state(system, pulse, eval_x, ini_state, **solve_kw)
         overlaps[f"a{label}"] = corrections[label] * ini_state.conj().dot(res.T)
         for key, op in occ_ops.items():
             residuals_accum[key] += np.real(res.conj() @ op @ res)
@@ -322,8 +338,7 @@ def state_infidelity(
     initial_state : str or ndarray
         State label or 49-D state vector.
     """
-    params = protocol.unpack_params(x, system)
-    theta = params["theta"]
+    pulse, eval_x, theta = _bind_cz(system, protocol, x)
 
     if isinstance(initial_state, str):
         sss_states = build_sss_state_map()
@@ -340,7 +355,7 @@ def state_infidelity(
     state_10 = np.kron(s1, s0)
     state_11 = np.kron(s1, s1)
 
-    res = _solve_state(system, protocol, x, ini_state)
+    res = _solve_state(system, pulse, eval_x, ini_state)
 
     c00 = np.vdot(state_00, ini_state)
     c01 = np.vdot(state_01, ini_state)
@@ -376,11 +391,11 @@ def population_evolution(
         raise ValueError(f"Unsupported initial state: '{initial_state}'")
     ini_state = sss_states[initial_state]
 
-    params = protocol.unpack_params(x, system)
-    t_gate = params["t_gate"]
+    pulse, eval_x, _ = _bind_cz(system, protocol, x)
+    t_gate = pulse.unpack_params(eval_x, system)["t_gate"]
     t_eval = np.linspace(0, t_gate, 1000)
 
-    states, t_list = _solve_trajectory(system, protocol, x, ini_state, t_eval)
+    states, t_list = _solve_trajectory(system, pulse, eval_x, ini_state, t_eval)
 
     occ_specs = {
         "e1": ("pop_e1", build_occ_operator(2)),
