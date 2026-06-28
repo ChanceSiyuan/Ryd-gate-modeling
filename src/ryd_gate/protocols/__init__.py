@@ -2,9 +2,8 @@
 
 Contents
 --------
-- ``gate_cz``   — CZ gate protocols: TOProtocol (time-optimal, cosine phase,
-  6 params), ARProtocol (amplitude-robust, dual-sine phase, 8 params), and
-  DoubleARPProtocol (double rapid-adiabatic-passage)
+- ``gate_cz``   — CZ gate protocols: CZProtocol (the laser-domain container),
+  TOProtocol / ARProtocol builders, and the ``phase_from_chirp`` pulse helper
 - ``sweep``      — SweepProtocol: function-defined global Rydberg sweep
 - ``lattice_dynamics`` — TFIMQuenchProtocol / TFIMAnnealProtocol for 2D lattice dynamics
 - ``digital_analog`` — DigitalAnalogProtocol: piecewise digital-analog schedules
@@ -18,7 +17,13 @@ All protocol classes implement:
 
 from ryd_gate.protocols.base import Protocol
 from ryd_gate.protocols.digital_analog import DigitalAnalogProtocol
-from ryd_gate.protocols.gate_cz import ARProtocol, DoubleARPProtocol, TOProtocol
+from ryd_gate.protocols.gate_cz import (
+    ARProtocol,
+    CZProtocol,
+    EffectiveCZProtocol,
+    TOProtocol,
+    phase_from_chirp,
+)
 from ryd_gate.protocols.lattice_dynamics import (
     TFIMAnnealProtocol,
     TFIMQuenchProtocol,
@@ -32,7 +37,9 @@ __all__ = [
     "Protocol",
     "TOProtocol",
     "ARProtocol",
-    "DoubleARPProtocol",
+    "CZProtocol",
+    "EffectiveCZProtocol",
+    "phase_from_chirp",
     "SweepProtocol",
     "TFIMAnnealProtocol",
     "TFIMQuenchProtocol",

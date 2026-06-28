@@ -27,20 +27,37 @@ from ryd_gate.analysis.gate_metrics import (
     error_budget,
     optimize_cz_parameters,
 )
+from ryd_gate.core.effective_theory import (
+    lower_cz_to_effective_01r,
+    reverse_amplitude_split,
+    schrieffer_wolff,
+    shift_coefficients,
+)
 from ryd_gate.core.serialization import check_schema, json_ready, schema_tag
-from ryd_gate.protocols.gate_cz import ARProtocol, CZProtocol, DoubleARPProtocol, TOProtocol
+from ryd_gate.protocols.gate_cz import (
+    ARProtocol,
+    CZProtocol,
+    EffectiveCZProtocol,
+    TOProtocol,
+    phase_from_chirp,
+)
 
 __all__ = [
     "ARProtocol",
     "CZGateReport",
     "CZOptimizeResult",
     "CZProtocol",
-    "DoubleARPProtocol",
+    "EffectiveCZProtocol",
     "TOProtocol",
     "average_gate_infidelity",
     "cz_gate_report",
     "error_budget",
+    "lower_cz_to_effective_01r",
     "optimize_cz_parameters",
+    "phase_from_chirp",
+    "reverse_amplitude_split",
+    "schrieffer_wolff",
+    "shift_coefficients",
 ]
 
 

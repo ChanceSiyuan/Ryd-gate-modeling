@@ -4,11 +4,22 @@
 class TestGateNamespace:
     def test_protocol_classes_are_the_kernel_classes(self):
         from ryd_gate import gates
-        from ryd_gate.protocols.gate_cz import ARProtocol, DoubleARPProtocol, TOProtocol
+        from ryd_gate.core.effective_theory import lower_cz_to_effective_01r
+        from ryd_gate.protocols.gate_cz import (
+            ARProtocol,
+            CZProtocol,
+            TOProtocol,
+            phase_from_chirp,
+        )
 
         assert gates.TOProtocol is TOProtocol
         assert gates.ARProtocol is ARProtocol
-        assert gates.DoubleARPProtocol is DoubleARPProtocol
+        assert gates.CZProtocol is CZProtocol
+        assert gates.phase_from_chirp is phase_from_chirp
+        assert gates.lower_cz_to_effective_01r is lower_cz_to_effective_01r
+        # AdiaProtocol / DoubleARPProtocol are fully removed.
+        assert not hasattr(gates, "AdiaProtocol")
+        assert not hasattr(gates, "DoubleARPProtocol")
 
     def test_metric_functions_are_gate_metrics_functions(self):
         from ryd_gate import gates

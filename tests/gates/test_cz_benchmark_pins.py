@@ -33,7 +33,7 @@ import pytest
 
 from ryd_gate import Register, RydbergSystem
 from ryd_gate.analysis import gate_metrics
-from ryd_gate.gates import ARProtocol, DoubleARPProtocol, TOProtocol, cz_gate_report
+from ryd_gate.gates import ARProtocol, CZProtocol, TOProtocol, cz_gate_report, phase_from_chirp
 
 # x = [A, omega/Omega_eff, phi0, delta/Omega_eff, theta, T/T_scale]
 X_TO_DARK = [
@@ -77,7 +77,11 @@ MHZ = 2.0 * np.pi * 1e6
 # (see module docstring).
 TO_DARK_INFIDELITY = 3.738562268651e-07
 AR_INFIDELITY = 6.511247625966e-01
-DOUBLE_ARP_INFIDELITY = 9.727856728551e-01
+# Adiabatic-ARP path guard (not a tuned gate): a plain CZProtocol whose 420 phase is
+# the bare chirp integral (phase_from_chirp), with NO Stark compensation (that
+# effective-theory logic lives only in lower_cz_to_effective_01r) and canonical 'our'
+# Rabis. Uncompensated 7-level gate; value from the deterministic exact solver.
+DOUBLE_ARP_INFIDELITY = 8.743619247881e-01
 RYDBERG_DECAY_BUDGET_TOTAL = 8.292516768162672e-04
 # Re-optimized AR points (explicit |0> model, 2026-06-26).
 AR_LUKIN_INFIDELITY = 1.602054501948e-06
@@ -95,7 +99,7 @@ def _system(**kwargs):
 class TestBenchmarkPins:
     def test_to_dark_benchmark(self):
         report = cz_gate_report(
-            _system(blackmanflag=True, detuning_sign=1),
+            _system(detuning_sign=1),
             TOProtocol(),
             X_TO_DARK,
             include_error_budget=False,
@@ -150,14 +154,27 @@ class TestBenchmarkPins:
         assert report.infidelity == pytest.approx(AR_OUR_OPT_INFIDELITY, rel=1e-3)
 
     def test_double_arp_benchmark(self):
-        protocol = DoubleARPProtocol(
-            omega_max=17.0 * MHZ,
-            delta_max=23.0 * MHZ,
-            t_gate=0.54e-6,
-            sigma=0.175 * 0.54e-6,
-            n_steps=80,
-            compensate_stark=True,
-            stark_compensation_sign=-1.0,
+        # The adiabatic ARP pulse, built directly as a CZProtocol: a super-Gaussian
+        # flat-top 420 envelope + a delta_max*sin round-trip sweep whose integral is
+        # the 420 phase (phase_from_chirp). Canonical 'our' Rabis (no rescaling).
+        T, N, DELTA_MAX = 0.54e-6, 80, 23.0 * MHZ
+        sigma, t_pulse = 0.175 * T, 0.5 * 0.54e-6
+        offset = np.exp(-((t_pulse / 2) ** 4) / sigma**4)
+
+        def env(t):
+            tc = float(np.clip(t, 0.0, T)); u = tc if tc < t_pulse else tc - t_pulse
+            return (np.exp(-((u - t_pulse / 2) ** 4) / sigma**4) - offset) / (1 - offset)
+
+        def sweep(t):
+            tc = float(np.clip(t, 0.0, T)); u = tc if tc < t_pulse else tc - t_pulse
+            return DELTA_MAX * np.sin(np.pi * (u / t_pulse - 0.5))
+
+        phi = phase_from_chirp(sweep, T, 4 * N + 1)
+        protocol = CZProtocol(
+            t_gate=T,
+            A_420=lambda s: env(float(np.clip(s, 0.0, 1.0)) * T),
+            phi_420=lambda s: phi(float(np.clip(s, 0.0, 1.0)) * T),
+            n_steps=N,
         )
         report = cz_gate_report(
             _system(), protocol, [],
@@ -167,7 +184,7 @@ class TestBenchmarkPins:
         assert report.infidelity == pytest.approx(DOUBLE_ARP_INFIDELITY, rel=1e-3)
 
     def test_error_budget_pin(self):
-        system = _system(blackmanflag=True, detuning_sign=1, enable_rydberg_decay=True)
+        system = _system(detuning_sign=1, enable_rydberg_decay=True)
         budget = gate_metrics.error_budget(system, TOProtocol(), X_TO_DARK)
         assert budget["rydberg_decay"]["total"] == pytest.approx(
             RYDBERG_DECAY_BUDGET_TOTAL, rel=1e-3

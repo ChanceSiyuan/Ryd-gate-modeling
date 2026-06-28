@@ -76,9 +76,10 @@ quartodoc:
         - protocols.lattice_dynamics.interaction_longitudinal_shifts
         - protocols.sweep.SweepProtocol
         - protocols.digital_analog.DigitalAnalogProtocol
+        - protocols.gate_cz.CZProtocol
         - protocols.gate_cz.TOProtocol
         - protocols.gate_cz.ARProtocol
-        - protocols.gate_cz.DoubleARPProtocol
+        - protocols.gate_cz.phase_from_chirp
     - title: Hamiltonian IR and results
       desc: The unified intermediate representation every backend consumes.
       contents:

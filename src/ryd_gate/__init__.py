@@ -10,13 +10,13 @@ Typical workflow
 1. **Choose a pulse protocol**::
 
        from ryd_gate import TFIMQuenchProtocol, SweepProtocol
-       from ryd_gate.gates import TOProtocol, ARProtocol, DoubleARPProtocol
+       from ryd_gate.gates import TOProtocol, ARProtocol, CZProtocol, phase_from_chirp
 
        protocol = TFIMQuenchProtocol(...)     # 2D TFIM / g-r lattice quench
        protocol = SweepProtocol(...)         # function-defined Rydberg sweep
        protocol = TOProtocol()               # time-optimal CZ gate (6 params)
        protocol = ARProtocol()               # amplitude-robust CZ gate (8 params)
-       protocol = DoubleARPProtocol(...)      # double-ARP CZ gate
+       protocol = CZProtocol(...)             # direct 420/1013 laser pulse (e.g. adiabatic)
 
 2. **Create a quantum system with the protocol bound**::
 

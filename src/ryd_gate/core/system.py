@@ -191,11 +191,12 @@ class RydbergSystem(SystemModel):
 
         Returns a builder; chain :meth:`_RydbergSystemBuilder.set_atom_geom`
         (atom positions + Rydberg interaction) and
-        :meth:`_RydbergSystemBuilder.set_protocol` (the 420/1013 nm drive, which
-        carries the laser parameters ``Delta_Hz`` / ``rabi_420_Hz`` /
-        ``rabi_1013_Hz``).  ``level_kwargs`` are atom-level physics flags
-        (``blackmanflag``, ``detuning_sign``, ``enable_*_decay`` ...);
-        only the keys you pass are forwarded.
+        :meth:`_RydbergSystemBuilder.set_protocol` (the pulse).  ``level_kwargs``
+        are atom-level physics flags (``detuning_sign``, ``enable_*_decay`` ...)
+        and the laser operating point (``Delta_Hz``; for
+        analog_3 also ``rabi_420_Hz`` / ``rabi_1013_Hz``).  The rb87_7 420/1013
+        Rabi scale is owned by the CZ protocol (``omega_*_max``), not the system.
+        Only the keys you pass are forwarded.
         """
         return _RydbergSystemBuilder(
             level_structure,
@@ -209,12 +210,12 @@ class _RydbergSystemBuilder:
     """Accumulates atom-level + geometry + protocol config, materializing once.
 
     Returned by :meth:`RydbergSystem.set_atom_level`.  The single-atom numeric
-    blocks depend on the laser parameters carried by the protocol, so the system
-    is materialized only at the terminal step (:meth:`set_protocol` or
-    :meth:`build`).  Re-binding a different protocol afterwards via
-    :meth:`RydbergSystem.with_protocol` swaps the pulse shape but does *not*
-    re-derive the operating point (``rabi_eff`` etc.); rebuild via the builder to
-    change laser parameters.
+    blocks depend on the atom-level laser parameters (``Delta_Hz``; analog_3 also
+    its Rabis), so the system is materialized at the terminal step
+    (:meth:`set_protocol` or :meth:`build`).  :meth:`RydbergSystem.with_protocol`
+    then swaps the pulse freely; for rb87_7 the 420/1013 Rabi scale rides on the
+    CZ protocol (``omega_*_max``) against unit blocks, so changing it needs no
+    rebuild.
     """
 
     def __init__(
@@ -249,10 +250,6 @@ class _RydbergSystemBuilder:
     def build(self) -> "RydbergSystem":
         """Materialize the system (undriven if no protocol was attached)."""
         geometry = self._geometry if self._geometry is not None else Register.chain(1)
-        # Protocols may be duck-typed (not subclassing Protocol); only physical
-        # protocols carry laser overrides. Absent -> defaults from param_set/preset.
-        get_laser = getattr(self._protocol, "laser_kwargs", None)
-        laser_kwargs = get_laser() if callable(get_laser) else {}
         return _build_from_lattice(
             RydbergSystem,
             geometry,
@@ -261,7 +258,7 @@ class _RydbergSystemBuilder:
             protocol=self._protocol,
             param_set=self._param_set,
             Omega=self._Omega,
-            **{**self._level_kwargs, **laser_kwargs},
+            **self._level_kwargs,
         )
 
 

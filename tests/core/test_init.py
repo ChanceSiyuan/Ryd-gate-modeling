@@ -40,7 +40,7 @@ class TestPackageImports:
         for name in (
             "TOProtocol",
             "ARProtocol",
-            "DoubleARPProtocol",
+            "CZProtocol",
             "CZGateReport",
             "cz_gate_report",
             "average_gate_infidelity",

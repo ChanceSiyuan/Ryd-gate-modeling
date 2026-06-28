@@ -68,15 +68,6 @@ class Protocol(ABC):
         """
         return frozenset(self.required_channels)
 
-    def laser_kwargs(self) -> dict:
-        """Laser overrides (``Delta_Hz`` / ``rabi_420_Hz`` / ``rabi_1013_Hz``)
-        forwarded into system materialization when this protocol is attached via
-        ``set_protocol``.  Default: none, so the rb87/analog operating point
-        comes from the ``param_set`` / preset defaults.  Physical (rb87_7 /
-        analog_3) protocols override this to carry their laser configuration.
-        """
-        return {}
-
     @abstractmethod
     def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
         """Return {channel_name: coefficient(t)} for each drive term."""
@@ -120,6 +111,7 @@ class Protocol(ABC):
         channels=None,
         skip_dag: bool = True,
         group_sites: bool = True,
+        stacked: bool = False,
         unit_scale: float = 1.0,
         unit_label: str = "natural units",
         time_scale: float = 1.0,
@@ -156,6 +148,11 @@ class Protocol(ABC):
             Skip ``*_dag`` (hermitian-conjugate) channels in the fallback.
         group_sites : bool
             Bundle ``name_<i>`` per-site families into one faint group.
+        stacked : bool
+            When using :meth:`pulse_traces`, draw each trace in its own vertically
+            stacked subplot (shared time axis) instead of one shared axis — so
+            differently-scaled traces (e.g. amplitudes vs phase chirps) each
+            autoscale.  Returns ``(fig, [axes])`` in this mode.
         unit_scale, unit_label : float, str
             Multiply values by ``unit_scale`` and label the y-axis with
             ``unit_label`` (e.g. ``1/(2*np.pi*1e6)`` and ``"MHz"``).
@@ -225,22 +222,51 @@ class Protocol(ABC):
                 singles.extend(families.pop(prefix))
 
         tgrid = ts * time_scale
+
+        def _draw_trace(target_ax, name: str, label: str) -> bool:
+            """Draw one trace on *target_ax* (Re/Im split when complex, else real).
+            Returns True if an imaginary part was drawn (caller may add a legend)."""
+            y = arrays[name] * unit_scale
+            scale = max(1.0, float(np.max(np.abs(y))))
+            if float(np.max(np.abs(y.imag))) > 1e-9 * scale:
+                target_ax.plot(tgrid, y.real, lw=2, label=f"Re {label}")
+                target_ax.plot(tgrid, y.imag, lw=2, ls="--", label=f"Im {label}")
+                return True
+            target_ax.plot(tgrid, y.real, lw=2, label=label)
+            return False
+
+        # Stacked layout: one subplot per trace, shared time axis (top -> bottom).
+        # Use it when traces live on incompatible scales (e.g. amplitudes in MHz vs
+        # phase chirps), so each panel autoscales independently.
+        if stacked and use_traces and ax is None:
+            n = max(len(names), 1)
+            fig, axs = plt.subplots(
+                n, 1, sharex=True, figsize=(10, max(1.8 * n, 3.0)), squeeze=False
+            )
+            axs = list(axs[:, 0])
+            for axi, name in zip(axs, names):
+                if _draw_trace(axi, name, name):
+                    axi.legend(fontsize=8, loc="upper right")
+                axi.set_ylabel(f"{name}\n[{unit_label}]", fontsize=9)
+                axi.axhline(0.0, color="k", ls=":", lw=0.8)
+                axi.grid(alpha=0.3)
+            axs[-1].set_xlabel(time_label)
+            axs[0].set_title(title or f"{type(self).__name__} pulse schedule")
+            fig.tight_layout()
+            if savefig:
+                stem = Path(f"{type(self).__name__.lower()}_schedule" if savefig is True else savefig)
+                fig.savefig(stem.with_suffix(".png") if stem.suffix == "" else stem)
+            if show:
+                plt.show()
+            return fig, axs
+
         if ax is None:
             fig, ax = plt.subplots(figsize=(10, 4))
         else:
             fig = ax.figure
 
-        def _draw(name: str, label: str) -> None:
-            y = arrays[name] * unit_scale
-            scale = max(1.0, float(np.max(np.abs(y))))
-            if float(np.max(np.abs(y.imag))) > 1e-9 * scale:
-                ax.plot(tgrid, y.real, lw=2, label=f"Re {label}")
-                ax.plot(tgrid, y.imag, lw=2, ls="--", label=f"Im {label}")
-            else:
-                ax.plot(tgrid, y.real, lw=2, label=label)
-
         for name in singles:
-            _draw(name, name)
+            _draw_trace(ax, name, name)
         for prefix, members in families.items():
             members = sorted(members, key=lambda c: int(site_pat.match(c).group(2)))
             for k, name in enumerate(members):

@@ -193,7 +193,7 @@ class MonteCarloRunner:
         all_results = []
         for _ in range(n_shots):
             system = self._sample_local_addressing(rng)
-            params = system.unpack_params(self.x)
+            system, params, _ = self._bind_shot(system)
             amp_scale, terms, _ = self._sample_terms(rng, compiler, system)
 
             ir = compiler.compile(system.with_amplitude_scale(amp_scale), params)
@@ -234,8 +234,7 @@ class MonteCarloRunner:
         for shot in range(n_shots):
             self._print_progress("MC shot", shot, n_shots)
             system = self._sample_local_addressing(rng)
-            params = system.unpack_params(self.x)
-            theta = params["theta"]
+            system, params, theta = self._bind_shot(system)
             amp_scale, terms, samples = self._sample_terms(rng, compiler, system)
             if detuning_samples is not None and "detuning" in samples:
                 detuning_samples[shot] = samples["detuning"]
@@ -316,6 +315,22 @@ class MonteCarloRunner:
         protocol._stark_phase_table = None
         return self.system.with_protocol(protocol)
 
+    def _bind_shot(self, system: RydbergSystem):
+        """Per-shot: materialize a concrete pulse from ``self.x`` when a CZ builder
+        (TO/AR, exposing ``build``) is bound, returning ``(system, params, theta)``.
+
+        The build consumes no RNG and is inserted between the existing ``rng`` draws,
+        so the seeded noise stream is unchanged.
+        """
+        proto = getattr(system, "protocol", None)
+        if proto is not None and hasattr(proto, "build"):
+            system = system.with_protocol(proto.build(list(self.x), system))
+            ti = getattr(proto, "theta_index", None)
+            theta = float(self.x[ti]) if ti is not None else 0.0
+            return system, system.unpack_params(()), theta
+        params = system.unpack_params(self.x)
+        return system, params, float(params.get("theta", 0.0))
+
     @staticmethod
     def _print_progress(label: str, shot: int, n_shots: int) -> None:
         if n_shots < 5:
@@ -356,10 +371,23 @@ class MonteCarloRunner:
         if self._sigma_amplitude is not None:
             amp_err = rng.normal(0, self._sigma_amplitude)
             amp_scale = 1.0 + amp_err
-            if system.blocks.has("H_1013") and system.blocks.has("H_1013_conj"):
+            # ``amplitude_scale`` already scales every *driven* channel's coefficient
+            # (the 420 drive and, on rb87_7, the now-driven 1013 — both carry their
+            # Rabi in the protocol coefficient).  Only a *static* 1013 coupling
+            # (analog_3's H_1013) needs an explicit additive intensity-noise term.
+            driven = system.protocol.drive_channels(system)
+            pair = next(
+                (
+                    (a, b)
+                    for a, b in (("drive_1013", "drive_1013_dag"), ("H_1013", "H_1013_conj"))
+                    if system.blocks.has(a) and system.blocks.has(b) and a not in driven
+                ),
+                None,
+            )
+            if pair is not None:
                 h1013 = (
-                    compiler.materialize_block(system, "H_1013")
-                    + compiler.materialize_block(system, "H_1013_conj")
+                    compiler.materialize_block(system, pair[0])
+                    + compiler.materialize_block(system, pair[1])
                 )
                 terms.append(("amplitude_noise_1013", amp_err * h1013))
             samples["amplitude"] = amp_err

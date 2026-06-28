@@ -40,7 +40,7 @@ from ryd_gate import Register, RydbergSystem
 from ryd_gate.gates import TOProtocol, cz_gate_report
 
 system = (RydbergSystem
-          .set_atom_level("rb87_7", param_set="our", blackmanflag=True, detuning_sign=1)
+          .set_atom_level("rb87_7", param_set="our", detuning_sign=1)
           .set_atom_geom(Register.chain(2, spacing_um=3.0)).build())
 report = cz_gate_report(system, TOProtocol(), X_TO_DARK, include_error_budget=False)
 print(report.fidelity)             # ~0.9999992 for the benchmark parameters
