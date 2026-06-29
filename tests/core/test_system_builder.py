@@ -14,7 +14,8 @@ import pytest
 
 from ryd_gate import RydbergSystem
 from ryd_gate.core.level_structures import InteractionSpec
-from ryd_gate.core.system import _build_from_lattice
+from ryd_gate.core.physical_models import analog_3_local_blocks
+from ryd_gate.core.system import _ATOM_LEVELS
 from ryd_gate.lattice import Register
 from ryd_gate.protocols.gate_cz import TOProtocol
 
@@ -112,32 +113,26 @@ def test_analog_3_only_receives_user_supplied_level_flags():
     assert system.meta("physical_model") == "analog_3"
 
 
-def test_builder_matches_direct_engine():
+def test_builder_operating_point_matches_source_of_truth():
+    # The public fluent build must reproduce the analog_3 operating point that
+    # ``analog_3_local_blocks`` (the single source of truth) computes from the
+    # same laser knobs.
     geom = Register.chain(2, spacing_um=5.0)
-    proto = TOProtocol()
     laser = dict(Delta_Hz=5.0e9, rabi_420_Hz=300e6, rabi_1013_Hz=200e6)
 
     built = (
         RydbergSystem.set_atom_level("analog_3", detuning_sign=1, **laser)
         .set_atom_geom(geom)
-        .set_protocol(proto)
+        .set_protocol(TOProtocol())
     )
-    direct = _build_from_lattice(
-        RydbergSystem,
-        geom,
-        "analog_3",
-        None,
-        protocol=proto,
-        param_set=None,
-        Omega=1.0,
-        detuning_sign=1,
-        **laser,
-    )
+    blk = analog_3_local_blocks(detuning_sign=1, **laser)
 
-    assert built.basis.local_levels == direct.basis.local_levels
-    assert set(built.blocks.list()) == set(direct.blocks.list())
-    assert built.meta("rabi_eff") == pytest.approx(direct.meta("rabi_eff"))
-    assert built.meta("Delta") == pytest.approx(direct.meta("Delta"))
+    assert built.basis.local_levels == ("g", "e", "r")
+    assert built.meta("physical_model") == "analog_3"
+    assert built.meta("rabi_eff") == pytest.approx(blk.rabi_eff)
+    assert built.meta("Delta") == pytest.approx(blk.Delta)
+    assert built.blocks.has("H_const")
+    assert built.blocks.has("drive_420")
 
 
 def test_duck_typed_protocol_without_laser_kwargs():
@@ -183,3 +178,34 @@ def test_builder_rb87_7_default_operating_point():
     assert system.meta("Delta") != 0
     # The Rabi scale now lives in the CZ protocol, not in system metadata.
     assert system.meta("rabi_eff") is None
+
+
+def test_atom_level_table_lists_five_builtins():
+    assert set(_ATOM_LEVELS) == {"01", "1r", "01r", "analog_3", "rb87_7"}
+    for entry in _ATOM_LEVELS.values():
+        assert entry["kind"] in {"symbolic", "analog_3", "rb87_7"}
+        assert isinstance(entry["level_kwargs"], frozenset)
+        assert isinstance(entry["description"], str) and entry["description"]
+
+
+@pytest.mark.parametrize("name", ["01", "1r", "01r"])
+def test_symbolic_models_reject_atom_level_kwargs(name):
+    with pytest.raises(TypeError, match="does not accept atom-level parameter") as exc:
+        (
+            RydbergSystem.set_atom_level(name, Delta_Hz=5.0e9)
+            .set_atom_geom(Register.chain(1))
+            .build()
+        )
+    message = str(exc.value)
+    assert "Delta_Hz" in message
+    assert "Allowed parameters: none" in message
+
+
+def test_rb87_7_rejects_invalid_param_set():
+    # Validated before any (expensive, ARC-backed) physical block construction.
+    with pytest.raises(ValueError, match="param_set must be one of"):
+        (
+            RydbergSystem.set_atom_level("rb87_7", param_set="bogus")
+            .set_atom_geom(Register.chain(1, spacing_um=3.0))
+            .build()
+        )
