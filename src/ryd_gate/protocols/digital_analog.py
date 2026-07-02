@@ -2,10 +2,10 @@
 
 Continuous schedules for four channels:
 
-- ``drive_R``   — hyperfine→Rydberg Rabi amplitude on ``|1>``↔``|r>`` (per atom, Omega_R)
-- ``drive_hf``  — hyperfine Rabi amplitude on ``|0>``↔``|1>`` (Omega_hf)
-- ``delta_R``   — Rydberg detuning (Delta_R, sign convention: H contains -Delta_R n^r)
-- ``delta_hf``  — hyperfine detuning (Delta_hf)
+- ``E[r,1]``  — hyperfine→Rydberg Rabi amplitude on ``|1>``↔``|r>`` (per atom, Omega_R)
+- ``E[1,0]``  — hyperfine Rabi amplitude on ``|0>``↔``|1>`` (Omega_hf)
+- ``E[r,r]``  — Rydberg detuning (Delta_R, sign convention: H contains -Delta_R n^r)
+- ``E[1,1]``  — hyperfine detuning (Delta_hf)
 
 The schedule lives on the protocol, so the parameter vector ``x`` passed to
 ``simulate()`` is empty.  Each function accepts physical time ``t`` in seconds
@@ -53,12 +53,14 @@ def as_site_profile(value: SiteProfile, n_sites: int) -> np.ndarray:
     return arr
 
 
-# (field, global channel, per-site channel prefix, half_factor, negate)
+# (function-field name, global channel, per-site prefix, is_drive, is_detuning).
+# The first element is the internal schedule-function key; the 2nd/3rd are the
+# primitive E[ket,bra] channel names the IR consumes.
 _CHANNEL_SPECS = (
-    ("omega_R", "drive_R", "drive_R", True, False),
-    ("omega_hf", "drive_hf", "drive_hf", True, False),
-    ("delta_R", "delta_R", "delta_R", False, True),
-    ("delta_hf", "delta_hf", "delta_hf", False, True),
+    ("omega_R", "E[r,1]", "E[r,1]", True, False),
+    ("omega_hf", "E[1,0]", "E[1,0]", True, False),
+    ("delta_R", "E[r,r]", "E[r,r]", False, True),
+    ("delta_hf", "E[1,1]", "E[1,1]", False, True),
 )
 
 
@@ -139,7 +141,7 @@ class DigitalAnalogProtocol(Protocol):
 
     @property
     def required_channels(self) -> frozenset[str]:
-        return frozenset({"drive_R", "drive_hf", "delta_R", "delta_hf"})
+        return frozenset({"E[r,1]", "E[1,0]", "E[r,r]", "E[1,1]"})
 
     def drive_channels(self, system) -> frozenset[str]:
         """All drive/detuning channels used by this schedule on this lattice."""
@@ -195,10 +197,10 @@ class DigitalAnalogProtocol(Protocol):
 
         Sign / factor conventions matching the compiler:
 
-        - ``drive_R`` / ``drive_R_i``  -> Omega_R / 2  (+ Hermitian conjugate)
-        - ``drive_hf`` / ``drive_hf_i`` -> Omega_hf / 2 (+ Hermitian conjugate)
-        - ``delta_R`` / ``delta_R_i``  -> -Delta_R on Rydberg projector
-        - ``delta_hf`` / ``delta_hf_i`` -> -Delta_hf on |1> projector
+        - ``E[r,1]`` / ``E[r,1]_i``  -> Omega_R / 2  (+ Hermitian conjugate)
+        - ``E[1,0]`` / ``E[1,0]_i``  -> Omega_hf / 2 (+ Hermitian conjugate)
+        - ``E[r,r]`` / ``E[r,r]_i``  -> -Delta_R on Rydberg projector
+        - ``E[1,1]`` / ``E[1,1]_i``  -> -Delta_hf on |1> projector
         """
         n_sites = int(params.get("n_sites", 1))
         coeffs: dict[str, complex] = {}

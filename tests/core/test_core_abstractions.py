@@ -1,9 +1,9 @@
-"""Tests for the Phase 0 core abstractions: BasisSpec, BlockRegistry, ObservableRegistry."""
+"""Tests for the Phase 0 core abstractions: BasisSpec, ObservableRegistry."""
 
 import numpy as np
 import pytest
 
-from ryd_gate.core.model import BasisSpec, BlockRegistry, ObservableRegistry
+from ryd_gate.core.model import BasisSpec, ObservableRegistry
 
 # ---------------------------------------------------------------------------
 # BasisSpec
@@ -83,54 +83,6 @@ class TestBasisSpec:
                 local_dim=2,
                 total_dim=8,
             )
-
-
-# ---------------------------------------------------------------------------
-# BlockRegistry
-# ---------------------------------------------------------------------------
-
-
-class TestBlockRegistry:
-    def test_register_and_get(self):
-        reg = BlockRegistry()
-        op = np.eye(4)
-        reg.register("H_const", op, description="constant term")
-        retrieved = reg.get("H_const")
-        assert np.array_equal(retrieved, op)
-
-    def test_get_info(self):
-        reg = BlockRegistry()
-        op = np.eye(4)
-        reg.register("drive_420", op, description="420nm drive", hermitian=True)
-        info = reg.get_info("drive_420")
-        assert info.name == "drive_420"
-        assert info.description == "420nm drive"
-        assert info.hermitian is True
-
-    def test_list(self):
-        reg = BlockRegistry()
-        reg.register("a", np.eye(2))
-        reg.register("b", np.eye(2))
-        assert sorted(reg.list()) == ["a", "b"]
-
-    def test_has_and_contains(self):
-        reg = BlockRegistry()
-        reg.register("H_vdw", np.eye(2))
-        assert reg.has("H_vdw")
-        assert "H_vdw" in reg
-        assert not reg.has("missing")
-        assert "missing" not in reg
-
-    def test_len(self):
-        reg = BlockRegistry()
-        assert len(reg) == 0
-        reg.register("x", np.eye(2))
-        assert len(reg) == 1
-
-    def test_get_missing_raises(self):
-        reg = BlockRegistry()
-        with pytest.raises(KeyError):
-            reg.get("nonexistent")
 
 
 # ---------------------------------------------------------------------------

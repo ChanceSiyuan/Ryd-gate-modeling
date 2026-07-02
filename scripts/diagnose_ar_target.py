@@ -1,13 +1,13 @@
-"""Target-soundness + gate-quality diagnostic for the CZ infidelity on "our".
+"""Target-soundness + gate-quality diagnostic for the CZ infidelity on rb87_7_mp.
 
 `average_gate_infidelity` uses the 3-state Nielsen formula: it evolves |00>,
 |01>, |11> and reuses |01> for the |10> contribution, assuming 01<->10
 exchange symmetry, with a single single-qubit phase `theta = x[-1]`. This
-script verifies the target is faithful on the "our" rb87_7 system (where the AR
-optimizer gets stuck at 0.451), so we can rule out a target bug before blaming
-the optimizer.
+script verifies the target is faithful on the rb87_7_mp (σ⁻/σ⁺) system (where
+the AR optimizer gets stuck at 0.451), so we can rule out a target bug before
+blaming the optimizer.
 
-For the TO dark point and the AR points on "our" it reports, from the raw
+For the TO dark point and the AR points on rb87_7_mp it reports, from the raw
 computational-basis overlaps r_kk = <kk|U|kk>:
 
 - **|a01 - a10|** -- the quantity the 3-state formula assumes is 0 (exact
@@ -70,14 +70,13 @@ def _nielsen_inf_at_theta(r, theta):
 
 def main() -> None:
     system = (
-        RydbergSystem.set_atom_level("rb87_7", param_set="our")
+        RydbergSystem.set_atom_level("rb87_7_mp")
         .set_atom_geom(Register.chain(2, spacing_um=3.0))
-        .build()
     )
     cases = [
         ("TO dark  (X_TO_DARK)", TOProtocol(), X_TO_DARK),
-        ("AR stuck (X_AR_OUR)", ARProtocol(), _checkpoint_x("our")),
-        ("AR lukin-opt on our", ARProtocol(), _checkpoint_x("lukin")),
+        ("AR stuck (mp)", ARProtocol(), _checkpoint_x("mp")),
+        ("AR pm-opt on mp", ARProtocol(), _checkpoint_x("pm")),
     ]
     thetas = np.linspace(-np.pi, np.pi, 4001)
 

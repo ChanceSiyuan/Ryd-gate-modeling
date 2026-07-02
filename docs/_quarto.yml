@@ -175,7 +175,7 @@ quartodoc:
       contents:
         - core.model.SystemModel
         - core.model.BasisSpec
-        - core.model.BlockRegistry
-        - core.model.BlockInfo
+        - core.operators.BasisOperatorFactory
+        - core.operators.StaticHamiltonianTerm
         - core.model.ObservableRegistry
         - core.model.Observable

@@ -54,7 +54,9 @@ from __future__ import annotations
 import functools
 
 import numpy as np
-from scipy.constants import c, epsilon_0
+from scipy.constants import c, epsilon_0, hbar, physical_constants
+
+_MU_B = physical_constants["Bohr magneton"][0]  # Bohr magneton, J/T
 
 # ======================================================================
 # PULSE ENVELOPE KERNELS (pure numpy; no ARC dependency)
@@ -298,6 +300,66 @@ def single_photon_rabi(
     return float(_get_atom().getRabiFrequency2(n1, l1, j1, mj1, n2, l2, j2, q, e0))
 
 
+# ======================================================================
+# MAGNETIC FIELD -> RYDBERG ZEEMAN SHIFT
+# ======================================================================
+
+
+def lande_gj(l: int, j: float, s: float = 0.5) -> float:
+    """Landé g-factor g_J for a fine-structure level ``|l j⟩`` (spin ``s``).
+
+    Parameters
+    ----------
+    l : int
+        Orbital angular momentum quantum number.
+    j : float
+        Total (fine-structure) angular momentum quantum number.
+    s : float, optional
+        Spin quantum number (default 1/2 for an alkali valence electron).
+
+    Returns
+    -------
+    float
+        The Landé g-factor. For an nS_{1/2} level (l=0, j=1/2) this is 2.
+    """
+    return 1.0 + (j * (j + 1) + s * (s + 1) - l * (l + 1)) / (2 * j * (j + 1))
+
+
+def rydberg_zeeman_shift_rad_s(magnetic_field_G: float, *, manifold: str) -> float:
+    """Linear Zeeman splitting (rad/s) of the garbage Rydberg state ``r_garb``.
+
+    The seven-level Rb87 gate model reaches an opposite-``m_j`` Rydberg Zeeman
+    state ``r_garb`` through polarization leakage. For an ``nS_{1/2}`` Rydberg
+    level the two states differ by ``Δm_j = 1`` (m_j = ±1/2), so the energy of
+    ``r_garb`` relative to ``r`` is the linear Zeeman shift
+
+    ``Δω = (μ_B / ħ) · g_J · Δm_j · B`` ,
+
+    with ``g_J = 2`` (``nS_{1/2}``) and ``B = magnetic_field_G · 1e-4`` (T). The
+    result is positive for positive ``B``, matching the Hamiltonian convention
+    ``h[6, 6] = +ryd_zeeman_shift`` (``r_garb`` above ``r``).
+
+    Parameters
+    ----------
+    magnetic_field_G : float
+        Bias magnetic field in Gauss.
+    manifold : str
+        ``"mp"`` (σ⁻/σ⁺) or ``"pm"`` (σ⁺/σ⁻); both are ``nS_{1/2}`` states with
+        opposite ``m_j = ±1/2`` (``Δm_j = 1``).
+
+    Returns
+    -------
+    float
+        The Zeeman shift in rad/s.
+    """
+    if manifold not in ("mp", "pm"):
+        raise ValueError(f"Unknown rb87 manifold '{manifold}' (expected 'mp' or 'pm').")
+    delta_mj = 1.0
+    g_j = lande_gj(0, 0.5, 0.5)
+    B_T = magnetic_field_G * 1e-4
+    return (_MU_B / hbar) * g_j * delta_mj * B_T
+
+
 def our_laser_rabis(
     p420_w: float,
     p1013_w: float,
@@ -305,11 +367,11 @@ def our_laser_rabis(
     *,
     ryd_level: int = RYD_LEVEL_OUR,
 ) -> tuple[float, float]:
-    """420/1013 nm single-photon Rabi frequencies (rad/s) for the 'our' path.
+    """420/1013 nm single-photon Rabi frequencies (rad/s) for the σ⁻/σ⁺ path.
 
     Both beams are top-hats of the given power filling the same
-    ``beam_area`` (μm²). Transitions match ``physical_models.py``
-    param_set ``our``:
+    ``beam_area`` (μm²). Transitions match the ``rb87_7_mp`` manifold
+    (σ⁻/σ⁺; was param_set ``our``):
 
       * 420 nm:  5S₁/₂ (mⱼ=-1/2) --σ⁻--> 6P₃/₂ (mⱼ=-3/2)
       * 1013 nm: 6P₃/₂ (mⱼ=-1/2) --σ⁺--> nS₁/₂ (mⱼ=+1/2)
@@ -322,10 +384,10 @@ def our_laser_rabis(
     omega_420 = single_photon_rabi(
         p420_w, beam_area,
         n1=5, l1=0, j1=0.5, mj1=-0.5, n2=6, l2=1, j2=1.5, q=-1,
-    )
+    )/np.sqrt(2)  # sqrt(2) factor for mF=0 splitting into mJ=-1/2 and mJ=+1/2 components
     omega_1013 = single_photon_rabi(
         p1013_w, beam_area,
-        n1=6, l1=1, j1=1.5, mj1=-0.5, n2=ryd_level, l2=0, j2=0.5, q=1,
+        n1=6, l1=1, j1=1.5, mj1=-1.5, n2=ryd_level, l2=0, j2=0.5, q=1,
     )
     return omega_420, omega_1013
 
@@ -335,15 +397,19 @@ def our_laser_rabis(
 # ======================================================================
 
 
-def _rydberg_branching_ratios(atom, ryd_level, param_set):
-    """Compute branching ratios for Rydberg radiative decay."""
+def _rydberg_branching_ratios(atom, ryd_level, manifold):
+    """Compute branching ratios for Rydberg radiative decay.
+
+    ``manifold`` is ``"mp"`` (σ⁻/σ⁺, Rydberg mⱼ=-1/2; was param_set "our") or
+    ``"pm"`` (σ⁺/σ⁻, mⱼ=+1/2; was "lukin").
+    """
     from arc.wigner import CG
 
     I = 3 / 2
     mI = 1 / 2
     nr = ryd_level
     lr, jr = 0, 1 / 2
-    if param_set == "our":
+    if manifold == "mp":
         mjr = -1 / 2
     else:
         mjr = 1 / 2

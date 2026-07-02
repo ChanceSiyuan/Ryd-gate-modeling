@@ -36,8 +36,8 @@ from ryd_gate.backends.exact import MonteCarloRunner
 from ryd_gate.gates import TOProtocol
 
 system = (RydbergSystem
-          .set_atom_level("rb87_7", param_set="our", detuning_sign=1)
-          .set_atom_geom(Register.chain(2, spacing_um=3.0)).build())
+          .set_atom_level("rb87_7_mp", detuning_sign=1)
+          .set_atom_geom(Register.chain(2, spacing_um=3.0)))
 runner = MonteCarloRunner(system.with_protocol(TOProtocol()), X_TO_DARK)
 configure_monte_carlo_runner(runner, noise)            # exact unit conversions
 mc = runner.run_gate_fidelity(n_shots=noise.runs, seed=123)
@@ -57,12 +57,13 @@ flags into `RydbergSystem.set_atom_level`:
 ```python
 from ryd_gate import level_structure
 
-spec = level_structure("rb87_7")
+spec = level_structure("rb87_7_mp")
 system = (RydbergSystem
           .set_atom_level(spec, **spec.physical_kwargs(), **noise.physical_kwargs())
-          .set_atom_geom(Register.chain(2, spacing_um=3.0)).build())
+          .set_atom_geom(Register.chain(2, spacing_um=3.0)))
 ```
 
 `validate_for(backend=..., level_structure=..., n_atoms=...)` reports
-capability errors per backend (decay needs `analog_3` or `rb87_7`; no TN
+capability errors per backend (decay needs `analog_3`, `rb87_7_mp`, or
+`rb87_7_pm`; no TN
 noise support — see the [Capability Matrix](capability_matrix.qmd)).

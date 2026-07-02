@@ -162,7 +162,7 @@ class TestValidateFor:
         assert "noise.decay_level_structure_unsupported" in _codes(
             noise.validate_for(backend="exact", level_structure="1r")
         )
-        assert noise.validate_for(backend="exact", level_structure="rb87_7") == []
+        assert noise.validate_for(backend="exact", level_structure="rb87_7_mp") == []
         assert noise.validate_for(backend="exact", level_structure="analog_3") == []
 
     def test_position_two_atom_only(self):

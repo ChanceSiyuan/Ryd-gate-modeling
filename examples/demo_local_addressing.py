@@ -92,7 +92,6 @@ def _setup_experiment(Lx, Ly):
     system = (
         RydbergSystem.set_atom_level("1r", Omega=1.0)
         .set_atom_geom(geom, interaction=InteractionSpec(C6=V_NN, mode="nn"))
-        .build()
     )
     bit_masks = precompute_bit_masks(system.N)
     print(f"  Built {Lx}x{Ly} lattice system ({system.N} atoms, dim = {2**system.N})")

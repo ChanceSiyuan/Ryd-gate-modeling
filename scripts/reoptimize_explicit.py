@@ -13,6 +13,7 @@ n_steps convergence check. Checkpoints best_x to data/<name>_explicit.json.
 """
 import os
 import json
+from math import pi
 from pathlib import Path
 
 for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
@@ -34,17 +35,20 @@ X_AR_LUKIN = [1.152444475742163, 0.5298612474274744, 1.0463537649409957,
               0.5247328111843467, -1.3495589677508941, -0.008058653524462491,
               1.4486084769604992, -0.1399323673945825]
 
-# (name, protocol_cls, set_atom_level kwargs, seed)
+# Canonical σ⁺/σ⁻ (pm) single-photon Rabis (rad/s); pm is not the protocol default.
+OMEGA_PM = dict(omega_420_max=2 * pi * 237e6, omega_1013_max=2 * pi * 303e6)
+
+# (name, level-structure tag, protocol_cls, protocol omega kwargs, set_atom_level kwargs, seed)
 GATES = [
-    ("to_dark", TOProtocol, dict(param_set="our", detuning_sign=1), X_TO_DARK),
-    ("ar_our", ARProtocol, dict(param_set="our"), X_AR_OUR),
-    ("ar_lukin", ARProtocol, dict(param_set="lukin"), X_AR_LUKIN),
+    ("to_dark", "rb87_7_mp", TOProtocol, {}, dict(detuning_sign=1), X_TO_DARK),
+    ("ar_our", "rb87_7_mp", ARProtocol, {}, {}, X_AR_OUR),
+    ("ar_lukin", "rb87_7_pm", ARProtocol, OMEGA_PM, {}, X_AR_LUKIN),
 ]
 
-for name, Proto, kw, seed in GATES:
-    sys = (RydbergSystem.set_atom_level("rb87_7", **kw)
-           .set_atom_geom(Register.chain(2, spacing_um=3.0)).build())
-    p = Proto(); p.n_steps = 200
+for name, atom_tag, Proto, omega_kw, kw, seed in GATES:
+    sys = (RydbergSystem.set_atom_level(atom_tag, **kw)
+           .set_atom_geom(Register.chain(2, spacing_um=3.0)))
+    p = Proto(**omega_kw); p.n_steps = 200
     print(f"\n=== {name} ===", flush=True)
     result = optimize_cz_parameters(sys, p, seed)
     print(f"seed={result.seed_infidelity:.6e}  theta-only={result.theta_infidelity:.6e}  "

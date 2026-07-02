@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from ryd_gate.core.effective_theory import single_atom_hamiltonian_parts
 from ryd_gate import NoiseModel, Register, RydbergSystem, configure_monte_carlo_runner, level_structure
 from ryd_gate.backends.exact import MonteCarloRunner
 from ryd_gate.protocols.gate_cz import TOProtocol
@@ -19,9 +20,8 @@ X_TO = [
 
 def _system(n_atoms=2, **kwargs):
     return (
-        RydbergSystem.set_atom_level("rb87_7", param_set="our", **kwargs)
+        RydbergSystem.set_atom_level("rb87_7_mp", **kwargs)
         .set_atom_geom(Register.chain(n_atoms, spacing_um=3.0))
-        .build()
     )
 
 
@@ -96,7 +96,7 @@ class TestConfigure:
 
 
 class TestDecayPhysicalKwargs:
-    @pytest.mark.parametrize("preset", ["rb87_7", "analog_3"])
+    @pytest.mark.parametrize("preset", ["rb87_7_mp", "analog_3"])
     def test_decay_kwargs_reproduce_manual_flags(self, preset):
         spec = level_structure(preset)
         noise = NoiseModel(rydberg_decay=True, intermediate_decay=True)
@@ -108,25 +108,23 @@ class TestDecayPhysicalKwargs:
                 enable_intermediate_decay=True,
             )
             .set_atom_geom(Register.chain(2, spacing_um=3.0))
-            .build()
         )
         via_noise = (
             RydbergSystem.set_atom_level(
                 preset, **spec.physical_kwargs(), **noise.physical_kwargs()
             )
             .set_atom_geom(Register.chain(2, spacing_um=3.0))
-            .build()
         )
         assert via_noise.meta("enable_rydberg_decay") is True
         assert via_noise.meta("enable_intermediate_decay") is True
-        h_manual = np.asarray(manual.blocks.get("H_const").matrix)
-        h_via = np.asarray(via_noise.blocks.get("H_const").matrix)
+        h_manual = np.asarray(single_atom_hamiltonian_parts(manual)[0])
+        h_via = np.asarray(single_atom_hamiltonian_parts(via_noise)[0])
         np.testing.assert_allclose(np.diag(h_via).imag, np.diag(h_manual).imag)
         assert np.any(np.diag(h_via).imag != 0.0)
 
     def test_no_decay_flags_keep_hermitian_diagonal(self):
         system = _system()
-        h_const = np.asarray(system.blocks.get("H_const").matrix)
+        h_const = np.asarray(single_atom_hamiltonian_parts(system)[0])
         assert np.all(np.diag(h_const).imag == 0.0)
 
 

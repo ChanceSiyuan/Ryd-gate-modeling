@@ -54,15 +54,14 @@ def noise_model() -> None:
 
 def cz_gate_report_demo() -> None:
     """Microscopic CZ gate: one call returns fidelity + phase diagnostics."""
-    print("== Gate: CZ report (rb87_7, time-optimal) ==")
+    print("== Gate: CZ report (rb87_7_mp, time-optimal) ==")
     x_to_dark = [
         -0.6894097925886826, 1.040962607910546, 0.3277877211544321,
         1.5639989822346387, 0.6689846026179691, 1.3407418093368753,
     ]
     system = (
-        RydbergSystem.set_atom_level("rb87_7", param_set="our")
+        RydbergSystem.set_atom_level("rb87_7_mp")
         .set_atom_geom(Register.chain(2, spacing_um=3.0))
-        .build()
     )
     report = cz_gate_report(system, TOProtocol(), x_to_dark, include_error_budget=False)
     print(f"   fidelity={report.fidelity:.7f}  phase_error={report.phase_error_rad:.2e} rad")

@@ -28,10 +28,10 @@ class ExactOptions:
 # backend (whose per-call setup overhead dominates ~``n_steps`` calls, and whose cost
 # also grows with ``||dt*H||``), so the auto selector routes them to
 # :class:`DenseExpmBackend`. Two caps: any small system below ``_DENSE_EXPM_SMALL_DIM``
-# (dense is just faster), and the physical-ladder models (``rb87_7``/``analog_3``, whose
+# (dense is just faster), and the physical-ladder models (rb87 7-level/``analog_3``, whose
 # ~GHz intermediate manifold makes ``expm_multiply`` *pathologically* slow) up to a
 # larger cap. Dense ``expm`` is O(dim^3)/step, so larger systems stay on the sparse path.
-_DENSE_LADDER_MODELS = frozenset({"rb87_7", "analog_3"})
+_DENSE_LADDER_MODELS = frozenset({"rb87_7_mp", "rb87_7_pm", "analog_3"})
 _DENSE_EXPM_SMALL_DIM = 256
 _DENSE_EXPM_MAX_DIM = 1024
 
@@ -121,7 +121,7 @@ def simulate(
     ``system`` must have a protocol bound. With ``backend=None`` the solver is
     selected automatically: sparse piecewise-exponential evolution for a sparse
     Hamiltonian IR, a dense piecewise matrix-exponential for the small physical-ladder
-    models (``rb87_7``/``analog_3``, whose ~GHz intermediate manifold makes
+    models (rb87 7-level/``analog_3``, whose ~GHz intermediate manifold makes
     ``expm_multiply`` pathologically slow), otherwise a dense ODE integrator. Pass
     ``force_kind="dense"``/``"sparse"`` to force a piecewise-``expm`` solver (this is
     how :func:`ryd_gate.simulate`'s ``exact_dense``/``exact_sparse`` keys route here),
@@ -164,7 +164,7 @@ def simulate_states(
 ):
     """Evolve several initial states under the same bound protocol, sharing work.
 
-    The dense ladder backend (``rb87_7``/``analog_3``) computes each step's propagator
+    The dense ladder backend (rb87 7-level/``analog_3``) computes each step's propagator
     once and applies it to all states, so evolving N basis states costs ~the same as
     one -- far faster than calling :func:`simulate` per state. Other backends fall back
     to a per-state loop over the single compiled IR. ``backend``/``force_kind`` select

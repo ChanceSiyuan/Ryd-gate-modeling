@@ -17,7 +17,7 @@ def _nn_square_system(L=2):
     return RydbergSystem.set_atom_level("1r", Omega=1.0).set_atom_geom(
         Register.rectangle(L, L, spacing_um=1.0),
         interaction=InteractionSpec(C6=4.0, mode="nn"),
-    ).build()
+    )
 
 
 def test_tfim_to_rydberg_controls_uniform_2x2_nn():
@@ -48,8 +48,8 @@ def test_tfim_quench_protocol_emits_existing_lattice_channels():
     coeffs = system.protocol.get_drive_coefficients(0.5, params)
 
     assert params["t_gate"] == 1.25
-    assert np.isclose(coeffs["global_X"], 0.75)
-    assert np.isclose(coeffs["global_n"], -4.0)
+    assert np.isclose(coeffs["E[r,1]"], 0.75)
+    assert np.isclose(coeffs["E[r,r]"], -4.0)
 
 
 def test_tfim_anneal_protocol_piecewise_schedule():
@@ -70,10 +70,10 @@ def test_tfim_anneal_protocol_piecewise_schedule():
     assert np.isclose(proto.hz_at(1.5), -8.0)
     assert np.isclose(proto.hz_at(3.0), 0.0)
     assert np.isclose(params["t_gate"], 4.5)
-    assert np.isclose(proto.get_drive_coefficients(1.5, params)["global_X"], 3.0)
+    assert np.isclose(proto.get_drive_coefficients(1.5, params)["E[r,1]"], 3.0)
 
 
-def test_exact_compiler_accepts_site_dependent_global_n_channels():
+def test_exact_compiler_accepts_site_dependent_detuning_channels():
     class SiteDetuningProtocol(Protocol):
         @property
         def n_params(self):
@@ -81,7 +81,7 @@ def test_exact_compiler_accepts_site_dependent_global_n_channels():
 
         @property
         def required_channels(self):
-            return frozenset({"global_n_0", "global_n_1"})
+            return frozenset({"E[r,r]_0", "E[r,r]_1"})
 
         def drive_channels(self, system):
             return self.required_channels
@@ -94,7 +94,7 @@ def test_exact_compiler_accepts_site_dependent_global_n_channels():
             return {"t_gate": 1.0}
 
         def get_drive_coefficients(self, t, params):
-            return {"global_n_0": -1.0, "global_n_1": -2.0}
+            return {"E[r,r]_0": -1.0, "E[r,r]_1": -2.0}
 
     system = RydbergSystem.set_atom_level("1r").set_atom_geom(
         Register.rectangle(1, 2, spacing_um=1.0),
@@ -104,4 +104,4 @@ def test_exact_compiler_accepts_site_dependent_global_n_channels():
     ham = compile_hamiltonian_ir(system, system.unpack_params([]))
     ir = compile_expm_ir(ham)
 
-    assert {term.name for term in ir.drive_terms} == {"global_n_0", "global_n_1"}
+    assert {term.name for term in ir.drive_terms} == {"E[r,r]_0", "E[r,r]_1"}

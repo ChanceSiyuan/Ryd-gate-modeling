@@ -166,7 +166,7 @@ def test_drive_channels_scalar_uses_global():
     system = RydbergSystem.set_atom_level("01r").set_atom_geom(
         Register.chain(2), interaction=InteractionSpec(C6=0.0)
     ).set_protocol(proto)
-    assert proto.drive_channels(system) == frozenset({"drive_R", "drive_hf", "delta_R", "delta_hf"})
+    assert proto.drive_channels(system) == frozenset({"E[r,1]", "E[1,0]", "E[r,r]", "E[1,1]"})
 
 
 def test_drive_channels_site_profile_uses_per_site():
@@ -179,9 +179,9 @@ def test_drive_channels_site_profile_uses_per_site():
         Register.chain(2), interaction=InteractionSpec(C6=0.0)
     ).set_protocol(proto)
     channels = proto.drive_channels(system)
-    assert "drive_R" not in channels
-    assert "drive_R_0" in channels
-    assert "drive_R_1" in channels
+    assert "E[r,1]" not in channels
+    assert "E[r,1]_0" in channels
+    assert "E[r,1]_1" in channels
 
 
 def test_site_dependent_omega_R_drives_one_site_only():
@@ -218,6 +218,6 @@ def test_compile_expm_ir_includes_per_site_drive_terms():
     ham = compile_hamiltonian_ir(system, params)
     ir = compile_expm_ir(ham)
     names = {term.name for term in ir.drive_terms}
-    assert "drive_R_0" in names
-    assert "drive_R_1" in names
-    assert "drive_R" not in names
+    assert "E[r,1]_0" in names
+    assert "E[r,1]_1" in names
+    assert "E[r,1]" not in names

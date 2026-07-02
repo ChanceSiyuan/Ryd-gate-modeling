@@ -6,7 +6,7 @@ per-step renormalization, same ``t_eval`` recording) but evolves with a dense
 drop-in with identical numerics (validated to ~1e-12).
 
 Why it exists: ``expm_multiply``'s cost grows with ``||dt*H||``. The physical-ladder
-models (``rb87_7``, ``analog_3``) keep the intermediate manifold at ~GHz, so over a
+models (rb87 7-level, ``analog_3``) keep the intermediate manifold at ~GHz, so over a
 microsecond pulse ``||dt*H|| ~ 10^3`` and ``expm_multiply`` becomes pathologically
 slow (minutes per 2-atom run). Dense ``expm`` uses scaling-and-squaring, whose cost
 is ~constant in the norm for a small matrix, so it is ~100x faster there. The auto
@@ -71,7 +71,10 @@ class DenseExpmBackend(SolverBackend):
         H_static = np.zeros((dim, dim), dtype=complex)
         for term in ir.static_terms:
             coeff = term.coefficient(0) if callable(term.coefficient) else term.coefficient
-            H_static = H_static + coeff * _to_dense(term.operator)
+            op = _to_dense(term.operator)
+            H_static = H_static + coeff * op
+            if term.add_hermitian_conjugate:
+                H_static = H_static + np.conj(coeff) * op.conj().T
 
         # Pre-bind drive terms once: operators and their Hermitian conjugates are
         # constant, so the dense conversion and transpose happen here, not per step.

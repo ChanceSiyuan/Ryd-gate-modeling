@@ -1,7 +1,6 @@
 """Foundational data structures for quantum system models.
 
 - :class:`BasisSpec` — Hilbert space structure with symbolic level labels
-- :class:`BlockRegistry` — named Hamiltonian operator blocks (matrices or specs)
 - :class:`ObservableRegistry` — named measurement operators or specs
 - :class:`SystemModel` — abstract base class consumed by solvers
 """
@@ -91,65 +90,6 @@ class BasisSpec:
         return result
 
 
-@dataclass
-class BlockInfo:
-    """Metadata for a registered Hamiltonian block."""
-
-    name: str
-    operator: Any  # ndarray, sparse matrix, or symbolic operator spec
-    description: str = ""
-    hermitian: bool = True
-
-
-class BlockRegistry:
-    """Dict-like container mapping names to operator blocks.
-
-    Stores Hamiltonian building blocks (e.g. "drive_420", "H_const", "H_vdw")
-    with metadata. Operators can be dense/sparse matrices for small exact
-    models, or symbolic operator specs for large lattice models.
-    """
-
-    def __init__(self) -> None:
-        self._blocks: dict[str, BlockInfo] = {}
-
-    def register(
-        self,
-        name: str,
-        operator: Any,
-        description: str = "",
-        hermitian: bool = True,
-    ) -> None:
-        """Register an operator block."""
-        self._blocks[name] = BlockInfo(
-            name=name,
-            operator=operator,
-            description=description,
-            hermitian=hermitian,
-        )
-
-    def get(self, name: str) -> Any:
-        """Get the registered matrix/spec for a block. Raises KeyError if missing."""
-        return self._blocks[name].operator
-
-    def get_info(self, name: str) -> BlockInfo:
-        """Get full BlockInfo for a block."""
-        return self._blocks[name]
-
-    def list(self) -> list[str]:
-        """Return names of all registered blocks."""
-        return list(self._blocks.keys())
-
-    def has(self, name: str) -> bool:
-        """Check if a block is registered."""
-        return name in self._blocks
-
-    def __contains__(self, name: str) -> bool:
-        return self.has(name)
-
-    def __len__(self) -> int:
-        return len(self._blocks)
-
-
 @dataclass(frozen=True)
 class Observable:
     """A named observable with its operator and metadata."""
@@ -219,7 +159,8 @@ class SystemModel(ABC):
 
     A SystemModel provides:
     - A basis specification with symbolic level labels
-    - A registry of Hamiltonian matrix blocks or symbolic block specs
+    - A primitive operator factory (``E[ket,bra]``) generated from the basis
+    - Driveable Hamiltonian channels and static Hamiltonian terms built from it
     - A registry of observables or symbolic observable specs
 
     ``RydbergSystem`` is the canonical implementation.
@@ -233,8 +174,20 @@ class SystemModel(ABC):
 
     @property
     @abstractmethod
-    def blocks(self) -> BlockRegistry:
-        """Registry of Hamiltonian matrix blocks or symbolic block specs."""
+    def operators(self):
+        """Primitive ``E[ket,bra]`` operator factory generated from the basis."""
+        ...
+
+    @property
+    @abstractmethod
+    def hamiltonian_channels(self) -> dict:
+        """Driveable primitive operators keyed by ``E[ket,bra]`` channel name."""
+        ...
+
+    @property
+    @abstractmethod
+    def static_hamiltonian_terms(self) -> list:
+        """Static (protocol-independent) Hamiltonian terms."""
         ...
 
     @property
@@ -245,6 +198,7 @@ class SystemModel(ABC):
 
     @property
     @abstractmethod
-    def param_set(self) -> str:
-        """System identifier string (e.g. 'our', 'lukin', 'analog', 'lattice')."""
+    def model_tag(self) -> str:
+        """Level-structure tag identifying the atom model (e.g. 'rb87_7_mp',
+        'analog_3', '1r') — not a numeric-parameter selector."""
         ...

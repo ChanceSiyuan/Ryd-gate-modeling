@@ -3,9 +3,9 @@
 Contents
 --------
 - ``system``           — RydbergSystem (universal model: lattice + level
-  structure + protocol → symbolic blocks + observables) and the
+  structure + protocol → operators/channels + observables) and the
   ``set_atom_level``/``set_atom_geom``/``set_protocol`` construction logic
-- ``model``            — BasisSpec, BlockRegistry, ObservableRegistry, and
+- ``model``            — BasisSpec, ObservableRegistry, and
   the SystemModel ABC consumed by solvers
 - ``level_structures`` — level/transition/interaction specs + presets, plus
   protocol-channel lowering helpers
@@ -27,7 +27,6 @@ from ryd_gate.core.level_structures import (
 )
 from ryd_gate.core.model import (
     BasisSpec,
-    BlockRegistry,
     Observable,
     ObservableRegistry,
 )
@@ -44,7 +43,6 @@ __all__ = [
     "ValidationIssue",
     "raise_for_errors",
     "BasisSpec",
-    "BlockRegistry",
     "Observable",
     "ObservableRegistry",
 ]

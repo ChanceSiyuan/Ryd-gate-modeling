@@ -57,7 +57,7 @@ def _analog3_chain(n=2, spacing_um=5.0, t_gate_scale=2.0):
     """A 2-atom analog_3 system bound to a short uncompensated ARP pulse builder."""
     sys0 = RydbergSystem.set_atom_level("analog_3", detuning_sign=1).set_atom_geom(
         Register.chain(n, spacing_um=spacing_um)
-    ).build()
+    )
     ts = sys0.meta("time_scale")
     return sys0.with_protocol(_short_arp(t_gate_scale * ts, n_steps=200)), ts
 

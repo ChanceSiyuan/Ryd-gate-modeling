@@ -39,11 +39,13 @@ def test_phase_from_chirp_validation():
 
 
 class _FakeSystem:
-    """Duck-typed system: no blocks -> the 1013 leg stays static (analog-like)."""
+    """Duck-typed system: a single 420 leg, no 1013 group (analog-like)."""
 
     N = 2
 
     def meta(self, name, default=None):
+        if name == "laser_channel_ratios":
+            return {"420": {"E[e,g]": 1.0}}
         return default
 
 
@@ -141,9 +143,9 @@ def test_direct_adiabatic_cz_protocol():
     assert proto.t_gate == T
     params = proto.unpack_params([], _FakeSystem())
     coeffs = proto.get_drive_coefficients(0.5 * T, params)
-    # no unit drive_1013 block on the duck system -> 1013 static, only 420 driven
-    assert set(coeffs) == {"drive_420", "drive_420_dag"}
-    assert np.isclose(coeffs["drive_420_dag"], np.conjugate(coeffs["drive_420"]))
+    # only the 420 group on this duck system; forward primitive channels only (the
+    # compiler adds each leg's h.c.).
+    assert set(coeffs) == {"E[e,g]"}
     # phase at t = T/2 is D_AMP * (T/2) = 3.0  ->  arg(c420) = -3.0
     wrap = lambda a: float(np.angle(np.exp(1j * a)))
-    assert np.isclose(wrap(np.angle(coeffs["drive_420"])), wrap(-D_AMP * T / 2))
+    assert np.isclose(wrap(np.angle(coeffs["E[e,g]"])), wrap(-D_AMP * T / 2))

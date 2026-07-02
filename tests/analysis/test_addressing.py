@@ -20,7 +20,6 @@ def test_default_sweep_x_uses_metadata():
     system = (
         RydbergSystem.set_atom_level("analog_3", detuning_sign=1)
         .set_atom_geom(Register.chain(2, spacing_um=3.0))
-        .build()
     )
     x = default_sweep_x(system)
     assert len(x) == 3

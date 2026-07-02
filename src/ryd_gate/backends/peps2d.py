@@ -403,13 +403,15 @@ def _drive_schedule(ir, *, dt_actual: float, n_steps: int) -> list[dict[str, Any
         coeffs = ir.protocol.get_drive_coefficients(t_mid, ir.params)
         if spec.level_structure == "analog_3":
             # Physical g/e/r ladder: the local 3x3 blocks live on spec.local_blocks;
-            # the protocol only modulates drive_420 by a (complex) scalar. Drive is
-            # spatially uniform, so no per-site profile/reorder is needed.
+            # the protocol modulates the g-e drive by a (complex) scalar. Drive is
+            # spatially uniform, so no per-site profile/reorder is needed.  Under the
+            # TN context the protocol emits the unitless g-e envelope on E[e,g]; the
+            # payload re-applies the full Rabi via local_blocks.drive_420.
             schedule.append(
                 {
                     "step": step + 1,
                     "t_mid": float(t_mid),
-                    "drive_coeffs": {"drive_420": complex(coeffs.get("drive_420", 0.0))},
+                    "drive_coeffs": {"drive_420": complex(coeffs.get("E[e,g]", 0.0))},
                 }
             )
             continue

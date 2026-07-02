@@ -62,7 +62,7 @@ class TNCompiler:
                 "compiler": "tn",
                 "source_compiler": hamiltonian.metadata.get("compiler", "unknown"),
                 "tn_spec": spec,
-                "param_set": hamiltonian.metadata.get("param_set"),
+                "model_tag": hamiltonian.metadata.get("model_tag"),
                 "level_structure": spec.level_structure,
                 "n_sites": spec.N,
                 "local_dim": spec.level_spec.local_dim,

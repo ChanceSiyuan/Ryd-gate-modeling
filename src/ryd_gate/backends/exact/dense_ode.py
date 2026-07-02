@@ -39,7 +39,10 @@ class DenseODEBackend(SolverBackend):
         H_static = np.zeros((ir.dim, ir.dim), dtype=np.complex128)
         for term in ir.static_terms:
             coeff = term.coefficient(0) if callable(term.coefficient) else term.coefficient
-            H_static += coeff * _as_dense(term.operator)
+            op = _as_dense(term.operator)
+            H_static += coeff * op
+            if term.add_hermitian_conjugate:
+                H_static += np.conj(coeff) * op.conj().T
 
         # Pre-bind drive terms once: (dense operator, coefficient, op_dag), so the
         # rhs (called many times by solve_ivp) never re-densifies or re-transposes.

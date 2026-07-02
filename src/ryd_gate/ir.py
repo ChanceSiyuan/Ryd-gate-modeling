@@ -135,28 +135,17 @@ class HamiltonianIR:
     params: dict | None = None
 
 
-# Summed into the static Hamiltonian *unless* a protocol drives a channel of the
-# same name (then the drive loop picks it up). rb87_7's 1013 coupling is
-# registered as drive_1013/drive_1013_dag so it is static by default but can be
-# modulated; analog_3 keeps the H_1013/H_1013_conj names.
-_STATIC_BLOCKS = (
-    "H_const",
-    "H_vdw",
-    "H_1013",
-    "H_1013_conj",
-    "drive_1013",
-    "drive_1013_dag",
-)
-
-
 def compile_hamiltonian_ir(system, params: dict) -> HamiltonianIR:
-    """Compile a protocol-bound system into the unified Hamiltonian IR."""
-    from ryd_gate.core.level_structures import (
-        LevelStructureSpec,
-        block_name_for_drive_channel,
-        channel_needs_hermitian_conjugate,
-    )
-    from ryd_gate.core.operators import LocalProjectorSpec
+    """Compile a protocol-bound system into the unified Hamiltonian IR.
+
+    Static terms come from ``system.static_hamiltonian_terms`` (a static term is
+    dropped when a protocol drives a channel of the same name).  Drive terms come
+    from ``system.hamiltonian_channels`` keyed by primitive ``E[ket,bra]`` names
+    (per-site ``E[...]_<i>`` resolved via the operator factory); the compiler
+    auto-adds ``conj(coeff)·E[bra,ket]`` for every non-diagonal channel.
+    """
+    from ryd_gate.core.level_structures import LevelStructureSpec, split_site_channel
+    from ryd_gate.core.operators import BasisOperatorFactory
 
     protocol = system._require_protocol()
     level_spec = system.meta("level_spec", None)
@@ -164,40 +153,47 @@ def compile_hamiltonian_ir(system, params: dict) -> HamiltonianIR:
         level_spec = None
 
     drive_channel_set = protocol.drive_channels(system)
-    static_terms: list[HamiltonianTerm] = []
-    for name in _STATIC_BLOCKS:
-        if name in drive_channel_set:
-            continue
-        if system.blocks.has(name):
-            static_terms.append(HamiltonianTerm(name, system.blocks.get(name), 1.0))
 
-    static_terms.extend(_static_overlay_terms(system, params, LocalProjectorSpec))
+    static_terms: list[HamiltonianTerm] = []
+    for term in system.static_hamiltonian_terms:
+        if term.name in drive_channel_set:
+            continue  # a driven channel supersedes its static term
+        static_terms.append(
+            HamiltonianTerm(
+                term.name,
+                term.operator,
+                term.coefficient,
+                add_hermitian_conjugate=term.add_hermitian_conjugate,
+            )
+        )
+    static_terms.extend(_static_overlay_terms(system, params))
 
     amplitude_scale = system.amplitude_scale
     drive_terms: list[HamiltonianTerm] = []
     unmapped_channels: list[str] = []
     for channel in sorted(drive_channel_set):
-        block_name = block_name_for_drive_channel(system, channel)
-        if block_name is None:
+        base, site = split_site_channel(channel)
+        if base not in system.hamiltonian_channels:
             unmapped_channels.append(channel)
             continue
+        operator = (
+            system.operators.local(base, site)
+            if site is not None
+            else system.hamiltonian_channels[base]
+        )
 
         def coeff_fn(t, channel=channel):
             coeffs = protocol.get_drive_coefficients(t, params)
-            coeff = coeffs.get(channel, 0.0)
-            return amplitude_scale * coeff
+            return amplitude_scale * coeffs.get(channel, 0.0)
 
         drive_terms.append(
             HamiltonianTerm(
                 channel,
-                system.blocks.get(block_name),
+                operator,
                 coeff_fn,
-                add_hermitian_conjugate=(
-                    channel_needs_hermitian_conjugate(channel, level_spec)
-                    and _explicit_dagger_channel(channel) not in drive_channel_set
-                ),
+                add_hermitian_conjugate=not BasisOperatorFactory.is_hermitian(base),
                 channel=channel,
-                metadata={"block": block_name},
+                metadata={"base": base},
             )
         )
     if unmapped_channels:
@@ -213,7 +209,7 @@ def compile_hamiltonian_ir(system, params: dict) -> HamiltonianIR:
     metadata = {
         "compiler": "ryd_gate",
         "t_gate": params["t_gate"],
-        "param_set": system.param_set,
+        "model_tag": system.model_tag,
         "n_sites": system.basis.n_sites,
         "local_dim": system.basis.local_dim,
         "level_structure": getattr(level_spec, "name", system.meta("level_structure", None)),
@@ -234,13 +230,11 @@ def compile_hamiltonian_ir(system, params: dict) -> HamiltonianIR:
     )
 
 
-def _explicit_dagger_channel(channel: str) -> str:
-    if channel.endswith("_dag"):
-        return channel[:-4]
-    return f"{channel}_dag"
+def _static_overlay_terms(system, params: dict) -> list[HamiltonianTerm]:
+    """Protocol-supplied static terms (Rydberg pinning, ground-state scatter
+    loss, arbitrary overlays), built from the system's primitive operators."""
+    from ryd_gate.core.operators import is_operator_spec
 
-
-def _static_overlay_terms(system, params: dict, local_projector_cls) -> list[HamiltonianTerm]:
     terms: list[HamiltonianTerm] = []
     n_sites = system.basis.n_sites
     ground_label = system.basis.local_levels[0]
@@ -249,14 +243,10 @@ def _static_overlay_terms(system, params: dict, local_projector_cls) -> list[Ham
     for idx, delta in params.get("pin_deltas", {}).items():
         if abs(delta) <= 1e-15 or idx >= n_sites:
             continue
-        block_name = f"n_{ryd_label}_{idx}"
-        operator = (
-            system.blocks.get(block_name) if system.blocks.has(block_name) else local_projector_cls(ryd_label, idx)
-        )
         terms.append(
             HamiltonianTerm(
                 "pinning",
-                operator,
+                system.operators.local(f"E[{ryd_label},{ryd_label}]", idx),
                 -delta,
                 metadata={"site": idx, "level": ryd_label},
             )
@@ -265,21 +255,18 @@ def _static_overlay_terms(system, params: dict, local_projector_cls) -> list[Ham
     for idx, rate in params.get("scatter_rates", {}).items():
         if rate <= 0 or idx >= n_sites:
             continue
-        block_name = f"n_{ground_label}_{idx}"
-        operator = (
-            system.blocks.get(block_name) if system.blocks.has(block_name) else local_projector_cls(ground_label, idx)
-        )
         terms.append(
             HamiltonianTerm(
                 "scatter_loss",
-                operator,
+                system.operators.local(f"E[{ground_label},{ground_label}]", idx),
                 -1j * rate / 2,
                 metadata={"site": idx, "level": ground_label},
             )
         )
 
-    for block_name, coeff in params.get("static_overlays", []):
-        if system.blocks.has(block_name):
-            terms.append(HamiltonianTerm(block_name, system.blocks.get(block_name), coeff))
+    # Arbitrary overlays: each entry is (operator_spec | "E[ket,bra]" name, coeff).
+    for op, coeff in params.get("static_overlays", []):
+        operator = op if is_operator_spec(op) else system.operators.sum(op)
+        terms.append(HamiltonianTerm("static_overlay", operator, coeff))
 
     return terms

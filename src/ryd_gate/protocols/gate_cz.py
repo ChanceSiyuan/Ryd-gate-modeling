@@ -1,9 +1,10 @@
 """CZ gate pulse protocols: a clean pulse container + Time-Optimal / Amplitude-
 Robust builders + Double-ARP.
 
-A CZ pulse is the complex 420 nm and 1013 nm laser drives.  The rb87_7 system now
-builds *unit-Rabi, phase-free* transition blocks (relative CG/dipole ratios only),
-so the protocol owns the laser amplitudes and phases:
+A CZ pulse is the complex 420 nm and 1013 nm laser drives.  The rb87 seven-level
+system (``rb87_7_mp`` / ``rb87_7_pm``) builds *unit-Rabi, phase-free* transition
+blocks (relative CG/dipole ratios only), so the protocol owns the amplitudes and
+phases:
 
     Omega_420(t)  = omega_420_max  * A_420(s)  * exp(-i * phi_420(s))
     Omega_1013(t) = omega_1013_max * A_1013(s) * exp(-i * phi_1013(s))
@@ -11,8 +12,8 @@ so the protocol owns the laser amplitudes and phases:
 with normalized time ``s = t/t_gate in [0, 1]``, ``A_* in [0,1]`` and ``phi_*`` in
 radians.  These coefficients multiply the unit blocks at compile time.
 
-- :class:`CZProtocol` — the container, and the **only** rb87_7 laser-domain
-  protocol: four normalized functions + the two max Rabi amplitudes + ``t_gate``.
+- :class:`CZProtocol` — the container, and the **only** rb87 seven-level laser-
+  domain protocol: four normalized functions + the two max Rabis + ``t_gate``.
   It also runs on ``analog_3`` (where the 1013 leg is a static coupling, not a
   driven block).  An adiabatic pulse is just a ``CZProtocol`` whose 420 phase is the
   chirp integral :func:`phase_from_chirp` — no dedicated class.
@@ -29,18 +30,27 @@ from __future__ import annotations
 
 import numpy as np
 
-from ryd_gate.core.physical_models import rb87_default_rabis
 from ryd_gate.protocols.base import Protocol
 
+# Protocol-internal default 420/1013 single-photon Rabi maxes (rad/s), used when a
+# CZ/TO/AR protocol is bound to a unit-Rabi rb87 seven-level system without an
+# explicit ``omega_*_max``.  These are the canonical σ⁻/σ⁺ (``rb87_7_mp``) values
+# and are a fixed protocol constant — never read from the system (its Rabi-bearing
+# atom-level metadata).  For the σ⁺/σ⁻ (``rb87_7_pm``) manifold, pass omega
+# explicitly.
+_CZ_DEFAULT_OMEGA_420 = 2 * np.pi * 491e6
+_CZ_DEFAULT_OMEGA_1013 = 2 * np.pi * 185e6
 
-def _has_unit_1013(system) -> bool:
-    """True when *system* exposes a unit-Rabi ``drive_1013`` block (rb87_7).
+# Tags whose primitive E[...] channels are unit-Rabi (the protocol supplies the
+# scale via its laser coefficient).  Other systems (analog_3, duck-typed) carry
+# the full Rabi in the channel ratio, so the omega scaling is a no-op (1.0) there.
+_UNIT_RABI_TAGS = frozenset({"rb87_7_mp", "rb87_7_pm"})
 
-    On ``analog_3`` / duck-typed systems the 1013 leg is a static coupling, so the
-    laser-domain protocols hold it constant rather than driving a channel.
-    """
-    blocks = getattr(system, "blocks", None)
-    return bool(blocks) and hasattr(blocks, "has") and blocks.has("drive_1013")
+
+def _laser_ratios(system) -> dict:
+    """The system's ``{"420": {...}, "1013": {...}}`` per-channel ratio map."""
+    meta = getattr(system, "meta", None)
+    return meta("laser_channel_ratios", {}) if callable(meta) else {}
 
 
 # ── Rabi-scale resolvers ─────────────────────────────────────────────────────
@@ -49,18 +59,21 @@ def _has_unit_1013(system) -> bool:
 def cz_rabi_maxes(system, omega_420_max=None, omega_1013_max=None) -> tuple[float, float]:
     """Resolve ``(omega_420_max, omega_1013_max)`` in rad/s.
 
-    Defaults to the system ``param_set``'s canonical rb87_7 Rabis; falls back to
-    ``(1.0, 1.0)`` when the param set is unknown (analog systems whose blocks
-    already carry the full Rabi, or duck-typed test systems) so the scaling is a
-    no-op there.
+    The Rabi *value* is never inferred from the system: an explicit
+    ``omega_*_max`` always wins; otherwise the default is the fixed σ⁻/σ⁺
+    protocol constant for unit-Rabi rb87 seven-level systems, or ``1.0`` (a
+    no-op) for systems whose blocks already carry the full Rabi (analog_3,
+    duck-typed test systems).  The system is consulted only for its
+    level-structure *tag*, to choose scale-vs-no-op — not for the amplitude.
     """
-    ps = getattr(system, "param_set", None)
-    try:
-        d420, d1013 = rb87_default_rabis(ps)
-    except ValueError:
-        d420, d1013 = 1.0, 1.0
-    o420 = d420 if omega_420_max is None else float(omega_420_max)
-    o1013 = d1013 if omega_1013_max is None else float(omega_1013_max)
+    meta = getattr(system, "meta", None)
+    tag = meta("level_structure") if callable(meta) else None
+    if tag in _UNIT_RABI_TAGS:
+        base420, base1013 = _CZ_DEFAULT_OMEGA_420, _CZ_DEFAULT_OMEGA_1013
+    else:
+        base420, base1013 = 1.0, 1.0
+    o420 = base420 if omega_420_max is None else float(omega_420_max)
+    o1013 = base1013 if omega_1013_max is None else float(omega_1013_max)
     return o420, o1013
 
 
@@ -116,8 +129,9 @@ class CZProtocol(Protocol):
     The 420/1013 drives are ``omega_*_max * A_*(s) * exp(-i*phi_*(s))`` (+ h.c.);
     they multiply the unit-Rabi system blocks at compile time.  Omit ``A_1013`` /
     ``phi_1013`` for a constant 1013 coupling (``A_1013 = 1``, ``phi_1013 = 0``).
-    ``omega_*_max`` default to the system ``param_set``'s canonical Rabis when left
-    ``None``.
+    ``omega_*_max`` default to the fixed σ⁻/σ⁺ (``rb87_7_mp``) canonical Rabis on
+    a unit-Rabi rb87 system when left ``None`` (pass them explicitly for the
+    ``rb87_7_pm`` manifold); on full-Rabi systems the default is a no-op ``1.0``.
     """
 
     def __init__(
@@ -142,6 +156,10 @@ class CZProtocol(Protocol):
         self._omega_420_max = None if omega_420_max is None else float(omega_420_max)
         self._omega_1013_max = None if omega_1013_max is None else float(omega_1013_max)
         self.n_steps = int(n_steps)
+        # The IR calls get_drive_coefficients once per channel per step (same t);
+        # cache the last evaluation so the 12-channel rb87 dict is built once/step.
+        self._cache_key: tuple | None = None
+        self._cache_coeffs: dict[str, complex] | None = None
 
     @property
     def t_gate(self) -> float:
@@ -149,15 +167,21 @@ class CZProtocol(Protocol):
 
     @property
     def required_channels(self) -> frozenset[str]:
-        return frozenset({"drive_420", "drive_420_dag", "drive_1013", "drive_1013_dag"})
+        # Canonical rb87 seven-level forward primitive channels.  The set actually
+        # driven on a given system comes from :meth:`drive_channels`.
+        return frozenset(
+            {
+                "E[e1,1]", "E[e2,1]", "E[e3,1]", "E[e1,0]", "E[e2,0]", "E[e3,0]",
+                "E[r,e1]", "E[r,e2]", "E[r,e3]", "E[r_garb,e1]", "E[r_garb,e2]", "E[r_garb,e3]",
+            }
+        )
 
     def drive_channels(self, system) -> frozenset[str]:
-        """Drive the 1013 channel only when the system exposes a unit ``drive_1013``
-        block (rb87_7); on analog_3 the 1013 leg stays a static coupling."""
-        channels = {"drive_420", "drive_420_dag"}
-        if _has_unit_1013(system):
-            channels |= {"drive_1013", "drive_1013_dag"}
-        return frozenset(channels)
+        """Forward primitive ``E[...]`` channels driven on *system*, from its
+        ``laser_channel_ratios`` (the 420 group; plus the 1013 group when the
+        system has one — rb87 seven-level, but not the static-1013 analog_3)."""
+        ratios = _laser_ratios(system)
+        return frozenset(set(ratios.get("420", {})) | set(ratios.get("1013", {})))
 
     @property
     def n_params(self) -> int:
@@ -175,17 +199,24 @@ class CZProtocol(Protocol):
             "theta": 0.0,
             "omega_420_max": o420,
             "omega_1013_max": o1013,
-            "drive_1013_active": _has_unit_1013(system),
+            "laser_channel_ratios": _laser_ratios(system),
         }
 
     def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
+        key = (t, id(params))
+        if key == self._cache_key:
+            return self._cache_coeffs
         s = t / params["t_gate"]
+        ratios = params.get("laser_channel_ratios", {})
+        # Expand the physical laser coefficients onto the primitive channels via
+        # the manifold CG/dipole ratios; the compiler auto-adds each leg's h.c.
         c420 = params["omega_420_max"] * self._A_420(s) * np.exp(-1j * self._phi_420(s))
-        coeffs = {"drive_420": c420, "drive_420_dag": np.conjugate(c420)}
-        if params.get("drive_1013_active", True):
+        coeffs = {chan: c420 * ratio for chan, ratio in ratios.get("420", {}).items()}
+        if "1013" in ratios:
             c1013 = params["omega_1013_max"] * self._A_1013(s) * np.exp(-1j * self._phi_1013(s))
-            coeffs["drive_1013"] = c1013
-            coeffs["drive_1013_dag"] = np.conjugate(c1013)
+            for chan, ratio in ratios["1013"].items():
+                coeffs[chan] = c1013 * ratio
+        self._cache_key, self._cache_coeffs = key, coeffs
         return coeffs
 
     def phase_420(self, t: float, params: dict) -> complex:
@@ -400,16 +431,16 @@ class EffectiveCZProtocol(Protocol):
     the 3x3 single-atom Hamiltonian in ``{|0>, |1>, |r>}`` order (the endpoint of
     the 7-level -> ``{0,1,r}`` reduction; build it with
     :func:`ryd_gate.core.effective_theory.lower_cz_to_effective_01r`).  It is
-    realized faithfully on the ``01r`` level structure via its
-    ``drive_R`` / ``drive_hf`` / ``drive_0r`` transition channels and
-    ``delta_R`` / ``delta_hf`` detuning channels — the off-diagonals are the
+    realized faithfully on the ``01r`` level structure via its primitive
+    ``E[r,1]`` / ``E[1,0]`` / ``E[r,0]`` transition channels and ``E[r,r]`` /
+    ``E[1,1]`` diagonal-detuning channels — the off-diagonals are the
     ``[upper, lower]`` matrix elements (the compiler adds the h.c.) and the diagonal
     is referenced to ``|0>`` (the global / clock phase is an unobservable
     single-qubit Z):
 
-        drive_R  = M[2, 1]   (|r><1|, K1r)        delta_hf = M[1, 1] - M[0, 0]
-        drive_hf = M[1, 0]   (|1><0|, K01)        delta_R  = M[2, 2] - M[0, 0]
-        drive_0r = M[2, 0]   (|r><0|, K0r)
+        E[r,1]  = M[2, 1]   (|r><1|, K1r)        E[1,1] = M[1, 1] - M[0, 0]
+        E[1,0]  = M[1, 0]   (|1><0|, K01)        E[r,r] = M[2, 2] - M[0, 0]
+        E[r,0]  = M[2, 0]   (|r><0|, K0r)
 
     ``has_K01`` / ``has_K0r`` declare whether the ``|0>-|1>`` / ``|0>-|r>`` legs are
     driven (so the resonant-flop case stays a pure ``|1>-|r>`` drive).  The full
@@ -498,11 +529,11 @@ class EffectiveCZProtocol(Protocol):
 
     @property
     def required_channels(self) -> frozenset[str]:
-        channels = {"drive_R", "delta_R", "delta_hf"}
+        channels = {"E[r,1]", "E[r,r]", "E[1,1]"}
         if self._has_K01:
-            channels.add("drive_hf")
+            channels.add("E[1,0]")
         if self._has_K0r:
-            channels.add("drive_0r")
+            channels.add("E[r,0]")
         return frozenset(channels)
 
     def _matrix(self, t: float) -> np.ndarray:
@@ -516,14 +547,14 @@ class EffectiveCZProtocol(Protocol):
     def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
         M = self._matrix(t)
         coeffs = {
-            "drive_R": complex(M[2, 1]),
-            "delta_hf": complex(M[1, 1] - M[0, 0]),
-            "delta_R": complex(M[2, 2] - M[0, 0]),
+            "E[r,1]": complex(M[2, 1]),            # |r><1| (K1r)
+            "E[1,1]": complex(M[1, 1] - M[0, 0]),  # |1> detuning (delta_hf)
+            "E[r,r]": complex(M[2, 2] - M[0, 0]),  # |r> detuning (delta_R)
         }
         if self._has_K01:
-            coeffs["drive_hf"] = complex(M[1, 0])
+            coeffs["E[1,0]"] = complex(M[1, 0])    # |1><0| (K01)
         if self._has_K0r:
-            coeffs["drive_0r"] = complex(M[2, 0])
+            coeffs["E[r,0]"] = complex(M[2, 0])    # |r><0| (K0r)
         return coeffs
 
     def pulse_traces(self, t: float, params: dict) -> dict[str, float]:

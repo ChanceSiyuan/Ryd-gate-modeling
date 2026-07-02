@@ -174,7 +174,7 @@ class MonteCarloRunner:
         from ryd_gate.core.operators import get_nominal_distance
 
         self._sigma_pos_um = tuple(float(s) * 1e6 for s in sigma_pos_xyz)
-        self._d_nominal_um = get_nominal_distance(self.system.param_set)
+        self._d_nominal_um = get_nominal_distance()
         self._c6_vdw = self.system.meta("v_ryd") * self._d_nominal_um**6
 
     def run_states(
@@ -372,24 +372,17 @@ class MonteCarloRunner:
             amp_err = rng.normal(0, self._sigma_amplitude)
             amp_scale = 1.0 + amp_err
             # ``amplitude_scale`` already scales every *driven* channel's coefficient
-            # (the 420 drive and, on rb87_7, the now-driven 1013 — both carry their
-            # Rabi in the protocol coefficient).  Only a *static* 1013 coupling
-            # (analog_3's H_1013) needs an explicit additive intensity-noise term.
+            # (the 420 drive and, on rb87 seven-level, the now-driven 1013 — both
+            # carry their Rabi in the protocol coefficient).  A *static* off-diagonal
+            # coupling (analog_3's static 1013, E[r,e]) needs an explicit additive
+            # intensity-noise term.
             driven = system.protocol.drive_channels(system)
-            pair = next(
-                (
-                    (a, b)
-                    for a, b in (("drive_1013", "drive_1013_dag"), ("H_1013", "H_1013_conj"))
-                    if system.blocks.has(a) and system.blocks.has(b) and a not in driven
-                ),
-                None,
-            )
-            if pair is not None:
-                h1013 = (
-                    compiler.materialize_block(system, pair[0])
-                    + compiler.materialize_block(system, pair[1])
-                )
-                terms.append(("amplitude_noise_1013", amp_err * h1013))
+            for term in system.static_hamiltonian_terms:
+                if not term.add_hermitian_conjugate or term.name in driven:
+                    continue
+                op = compiler.materialize_operator(system, term.operator)
+                coupling = term.coefficient * op + np.conj(term.coefficient) * op.conj().T
+                terms.append(("amplitude_noise_1013", amp_err * coupling))
             samples["amplitude"] = amp_err
 
         return amp_scale, terms, samples
@@ -419,15 +412,5 @@ class MonteCarloRunner:
         return {key: float(value / len(states)) for key, value in residuals.items()}
 
     def _rydberg_occupation_operator(self, compiler, system: RydbergSystem):
-        if system.blocks.has("sum_nr"):
-            return compiler.materialize_block(system, "sum_nr")
-        if system.blocks.has("sum_n_r"):
-            return compiler.materialize_block(system, "sum_n_r")
-
-        basis = system.basis
-        occ_op = np.zeros((basis.total_dim, basis.total_dim), dtype=np.complex128)
-        for level in [level for level in basis.local_levels if level.startswith("r")]:
-            block = f"sum_n_{level}"
-            if system.blocks.has(block):
-                occ_op = occ_op + compiler.materialize_block(system, block)
-        return occ_op
+        # Total |r> occupation sum_i |r><r|_i (the noise-coupling Rydberg operator).
+        return compiler.materialize_operator(system, system.operators.sum("E[r,r]"))

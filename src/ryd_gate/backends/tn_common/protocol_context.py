@@ -46,6 +46,10 @@ class TNProtocolContext:
                 return blocks.rabi_eff
             if name == "time_scale":
                 return blocks.time_scale
+            if name == "laser_channel_ratios":
+                # analog_3: the TN model carries the full g-e Rabi in local_blocks,
+                # so the protocol emits the *unitless* envelope on E[e,g] (unit ratio).
+                return {"420": {"E[e,g]": 1.0}}
         return default
 
 

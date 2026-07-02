@@ -19,11 +19,8 @@ X_TO_DARK = [-0.6894097925886826, 1.040962607910546, 0.3277877211544321,
 
 def main() -> None:
     system = (
-        RydbergSystem.set_atom_level(
-            "rb87_7", param_set="our", blackmanflag=True, detuning_sign=1
-        )
+        RydbergSystem.set_atom_level("rb87_7_mp", detuning_sign=1)
         .set_atom_geom(Register.chain(2, spacing_um=3.0))
-        .build()
     )
     report = cz_gate_report(system, TOProtocol(), X_TO_DARK, include_error_budget=False)
 

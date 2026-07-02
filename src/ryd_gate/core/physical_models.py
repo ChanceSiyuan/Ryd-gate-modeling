@@ -6,12 +6,16 @@ Three pieces of atomic/interaction physics in one module:
   V_ij = C6 / R_ij^6 with optional range truncation. Lives in ``core/``
   (not ``lattice/``) because computing interaction strengths is physics;
   the lattice package is reserved for pure geometry.
-- Rb87 seven-level physical parameter sets for the ``our`` and ``lukin``
-  configurations (level energies, Rabi frequencies, decay/branching rates)
-  and the helper that flattens them into a system metadata dict.
-- Local single-atom Hamiltonian blocks: the per-site complex matrices
-  (energies, drives, light shifts) for the ``analog_3`` and Rb87
-  seven-level physical models, registered on a system's block registry.
+- Rb87 seven-level static physical parameters per manifold/polarization
+  convention — ``rb87_7_mp`` (σ⁻/σ⁺, was ``our``) and ``rb87_7_pm`` (σ⁺/σ⁻,
+  was ``lukin``) — covering level energies, decay/branching rates, and VdW
+  strengths (no laser Rabi: those belong to the protocol), and the helper
+  that flattens them into a system metadata dict.
+- Single-atom physics for ``analog_3`` and the Rb87 seven-level models, lowered
+  to primitive ``E[ket,bra]`` form: static diagonal energies (and the analog
+  static e-r coupling) become ``StaticHamiltonianTerm`` s, and the off-diagonal
+  laser legs become per-channel CG/dipole ratios (``laser_channel_ratios``
+  metadata) that a protocol multiplies onto its laser coefficient.
 """
 
 from __future__ import annotations
@@ -22,8 +26,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ryd_gate.core.level_structures import DEFAULT_C6, level_structure
-from ryd_gate.core.model import BlockRegistry
-from ryd_gate.core.operators import LocalMatrixSumSpec
+from ryd_gate.core.operators import StaticHamiltonianTerm
 
 if TYPE_CHECKING:
     from ryd_gate.core.system import RydbergSystem
@@ -72,16 +75,18 @@ def vdw_couplings(
 
 
 @dataclass(frozen=True)
-class _RB87PhysicalParams:
-    param_set: str
+class Rb87SevenLevelParams:
+    """Static atom/manifold parameters for the seven-level Rb87 gate model.
+
+    ``manifold`` is ``"mp"`` (σ⁻/σ⁺, was param_set ``"our"``) or ``"pm"``
+    (σ⁺/σ⁻, was param_set ``"lukin"``).  This container holds *only* static
+    atom physics — no laser 420/1013 Rabi amplitudes (those belong to the
+    protocol); the unit-Rabi drive blocks carry only the CG/dipole ratios.
+    """
+
+    manifold: str
     ryd_level: int
     Delta: float
-    rabi_420: float
-    rabi_1013: float
-    rabi_eff: float
-    time_scale: float
-    rabi_420_garbage: float
-    rabi_1013_garbage: float
     d_mid_ratio: float
     d_ryd_ratio: float
     v_ryd: float
@@ -99,54 +104,49 @@ class _RB87PhysicalParams:
     t_rise: float
     enable_rydberg_decay: bool
     enable_intermediate_decay: bool
-    enable_polarization_leakage: bool
+    magnetic_field_G: float
     n_levels: int = 7
     rydberg_indices: tuple[int, ...] = (5, 6)
     n_atoms: int = 2
 
 
-def _rb87_default_c6(param_set: str) -> float:
-    if param_set == "lukin":
+def _rb87_default_c6(manifold: str) -> float:
+    """Default VdW C6 (rad/s · μm⁶) for an rb87 manifold ("mp"/"pm")."""
+    if manifold == "pm":  # was param_set="lukin"
         return 2 * np.pi * 450e6 * 3.0**6
     return DEFAULT_C6
 
 
-# Canonical (rabi_420, rabi_1013) per rb87_7 param_set, in rad/s.  Single source
-# of truth: used to seed the param-set defaults below and exposed via
-# ``rb87_default_rabis`` so CZ protocols can supply the laser Rabi scale that the
-# (now unit-normalized) 420/1013 Hamiltonian blocks no longer carry.
-_RB87_DEFAULT_RABIS: dict[str, tuple[float, float]] = {
-    "our": (2 * np.pi * 491e6, 2 * np.pi * 185e6),
-    "lukin": (2 * np.pi * 237e6, 2 * np.pi * 303e6),
-}
-
-
-def rb87_default_rabis(param_set: str) -> tuple[float, float]:
-    """Canonical ``(rabi_420, rabi_1013)`` (rad/s) for an rb87_7 param set."""
-    try:
-        return _RB87_DEFAULT_RABIS[param_set]
-    except KeyError:
-        raise ValueError(f"Unknown rb87_7 parameter set '{param_set}'.") from None
-
-
 def _rb87_physical_params(
-    param_set: str,
+    manifold: str,
     *,
     detuning_sign: int,
     enable_rydberg_decay: bool,
     enable_intermediate_decay: bool,
-    enable_polarization_leakage: bool,
+    magnetic_field_G: float = 20.0,
+    ryd_level: int | None = None,
+    C6_rad_s_um6: float | None = None,
+    t_rise: float | None = None,
     Delta_Hz: float | None = None,
-) -> _RB87PhysicalParams:
+) -> Rb87SevenLevelParams:
+    """Static seven-level params for ``manifold`` ("mp"=σ⁻/σ⁺, "pm"=σ⁺/σ⁻).
+
+    The per-manifold numbers are defaults; ``ryd_level``, ``C6_rad_s_um6``,
+    ``t_rise``, ``Delta_Hz`` (Hz; → ``Delta = detuning_sign·2π·Delta_Hz``)
+    override them.  No laser Rabi amplitudes are computed here.
+    """
     from arc import Rubidium87
 
-    from ryd_gate.physics import _mid_branching_ratios, _rydberg_branching_ratios
+    from ryd_gate.physics import (
+        _mid_branching_ratios,
+        _rydberg_branching_ratios,
+        rydberg_zeeman_shift_rad_s,
+    )
 
     atom = Rubidium87()
-    if param_set == "our":
-        ryd_level = 70
+    if manifold == "mp":  # σ⁻(420)/σ⁺(1013); was param_set="our"
+        ryd_level = 70 if ryd_level is None else int(ryd_level)
         Delta = detuning_sign * 2 * np.pi * 9.1e9
-        rabi_420, rabi_1013 = _RB87_DEFAULT_RABIS["our"]
         d_mid_ratio = atom.getDipoleMatrixElement(5, 0, 0.5, 0.5, 6, 1, 1.5, -0.5, -1) / atom.getDipoleMatrixElement(
             5, 0, 0.5, -0.5, 6, 1, 1.5, -1.5, -1
         )
@@ -154,17 +154,14 @@ def _rb87_physical_params(
             6, 1, 1.5, -0.5, ryd_level, 0, 0.5, 0.5, 1
         ) / atom.getDipoleMatrixElement(6, 1, 1.5, -1.5, ryd_level, 0, 0.5, -0.5, 1)
         v_ryd = 2 * np.pi * 874e9 / 3**6
-        v_ryd_garb = v_ryd
-        ryd_zeeman_shift = 2 * np.pi * 56e6 if enable_polarization_leakage else 2 * np.pi * 56e9
         mid_state_decay_rate = 1 / 110.7e-9
         ryd_state_decay_rate = 1 / 151.55e-6
         ryd_RD_rate = 1 / 410.41e-6
-        ryd_branch = _rydberg_branching_ratios(atom, ryd_level, "our")
+        ryd_branch = _rydberg_branching_ratios(atom, ryd_level, "mp")
         mid_branch = {F: _mid_branching_ratios(atom, F, mF=-1) for F in (1, 2, 3)}
-    elif param_set == "lukin":
-        ryd_level = 53
+    elif manifold == "pm":  # σ⁺(420)/σ⁻(1013); was param_set="lukin"
+        ryd_level = 53 if ryd_level is None else int(ryd_level)
         Delta = detuning_sign * 2 * np.pi * 7.8e9
-        rabi_420, rabi_1013 = _RB87_DEFAULT_RABIS["lukin"]
         d_mid_ratio = atom.getDipoleMatrixElement(5, 0, 0.5, -0.5, 6, 1, 1.5, 0.5, 1) / atom.getDipoleMatrixElement(
             5, 0, 0.5, 0.5, 6, 1, 1.5, 1.5, 1
         )
@@ -172,35 +169,32 @@ def _rb87_physical_params(
             6, 1, 1.5, 0.5, ryd_level, 0, 0.5, -0.5, -1
         ) / atom.getDipoleMatrixElement(6, 1, 1.5, 1.5, ryd_level, 0, 0.5, 0.5, -1)
         v_ryd = 2 * np.pi * 450e6
-        v_ryd_garb = v_ryd
-        ryd_zeeman_shift = 2 * np.pi * 2.4e9 if enable_polarization_leakage else 2 * np.pi * 2.4e12
         mid_state_decay_rate = 1 / 110e-9
         ryd_state_decay_rate = 1 / 88e-6
         ryd_RD_rate = 1 / 147.64e-6
-        ryd_branch = _rydberg_branching_ratios(atom, ryd_level, "lukin")
+        ryd_branch = _rydberg_branching_ratios(atom, ryd_level, "pm")
         mid_branch = {F: _mid_branching_ratios(atom, F, mF=1) for F in (1, 2, 3)}
     else:
-        raise ValueError(f"Unknown rb87_7 parameter set '{param_set}'.")
+        raise ValueError(f"Unknown rb87 manifold '{manifold}' (expected 'mp' or 'pm').")
+
+    # Physical Zeeman splitting of the garbage Rydberg state r_garb (opposite
+    # m_j = ±1/2 of r) from the bias field; sets h[6,6] = ryd_zeeman_shift.
+    ryd_zeeman_shift = rydberg_zeeman_shift_rad_s(magnetic_field_G, manifold=manifold)
 
     if Delta_Hz is not None:
         Delta = detuning_sign * 2 * np.pi * float(Delta_Hz)
+    if C6_rad_s_um6 is not None:
+        v_ryd = float(C6_rad_s_um6) / 3**6  # nearest-pair strength at the nominal 3 μm
+    v_ryd_garb = v_ryd
+    if t_rise is None:
+        t_rise = 20e-9
 
-    rabi_420_garbage = rabi_420 * d_mid_ratio
-    rabi_1013_garbage = rabi_1013 * d_ryd_ratio
-    rabi_eff = rabi_420 * rabi_1013 / (2 * abs(Delta))
-    time_scale = 2 * np.pi / rabi_eff
     ryd_BBR_rate = ryd_state_decay_rate - ryd_RD_rate
 
-    return _RB87PhysicalParams(
-        param_set=param_set,
+    return Rb87SevenLevelParams(
+        manifold=manifold,
         ryd_level=ryd_level,
         Delta=Delta,
-        rabi_420=rabi_420,
-        rabi_1013=rabi_1013,
-        rabi_eff=rabi_eff,
-        time_scale=time_scale,
-        rabi_420_garbage=rabi_420_garbage,
-        rabi_1013_garbage=rabi_1013_garbage,
         d_mid_ratio=d_mid_ratio,
         d_ryd_ratio=d_ryd_ratio,
         v_ryd=v_ryd,
@@ -215,18 +209,19 @@ def _rb87_physical_params(
         ryd_garb_decay_rate=ryd_state_decay_rate,
         ryd_branch=ryd_branch,
         mid_branch=mid_branch,
-        t_rise=20e-9,
+        t_rise=float(t_rise),
         enable_rydberg_decay=enable_rydberg_decay,
         enable_intermediate_decay=enable_intermediate_decay,
-        enable_polarization_leakage=enable_polarization_leakage,
+        magnetic_field_G=magnetic_field_G,
     )
 
 
-def _metadata_from_rb87_params(system: _RB87PhysicalParams) -> dict[str, Any]:
-    # The laser Rabi scale (rabi_420/rabi_1013/rabi_eff/time_scale/garbage) is no
-    # longer a system property — the unit-normalized blocks carry no Rabi, and the
-    # CZ protocol owns the 420/1013 amplitudes.  Delta stays here (static energies).
+def _metadata_from_rb87_params(system: Rb87SevenLevelParams) -> dict[str, Any]:
+    # The laser Rabi scale is not a system property — the unit-normalized blocks
+    # carry no Rabi, and the CZ protocol owns the 420/1013 amplitudes.  Static
+    # atom/manifold energies (Delta, manifold, decays) stay here.
     return {
+        "rb87_manifold": system.manifold,
         "t_rise": system.t_rise,
         "n_atoms": system.n_atoms,
         "n_levels": system.n_levels,
@@ -242,37 +237,57 @@ def _metadata_from_rb87_params(system: _RB87PhysicalParams) -> dict[str, Any]:
         "rydberg_indices": system.rydberg_indices,
         "enable_rydberg_decay": system.enable_rydberg_decay,
         "enable_intermediate_decay": system.enable_intermediate_decay,
-        "enable_polarization_leakage": system.enable_polarization_leakage,
+        "magnetic_field_G": system.magnetic_field_G,
+        "ryd_zeeman_shift": system.ryd_zeeman_shift,
     }
 
 
-# ── Local single-atom Hamiltonian blocks ─────────────────────────────────────
+# ── Single-atom physics → primitive E[ket,bra] terms/ratios ──────────────────
 
 
-def _register_local_matrix_block(
-    blocks: BlockRegistry,
-    name: str,
+def _add_static_diagonals(model, levels: tuple[str, ...], h_const: np.ndarray) -> None:
+    """Append a static ``coeff·sum_i E[a,a]_i`` term per nonzero diagonal energy.
+
+    ``levels`` are the basis labels in index order; ``h_const[i,i]`` is the
+    (possibly complex, decay-bearing) single-atom energy of level ``i``.
+    """
+    for i, level in enumerate(levels):
+        coeff = complex(h_const[i, i])
+        if coeff != 0:
+            name = f"E[{level},{level}]"
+            model.static_hamiltonian_terms.append(
+                StaticHamiltonianTerm(name, model.operators.sum(name), coeff)
+            )
+
+
+def _offdiag_ratios(
     matrix: np.ndarray,
-    *,
-    hermitian: bool = True,
-    description: str = "",
-) -> None:
-    blocks.register(
-        name,
-        LocalMatrixSumSpec(np.asarray(matrix, dtype=np.complex128)),
-        description=description,
-        hermitian=hermitian,
-    )
+    rows: list[tuple[int, str]],
+    cols: list[tuple[int, str]],
+) -> dict[str, complex]:
+    """Nonzero ``matrix[i,j]`` entries as an ``E[ket,bra] -> value`` ratio dict.
+
+    ``rows``/``cols`` are ``(matrix_index, level_label)`` pairs, so a row ``ket``
+    over a col ``bra`` keys the entry as ``E[ket,bra]``.
+    """
+    ratios: dict[str, complex] = {}
+    for i, ket in rows:
+        for j, bra in cols:
+            val = complex(matrix[i, j])
+            if val != 0:
+                ratios[f"E[{ket},{bra}]"] = val
+    return ratios
 
 
 @dataclass(frozen=True, eq=False)
 class Analog3Blocks:
     """analog_3 single-atom 3x3 blocks and scalars (shared by exact + TN paths).
 
-    ``h_const``/``h_1013``/``drive_420`` are the registered exact-backend blocks;
+    ``h_const``/``h_1013``/``drive_420`` are the analog single-atom matrices (the
+    source for both the system's static terms and the TN ``local_blocks``);
     ``static`` is their time-independent sum used by the TN backends, while
     ``drive_420`` is the base operator modulated each step by the protocol's
-    (generally complex) ``drive_420`` coefficient.
+    (generally complex) ``E[e,g]`` coefficient.
     """
 
     h_const: np.ndarray
@@ -382,15 +397,23 @@ def _apply_analog_3_lattice_blocks(
     ryd_RD_rate = 1 / 410.41e-6
     ryd_BBR_rate = _ANALOG3_RYD_DECAY_RATE - ryd_RD_rate
 
-    _register_local_matrix_block(model.blocks, "H_const", blk.h_const, description="single-atom ger energies")
-    _register_local_matrix_block(model.blocks, "H_1013", blk.h_1013, hermitian=False, description="static e-r coupling")
-    _register_local_matrix_block(model.blocks, "H_1013_conj", blk.h_1013.conj().T, hermitian=False)
-    _register_local_matrix_block(model.blocks, "drive_420", blk.drive_420, hermitian=False, description="g-e drive")
-    _register_local_matrix_block(model.blocks, "drive_420_dag", blk.drive_420.conj().T, hermitian=False)
+    # Diagonal g/e/r energies become static E[a,a] terms; the e-r 1013 leg is a
+    # static (non-Hermitian, h.c.-completed) E[r,e] coupling; the g-e 420 leg is a
+    # driveable channel whose full Rabi is carried as the E[e,g] ratio.
+    _add_static_diagonals(model, ("g", "e", "r"), blk.h_const)
+    c_er = complex(blk.h_1013[2, 1])
+    if c_er != 0:
+        model.static_hamiltonian_terms.append(
+            StaticHamiltonianTerm(
+                "E[r,e]", model.operators.sum("E[r,e]"), c_er, add_hermitian_conjugate=True
+            )
+        )
+    ratios = {"420": {"E[e,g]": complex(blk.drive_420[1, 0])}}
 
     model.metadata.update(
         {
             "physical_model": "analog_3",
+            "laser_channel_ratios": ratios,
             "rabi_eff": blk.rabi_eff,
             "time_scale": blk.time_scale,
             "t_rise": 20e-9,
@@ -413,29 +436,34 @@ def _apply_analog_3_lattice_blocks(
             "rydberg_indices": (2,),
             "enable_rydberg_decay": enable_rydberg_decay,
             "enable_intermediate_decay": enable_intermediate_decay,
-            "enable_polarization_leakage": False,
         }
     )
 
 
 def _apply_rb87_7_lattice_blocks(
     model: "RydbergSystem",
-    param_set: str,
+    manifold: str,
     *,
     detuning_sign: int = 1,
     enable_rydberg_decay: bool = False,
     enable_intermediate_decay: bool = False,
-    enable_polarization_leakage: bool = False,
+    magnetic_field_G: float = 20.0,
+    ryd_level: int | None = None,
+    C6_rad_s_um6: float | None = None,
+    t_rise: float | None = None,
     Delta_Hz: float | None = None,
     **unused,
 ) -> None:
     _reject_unused(unused)
     physical = _rb87_physical_params(
-        param_set,
+        manifold,
         detuning_sign=detuning_sign,
         enable_rydberg_decay=enable_rydberg_decay,
         enable_intermediate_decay=enable_intermediate_decay,
-        enable_polarization_leakage=enable_polarization_leakage,
+        magnetic_field_G=magnetic_field_G,
+        ryd_level=ryd_level,
+        C6_rad_s_um6=C6_rad_s_um6,
+        t_rise=t_rise,
         Delta_Hz=Delta_Hz,
     )
 
@@ -445,27 +473,30 @@ def _apply_rb87_7_lattice_blocks(
         physical.mid_state_decay_rate if enable_intermediate_decay else 0.0,
         physical.ryd_state_decay_rate if enable_rydberg_decay else 0.0,
     )
-    # Unit-Rabi, phase-free transition blocks: encode only which transitions are
-    # driven and their relative CG/dipole ratios (garbage leg -> the ratio).  The
-    # physical Rabi scale and phase are supplied by the CZ protocol coefficient at
-    # compile time (drive_420/drive_1013 are unit-valued here).
-    h420 = _rb87_local_h420(param_set, 1.0, physical.d_mid_ratio)
-    h1013 = _rb87_local_h1013(param_set, 1.0, physical.d_ryd_ratio)
+    _add_static_diagonals(
+        model, ("0", "1", "e1", "e2", "e3", "r", "r_garb"), h_const
+    )
 
-    _register_local_matrix_block(model.blocks, "H_const", h_const, description="single-atom rb87_7 energies")
-    _register_local_matrix_block(model.blocks, "drive_1013", h1013, hermitian=False, description="1013nm coupling (static by default; drivable)")
-    _register_local_matrix_block(model.blocks, "drive_1013_dag", h1013.conj().T, hermitian=False)
-    _register_local_matrix_block(model.blocks, "drive_420", h420, hermitian=False, description="420nm drive")
-    _register_local_matrix_block(model.blocks, "drive_420_dag", h420.conj().T, hermitian=False)
+    # Unit-Rabi, phase-free 420/1013 legs decomposed into per-channel CG/dipole
+    # ratios (the off-diagonal entries of the old drive matrices, all real).  A CZ
+    # protocol multiplies its laser coefficient c420(t)/c1013(t) onto these; the
+    # compiler auto-adds each leg's h.c.  420: |0>,|1> -> |e_F>; 1013: |e_F> -> |r>,|r_garb>.
+    h420 = _rb87_local_h420(manifold, 1.0, physical.d_mid_ratio)
+    h1013 = _rb87_local_h1013(manifold, 1.0, physical.d_ryd_ratio)
+    mid = [(2, "e1"), (3, "e2"), (4, "e3")]
+    ratios_420 = _offdiag_ratios(h420, mid, [(1, "1"), (0, "0")])
+    ratios_1013 = _offdiag_ratios(h1013, [(5, "r"), (6, "r_garb")], mid)
 
+    tag = f"rb87_7_{manifold}"
     model.metadata.update(_metadata_from_rb87_params(physical))
     model.metadata.update(
         {
-            "physical_model": param_set,
+            "physical_model": tag,
             "n_atoms": model.N,
             "n_sites": model.N,
-            "level_structure": "rb87_7",
-            "level_spec": level_structure("rb87_7"),
+            "level_structure": tag,
+            "level_spec": level_structure(tag),
+            "laser_channel_ratios": {"420": ratios_420, "1013": ratios_1013},
             "v_ryd": _nearest_pair_strength(model.metadata.get("interaction_pairs", ())),
             "ryd_level": physical.ryd_level,
         }
@@ -489,39 +520,39 @@ def _rb87_local_h_const(
 
 
 def _rb87_local_h420(
-    param_set: str,
+    manifold: str,
     rabi_420: float,
     rabi_420_garbage: float,
 ) -> np.ndarray:
     from arc.wigner import CG
 
     h = np.zeros((7, 7), dtype=np.complex128)
-    if param_set == "our":
+    if manifold == "mp":  # σ⁻ 420 drive (was param_set="our")
         for row, F in zip((2, 3, 4), (1, 2, 3)):
             h[row, 1] = (
                 rabi_420 * CG(3 / 2, -3 / 2, 3 / 2, 1 / 2, F, -1)
                 + rabi_420_garbage * CG(3 / 2, -1 / 2, 3 / 2, -1 / 2, F, -1)
             ) / 2
-    else:
+    else:  # "pm": σ⁺ 420 drive (was param_set="lukin")
         for row, F in zip((2, 3, 4), (1, 2, 3)):
             h[row, 1] = (
                 rabi_420 * CG(3 / 2, 3 / 2, 3 / 2, -1 / 2, F, 1)
                 + rabi_420_garbage * CG(3 / 2, 1 / 2, 3 / 2, 1 / 2, F, 1)
             ) / 2
-    for row, g_i in zip((2, 3, 4), _rb87_zero_420_couplings(param_set, rabi_420, rabi_420_garbage)):
+    for row, g_i in zip((2, 3, 4), _rb87_zero_420_couplings(manifold, rabi_420, rabi_420_garbage)):
         h[row, 0] = g_i
     return h
 
 
-def _rb87_local_h1013(param_set: str, rabi_1013: float, rabi_1013_garbage: float) -> np.ndarray:
+def _rb87_local_h1013(manifold: str, rabi_1013: float, rabi_1013_garbage: float) -> np.ndarray:
     from arc.wigner import CG
 
     h = np.zeros((7, 7), dtype=np.complex128)
-    if param_set == "our":
+    if manifold == "mp":  # σ⁺ 1013 drive (was param_set="our")
         for col, F in zip((2, 3, 4), (1, 2, 3)):
             h[5, col] = (rabi_1013 / 2) * CG(3 / 2, -3 / 2, 3 / 2, 1 / 2, F, -1)
             h[6, col] = (rabi_1013_garbage / 2) * CG(3 / 2, -1 / 2, 3 / 2, -1 / 2, F, -1)
-    else:
+    else:  # "pm": σ⁻ 1013 drive (was param_set="lukin")
         for col, F in zip((2, 3, 4), (1, 2, 3)):
             h[5, col] = (rabi_1013 / 2) * CG(3 / 2, 3 / 2, 3 / 2, -1 / 2, F, 1)
             h[6, col] = (rabi_1013_garbage / 2) * CG(3 / 2, 1 / 2, 3 / 2, 1 / 2, F, 1)
@@ -529,14 +560,14 @@ def _rb87_local_h1013(param_set: str, rabi_1013: float, rabi_1013_garbage: float
 
 
 def _rb87_zero_420_couplings(
-    param_set: str,
+    manifold: str,
     rabi_420: float,
     rabi_420_garbage: float,
 ) -> list[complex]:
     """Hamiltonian matrix elements for the off-resonant |0> -> |e_F> 420 leg."""
     from arc.wigner import CG
 
-    if param_set == "our":
+    if manifold == "mp":  # was param_set="our"
         # The clock-state decomposition is written in the conventional
         # hyperfine order <I m_I, J m_J | F m_F>; swapping to J-first would
         # add a (-1) phase for F=1 and flip the explicit |0> leg.

@@ -14,7 +14,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-PRESETS = ("01", "1r", "01r", "analog_3", "rb87_7")
+PRESETS = ("01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm")
 BACKENDS = ("exact", "mps", "peps", "stabilizer")
 OUT_PATH = Path(__file__).resolve().parents[1] / "capability_matrix.qmd"
 
@@ -54,7 +54,7 @@ def _noise_table() -> list[str]:
     for label, model in probes.items():
         cells = []
         for backend in BACKENDS:
-            issues = model.validate_for(backend=backend, level_structure="rb87_7", n_atoms=2)
+            issues = model.validate_for(backend=backend, level_structure="rb87_7_mp", n_atoms=2)
             cells.append(YES if not issues else NO)
         lines.append(f"| {label} | " + " | ".join(cells) + " |")
     return lines

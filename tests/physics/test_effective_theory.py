@@ -18,12 +18,16 @@ from ryd_gate.core.effective_theory import (
     lower_cz_to_effective_01r,
     schrieffer_wolff,
     shift_coefficients,
+    single_atom_hamiltonian_parts,
 )
-from ryd_gate.core.physical_models import rb87_default_rabis
 from ryd_gate.gates import CZProtocol, EffectiveCZProtocol, TOProtocol, phase_from_chirp
 from ryd_gate.ir import compile_hamiltonian_ir
 from ryd_gate.lattice import Register
 from ryd_gate.physics import our_laser_rabis
+
+# Canonical σ⁻/σ⁺ (rb87_7_mp) single-photon Rabis (rad/s) — used to restore the
+# full Rabi onto the unit-normalized 420/1013 blocks in these reductions.
+RABI_420_MP, RABI_1013_MP = 2 * np.pi * 491e6, 2 * np.pi * 185e6
 
 X_TO_DARK = [
     -0.6894097925886826, 1.040962607910546, 0.3277877211544321,
@@ -36,17 +40,23 @@ ELIM = [2, 3, 4]   # {e1, e2, e3}
 
 
 def _block(system, *names):
+    """Legacy block name -> single-atom matrix, via the primitive operator model.
+
+    ``H_const`` -> static diagonal energies; ``drive_420`` -> the unit-Rabi 420
+    leg; ``drive_1013`` / ``H_1013`` -> the unit-Rabi 1013 leg.
+    """
+    hc, h420, h1013 = single_atom_hamiltonian_parts(system)
+    parts = {"H_const": hc, "drive_420": h420, "drive_1013": h1013, "H_1013": h1013}
     for name in names:
-        if system.blocks.has(name):
-            return np.asarray(system.blocks.get(name).matrix)
-    raise KeyError(f"none of {names} registered")
+        if name in parts:
+            return parts[name]
+    raise KeyError(f"none of {names} known")
 
 
-def _one_atom_rb87_7(param_set="our"):
+def _one_atom_rb87_7(tag="rb87_7_mp"):
     return (
-        RydbergSystem.set_atom_level("rb87_7", param_set=param_set)
+        RydbergSystem.set_atom_level(tag)
         .set_atom_geom(Register.chain(1, spacing_um=3.0))
-        .build()
     )
 
 
@@ -58,7 +68,7 @@ def test_shift_coefficients_match_lowdin_diagonal():
     is the internal-consistency guarantee behind the closed-form cross-checks)."""
     system = _one_atom_rb87_7()
     h_const = _block(system, "H_const")
-    R420, R1013 = rb87_default_rabis("our")
+    R420, R1013 = (RABI_420_MP, RABI_1013_MP)
     # Blocks are unit-normalized; at unit Rabi the diagonal shifts are ~1e-12 rad/s
     # and vanish under float cancellation against the ~4e10 clock energy on the
     # diagonal.  Restore the full Rabi so eff[a,a]-h_const[a,a] is resolvable.
@@ -84,7 +94,7 @@ def test_closed_forms_match_lowdin():
     system = _one_atom_rb87_7()
     h_const = _block(system, "H_const")
     De = system.meta("Delta")
-    R420, R1013 = rb87_default_rabis("our")
+    R420, R1013 = (RABI_420_MP, RABI_1013_MP)
     # The 420/1013 blocks are unit-normalized; restore the full Rabi so the numeric
     # Löwdin shifts match the closed forms (which carry R420/R1013).
     h420 = R420 * _block(system, "drive_420")
@@ -106,10 +116,10 @@ def test_closed_forms_match_lowdin():
 
 
 def test_cz_protocol_drives_1013_on_rb87():
-    """rb87_7 builds *unit* 420/1013 blocks; the protocol supplies their Rabi, so
+    """rb87 builds *unit* 420/1013 blocks; the protocol supplies their Rabi, so
     both 420 AND 1013 are *driven* channels (not static)."""
     system = (
-        RydbergSystem.set_atom_level("rb87_7", param_set="our")
+        RydbergSystem.set_atom_level("rb87_7_mp")
         .set_atom_geom(Register.chain(2, spacing_um=3.0))
         .set_protocol(TOProtocol())
     )
@@ -120,8 +130,9 @@ def test_cz_protocol_drives_1013_on_rb87():
 
     static_names = {term.name for term in ir.static_terms}
     driven = {term.channel for term in ir.drive_terms}
-    assert {"drive_420", "drive_1013", "drive_1013_dag"} <= driven
-    assert "drive_1013" not in static_names and "drive_1013_dag" not in static_names
+    # both the 420 (E[e_F,q]) and 1013 (E[r/r_garb,e_F]) legs are driven, not static.
+    assert {"E[e1,1]", "E[r,e1]"} <= driven
+    assert "E[r,e1]" not in static_names
 
 
 def test_cz_protocol_drives_420_and_1013():
@@ -129,7 +140,11 @@ def test_cz_protocol_drives_420_and_1013():
     restore the 1013 Rabi); the four normalized functions of ``s`` set both."""
     from ryd_gate.gates import CZProtocol
 
-    params = {"t_gate": 1e-6, "omega_420_max": 2.0, "omega_1013_max": 3.0}
+    # Unit ratio per group so the expanded primitive coeff equals the laser coeff.
+    params = {
+        "t_gate": 1e-6, "omega_420_max": 2.0, "omega_1013_max": 3.0,
+        "laser_channel_ratios": {"420": {"E[e1,1]": 1.0}, "1013": {"E[r,e1]": 1.0}},
+    }
     proto = CZProtocol(
         t_gate=1e-6,
         A_420=lambda s: 0.7,
@@ -137,13 +152,11 @@ def test_cz_protocol_drives_420_and_1013():
         A_1013=lambda s: 0.4,
         phi_1013=lambda s: 0.5,
     )
-    assert proto.required_channels == frozenset(
-        {"drive_420", "drive_420_dag", "drive_1013", "drive_1013_dag"}
-    )
+    assert {"E[e1,1]", "E[r,e1]"} <= proto.required_channels
     coeffs = proto.get_drive_coefficients(0.3e-6, params)
-    assert coeffs["drive_420"] == pytest.approx(2.0 * 0.7)
-    assert coeffs["drive_1013"] == pytest.approx(3.0 * 0.4 * np.exp(-1j * 0.5))
-    assert coeffs["drive_1013_dag"] == pytest.approx(np.conjugate(3.0 * 0.4 * np.exp(-1j * 0.5)))
+    # forward primitive channels only (the compiler adds each leg's h.c.)
+    assert coeffs["E[e1,1]"] == pytest.approx(2.0 * 0.7)
+    assert coeffs["E[r,e1]"] == pytest.approx(3.0 * 0.4 * np.exp(-1j * 0.5))
 
 
 def _wrap(a):
@@ -155,30 +168,30 @@ def test_converter_matrix_level_reduction():
     precision: the 3x3 reconstructed from the returned EffectiveCZProtocol equals
     the direct two-stage Löwdin projection of H7(t), up to the |0>-energy gauge."""
     spacing, t_gate = 3.0, 0.5e-6
-    o420, o1013 = rb87_default_rabis("our")
+    o420, o1013 = (RABI_420_MP, RABI_1013_MP)
     proto7 = _adia_cz_protocol(t_gate, 64, o420, o1013)
     sys7 = (
-        RydbergSystem.set_atom_level("rb87_7", param_set="our", detuning_sign=1)
+        RydbergSystem.set_atom_level("rb87_7_mp", detuning_sign=1)
         .set_atom_geom(Register.chain(2, spacing_um=spacing))
-        .build()
     )
     proto_eff = lower_cz_to_effective_01r(proto7, sys7)
     assert proto_eff.required_channels == frozenset(
-        {"drive_R", "drive_hf", "drive_0r", "delta_R", "delta_hf"}
+        {"E[r,1]", "E[1,0]", "E[r,0]", "E[r,r]", "E[1,1]"}
     )
 
     params = proto7.unpack_params([], sys7)
-    hc = np.asarray(sys7.blocks.get("H_const").matrix)
-    h420 = np.asarray(sys7.blocks.get("drive_420").matrix)
-    h1013 = np.asarray(sys7.blocks.get("drive_1013").matrix)
+    hc, _, _ = single_atom_hamiltonian_parts(sys7)
+    _idx = {lvl: i for i, lvl in enumerate(sys7.basis.local_levels)}
 
     def h7(t):
-        c = proto7.get_drive_coefficients(t, params)
-        c420, c1013 = c["drive_420"], c.get("drive_1013", 0.0)
-        return (
-            hc + c420 * h420 + np.conj(c420) * h420.conj().T
-            + c1013 * h1013 + np.conj(c1013) * h1013.conj().T
-        )
+        H = hc.copy()
+        for chan, c in proto7.get_drive_coefficients(t, params).items():
+            ket, bra = chan[2:-1].split(",")
+            i, j = _idx[ket], _idx[bra]
+            H[i, j] += c
+            if ket != bra:
+                H[j, i] += np.conj(c)
+        return H
 
     max_k0r = 0.0
     for t in np.linspace(0.05e-6, 0.45e-6, 7):
@@ -186,9 +199,9 @@ def test_converter_matrix_level_reduction():
         h3 = schrieffer_wolff(h4, [0, 1, 2], [3])
         co = proto_eff.get_drive_coefficients(float(t), {})
         recon = np.zeros((3, 3), dtype=complex)
-        recon[1, 1] = co["delta_hf"]
-        recon[2, 2] = co["delta_R"]
-        for (upper, lower), ch in (((2, 1), "drive_R"), ((1, 0), "drive_hf"), ((2, 0), "drive_0r")):
+        recon[1, 1] = co["E[1,1]"]
+        recon[2, 2] = co["E[r,r]"]
+        for (upper, lower), ch in (((2, 1), "E[r,1]"), ((1, 0), "E[1,0]"), ((2, 0), "E[r,0]")):
             recon[upper, lower], recon[lower, upper] = co[ch], np.conj(co[ch])
         ref = h3 - h3[0, 0] * np.eye(3)
         assert np.max(np.abs(recon - ref)) < 1e-6 * (1 + np.max(np.abs(ref)))
@@ -224,17 +237,16 @@ def _adia_cz_protocol(t_gate, n_steps, omega_420, omega_1013):
 
 
 def _adia_rb87_7(spacing=3.0, t_gate=1.0e-6, n_steps=3000):
-    """rb87_7 'our' bound to the find_phase adiabatic CZ pulse."""
+    """rb87_7_mp bound to the find_phase adiabatic CZ pulse."""
     omega_420, omega_1013 = our_laser_rabis(
         p420_w=0.641, p1013_w=10.0, beam_area=7 * 20 * spacing, ryd_level=70
     )
     proto7 = _adia_cz_protocol(t_gate, n_steps, omega_420, omega_1013)
     sys7 = (
         RydbergSystem.set_atom_level(
-            "rb87_7", param_set="our", detuning_sign=1, Delta_Hz=40.1e9
+            "rb87_7_mp", detuning_sign=1, Delta_Hz=40.1e9
         )
         .set_atom_geom(Register.chain(2, spacing_um=spacing))
-        .build()
     )
     return sys7.with_protocol(proto7), proto7
 
@@ -249,20 +261,20 @@ def test_effective_matches_seven_level_observables():
     spacing, t_gate, n_steps = 3.0, 1.0e-6, 3000
     sys7, proto7 = _adia_rb87_7(spacing, t_gate, n_steps)
     params = proto7.unpack_params([], sys7)
-    h_const = np.asarray(sys7.blocks.get("H_const").matrix)
-    h420 = np.asarray(sys7.blocks.get("drive_420").matrix)
-    h1013 = np.asarray(sys7.blocks.get("drive_1013").matrix)
+    h_const, _, _ = single_atom_hamiltonian_parts(sys7)
+    _idx = {lvl: i for i, lvl in enumerate(sys7.basis.local_levels)}
     v_nn = float(sys7.metadata["interaction_pairs"][0][2])
     labels, loc = ("00", "01", "10", "11"), {"0": 0, "1": 1}
 
-    def h7_local(t):  # rebuild H7(t) exactly as the converter does (420 + const 1013)
-        c = proto7.get_drive_coefficients(float(t), params)
-        c420, c1013 = c["drive_420"], c.get("drive_1013", 0.0)
-        return (
-            h_const
-            + c420 * h420 + np.conj(c420) * h420.conj().T
-            + c1013 * h1013 + np.conj(c1013) * h1013.conj().T
-        )
+    def h7_local(t):  # rebuild H7(t) exactly as the converter does
+        H = h_const.copy()
+        for chan, c in proto7.get_drive_coefficients(float(t), params).items():
+            ket, bra = chan[2:-1].split(",")
+            i, j = _idx[ket], _idx[bra]
+            H[i, j] += c
+            if ket != bra:
+                H[j, i] += np.conj(c)
+        return H
 
     def h_eff_local(t):  # two-stage SW: eliminate {e}, then r_garb (= converter's h_eff)
         h4 = schrieffer_wolff(h7_local(t), [0, 1, 5, 6], [2, 3, 4])
@@ -348,11 +360,11 @@ def test_tn_path_rejects_nonzero_k0r():
 
     spec = SimpleNamespace(level_spec=level_structure("01r"), N=1, level_structure="01r")
     # zero / absent K0r is fine
-    three_level_profiles_from_coeffs({"drive_R": 1.0 + 0j, "drive_0r": 0.0 + 0j}, spec)
-    three_level_profiles_from_coeffs({"drive_R": 1.0 + 0j}, spec)
+    three_level_profiles_from_coeffs({"E[r,1]": 1.0 + 0j, "E[r,0]": 0.0 + 0j}, spec)
+    three_level_profiles_from_coeffs({"E[r,1]": 1.0 + 0j}, spec)
     # a driven K0r is rejected with a clear message
     with pytest.raises(ValueError, match="K0r"):
-        three_level_profiles_from_coeffs({"drive_R": 1.0 + 0j, "drive_0r": 0.3 + 0j}, spec)
+        three_level_profiles_from_coeffs({"E[r,1]": 1.0 + 0j, "E[r,0]": 0.3 + 0j}, spec)
 
 
 def test_effective_cz_protocol_runs_on_01r():
@@ -363,12 +375,12 @@ def test_effective_cz_protocol_runs_on_01r():
         t_gate=t_gate, omega_eff_fn=lambda t: omega, phi_fn=lambda t: 0.0, n_steps=600
     )
     # No K01/K0r given -> a pure |1>-|r> drive (only drive_R/delta_R/delta_hf).
-    assert proto.required_channels == frozenset({"drive_R", "delta_R", "delta_hf"})
+    assert proto.required_channels == frozenset({"E[r,1]", "E[r,r]", "E[1,1]"})
     coeffs = proto.get_drive_coefficients(0.3e-6, {"t_gate": t_gate})
-    assert coeffs["drive_R"] == pytest.approx(0.5 * omega)
-    assert coeffs["delta_R"] == pytest.approx(0.0)
-    assert coeffs["delta_hf"] == pytest.approx(0.0)
-    assert "drive_hf" not in coeffs and "drive_0r" not in coeffs
+    assert coeffs["E[r,1]"] == pytest.approx(0.5 * omega)
+    assert coeffs["E[r,r]"] == pytest.approx(0.0)
+    assert coeffs["E[1,1]"] == pytest.approx(0.0)
+    assert "E[1,0]" not in coeffs and "E[r,0]" not in coeffs
 
     sys01r = (
         RydbergSystem.set_atom_level("01r")

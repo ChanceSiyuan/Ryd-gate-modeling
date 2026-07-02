@@ -37,6 +37,8 @@ class SparseExpmBackend(SolverBackend):
         for term in ir.static_terms:
             coeff = term.coefficient(0) if callable(term.coefficient) else term.coefficient
             contrib = coeff * term.operator
+            if term.add_hermitian_conjugate:
+                contrib = contrib + np.conj(coeff) * term.operator.conj().T
             H_static = contrib if H_static is None else H_static + contrib
         if H_static is None:
             H_static = 0

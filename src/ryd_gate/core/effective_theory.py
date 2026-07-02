@@ -1,7 +1,7 @@
 """The 7-level ⇄ {0,1,r} effective-theory map (2nd-order Schrieffer–Wolff).
 
 This module is *the bridge* between the two levels at which a Rb87 CZ gate is
-modeled — the full seven-level ``rb87_7`` ladder
+modeled — the full seven-level rb87 ladder (``rb87_7_mp`` / ``rb87_7_pm``)
 ``{0, 1, e1, e2, e3, r, r_garb}`` (driven by the 420 nm and 1013 nm lasers) and
 the effective three-level ``{0, 1, r}`` model obtained by adiabatically
 eliminating the far-detuned ``6P`` states.  It exists so the relationship is a
@@ -11,7 +11,7 @@ The physics is derived in ``Rydberg_sim.tex`` (Theorem 1 + Lemma 1) and validate
 numerically in ``scripts/notebooks/find_phase.ipynb`` §4.  Public surface:
 
 - :func:`lower_cz_to_effective_01r` — the complete public converter: an arbitrary
-  rb87_7 CZ pulse (any ``CZProtocol``-style protocol) → an
+  rb87 seven-level CZ pulse (any ``CZProtocol``-style protocol) → an
   :class:`~ryd_gate.protocols.gate_cz.EffectiveCZProtocol` on the ``01r`` model.
   At each ``t`` it rebuilds ``H7(t)`` from the registered blocks and does the
   *two-stage* reduction (eliminate ``e1/e2/e3``, then eliminate ``r_garb/r'``),
@@ -19,7 +19,7 @@ numerically in ``scripts/notebooks/find_phase.ipynb`` §4.  Public surface:
 - :func:`schrieffer_wolff` — the 2nd-order (Löwdin) projection of a single-atom
   block onto the kept levels (one reduction stage).  This *is* find_phase §4.2.
 - :func:`shift_coefficients` — the diagonal AC-Stark / light shifts the projection
-  induces, read straight off the registered ``rb87_7`` blocks.
+  induces, read straight off the registered rb87 seven-level blocks.
 - :func:`reverse_amplitude_split` — the inverse direction: a target effective Rabi
   ``Ω_eff(t)`` and a 420/1013 power-split choice → the per-laser amplitudes.
 
@@ -34,6 +34,8 @@ from __future__ import annotations
 from typing import Callable, Mapping, Sequence
 
 import numpy as np
+
+from ryd_gate.core.operators import parse_E
 
 # |0>-|1> Rb87 clock hyperfine splitting; |0> sits at -EPS0 in H_const, so the
 # off-resonant |0>->|e> 420 leg is detuned by Δ_e + EPS0 rather than Δ_e.  Kept
@@ -92,8 +94,8 @@ def shift_coefficients(
     """Diagonal AC-Stark light shifts the eliminated ``6P`` manifold induces.
 
     These are the ``a == b`` entries of :func:`schrieffer_wolff` for the
-    ``rb87_7`` layout, read directly off the registered blocks (``H_const``,
-    ``drive_420``, the 1013 nm coupling).  Each is the shift on its level at the
+    rb87 seven-level layout, read directly off the single-atom parts (``h_const``
+    diagonal, the 420 and 1013 couplings).  Each is the shift on its level at the
     system's *nominal* laser amplitudes:
 
         D_a = Σ_e |coupling(a, e)|² / (E_a - E_e),   e ∈ {e1, e2, e3}.
@@ -163,6 +165,38 @@ _SW_KEEP_RGARB = [0, 1, 2]                           # [0,1,r] in the 4-level la
 _SW_ELIM_RGARB = [3]                                 # eliminate r' (= r_garb)
 
 
+def single_atom_hamiltonian_parts(system):
+    """Single-atom ``(h_const, h420, h1013)`` 7x7 matrices for an rb87 system.
+
+    Reconstructs the legacy dense matrices from the primitive operator model:
+    ``h_const`` sums the static diagonal-energy terms (``E[a,a]`` coefficients,
+    plus any h.c.-completed static coupling); ``h420`` / ``h1013`` are the
+    unit-Rabi laser legs ``Σ ratio·|ket><bra|`` over the ``laser_channel_ratios``
+    ``"420"`` / ``"1013"`` groups.
+    """
+    levels = system.basis.local_levels
+    d = len(levels)
+    idx = {lvl: i for i, lvl in enumerate(levels)}
+    hc = np.zeros((d, d), dtype=complex)
+    for term in system.static_hamiltonian_terms:
+        if term.name == "H_pair":
+            continue
+        ket, bra = parse_E(term.name)
+        hc[idx[ket], idx[bra]] += term.coefficient
+        if term.add_hermitian_conjugate and ket != bra:
+            hc[idx[bra], idx[ket]] += np.conjugate(term.coefficient)
+    ratios = system.meta("laser_channel_ratios", {})
+
+    def _group(group: str) -> np.ndarray:
+        m = np.zeros((d, d), dtype=complex)
+        for chan, ratio in ratios.get(group, {}).items():
+            ket, bra = parse_E(chan)
+            m[idx[ket], idx[bra]] += ratio
+        return m
+
+    return hc, _group("420"), _group("1013")
+
+
 def lower_cz_to_effective_01r(protocol, system7, *, n_steps: int | None = None):
     """Lower an rb87_7 CZ pulse to an effective ``{0,1,r}`` protocol.
 
@@ -173,8 +207,9 @@ def lower_cz_to_effective_01r(protocol, system7, *, n_steps: int | None = None):
     3x3 effective Hamiltonian on the ``01r`` model.
 
     At each time ``t`` it reads ``c420(t), c1013(t)`` off *protocol*, rebuilds the
-    single-atom ``H7(t)`` from the registered ``H_const`` / ``drive_420`` /
-    ``drive_1013`` blocks, and applies the two-stage Schrieffer–Wolff reduction:
+    single-atom ``H7(t)`` from the system's static terms and per-channel 420/1013
+    ratios (via :func:`single_atom_hamiltonian_parts`), and applies the two-stage
+    Schrieffer–Wolff reduction:
     first eliminate the ``6P`` manifold ``{e1,e2,e3}``, then eliminate the garbage
     Rydberg ``r_garb`` (= ``r'``).  The result is the full ``{0,1,r}`` Hamiltonian
     ``D0,D1,Dr`` + ``K01,K0r,K1r`` (``K0r`` included; the ``r'`` 2nd-order
@@ -192,27 +227,33 @@ def lower_cz_to_effective_01r(protocol, system7, *, n_steps: int | None = None):
 
     from ryd_gate.protocols.gate_cz import EffectiveCZProtocol
 
-    blocks = system7.blocks
-    hc = np.asarray(blocks.get("H_const").matrix)
-    h420 = np.asarray(blocks.get("drive_420").matrix)
-    h1013 = np.asarray(blocks.get("drive_1013").matrix)
+    hc = single_atom_hamiltonian_parts(system7)[0]  # only the static part is needed here
     if hc.shape[0] < 7:
         raise ValueError("lower_cz_to_effective_01r targets the rb87_7 (7-level) layout.")
-    h420_dag = h420.conj().T
-    h1013_dag = h1013.conj().T
+    idx = {lvl: i for i, lvl in enumerate(system7.basis.local_levels)}
 
     params = protocol.unpack_params([], system7)
     scale = float(getattr(system7, "amplitude_scale", 1.0))
 
+    # The driven channels and their (row, col) placement are constant across t,
+    # so parse each E[ket,bra] name once rather than at every lowering grid point.
+    channel_slots = []
+    for chan in protocol.get_drive_coefficients(0.0, params):
+        ket, bra = parse_E(chan)
+        channel_slots.append((chan, idx[ket], idx[bra], ket != bra))
+
     def h7(t: float) -> np.ndarray:
+        # H7(t) = static energies + Σ_channel coeff·E[ket,bra] (+ h.c. when off-
+        # diagonal).  Summing the per-channel coefficients reproduces the legacy
+        # c420·h420 + c1013·h1013 (+ h.c.) exactly.
+        H = hc.copy()
         coeffs = protocol.get_drive_coefficients(float(t), params)
-        c420 = scale * coeffs["drive_420"]
-        c1013 = scale * coeffs.get("drive_1013", 0.0)
-        return (
-            hc
-            + c420 * h420 + np.conjugate(c420) * h420_dag
-            + c1013 * h1013 + np.conjugate(c1013) * h1013_dag
-        )
+        for chan, i, j, off_diag in channel_slots:
+            c = scale * coeffs[chan]
+            H[i, j] += c
+            if off_diag:
+                H[j, i] += np.conjugate(c)
+        return H
 
     def h_eff(t: float) -> np.ndarray:
         h4 = schrieffer_wolff(h7(t), _SW_KEEP_E, _SW_ELIM_E)

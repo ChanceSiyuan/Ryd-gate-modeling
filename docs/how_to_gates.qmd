@@ -24,9 +24,10 @@ not a second implementation.
 
 ## Protocols: a pulse is the 420/1013 laser drive
 
-The `rb87_7` system builds **unit-Rabi, phase-free** transition blocks — they encode only
-which transitions are driven and their relative CG/dipole ratios. The CZ **protocol** owns
-the laser amplitudes and phases, supplying the complex drives that multiply those blocks:
+The rb87 seven-level system (`rb87_7_mp` / `rb87_7_pm`) builds **unit-Rabi, phase-free**
+transition channels — they encode only which transitions are driven and their relative
+CG/dipole ratios (for that manifold). The CZ **protocol** owns
+the laser amplitudes and phases, supplying the complex drives that multiply those channels:
 
 $$\Omega_{420}(t)=\Omega_{420}^{\max}\,A_{420}(s)\,e^{-i\varphi_{420}(s)},\qquad
   \Omega_{1013}(t)=\Omega_{1013}^{\max}\,A_{1013}(s)\,e^{-i\varphi_{1013}(s)}$$
@@ -42,7 +43,8 @@ class CZProtocol(Protocol):
 ```
 
 `A_1013` / `phi_1013` default to a constant 1013 coupling ($A_{1013}=1$, $\varphi_{1013}=0$);
-`omega_*_max` default to the system `param_set`'s canonical Rabis. The intermediate detuning
+`omega_*_max` default to the fixed σ⁻/σ⁺ (`rb87_7_mp`) canonical Rabis (a protocol constant,
+never read from the system — pass them explicitly for `rb87_7_pm`). The intermediate detuning
 $\Delta_e$ is an atomic property and lives on `set_atom_level(..., Delta_Hz=…)`.
 
 The three built-ins differ **only** in how the 420 phase is supplied:
@@ -91,7 +93,7 @@ proto = CZProtocol(
     A_420=lambda s: np.sin(np.pi * s) ** 2,   # 420 envelope in [0,1], s = t/t_gate
     phi_420=lambda s: 5.0 * s,                # 420 phase (rad)
     # A_1013 / phi_1013 omitted -> constant 1013 coupling
-    # omega_*_max omitted -> param_set canonical Rabis
+    # omega_*_max omitted -> fixed σ⁻/σ⁺ (rb87_7_mp) canonical Rabis
 )
 report = cz_gate_report(system, proto, [], include_error_budget=False)
 ```
@@ -132,14 +134,14 @@ Stark / Schrieffer–Wolff bookkeeping lives.
 
 ### (c) The 7-level → {0,1,r} converter
 
-A Rb87 CZ gate lives at two levels: the full **7-level** `rb87_7` model
-$\{0,1,e_1,e_2,e_3,r,r'\}$ (the 420 nm and 1013 nm drives) and the effective **{0,1,r}**
-3-level model obtained by 2nd-order Schrieffer–Wolff elimination. The public converter
-turns *any* concrete `rb87_7` CZ pulse into an effective `01r` protocol you can simulate
-like any other:
+A Rb87 CZ gate lives at two levels: the full **7-level** rb87 model (`rb87_7_mp` /
+`rb87_7_pm`) $\{0,1,e_1,e_2,e_3,r,r'\}$ (the 420 nm and 1013 nm drives) and the effective
+**{0,1,r}** 3-level model obtained by 2nd-order Schrieffer–Wolff elimination. The public
+converter turns *any* concrete rb87 seven-level CZ pulse into an effective `01r` protocol
+you can simulate like any other:
 
 ```python
-proto7    = CZProtocol(...)                        # any concrete CZProtocol on rb87_7
+proto7    = CZProtocol(...)                        # any concrete CZProtocol on rb87 7-level
 proto_eff = lower_cz_to_effective_01r(proto7, sys7)
 
 sys_eff = (rg.RydbergSystem
@@ -150,7 +152,7 @@ results = rg.simulate(sys_eff, psi0=cfgs, t_eval=t_eval)
 ```
 
 At each `t` the converter reads $c_{420}(t), c_{1013}(t)$ off `proto7`, rebuilds $H_7(t)$
-from the registered blocks, and does a **two-stage** reduction: first eliminate the `6P`
+from the primitive operators, and does a **two-stage** reduction: first eliminate the `6P`
 manifold $\{e_1,e_2,e_3\}$, **then** eliminate the garbage Rydberg $r'$ (`r_garb`) — both via
 `schrieffer_wolff` (Theorem 1 + Lemma 1 of `Rydberg_sim.tex`). The result is the **full**
 $3\times3$ effective Hamiltonian on $\{0,1,r\}$ — diagonals $D_0,D_1,D_r$ and *all three*
@@ -185,7 +187,7 @@ in `find_phase.ipynb` §4). Do **not** treat the effective ZZ phase as machine-a
 against 7-level.
 
 **Backend support.** The full effective Hamiltonian (nonzero $K_{0r}$ / $K_{01}$) is
-**exact-backend only**: `set_atom_level("01r")` declares the `drive_0r` channel for the exact
+**exact-backend only**: `set_atom_level("01r")` declares the `E[r,0]` channel for the exact
 compiler, but the TN (`mps`/`peps`) `01r` lowering supports only the `|1\rangle`–$|r\rangle$
 subspace and **rejects** a nonzero $K_{0r}$ with a clear error. The reverse map is 2-DOF:
 with only two lasers `D_0` is locked to `D_1`, so you can realize at most two of
@@ -200,8 +202,8 @@ X_TO_DARK = [-0.6894097925886826, 1.040962607910546, 0.3277877211544321,
              1.5639989822346387, 0.6689846026179691, 1.3407418093368753]
 
 system = (RydbergSystem
-          .set_atom_level("rb87_7", param_set="our", detuning_sign=1)
-          .set_atom_geom(Register.chain(2, spacing_um=3.0)).build())
+          .set_atom_level("rb87_7_mp", detuning_sign=1)
+          .set_atom_geom(Register.chain(2, spacing_um=3.0)))
 report = cz_gate_report(system, TOProtocol(), X_TO_DARK, include_error_budget=False)
 
 report.infidelity        # ~3.7e-7 (benchmark pin)
@@ -252,9 +254,9 @@ infidelity by physical source and decay channel class:
 
 ```python
 system_decay = (RydbergSystem
-                .set_atom_level("rb87_7", param_set="our",
+                .set_atom_level("rb87_7_mp",
                                 detuning_sign=1, enable_rydberg_decay=True)
-                .set_atom_geom(Register.chain(2, spacing_um=3.0)).build())
+                .set_atom_geom(Register.chain(2, spacing_um=3.0)))
 report = cz_gate_report(system_decay, TOProtocol(), X_TO_DARK)
 report.error_budget["rydberg_decay"]    # {"total": ..., "XYZ": ..., "AL": ..., "LG": ...}
 ```
@@ -264,16 +266,16 @@ report.error_budget["rydberg_decay"]    # {"total": ..., "XYZ": ..., "AL": ..., 
 - **TO dark** (`X_TO_DARK`, blackman flat-top, detuning_sign=+1): infidelity
   ≈ 3.7e-7 — the validated high-fidelity TO operating point.
 - **AR re-optimized**: genuine high-fidelity amplitude-robust CZ gates on
-  **both** parameter sets, found by `scripts/reoptimize_explicit.py` /
-  `scripts/optimize_ar_cz.py`: `X_AR_OUR_OPT` → ≈ 7.2e-6 on `param_set="our"`,
-  and `X_AR_LUKIN` → ≈ 1.6e-6 on `param_set="lukin"` (the lukin pin is
-  `slow`-marked).
+  **both** manifolds, found by `scripts/reoptimize_explicit.py` /
+  `scripts/optimize_ar_cz.py`: `X_AR_OUR_OPT` → ≈ 7.2e-6 on `rb87_7_mp`,
+  and `X_AR_LUKIN` → ≈ 1.6e-6 on `rb87_7_pm` (with its canonical Rabis passed
+  explicitly to the protocol; the `pm` pin is `slow`-marked).
 - The *legacy* `X_AR` parameters and the Saffman-constants adiabatic-ARP
   configuration are **not** high-fidelity optima as written; their pins guard
   the computation path, not gate quality.
 
 > **Why the legacy AR seed looks bad.** The legacy `X_AR` single-start gets
-> trapped at infidelity ~0.45 on "our" — a *non-entangling local minimum*
+> trapped at infidelity ~0.45 on `rb87_7_mp` — a *non-entangling local minimum*
 > (low leakage, but conditional phase ≈ 0 instead of π), **not** a protocol or
 > target bug: the TO gate reaches 3.7e-7 on the same system with the same
 > `average_gate_infidelity`, and `scripts/diagnose_ar_target.py` confirms the

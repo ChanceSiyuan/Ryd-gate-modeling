@@ -43,22 +43,22 @@ class Protocol(ABC):
     def phase_420(self, t: float, params: dict) -> complex:
         """Compute exp(-i * phi(t)) for 420nm laser phase modulation.
 
-        The default implementation derives the value from the
-        ``drive_420`` coefficient when a protocol exposes that channel.
+        The default is no modulation; laser protocols (``CZProtocol``) override
+        this to expose their 420 optical phase for plotting.
         """
-        coeffs = self.get_drive_coefficients(t, params)
-        return coeffs.get("drive_420", 1.0 + 0j)
+        del t, params
+        return 1.0 + 0j
 
     # -- New generalized interface -----------------------------------------
 
     @property
     def required_channels(self) -> frozenset[str]:
-        """Channel names this protocol drives.
+        """Primitive ``E[ket,bra]`` channel names this protocol drives.
 
         Used by the compiler to validate system-protocol compatibility.
-        Default assumes the two-photon 420nm drive channels.
+        Concrete protocols override this; the default drives nothing.
         """
-        return frozenset({"drive_420", "drive_420_dag"})
+        return frozenset()
 
     def drive_channels(self, system) -> frozenset[str]:
         """Channel names wired into the Hamiltonian for *system*.
@@ -215,8 +215,8 @@ class Protocol(ABC):
                 families.setdefault(m.group(1), []).append(name)
             else:
                 singles.append(name)
-        # A real per-site family has >=2 members (e.g. global_n_0..N-1); a lone
-        # trailing-number match like "drive_420" is a single channel, not a bundle.
+        # A real per-site family has >=2 members (e.g. E[r,r]_0..N-1); a base
+        # name that merely ends in a digit is a single channel, not a bundle.
         for prefix in list(families):
             if len(families[prefix]) < 2:
                 singles.extend(families.pop(prefix))

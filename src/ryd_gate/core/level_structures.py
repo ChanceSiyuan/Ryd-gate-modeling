@@ -2,15 +2,17 @@
 
 Defines the small dataclasses that describe a site's local energy levels and
 pairwise interactions, plus the built-in ``level_structure`` presets
-(``01`` / ``1r`` / ``01r`` / ``analog_3`` / ``rb87_7``).
+(``01`` / ``1r`` / ``01r`` / ``analog_3`` / ``rb87_7_mp`` / ``rb87_7_pm``).
 
 ``LevelStructureSpec`` is both the compiler-facing level spec and the
 user-facing atom model (there is no separate ``AtomModel`` class). Preset
 *names* encode Hamiltonian construction semantics — ``analog_3`` mounts the
-physical Rb87 analog blocks — whereas ``param_set`` tags (``rb87_7``:
-``our``/``lukin``) only switch numerical sets within identical semantics.
-Fully custom (symbolic) models are hand-built ``LevelStructureSpec``
-instances passed straight to ``RydbergSystem.set_atom_level``.
+physical Rb87 analog blocks, and ``rb87_7_mp`` / ``rb87_7_pm`` mount the
+seven-level model for the two manifold/polarization conventions (σ⁻/σ⁺ vs
+σ⁺/σ⁻). Static numerical values are explicit ``set_atom_level`` kwargs (there
+is no ``param_set``). Fully custom (symbolic) models are hand-built
+``LevelStructureSpec`` instances passed straight to
+``RydbergSystem.set_atom_level``.
 
 Also hosts the shared lowering helpers for protocol channels: the exact
 sparse compiler and TN backends both consume protocol coefficients, but they
@@ -43,7 +45,7 @@ _TN_CAPABLE = frozenset({"1r", "01r"})
 # (backend="peps") and the TeNPy MPS path (backend="mps").
 _TN_ANALOG = _TN_CAPABLE | {"analog_3"}
 _BACKEND_SUPPORT = {
-    "exact": frozenset({"01", "1r", "01r", "analog_3", "rb87_7"}),
+    "exact": frozenset({"01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm"}),
     "mps": _TN_ANALOG,
     "peps": _TN_ANALOG,
     "stabilizer": frozenset({"01"}),
@@ -97,17 +99,14 @@ class LevelStructureSpec:
         return self.initial_level if self.initial_level is not None else self.levels[0]
 
     def physical_kwargs(self) -> dict[str, Any]:
-        """Keyword arguments the system factory needs for this model.
+        """Atom-level keyword arguments the system factory needs for this model.
 
-        ``analog_3`` and ``rb87_7`` carry a ``param_set``; other presets need
-        nothing. Extra entries in ``params`` pass through unchanged.
+        The manifold/polarization convention is encoded in the preset *name*
+        (e.g. ``rb87_7_mp`` / ``rb87_7_pm``), not in a ``param_set``; built-in
+        presets need no factory kwargs. Extra entries in ``params`` (custom
+        specs) pass through unchanged, minus any legacy ``param_set``.
         """
-        extra = {k: v for k, v in self.params.items() if k != "param_set"}
-        if self.name == "analog_3":
-            return {"param_set": "analog_3", **extra}
-        if self.name == "rb87_7":
-            return {"param_set": self.params.get("param_set", "our"), **extra}
-        return {}
+        return {k: v for k, v in self.params.items() if k != "param_set"}
 
     def supports_backend(self, backend: str) -> bool:
         """Whether *backend* can simulate this model (Stage 1 truth table)."""
@@ -202,6 +201,26 @@ class InteractionSpec:
     mode: Literal["all", "nn", "nnn"] = "all"
 
 
+# The 12 primitive driven transitions of the seven-level gate model (shared by
+# both manifolds; the manifold differs only in the per-channel CG ratio carried
+# by the protocol coefficient, not in which transitions exist).  420 nm drives
+# |0>,|1> -> |e_F>; 1013 nm drives |e_F> -> |r>,|r_garb>.
+_RB87_7_TRANSITIONS = (
+    TransitionSpec("e1_1", "1", "e1", "E[e1,1]"),
+    TransitionSpec("e2_1", "1", "e2", "E[e2,1]"),
+    TransitionSpec("e3_1", "1", "e3", "E[e3,1]"),
+    TransitionSpec("e1_0", "0", "e1", "E[e1,0]"),
+    TransitionSpec("e2_0", "0", "e2", "E[e2,0]"),
+    TransitionSpec("e3_0", "0", "e3", "E[e3,0]"),
+    TransitionSpec("r_e1", "e1", "r", "E[r,e1]"),
+    TransitionSpec("r_e2", "e2", "r", "E[r,e2]"),
+    TransitionSpec("r_e3", "e3", "r", "E[r,e3]"),
+    TransitionSpec("rg_e1", "e1", "r_garb", "E[r_garb,e1]"),
+    TransitionSpec("rg_e2", "e2", "r_garb", "E[r_garb,e2]"),
+    TransitionSpec("rg_e3", "e3", "r_garb", "E[r_garb,e3]"),
+)
+
+
 def level_structure(name: str) -> LevelStructureSpec:
     """Return a built-in level-structure preset."""
     presets = {
@@ -218,8 +237,8 @@ def level_structure(name: str) -> LevelStructureSpec:
             name="1r",
             levels=("1", "r"),
             rydberg_levels=("r",),
-            transitions=(TransitionSpec("1_r", "1", "r", "global_X"),),
-            detuning_levels={"global_n": "r"},
+            transitions=(TransitionSpec("1_r", "1", "r", "E[r,1]"),),
+            detuning_levels={"E[r,r]": "r"},
             initial_level="1",
         ),
         "01r": LevelStructureSpec(
@@ -227,16 +246,16 @@ def level_structure(name: str) -> LevelStructureSpec:
             levels=("0", "1", "r"),
             rydberg_levels=("r",),
             transitions=(
-                TransitionSpec("R", "1", "r", "drive_R"),
-                TransitionSpec("hf", "0", "1", "drive_hf"),
+                TransitionSpec("R", "1", "r", "E[r,1]"),
+                TransitionSpec("hf", "0", "1", "E[1,0]"),
                 # |0>-|r> (K0r) leg of the full effective CZ Hamiltonian.  Exact
-                # backend only; the TN 01r lowering rejects a nonzero drive_0r.
-                TransitionSpec("0r", "0", "r", "drive_0r"),
+                # backend only; the TN 01r lowering rejects a nonzero E[r,0].
+                TransitionSpec("0r", "0", "r", "E[r,0]"),
             ),
-            detuning_levels={"delta_R": "r", "delta_hf": "1"},
+            detuning_levels={"E[r,r]": "r", "E[1,1]": "1"},
             initial_level="1",
         ),
-        # Physical Rb87 three-level ladder: analog blocks with static H_1013.
+        # Physical Rb87 three-level ladder: analog blocks with static e-r coupling.
         # The *name* mounts the physics (stageplans/README D11/D13); symbolic
         # three-level models are hand-built LevelStructureSpec instances.
         "analog_3": LevelStructureSpec(
@@ -244,21 +263,38 @@ def level_structure(name: str) -> LevelStructureSpec:
             levels=("g", "e", "r"),
             rydberg_levels=("r",),
             transitions=(
-                TransitionSpec("420", "g", "e", "drive_420"),
-                TransitionSpec("1013", "e", "r", "H_1013"),
+                TransitionSpec("420", "g", "e", "E[e,g]"),
+                TransitionSpec("1013", "e", "r", "E[r,e]"),
             ),
-            detuning_levels={"delta_e": "e", "delta_R": "r"},
+            detuning_levels={"E[e,e]": "e", "E[r,r]": "r"},
             initial_level="g",
-            params={"param_set": "analog_3"},
         ),
-        "rb87_7": LevelStructureSpec(
-            name="rb87_7",
+        # Physical Rb87 seven-level gate model, split by manifold/polarization
+        # convention (the suffix encodes the 420/1013 polarizations):
+        #   rb87_7_mp  ->  sigma-(420) / sigma+(1013)   (was param_set="our")
+        #   rb87_7_pm  ->  sigma+(420) / sigma-(1013)   (was param_set="lukin")
+        "rb87_7_mp": LevelStructureSpec(
+            name="rb87_7_mp",
             levels=("0", "1", "e1", "e2", "e3", "r", "r_garb"),
             rydberg_levels=("r", "r_garb"),
+            transitions=_RB87_7_TRANSITIONS,
             initial_level="0",
-            params={"param_set": "our"},
+        ),
+        "rb87_7_pm": LevelStructureSpec(
+            name="rb87_7_pm",
+            levels=("0", "1", "e1", "e2", "e3", "r", "r_garb"),
+            rydberg_levels=("r", "r_garb"),
+            transitions=_RB87_7_TRANSITIONS,
+            initial_level="0",
         ),
     }
+    if name == "rb87_7":
+        raise ValueError(
+            "'rb87_7' has been split by manifold/polarization convention: use "
+            "'rb87_7_mp' (sigma-/sigma+, was param_set='our') or 'rb87_7_pm' "
+            "(sigma+/sigma-, was param_set='lukin'), with explicit static kwargs "
+            "(Delta_Hz, ryd_level, C6_rad_s_um6, t_rise)."
+        )
     try:
         return presets[name]
     except KeyError:
@@ -266,9 +302,6 @@ def level_structure(name: str) -> LevelStructureSpec:
 
 
 # ── Protocol-channel lowering helpers ────────────────────────────────────────
-
-_HC_CHANNELS = frozenset({"global_X", "drive_R", "drive_hf", "drive_0r"})
-_HC_CHANNEL_PREFIXES = ("global_X_", "drive_R_", "drive_hf_", "drive_0r_")
 
 
 def split_site_channel(channel: str) -> tuple[str, int | None]:
@@ -284,13 +317,6 @@ def declared_channels(level_spec: LevelStructureSpec) -> set[str]:
     channels = {transition.channel for transition in level_spec.transitions}
     channels.update(level_spec.detuning_levels)
     return channels
-
-
-def transition_channels(level_spec: LevelStructureSpec | None) -> set[str]:
-    """Return non-Hermitian transition channels declared by ``level_spec``."""
-    if level_spec is None:
-        return set()
-    return {transition.channel for transition in level_spec.transitions}
 
 
 def validate_coeff_channels(
@@ -327,37 +353,6 @@ def detuning_channel(level_spec: LevelStructureSpec, level: str) -> str | None:
     for channel, detuned_level in level_spec.detuning_levels.items():
         if detuned_level == level:
             return channel
-    return None
-
-
-def channel_needs_hermitian_conjugate(
-    channel: str,
-    level_spec: LevelStructureSpec | None = None,
-) -> bool:
-    """Return True when ``channel`` lowers to a non-Hermitian transition."""
-    if channel in _HC_CHANNELS:
-        return True
-    if any(channel.startswith(prefix) for prefix in _HC_CHANNEL_PREFIXES):
-        return True
-    base, _ = split_site_channel(channel)
-    return base in transition_channels(level_spec)
-
-
-def block_name_for_drive_channel(system: Any, channel: str) -> str | None:
-    """Map a protocol channel to a registered exact-compiler block."""
-    if system.blocks.has(channel):
-        return channel
-
-    base, site = split_site_channel(channel)
-    if site is None:
-        return None
-
-    level_spec = system.meta("level_spec", None) if hasattr(system, "meta") else None
-    if isinstance(level_spec, LevelStructureSpec) and base in level_spec.detuning_levels:
-        level = level_spec.detuning_levels[base]
-        block = f"n_{level}_{site}"
-        return block if system.blocks.has(block) else None
-
     return None
 
 

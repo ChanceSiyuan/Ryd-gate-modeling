@@ -11,7 +11,8 @@ Regenerate with `uv run python docs/_scripts/build_capability_matrix.py`.
 | `1r` | yes | yes | yes | — |
 | `01r` | yes | yes | yes | — |
 | `analog_3` | yes | yes | yes | — |
-| `rb87_7` | yes | — | — | — |
+| `rb87_7_mp` | yes | — | — | — |
+| `rb87_7_pm` | yes | — | — | — |
 
 ## NoiseModel runtime support by backend
 | noise group | exact | mps | peps | stabilizer |

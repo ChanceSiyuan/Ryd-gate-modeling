@@ -95,7 +95,7 @@ class TestCreateTNLatticeSpec:
 
     def test_registered_but_unsupported_level_structure_raises(self):
         with pytest.raises(ValueError, match="not supported"):
-            create_tn_lattice_spec(Lx=2, Ly=2, level_structure="rb87_7")
+            create_tn_lattice_spec(Lx=2, Ly=2, level_structure="rb87_7_mp")
 
     def test_nn_interaction_mode_filters_diagonals(self):
         spec = create_tn_lattice_spec(Lx=2, Ly=2, interaction_mode="nn")
@@ -147,10 +147,27 @@ def test_tn_compiler_uses_system_level_spec_and_interactions():
 
 
 def test_incompatible_protocol_level_structure_is_rejected():
-    system = RydbergSystem.set_atom_level("01r", Omega=2.0).set_atom_geom(
-        Register.rectangle(2, 2, spacing_um=10.0),
-        interaction=InteractionSpec(C6=DEFAULT_C6, mode="nn"),
-    ).set_protocol(_sweep(omega=2.0))
+    # A protocol that drives a primitive channel the level structure does not
+    # declare is rejected: 1r has only {E[r,1], E[r,r]} (no |0> level), so a
+    # protocol emitting E[r,0] is incompatible.
+    class _BadProto:
+        n_params = 0
+
+        def validate_params(self, x):
+            pass
+
+        def unpack_params(self, x, system):
+            return {"t_gate": 0.1, "pin_deltas": {}, "scatter_rates": {}, "static_overlays": []}
+
+        def drive_channels(self, system):
+            return frozenset({"E[r,0]"})
+
+        def get_drive_coefficients(self, t, params):
+            return {"E[r,0]": 1.0}
+
+    system = RydbergSystem.set_atom_level("1r").set_atom_geom(
+        Register.chain(2, spacing_um=4.0), interaction=InteractionSpec(C6=0.0)
+    ).set_protocol(_BadProto())
     params = system.unpack_params([])
 
     with pytest.raises(ValueError, match="channel mismatch"):

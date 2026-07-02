@@ -6,13 +6,26 @@ Product-API refactor. The staged refactor specs (`stageplans/`, Decision Log
 D1–D13) have been retired now that the protocol-only surface has landed; the
 sections below summarize the history.
 
+### rb87_7 split into `rb87_7_mp` / `rb87_7_pm` (manifold tags; `param_set` removed)
+- The Rb87 seven-level model is now selected by manifold/polarization tag, not a
+  `param_set`: **`rb87_7_mp`** (σ⁻/σ⁺, was `param_set="our"`) and **`rb87_7_pm`**
+  (σ⁺/σ⁻, was `"lukin"`). The bare `"rb87_7"` tag and the `param_set` kwarg are
+  removed (breaking) — both raise a clear error pointing to the new tags.
+- Static atom/manifold values are explicit `set_atom_level` kwargs: `Delta_Hz`,
+  `ryd_level`, `C6_rad_s_um6`, `t_rise`, `detuning_sign`, `enable_*`. No laser
+  Rabi amplitude enters at `set_atom_level` (the drive blocks stay unit-Rabi).
+- CZ/TO/AR protocols own the 420/1013 Rabis: `omega_*_max` default to the fixed
+  σ⁻/σ⁺ (`rb87_7_mp`) canonical values — a protocol constant, never inferred from
+  the system; pass them explicitly for the `rb87_7_pm` manifold.
+
 ### Fluent system builder (replaces `from_lattice`)
 - `RydbergSystem.from_lattice(...)` is removed in favour of a three-step builder
   that separates the previously-conflated concerns:
-  `RydbergSystem.set_atom_level(level_structure, param_set=..., **flags)` →
+  `RydbergSystem.set_atom_level(level_structure, **flags)` →
   `.set_atom_geom(geometry, interaction=...)` (adds the Rydberg `H_vdw`) →
-  `.set_protocol(protocol)` (or `.build()` for an undriven system;
-  `set_atom_geom` is optional and defaults to a single atom).
+  `.set_protocol(protocol)`. Every step returns a fully materialized, usable
+  system, so `set_atom_geom` (defaults to a single atom) and `set_protocol`
+  (undriven otherwise) are both optional.
 - The 420/1013 nm laser parameters (`Delta_Hz`, `rabi_420_Hz`, `rabi_1013_Hz`)
   now travel on the drive protocol (e.g. `DoubleARPProtocol(..., Delta_Hz=...)`)
   via `Protocol.laser_kwargs()`, and are baked into the operating point when
@@ -60,7 +73,7 @@ sections below summarize the history.
   (chain/square/rectangle/triangular/from_coordinates, stable atom ids,
   sublattice conventions preserved).
 - `LevelStructureSpec` extended into the user-facing atom model; presets
-  `01`/`1r`/`01r`/`ger`/`analog_3`/`rb87_7` with `supports_backend` truth
+  `01`/`1r`/`01r`/`ger`/`analog_3`/`rb87_7_mp`/`rb87_7_pm` with `supports_backend` truth
   table.
 - `DeviceSpec` / `ChannelSpec` hardware constraints as validating data;
   `Waveform` / `Pulse` (integer ns, rad/µs); `ValidationIssue` +

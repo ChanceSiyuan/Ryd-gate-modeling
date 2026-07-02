@@ -24,9 +24,8 @@ X_FAST = [
 
 def _system(**kwargs):
     return (
-        RydbergSystem.set_atom_level("rb87_7", param_set="our", **kwargs)
+        RydbergSystem.set_atom_level("rb87_7_mp", **kwargs)
         .set_atom_geom(Register.chain(2, spacing_um=3.0))
-        .build()
     )
 
 

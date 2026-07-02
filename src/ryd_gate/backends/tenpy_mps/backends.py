@@ -293,9 +293,11 @@ class TenpyTDVPBackend:
             t_mid = (k + 0.5) * dt_actual
             coeffs = protocol.get_drive_coefficients(t_mid, params)
             if spec.level_structure == "analog_3":
+                # Under the TN context the protocol emits the unitless g-e envelope
+                # on E[e,g]; the model re-applies the full Rabi via local_blocks.
                 model = build_tenpy_model(
                     spec, Delta=0.0,
-                    drive_420_coeff=complex(coeffs.get("drive_420", 0.0)),
+                    drive_420_coeff=complex(coeffs.get("E[e,g]", 0.0)),
                 )
             elif spec.level_structure == "01r":
                 profiles = three_level_profiles_from_coeffs(coeffs, spec)

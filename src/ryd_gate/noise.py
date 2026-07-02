@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 __all__ = ["NoiseModel", "configure_monte_carlo_runner"]
 
 # Level structures whose local blocks carry the non-Hermitian decay terms.
-_DECAY_CAPABLE = frozenset({"analog_3", "rb87_7"})
+_DECAY_CAPABLE = frozenset({"analog_3", "rb87_7_mp", "rb87_7_pm"})
 
 # Fields accepted as data but without a Stage 4 runtime path.
 _RUNTIME_NOT_STAGE4 = ("state_prep", "readout", "temperature", "laser_waist")

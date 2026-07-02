@@ -36,8 +36,8 @@ def test_lattice_coefficients_use_user_functions():
 
     coeffs = proto.get_drive_coefficients(0.5, {})
 
-    assert np.isclose(coeffs["global_X"], 2.5)
-    assert np.isclose(coeffs["global_n"], -2.0)
+    assert np.isclose(coeffs["E[r,1]"], 2.5)
+    assert np.isclose(coeffs["E[r,r]"], -2.0)
 
 
 def test_lattice_coefficients_accept_per_site_detuning():
@@ -51,11 +51,11 @@ def test_lattice_coefficients_accept_per_site_detuning():
 
     coeffs = proto.get_drive_coefficients(0.5, params)
 
-    assert np.isclose(coeffs["global_n"], -3.0)
-    assert np.isclose(coeffs["global_n_0"], 1.0)
-    assert np.isclose(coeffs["global_n_1"], -1.0)
-    assert np.isclose(-(coeffs["global_n"] + coeffs["global_n_0"]), 2.0)
-    assert np.isclose(-(coeffs["global_n"] + coeffs["global_n_1"]), 4.0)
+    assert np.isclose(coeffs["E[r,r]"], -3.0)
+    assert np.isclose(coeffs["E[r,r]_0"], 1.0)
+    assert np.isclose(coeffs["E[r,r]_1"], -1.0)
+    assert np.isclose(-(coeffs["E[r,r]"] + coeffs["E[r,r]_0"]), 2.0)
+    assert np.isclose(-(coeffs["E[r,r]"] + coeffs["E[r,r]_1"]), 4.0)
 
 
 def test_delta_fn_must_be_scalar():

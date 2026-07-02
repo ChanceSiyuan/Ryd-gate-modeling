@@ -161,12 +161,12 @@ class TFIMQuenchProtocol(Protocol):
 
     @property
     def required_channels(self) -> frozenset[str]:
-        return frozenset({"global_X", "global_n"})
+        return frozenset({"E[r,1]", "E[r,r]"})
 
     def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
         return {
-            "global_X": 0.5 * params["Omega"],
-            "global_n": -params["Delta"],
+            "E[r,1]": 0.5 * params["Omega"],
+            "E[r,r]": -params["Delta"],
         }
 
     def pulse_traces(self, t: float, params: dict) -> dict[str, float]:
@@ -256,15 +256,15 @@ class TFIMAnnealProtocol(Protocol):
 
     @property
     def required_channels(self) -> frozenset[str]:
-        return frozenset({"global_X", "global_n"})
+        return frozenset({"E[r,1]", "E[r,r]"})
 
     def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
         hx_t = self.hx_at(t)
         hz_t = self.hz_at(t)
         Delta_t = 2.0 * (params["shift_reference"] - hz_t)
         return {
-            "global_X": hx_t,
-            "global_n": -Delta_t,
+            "E[r,1]": hx_t,
+            "E[r,r]": -Delta_t,
         }
 
     def pulse_traces(self, t: float, params: dict) -> dict[str, float]:
@@ -297,10 +297,10 @@ def _lerp(start: float, end: float, frac: float) -> float:
 
 
 def _tfim_pulse_traces(coeffs: dict) -> dict[str, float]:
-    """Physical TFIM fields from drive coefficients: h_x = Omega/2, Delta = -global_n."""
+    """Physical TFIM fields from drive coefficients: h_x = Omega/2, Delta = -E[r,r]."""
     return {
-        r"$h_x=\Omega/2$": float(np.real(coeffs["global_X"])),
-        r"$\Delta$": float(np.real(-coeffs["global_n"])),
+        r"$h_x=\Omega/2$": float(np.real(coeffs["E[r,1]"])),
+        r"$\Delta$": float(np.real(-coeffs["E[r,r]"])),
     }
 
 

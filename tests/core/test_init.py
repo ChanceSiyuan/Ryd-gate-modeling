@@ -52,7 +52,6 @@ class TestPackageImports:
             "compile_hamiltonian_ir",
             "SystemModel",
             "BasisSpec",
-            "BlockRegistry",
             "ObservableRegistry",
             "Observable",
             "TransitionSpec",
@@ -104,7 +103,7 @@ class TestPackageImports:
     def test_architecture_types_importable_from_submodules(self):
         """Core/IR types are importable from their owning submodules."""
         from ryd_gate import EvolutionResult, RydbergSystem
-        from ryd_gate.core import BasisSpec, BlockRegistry, ObservableRegistry
+        from ryd_gate.core import BasisSpec, ObservableRegistry
         from ryd_gate.core.model import SystemModel
         from ryd_gate.ir import HamiltonianIR, HamiltonianTerm, compile_hamiltonian_ir
 
@@ -114,7 +113,6 @@ class TestPackageImports:
                 EvolutionResult,
                 RydbergSystem,
                 BasisSpec,
-                BlockRegistry,
                 ObservableRegistry,
                 SystemModel,
                 HamiltonianIR,

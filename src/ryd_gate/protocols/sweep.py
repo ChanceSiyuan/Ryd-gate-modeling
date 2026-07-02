@@ -37,8 +37,8 @@ class SweepProtocol(Protocol):
     n_steps : int
         Number of piecewise-constant time steps used by exact sparse evolution.
 
-    Schedules emit ``global_X = Omega(t)/2``, ``global_n = -Delta(t)``, and,
-    when ``address_fn`` is provided, ``global_n_i = -Delta_addr_i(t)``.
+    Schedules emit ``E[r,1] = Omega(t)/2``, ``E[r,r] = -Delta(t)``, and,
+    when ``address_fn`` is provided, ``E[r,r]_i = -Delta_addr_i(t)``.
     """
 
     def __init__(
@@ -92,13 +92,13 @@ class SweepProtocol(Protocol):
 
     @property
     def required_channels(self) -> frozenset[str]:
-        return frozenset({"global_X", "global_n"})
+        return frozenset({"E[r,1]", "E[r,r]"})
 
     def drive_channels(self, system) -> frozenset[str]:
         n_sites = self._n_sites(system)
-        channels = {"global_X", "global_n"}
+        channels = {"E[r,1]", "E[r,r]"}
         if self.address_fn is not None:
-            channels.update(f"global_n_{i}" for i in range(n_sites))
+            channels.update(f"E[r,r]_{i}" for i in range(n_sites))
         return frozenset(channels)
 
     def omega_half_at(self, t: float) -> float:
@@ -124,15 +124,15 @@ class SweepProtocol(Protocol):
 
     def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
         coeffs: dict[str, complex] = {
-            "global_X": self.omega_half_at(t),
-            "global_n": -self.delta_at(t),
+            "E[r,1]": self.omega_half_at(t),
+            "E[r,r]": -self.delta_at(t),
         }
         if self.address_fn is not None:
             n_sites = params.get("n_sites")
             if n_sites is None:
                 raise ValueError("SweepProtocol with address_fn requires params['n_sites'].")
             coeffs.update(
-                {f"global_n_{i}": -float(shift) for i, shift in enumerate(self.address_at(t, int(n_sites)))}
+                {f"E[r,r]_{i}": -float(shift) for i, shift in enumerate(self.address_at(t, int(n_sites)))}
             )
         return coeffs
 

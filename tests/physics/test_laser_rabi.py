@@ -74,13 +74,17 @@ def test_single_photon_rabi_sqrt_power_scaling():
 
 
 def test_our_laser_rabis_known_values():
-    """6.41 W / 100 W over a 100 µm × 100 µm top-hat -> ~2405 / ~183 MHz (ARC, 70S)."""
+    """6.41 W / 100 W over a 100 µm × 100 µm top-hat -> ~1701 / ~317 MHz (ARC, 70S).
+
+    The 420 leg carries the mF=0 splitting 1/sqrt(2); the 1013 leg drives from the
+    6P mⱼ=-3/2 state the 420 leg populates (both legs share the intermediate).
+    """
     beam_area_um2 = 100.0**2
     omega_420, omega_1013 = our_laser_rabis(6.41, 100.0, beam_area_um2, ryd_level=70)
     f420_mhz = omega_420 / (2 * np.pi) / 1e6
     f1013_mhz = omega_1013 / (2 * np.pi) / 1e6
-    assert f420_mhz == pytest.approx(2405.0, rel=2e-2)
-    assert f1013_mhz == pytest.approx(183.0, rel=2e-2)
+    assert f420_mhz == pytest.approx(1700.9, rel=2e-2)
+    assert f1013_mhz == pytest.approx(317.3, rel=2e-2)
 
 
 def test_our_laser_rabis_delegates_to_single_photon_rabi():
@@ -91,11 +95,12 @@ def test_our_laser_rabis_delegates_to_single_photon_rabi():
             6.41, beam_area_um2,
             n1=5, l1=0, j1=0.5, mj1=-0.5, n2=6, l2=1, j2=1.5, q=-1,
         )
+        / np.sqrt(2)  # mF=0 splitting into mJ=±1/2
     )
     assert omega_1013 == pytest.approx(
         single_photon_rabi(
             100.0, beam_area_um2,
-            n1=6, l1=1, j1=1.5, mj1=-0.5, n2=70, l2=0, j2=0.5, q=1,
+            n1=6, l1=1, j1=1.5, mj1=-1.5, n2=70, l2=0, j2=0.5, q=1,
         )
     )
 
@@ -114,12 +119,12 @@ def test_our_laser_rabis_rectangular_array_footprint():
 
     f420_mhz = omega_420 / (2 * np.pi) / 1e6
     f1013_mhz = omega_1013 / (2 * np.pi) / 1e6
-    assert f420_mhz == pytest.approx(3118.6, rel=2e-2)
-    assert f1013_mhz == pytest.approx(237.7, rel=2e-2)
+    assert f420_mhz == pytest.approx(2205.2, rel=2e-2)
+    assert f1013_mhz == pytest.approx(411.7, rel=2e-2)
 
     # Same intensity as spreading the same power over the area directly.
     expected_e0 = electric_field_uniform_beam(p420_eff, beam_area_um2)
     assert omega_420 == pytest.approx(
-        _atom.getRabiFrequency2(5, 0, 0.5, -0.5, 6, 1, 1.5, -1, expected_e0),
+        _atom.getRabiFrequency2(5, 0, 0.5, -0.5, 6, 1, 1.5, -1, expected_e0) / np.sqrt(2),
         rel=1e-9,
     )

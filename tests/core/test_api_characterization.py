@@ -90,9 +90,8 @@ def test_rb87_physical_metadata_present():
     not the system, since the 420/1013 blocks are unit-normalized.
     """
     system = (
-        RydbergSystem.set_atom_level("rb87_7", param_set="our")
+        RydbergSystem.set_atom_level("rb87_7_mp")
         .set_atom_geom(Register.chain(2, spacing_um=3.0))
-        .build()
     )
     assert system.meta("t_rise", None) is not None
     assert system.meta("Delta", 0.0) != 0.0

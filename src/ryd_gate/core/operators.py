@@ -12,6 +12,7 @@ Two layers in one module:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -196,7 +197,7 @@ def build_atom_b_projector(index: int, n_levels: int = 7) -> "NDArray[np.complex
     return np.kron(np.eye(n_levels, dtype=np.complex128), sq)
 
 
-def get_nominal_distance(param_set: str) -> float:
+def get_nominal_distance() -> float:
     """Get the nominal interatomic distance in um."""
     return 3.0
 
@@ -261,6 +262,99 @@ OperatorSpec = (
     | LocalMatrixSumSpec
     | RydbergPairInteractionSpec
 )
+
+
+# ======================================================================
+# PRIMITIVE OPERATOR FACTORY:  E[ket,bra] = |ket><bra|
+# ======================================================================
+
+_E_NAME = re.compile(r"^E\[(.+),(.+)\]$")
+
+
+def parse_E(name: str) -> tuple[str, str]:
+    """Parse an ``E[ket,bra]`` operator name into ``(ket, bra)`` labels.
+
+    The bracket form is required (not ``E_ket_bra``) because level labels may
+    contain underscores such as ``r_garb``.
+    """
+    m = _E_NAME.match(name)
+    if m is None:
+        raise ValueError(
+            f"Operator name {name!r} is not of the form 'E[ket,bra]' "
+            "(e.g. 'E[r,r]', 'E[r_garb,e1]')."
+        )
+    return m.group(1), m.group(2)
+
+
+@dataclass(frozen=True)
+class StaticHamiltonianTerm:
+    """A static (protocol-independent) Hamiltonian term.
+
+    ``operator`` is an :data:`OperatorSpec` (built via a system's operator
+    factory). ``name`` is the ``E[ket,bra]`` (or pair) identity, used so a bound
+    protocol's drive on the same channel can override the static term.  Diagonal
+    ``E[a,a]`` terms are Hermitian; off-diagonal static couplings set
+    ``add_hermitian_conjugate=True``.
+    """
+
+    name: str
+    operator: object
+    coefficient: complex = 1.0
+    add_hermitian_conjugate: bool = False
+
+
+class BasisOperatorFactory:
+    """Primitive operator factory generated from a :class:`BasisSpec`.
+
+    The single source of truth for constructing operator specs by ``E[ket,bra]``
+    name (``E[ket,bra] = |ket><bra|``).  Diagonal ``E[a,a]`` map to projectors;
+    off-diagonal ``E[a,b]`` (``a != b``) map to ``|a><b|`` transitions.
+    """
+
+    def __init__(self, basis: BasisSpec) -> None:
+        self.basis = basis
+
+    def _parse(self, name: str) -> tuple[str, str]:
+        ket, bra = parse_E(name)
+        levels = self.basis.local_levels
+        for label in (ket, bra):
+            if label not in levels:
+                raise ValueError(
+                    f"Operator {name!r} references level {label!r} not in basis "
+                    f"levels {levels}."
+                )
+        return ket, bra
+
+    def local(self, name: str, site: int):
+        """``E[ket,bra]`` on a single ``site``."""
+        ket, bra = self._parse(name)
+        if ket == bra:
+            return LocalProjectorSpec(ket, site)
+        return TransitionOperatorSpec(lower=bra, upper=ket, site=site)
+
+    def sum(self, name: str):
+        """``sum_i E[ket,bra]_i`` over all sites."""
+        ket, bra = self._parse(name)
+        if ket == bra:
+            return SumProjectorSpec(ket)
+        return TransitionOperatorSpec(lower=bra, upper=ket, site=None)
+
+    def weighted_sum(self, name: str, weights: tuple[float, ...]) -> WeightedProjectorSumSpec:
+        """``sum_i w_i E[a,a]_i`` (diagonal operators only)."""
+        ket, bra = self._parse(name)
+        if ket != bra:
+            raise ValueError(f"weighted_sum requires a diagonal E[a,a]; got {name!r}.")
+        return WeightedProjectorSumSpec(ket, tuple(float(w) for w in weights))
+
+    def pair_projector(self, pairs, rydberg_levels) -> RydbergPairInteractionSpec:
+        """Rydberg van der Waals pair-interaction spec ``sum_ij V_ij n_i^R n_j^R``."""
+        return RydbergPairInteractionSpec(tuple(pairs), tuple(rydberg_levels))
+
+    @staticmethod
+    def is_hermitian(name: str) -> bool:
+        """True when ``E[ket,bra]`` is diagonal (``ket == bra``)."""
+        ket, bra = parse_E(name)
+        return ket == bra
 
 
 def is_operator_spec(value) -> bool:

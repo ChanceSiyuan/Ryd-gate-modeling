@@ -20,10 +20,10 @@ def _symbolic_ger_spec() -> LevelStructureSpec:
         levels=("g", "e", "r"),
         rydberg_levels=("r",),
         transitions=(
-            TransitionSpec("420", "g", "e", "drive_420"),
-            TransitionSpec("1013", "e", "r", "H_1013"),
+            TransitionSpec("420", "g", "e", "E[e,g]"),
+            TransitionSpec("1013", "e", "r", "E[r,e]"),
         ),
-        detuning_levels={"delta_e": "e", "delta_R": "r"},
+        detuning_levels={"E[e,e]": "e", "E[r,r]": "r"},
         initial_level="g",
     )
 
@@ -42,10 +42,10 @@ class _AnalogProtocol:
         return {"t_gate": 0.1, "pin_deltas": {}, "scatter_rates": {}, "static_overlays": []}
 
     def drive_channels(self, system):
-        return frozenset({"drive_420", "drive_420_dag"})
+        return frozenset({"E[e,g]"})
 
     def get_drive_coefficients(self, t, params):
-        return {"drive_420": 1.0, "drive_420_dag": 1.0}
+        return {"E[e,g]": 1.0}
 
 
 class TestPresets:
@@ -60,19 +60,19 @@ class TestPresets:
         assert level_structure("1r").initial_level_or_default() == "1"
         assert level_structure("01r").initial_level_or_default() == "1"
         assert level_structure("analog_3").initial_level_or_default() == "g"
-        assert level_structure("rb87_7").initial_level_or_default() == "0"
+        assert level_structure("rb87_7_mp").initial_level_or_default() == "0"
         # default rule: levels[0] when initial_level unset
         custom = LevelStructureSpec(name="x", levels=("a", "b"), rydberg_levels=())
         assert custom.initial_level_or_default() == "a"
 
     def test_physical_kwargs(self):
-        assert level_structure("analog_3").physical_kwargs()["param_set"] == "analog_3"
-        assert level_structure("rb87_7").physical_kwargs()["param_set"] == "our"
-        for name in ("01", "1r", "01r"):
+        # No preset needs factory kwargs anymore: the manifold is the tag name,
+        # and there is no param_set.
+        for name in ("01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm"):
             assert level_structure(name).physical_kwargs() == {}
 
     def test_supports_backend_matrix(self):
-        exact_ok = ("01", "1r", "01r", "analog_3", "rb87_7")
+        exact_ok = ("01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm")
         analog_ok = ("1r", "01r", "analog_3")  # YASTN PEPS + TeNPy MPS lower analog_3
         for name in exact_ok:
             spec = level_structure(name)
@@ -85,7 +85,7 @@ class TestPresets:
     def test_analog_3_keeps_channels(self):
         spec = level_structure("analog_3")
         channels = {t.channel for t in spec.transitions} | set(spec.detuning_levels)
-        assert channels == {"drive_420", "H_1013", "delta_e", "delta_R"}
+        assert channels == {"E[e,g]", "E[r,e]", "E[e,e]", "E[r,r]"}
 
     def test_unknown_preset_raises(self):
         with pytest.raises(ValueError, match="Unknown level-structure"):
@@ -109,28 +109,26 @@ class TestValidate:
         assert "level_structure.rydberg_levels" in codes
 
     def test_valid_preset_has_no_issues(self):
-        for name in ("01", "1r", "01r", "analog_3", "rb87_7"):
+        for name in ("01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm"):
             assert level_structure(name).validate() == []
 
 
 class TestAnalog3Semantics:
     def test_custom_symbolic_spec_never_infers_analog_3(self):
-        """D11/D13: names carry semantics; param_set is numbers only."""
+        """D11/D13: names carry semantics; a custom spec stays symbolic."""
         physical = (
             RydbergSystem.set_atom_level(level_structure("analog_3"))
             .set_atom_geom(Register.chain(2), interaction=InteractionSpec(C6=0.0))
-            .build()
         )
         symbolic = (
-            RydbergSystem.set_atom_level(_symbolic_ger_spec(), param_set="analog_3")
+            RydbergSystem.set_atom_level(_symbolic_ger_spec())
             .set_atom_geom(Register.chain(2), interaction=InteractionSpec(C6=0.0))
-            .build()
         )
         assert physical.basis.local_levels == symbolic.basis.local_levels == ("g", "e", "r")
         assert physical.metadata["physical_model"] == "analog_3"
         assert "physical_model" not in symbolic.metadata
-        assert physical.blocks.has("H_const")
-        assert not symbolic.blocks.has("H_const")
+        assert any(t.name.startswith("E[") for t in physical.static_hamiltonian_terms)
+        assert not any(t.name.startswith("E[") for t in symbolic.static_hamiltonian_terms)
 
     def test_semantic_split_physical_vs_symbolic(self):
         analog = (
@@ -141,20 +139,19 @@ class TestAnalog3Semantics:
         symbolic = (
             RydbergSystem.set_atom_level(_symbolic_ger_spec())
             .set_atom_geom(Register.chain(1), interaction=InteractionSpec(C6=0.0))
-            .build()
         )
 
         # physical blocks mounted only on analog_3
-        assert analog.blocks.has("H_const")
-        assert analog.blocks.has("H_1013_conj")
+        assert any(t.name.startswith("E[") for t in analog.static_hamiltonian_terms)
+        assert any(t.name == "E[r,e]" and t.add_hermitian_conjugate for t in analog.static_hamiltonian_terms)
         assert "physical_model" not in symbolic.metadata
-        assert not symbolic.blocks.has("H_const")
-        assert not symbolic.blocks.has("H_1013_conj")
+        assert not any(t.name.startswith("E[") for t in symbolic.static_hamiltonian_terms)
+        assert not any(t.name == "E[r,e]" for t in symbolic.static_hamiltonian_terms)
 
         # the e<->r coupling compiles as a *static* term for analog_3
         params = analog.unpack_params([])
         ir = ExactSparseCompiler().compile(analog, params)
-        assert "H_1013" in {term.name for term in ir.static_terms}
+        assert "E[r,e]" in {term.name for term in ir.static_terms}
 
 
 class TestSerialization:

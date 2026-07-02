@@ -105,15 +105,10 @@ class ExactSparseCompiler:
             params=source_ir.params,
         )
 
-    def materialize_block(self, system, name: str, cache: dict[str, Any] | None = None):
-        """Return the exact matrix for a registered block."""
-        cache = cache if cache is not None else {}
-        if name in cache:
-            return cache[name]
-        operator = system.blocks.get(name)
+    def materialize_operator(self, system, operator):
+        """Return the exact matrix for an operator spec (or pass a matrix through)."""
         if is_operator_spec(operator):
-            operator = materialize_sparse_operator(operator, system.basis, max_dim=self.max_dim)
-        cache[name] = operator
+            return materialize_sparse_operator(operator, system.basis, max_dim=self.max_dim)
         return operator
 
     def _materialize_term(

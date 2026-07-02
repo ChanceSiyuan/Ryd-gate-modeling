@@ -9,19 +9,22 @@ seconds.
 
 ## Level structures: names carry semantics
 
-Preset *names* encode Hamiltonian construction; `param_set` only switches
-numerical parameter sets within identical semantics:
+Preset *names* encode Hamiltonian construction — including the manifold /
+polarization convention. There is no `param_set`; static numbers are explicit
+`set_atom_level` kwargs:
 
-- `1r` / `01r` — symbolic two-/three-level lattices, blocks driven by
+- `1r` / `01r` — symbolic two-/three-level lattices, channels driven by
   protocols;
-- `analog_3` — *physical* Rb87 analog three-level blocks (static `H_1013`,
-  decay-capable `H_const`);
-- `rb87_7` — full seven-level Rb87 gate model (`param_set="our"` or
-  `"lukin"`).
+- `analog_3` — *physical* Rb87 analog three-level operators (static term
+  `E[r,e]`, decay-capable diagonal `E[a,a]` energies);
+- `rb87_7_mp` / `rb87_7_pm` — full seven-level Rb87 gate model, one tag per
+  manifold/polarization convention (`_mp` = σ⁻/σ⁺, was `param_set="our"`;
+  `_pm` = σ⁺/σ⁻, was `"lukin"`). Static values (`Delta_Hz`, `ryd_level`,
+  `C6_rad_s_um6`, `t_rise`, decay flags) are explicit kwargs.
 
 Fully custom symbolic models are hand-built `LevelStructureSpec` instances
 passed straight to `RydbergSystem.set_atom_level` — they never mount physical
-blocks, regardless of `param_set` (Decision Log D11/D13).
+operators (Decision Log D11/D13).
 
 ## One kernel, one control surface
 
@@ -42,8 +45,8 @@ DigitalAnalogProtocol ─────────┘        └─ compile_hamil
 Protocols emit drive coefficients per compiler channel
 (`get_drive_coefficients(t, params)`); per-site addressing uses compiler
 keys `f"{base}_{site}"`, resolved by the kernel channel-lowering rules
-(`split_site_channel` / `block_name_for_drive_channel` in
-`core.level_structures`).
+(`split_site_channel` in `core.level_structures`, plus membership in
+`system.hamiltonian_channels`).
 
 ## Geometry conventions
 

@@ -88,11 +88,15 @@ AR_LUKIN_INFIDELITY = 1.602054501948e-06
 AR_OUR_OPT_INFIDELITY = 7.158272490759e-06
 
 
+# Canonical single-photon Rabis (rad/s) per manifold — the protocol owns these now.
+OMEGA_MP = (2 * np.pi * 491e6, 2 * np.pi * 185e6)   # σ⁻/σ⁺ (was "our"); protocol default
+OMEGA_PM = (2 * np.pi * 237e6, 2 * np.pi * 303e6)   # σ⁺/σ⁻ (was "lukin"); pass explicitly
+
+
 def _system(**kwargs):
     return (
-        RydbergSystem.set_atom_level("rb87_7", param_set="our", **kwargs)
+        RydbergSystem.set_atom_level("rb87_7_mp", **kwargs)
         .set_atom_geom(Register.chain(2, spacing_um=3.0))
-        .build()
     )
 
 
@@ -127,12 +131,15 @@ class TestBenchmarkPins:
         slow-marked. Pins both the high-fidelity guard and the exact value.
         """
         system = (
-            RydbergSystem.set_atom_level("rb87_7", param_set="lukin")
+            RydbergSystem.set_atom_level("rb87_7_pm")
             .set_atom_geom(Register.chain(2, spacing_um=3.0))
-            .build()
         )
+        # The σ⁺/σ⁻ (pm) manifold is not the protocol default, so pass its
+        # canonical Rabis explicitly to reproduce the lukin operating point.
         report = cz_gate_report(
-            system, ARProtocol(), X_AR_LUKIN,
+            system,
+            ARProtocol(omega_420_max=OMEGA_PM[0], omega_1013_max=OMEGA_PM[1]),
+            X_AR_LUKIN,
             include_error_budget=False, include_residuals=False,
         )
         assert report.infidelity < 1e-3

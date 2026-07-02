@@ -14,11 +14,11 @@ drive amplitudes in rad/s, time in seconds, distances in µm.
 | Symbol | Meaning | Code |
 |---|---|---|
 | $\lvert\ell\rangle$ | single-atom level with label $\ell$ (e.g. $\lvert 0\rangle, \lvert 1\rangle, \lvert e\rangle, \lvert r\rangle$) | `LevelStructureSpec.levels` |
-| $n^{\ell}_i = \lvert\ell\rangle\langle\ell\rvert_i$ | projector onto level $\ell$ at site $i$ | blocks `n_<level>_<i>`, `sum_n_<level>` |
-| $\sigma^x_i = \lvert r\rangle\langle 1\rvert_i + \lvert 1\rangle\langle r\rvert_i$ | two-level transition operator | block `global_X` + h.c. |
+| $n^{\ell}_i = \lvert\ell\rangle\langle\ell\rvert_i$ | projector onto level $\ell$ at site $i$ | observables `n_<level>_<i>`, `sum_n_<level>` |
+| $\sigma^x_i = \lvert r\rangle\langle 1\rvert_i + \lvert 1\rangle\langle r\rvert_i$ | two-level transition operator | channel `E[r,1]` (+ auto h.c.) |
 | $\Omega$ | Rabi frequency (rad/s); protocols emit the coefficient $\Omega/2$ | `get_drive_coefficients` |
-| $\Delta$ | global detuning; sign convention: $H \supset -\Delta\, n^r$ | channel `global_n` / `delta_R` |
-| $\delta_i$ | per-site detuning (addressing pin) | `pin_deltas`, channels `global_n_i` |
+| $\Delta$ | global detuning; sign convention: $H \supset -\Delta\, n^r$ | channel `E[r,r]` |
+| $\delta_i$ | per-site detuning (addressing pin) | `pin_deltas`, channels `E[r,r]_i` |
 | $V_{ij} = C_6 / \lvert \mathbf{r}_i - \mathbf{r}_j \rvert^6$ | van der Waals pair interaction | `core.physical_models.vdw_couplings` |
 | $\gamma$ | population decay rate; enters as $-\tfrac{i}{2}\gamma$ on the diagonal (non-Hermitian norm loss) | `physical_models` decay flags |
 | $A(t)$ | dimensionless Blackman flat-top envelope $\in [0,1]$ | `physics.blackman_pulse` |
@@ -35,17 +35,18 @@ same pieces (`src/ryd_gate/ir.py`):
 
 $$
 H(t) \;=\;
-\underbrace{H_{\text{const}} + H_{1013} + H_{\text{vdW}}}_{\text{static blocks}}
+\underbrace{H_{\text{const}} + H_{1013} + H_{\text{vdW}}}_{\text{static terms}}
 \;+\; \sum_{c\,\in\,\text{drive channels}} \Big[\, s\, c_c(t)\, B_c \;+\; \text{h.c.}\Big]
 \;-\; \sum_i \delta^{\text{pin}}_i n^{r}_i
 \;-\; \frac{i}{2} \sum_i \gamma^{\text{sc}}_i\, n^{g}_i ,
 $$
 
 where $c_c(t)$ is the protocol's drive coefficient for channel $c$, $B_c$
-the registered operator block, and $s$ the `amplitude_scale` of the system
-(noise sweeps). The h.c.
-term is added only for non-Hermitian transition blocks. The last two sums
-are the optional static overlays (`pin_deltas`, `scatter_rates`).
+the primitive operator for that channel, and $s$ the `amplitude_scale` of the
+system (noise sweeps). The h.c. term is added structurally for every
+non-diagonal transition channel (`E[a,b]` with $a\neq b$); diagonal `E[a,a]`
+terms are Hermitian. The last two sums are the optional static overlays
+(`pin_deltas`, `scatter_rates`).
 
 The van der Waals term is always
 
@@ -56,13 +57,13 @@ n^{R}_i \;=\; \sum_{\ell \,\in\, \text{rydberg\_levels}} n^{\ell}_i ,
 $$
 
 with the pair list built by `vdw_couplings` over the register coordinates
-(`RydbergSystem.set_atom_geom` → block `H_vdw`).
+(`RydbergSystem.set_atom_geom` → static term `H_pair`).
 
 ## Two-level lattice (`1r`) — the TFIM workhorse
 
 Levels $(\lvert 1\rangle, \lvert r\rangle)$. With the channel conventions
-`global_X` $\to \Omega(t)/2$ on $\sum_i \lvert r\rangle\langle 1\rvert_i$ (+ h.c.)
-and `global_n` $\to -\Delta(t)$ on $\sum_i n^r_i$
+`E[r,1]` $\to \Omega(t)/2$ on $\sum_i \lvert r\rangle\langle 1\rvert_i$ (+ h.c.)
+and `E[r,r]` $\to -\Delta(t)$ on $\sum_i n^r_i$
 (`protocols/sweep.py::get_drive_coefficients`):
 
 $$
@@ -103,9 +104,9 @@ shifts. `TFIMQuenchProtocol(hx, hz, t_gate)` holds these fields constant;
 ## Three-level lattice (`01r`) — digital-analog
 
 Levels $(\lvert 0\rangle, \lvert 1\rangle, \lvert r\rangle)$; channels
-`drive_R` $\to \Omega_R/2$ on $\lvert r\rangle\langle 1\rvert$,
-`drive_hf` $\to \Omega_{hf}/2$ on $\lvert 1\rangle\langle 0\rvert$,
-`delta_R` $\to -\Delta_R$ on $n^r$, `delta_hf` $\to -\Delta_{hf}$ on $n^1$
+`E[r,1]` $\to \Omega_R/2$ on $\lvert r\rangle\langle 1\rvert$,
+`E[1,0]` $\to \Omega_{hf}/2$ on $\lvert 1\rangle\langle 0\rvert$,
+`E[r,r]` $\to -\Delta_R$ on $n^r$, `E[1,1]` $\to -\Delta_{hf}$ on $n^1$
 (`protocols/digital_analog.py::get_drive_coefficients`):
 
 $$
@@ -150,10 +151,10 @@ see [Gate drives](#gate-drive-coefficients)).
 For a fully *symbolic* three-level ladder (every coefficient — including the
 $e \leftrightarrow r$ coupling — chosen by the protocol), hand-build a
 `LevelStructureSpec` with the same transitions and pass it to
-`RydbergSystem.set_atom_level`; custom specs never mount physical blocks
+`RydbergSystem.set_atom_level`; custom specs never mount physical operators
 (Decision D11/D13).
 
-## Seven-level Rb87 (`rb87_7`) — the gate model
+## Seven-level Rb87 (`rb87_7_mp` / `rb87_7_pm`) — the gate model
 
 Levels $(\lvert 0\rangle, \lvert 1\rangle, \lvert e_1\rangle, \lvert e_2\rangle,
 \lvert e_3\rangle, \lvert r\rangle, \lvert r'\rangle)$: the two qubit
@@ -161,7 +162,7 @@ hyperfine states, the three $6P_{3/2}$ hyperfine intermediate states
 $F \in \{1,2,3\}$, the target Rydberg state, and the "garbage" Rydberg
 Zeeman state $\lvert r'\rangle$ reached through polarization leakage.
 All matrices are built by `physical_models._apply_rb87_7_lattice_blocks`
-with the `our` / `lukin` parameter sets.
+for the `mp` (σ⁻/σ⁺, was `our`) / `pm` (σ⁺/σ⁻, was `lukin`) manifolds.
 
 **Static single-atom energies** (`_rb87_local_h_const`):
 
@@ -177,9 +178,13 @@ with the clock-qubit hyperfine splitting
 $\omega_{\text{clock}} = 2\pi \times 6.835\,\text{GHz}$ placing the spectator
 state $\lvert 0\rangle$ below $\lvert 1\rangle$, hyperfine offsets
 $\epsilon_{1,2,3} = 2\pi \times (-51, 0, +87)\,\text{MHz}$, and the Zeeman
-splitting $\delta_Z$ of the garbage Rydberg state.
+splitting $\delta_Z$ of the garbage Rydberg state. The seven-level model always
+includes the physical garbage state $\lvert r'\rangle$; its splitting is a real
+linear Zeeman shift $\delta_Z = (\mu_B/\hbar)\, g_J\, \Delta m_j\, B$ set by the
+bias field (`magnetic_field_G`, default 20 G $\to 2\pi \times 56$ MHz, with
+$g_J = 2$ and $\Delta m_j = 1$ for the $nS_{1/2}$ Rydberg state).
 
-**420-nm drive** (`_rb87_local_h420`, block `drive_420`; time dependence
+**420-nm drive** (`_rb87_local_h420`, channels `E[e_k,1]`/`E[e_k,0]`; time dependence
 comes from the protocol coefficient $c_{420}(t)$):
 
 $$
@@ -196,8 +201,8 @@ The second sum is the spectator leg: the same 420-nm field off-resonantly
 couples $\lvert 0\rangle \to \lvert e_k\rangle$ with matrix elements $g_k$
 (`_rb87_zero_420_couplings`), detuned by $\Delta + \omega_{\text{clock}}$.
 
-**Static 1013-nm coupling** (`_rb87_local_h1013`, blocks `H_1013` +
-conjugate):
+**Static 1013-nm coupling** (`_rb87_local_h1013`, terms `E[r,e_k]`/`E[r_garb,e_k]`;
+h.c. added structurally):
 
 $$
 h_{1013} = \sum_{k=1}^{3} \Big[
@@ -234,8 +239,11 @@ $n^{R} = \lvert r\rangle\langle r\rvert + \lvert r'\rangle\langle r'\rvert$.
 
 ## Gate drive coefficients
 
-The CZ protocols drive only the `drive_420` (+ dagger) channels
-(`protocols/gate_cz.py`):
+The CZ protocols drive both the 420-leg (`E[e_k,1]` / `E[e_k,0]`) and 1013-leg
+(`E[r,e_k]` / `E[r_garb,e_k]`) channels (+ structural h.c.); each channel's
+coefficient is a scalar laser coefficient times that channel's Clebsch–Gordan
+ratio (`laser_channel_ratios`). The 420 coefficient carries the gate's
+time-dependence (`protocols/gate_cz.py`):
 
 $$
 c_{420}(t) = A(t)\, e^{-i\varphi(t)} ,
