@@ -3,7 +3,9 @@
 Contents
 --------
 - ``gate_metrics`` — average_gate_infidelity, error_budget, sss_infidelity,
-  bell_infidelity, population_evolution, state_infidelity
+  bell_infidelity, population_evolution, state_infidelity, and the four-level
+  297 counterparts (average_gate_infidelity_297, population_evolution_297,
+  error_budget_297, project_theta_297)
 - ``observables``  — bit/trit-mask occupation and staggered magnetization for
   many-body lattice states (2-level and 3-level), and observable-registry
   metrics (measure_observables, measure_trajectory, state_overlap)
@@ -21,6 +23,7 @@ from .coarsening import (
     identify_domains,
     local_staggered_magnetization,
 )
+from .gate_metrics import Theta297Projection, project_theta_297
 from .observables import (
     measure_from_states,
     measure_observables,
@@ -34,6 +37,9 @@ from .observables import (
 )
 
 __all__ = [
+    # 297 four-level gate metrics (theta projection)
+    "Theta297Projection",
+    "project_theta_297",
     # Coarsening / domain analysis
     "build_neighbor_lists",
     "correct_single_spin_flips",

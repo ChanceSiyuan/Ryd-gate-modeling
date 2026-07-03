@@ -2,6 +2,58 @@
 
 ## Unreleased (0.1.0 development line)
 
+### `rb87_297_clock_4`: 297 nm single-photon clock → nP₃/₂ model
+- New atom-level preset **`rb87_297_clock_4`** (`("0", "1", "r", "r_garb")`):
+  direct σ⁻ 297 nm excitation from the clock-like `|F=2, mF=0⟩` ground state
+  `|1⟩` to the 53P₃/₂ target (`mⱼ=-3/2`) and garbage (`mⱼ=-1/2`) Zeeman
+  branches; the logical `|0⟩` (`|F=1, mF=0⟩`) is a dark spectator carrying only
+  the static clock hyperfine energy (`h[0,0] = -ω_hf`, as in the seven-level
+  model). Unit-Rabi drive blocks carry the branch dipole ratio (1/√3);
+  atom-level kwargs are `enable_rydberg_decay`, `magnetic_field_G`,
+  `ryd_level`. The `|r_garb⟩` detuning is the Δmⱼ=+1 excited-state nP₃/₂
+  Zeeman splitting relative to the shared low-field clock-state ground energy;
+  nP₃/₂ decay (`-iΓ/2` on both Rydberg levels) comes from ARC lifetimes (300 K
+  total, 0 K radiative → RD/BBR split in metadata).
+- New **`Direct297PiProtocol(power_at_atoms_w, beam_area_um2, ...)`**: Blackman
+  π-pulse whose target Rabi is `single_photon_rabi(...)/√2` (clock-state
+  factor) from the beam power *at the atoms* (no optics-loss factor inside);
+  the Rydberg level is read from the bound `rb87_297_clock_4` system, and
+  `t_gate=None` auto-calibrates the target pulse area to π.
+- New **`Direct297CZProtocol(t_gate=..., A_297=..., phi_297=..., ...)`** — the
+  single-beam CZ pulse container (297 analog of `CZProtocol`): drive
+  `Ω_297_max · A_297(s) · e^{-iφ_297(s)}` on the `"297"` ratio group, with
+  `Ω_297_max` from power/area and the bound system's `ryd_level`;
+  `pulse_traces` exposes `Ω_297` and the chirp `dφ_297/dt`. New
+  **`Direct297TOProtocol(power, area, blackman=True)`** builder with
+  `x = [A, ω/Ω_297, φ0, δ/Ω_297, θ, T/T_297]`, `T_297 = 2π/Ω_297`
+  (`theta_index=4`, `t_gate_index=5`).
+- New four-level 297 gate metrics in `analysis.gate_metrics` (also exported
+  from `ryd_gate.gates`), explicitly named to keep the seven-level API intact:
+  `average_gate_infidelity_297` (evolves |00⟩,|01⟩,|10⟩,|11⟩; four-state
+  Nielsen formula that reduces to the seven-level three-state formula when
+  `a01 == a10`; residuals report `r`/`r_garb`/`logical_loss`),
+  `population_evolution_297` (`sum_n_r`/`sum_n_r_garb` time series), and
+  `error_budget_297` (flat budget, no XYZ/AL/LG branching:
+  `p_ryd_decay = Γ·∫(n_r+n_r_garb)dt` split into target/garb, plus final
+  residuals and `p_total`; default inputs `["01", "10", "11"]`), plus
+  `project_theta_297` (bounded 1-D refit of the single-qubit Z `theta` alone —
+  the 297 counterpart of `optimize_cz_parameters`' theta-projection warm
+  start, returning a `Theta297Projection` that never scores worse than the
+  seed; also exported from `ryd_gate.analysis`). All `*_297` functions reject
+  non-`rb87_297_clock_4` systems.
+- New physics helpers: `zeeman_shift_rad_s(B, l=..., j=..., delta_mj=...)`
+  (generalizes the nS₁/₂ helper), `direct_297_rabis`, and
+  `arc_pair_c6_rad_s_um6` — ARC perturbative pair C6 converted to this repo's
+  `V = +C6/R⁶` sign convention, with max-overlap eigenchannel selection in the
+  degenerate mⱼ manifold (warns when the bare-channel overlap is < 0.5) and
+  per-orientation caching.
+- New `vdw_couplings_from_c6_function(coords, c6_fn, quantization_axis=z)`:
+  anisotropic `C6(θ, φ)/R⁶` pair couplings; the 297 model uses it by default
+  (2D registers lie in the xy plane, B ⊥ plane → θ=π/2 for all pairs), with the
+  single target-channel C6 applied to *all* r/r_garb pair projectors (coarse
+  first-version approximation). An explicit `InteractionSpec(C6=...)` still
+  overrides with the isotropic scalar.
+
 Product-API refactor. The staged refactor specs (`stageplans/`, Decision Log
 D1–D13) have been retired now that the protocol-only surface has landed; the
 sections below summarize the history.

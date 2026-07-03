@@ -325,6 +325,32 @@ def lande_gj(l: int, j: float, s: float = 0.5) -> float:
     return 1.0 + (j * (j + 1) + s * (s + 1) - l * (l + 1)) / (2 * j * (j + 1))
 
 
+def zeeman_shift_rad_s(magnetic_field_G: float, *, l: int, j: float, delta_mj: float) -> float:
+    """Linear Zeeman shift (rad/s) between two ``m_j`` states of a ``|l j⟩`` level.
+
+    ``Δω = (μ_B / ħ) · g_J(l, j) · Δm_j · B`` with ``B = magnetic_field_G · 1e-4``
+    (T) and :func:`lande_gj` for the fine-structure g-factor.
+
+    Parameters
+    ----------
+    magnetic_field_G : float
+        Bias magnetic field in Gauss.
+    l : int
+        Orbital angular momentum quantum number of the level.
+    j : float
+        Total (fine-structure) angular momentum quantum number of the level.
+    delta_mj : float
+        ``m_j`` difference between the two states.
+
+    Returns
+    -------
+    float
+        The Zeeman shift in rad/s.
+    """
+    B_T = magnetic_field_G * 1e-4
+    return (_MU_B / hbar) * lande_gj(l, j) * delta_mj * B_T
+
+
 def rydberg_zeeman_shift_rad_s(magnetic_field_G: float, *, manifold: str) -> float:
     """Linear Zeeman splitting (rad/s) of the garbage Rydberg state ``r_garb``.
 
@@ -332,11 +358,8 @@ def rydberg_zeeman_shift_rad_s(magnetic_field_G: float, *, manifold: str) -> flo
     state ``r_garb`` through polarization leakage. For an ``nS_{1/2}`` Rydberg
     level the two states differ by ``Δm_j = 1`` (m_j = ±1/2), so the energy of
     ``r_garb`` relative to ``r`` is the linear Zeeman shift
-
-    ``Δω = (μ_B / ħ) · g_J · Δm_j · B`` ,
-
-    with ``g_J = 2`` (``nS_{1/2}``) and ``B = magnetic_field_G · 1e-4`` (T). The
-    result is positive for positive ``B``, matching the Hamiltonian convention
+    :func:`zeeman_shift_rad_s` with ``g_J = 2`` (``nS_{1/2}``). The result is
+    positive for positive ``B``, matching the Hamiltonian convention
     ``h[6, 6] = +ryd_zeeman_shift`` (``r_garb`` above ``r``).
 
     Parameters
@@ -354,10 +377,7 @@ def rydberg_zeeman_shift_rad_s(magnetic_field_G: float, *, manifold: str) -> flo
     """
     if manifold not in ("mp", "pm"):
         raise ValueError(f"Unknown rb87 manifold '{manifold}' (expected 'mp' or 'pm').")
-    delta_mj = 1.0
-    g_j = lande_gj(0, 0.5, 0.5)
-    B_T = magnetic_field_G * 1e-4
-    return (_MU_B / hbar) * g_j * delta_mj * B_T
+    return zeeman_shift_rad_s(magnetic_field_G, l=0, j=0.5, delta_mj=1.0)
 
 
 def our_laser_rabis(
@@ -390,6 +410,129 @@ def our_laser_rabis(
         n1=6, l1=1, j1=1.5, mj1=-1.5, n2=ryd_level, l2=0, j2=0.5, q=1,
     )
     return omega_420, omega_1013
+
+
+# Default Rydberg level for the 297 nm single-photon configuration.
+RYD_LEVEL_297: int = 53
+
+
+def direct_297_rabis(
+    power_w: float,
+    beam_area: float,
+    *,
+    ryd_level: int = RYD_LEVEL_297,
+) -> tuple[float, float]:
+    """297 nm σ⁻ single-photon Rabi frequencies (rad/s) from the clock state.
+
+    One top-hat beam of the given power filling ``beam_area`` (μm²) drives both
+    Zeeman branches out of the clock-like ground state
+    ``|1⟩ = (|m_J=-1/2, m_I=+1/2⟩ + |m_J=+1/2, m_I=-1/2⟩)/√2``:
+
+      * target:  5S₁/₂ (mⱼ=-1/2) --σ⁻--> nP₃/₂ (mⱼ=-3/2)   (m_I=+1/2 spectator)
+      * garbage: 5S₁/₂ (mⱼ=+1/2) --σ⁻--> nP₃/₂ (mⱼ=-1/2)   (m_I=-1/2 spectator)
+
+    Both legs carry the clock-state 1/sqrt(2) amplitude factor.
+
+    Returns
+    -------
+    (omega_r, omega_garb) : tuple of float
+        Single-photon Rabi frequencies in rad/s for the target and garbage
+        branches.
+    """
+    omega_r = single_photon_rabi(
+        power_w, beam_area,
+        n1=5, l1=0, j1=0.5, mj1=-0.5, n2=ryd_level, l2=1, j2=1.5, q=-1,
+    ) / np.sqrt(2)  # sqrt(2) factor for mF=0 splitting into mJ=-1/2 and mJ=+1/2 components
+    omega_garb = single_photon_rabi(
+        power_w, beam_area,
+        n1=5, l1=0, j1=0.5, mj1=0.5, n2=ryd_level, l2=1, j2=1.5, q=-1,
+    ) / np.sqrt(2)
+    return omega_r, omega_garb
+
+
+# ======================================================================
+# ARC PAIR-STATE C6 (VdW) COEFFICIENTS
+# ======================================================================
+
+
+@functools.lru_cache(maxsize=None)
+def _arc_pair_c6_cached(
+    n1, l1, j1, mj1, n2, l2, j2, mj2, theta, phi, n_range, energy_delta_hz, degenerate,
+) -> tuple[float, float]:
+    """``(repo C6 in rad/s·μm⁶, bare-channel overlap)`` — see the public wrapper."""
+    import warnings
+
+    from arc import PairStateInteractions
+    from arc.calculations_atom_pairstate import compositeState, singleAtomState
+
+    calc = PairStateInteractions(_get_atom(), n1, l1, j1, n2, l2, j2, mj1, mj2)
+    if not degenerate:
+        arc_c6_ghz = float(np.real(calc.getC6perturbatively(theta, phi, n_range, energy_delta_hz)))
+        overlap = 1.0
+    else:
+        values, vectors = calc.getC6perturbatively(
+            theta, phi, n_range, energy_delta_hz, degeneratePerturbation=True
+        )
+        # Bare |mj1, mj2⟩ channel in ARC's {mj1=-j1..+j1} ⊗ {mj2=-j2..+j2}
+        # eigenvector basis (vectors are rows); pick the max-overlap eigenchannel.
+        bare = compositeState(singleAtomState(j1, mj1), singleAtomState(j2, mj2)).flatten()
+        overlaps = np.abs(np.asarray(vectors) @ bare) ** 2
+        best = int(np.argmax(overlaps))
+        arc_c6_ghz = float(np.real(values[best]))
+        overlap = float(overlaps[best])
+        if overlap < 0.5:
+            warnings.warn(
+                f"arc_pair_c6_rad_s_um6: bare pair channel |{mj1},{mj2}⟩ of "
+                f"({n1} l={l1} j={j1}, {n2} l={l2} j={j2}) at theta={theta:.3f}, "
+                f"phi={phi:.3f} is not a dominant eigenchannel (max overlap "
+                f"{overlap:.2f}); returning the max-overlap C6 eigenvalue.",
+                stacklevel=2,
+            )
+    # ARC's perturbative convention is V(R) = -C6/R^6 (getC6perturbatively
+    # docstring); this repo uses V(R) = +C6/R^6 (vdw_couplings), hence the flip.
+    return -arc_c6_ghz * 2 * np.pi * 1e9, overlap
+
+
+def arc_pair_c6_rad_s_um6(
+    *,
+    n1: int,
+    l1: int,
+    j1: float,
+    mj1: float,
+    n2: int | None = None,
+    l2: int | None = None,
+    j2: float | None = None,
+    mj2: float | None = None,
+    theta: float,
+    phi: float,
+    n_range: int = 5,
+    energy_delta_hz: float = 30e9,
+    degenerate: bool = True,
+) -> float:
+    """Perturbative pair-state C6 (rad/s·μm⁶) in this repo's ``V = +C6/R⁶`` sign.
+
+    Wraps ARC ``PairStateInteractions.getC6perturbatively`` for the
+    ``|n1 l1 j1 mj1; n2 l2 j2 mj2⟩`` pair state at inter-atomic axis orientation
+    ``(theta, phi)`` relative to the quantization axis, converting from ARC's
+    ``V(R) = -C6/R⁶`` GHz·μm⁶ convention. Atom-2 quantum numbers default to
+    atom-1's (identical pair state).
+
+    With ``degenerate=True`` (required off-axis / for non-stretched states) the
+    C6 matrix over the degenerate ``m_j`` manifold is diagonalized and the
+    eigenvalue whose eigenvector has the largest overlap with the bare
+    ``|mj1, mj2⟩`` channel is returned; a warning reports the overlap when it is
+    not dominant (< 0.5). Results are cached (``theta``/``phi`` rounded to
+    1e-9 rad), so repeated per-pair lookups at the same orientation are free.
+    """
+    if n2 is None:
+        n2, l2, j2, mj2 = n1, l1, j1, mj1
+    c6, _overlap = _arc_pair_c6_cached(
+        int(n1), int(l1), float(j1), float(mj1),
+        int(n2), int(l2), float(j2), float(mj2),
+        round(float(theta), 9), round(float(phi), 9),
+        int(n_range), float(energy_delta_hz), bool(degenerate),
+    )
+    return c6
 
 
 # ======================================================================

@@ -23,9 +23,14 @@ import numpy as np
 from ryd_gate.analysis import gate_metrics
 from ryd_gate.analysis.gate_metrics import (
     CZOptimizeResult,
+    Theta297Projection,
     average_gate_infidelity,
+    average_gate_infidelity_297,
     error_budget,
+    error_budget_297,
     optimize_cz_parameters,
+    population_evolution_297,
+    project_theta_297,
 )
 from ryd_gate.core.effective_theory import (
     lower_cz_to_effective_01r,
@@ -34,6 +39,7 @@ from ryd_gate.core.effective_theory import (
     shift_coefficients,
 )
 from ryd_gate.core.serialization import check_schema, json_ready, schema_tag
+from ryd_gate.protocols.direct_297 import Direct297CZProtocol, Direct297TOProtocol
 from ryd_gate.protocols.gate_cz import (
     ARProtocol,
     CZProtocol,
@@ -47,14 +53,21 @@ __all__ = [
     "CZGateReport",
     "CZOptimizeResult",
     "CZProtocol",
+    "Direct297CZProtocol",
+    "Direct297TOProtocol",
     "EffectiveCZProtocol",
     "TOProtocol",
+    "Theta297Projection",
     "average_gate_infidelity",
+    "average_gate_infidelity_297",
     "cz_gate_report",
     "error_budget",
+    "error_budget_297",
     "lower_cz_to_effective_01r",
     "optimize_cz_parameters",
     "phase_from_chirp",
+    "population_evolution_297",
+    "project_theta_297",
     "reverse_amplitude_split",
     "schrieffer_wolff",
     "shift_coefficients",

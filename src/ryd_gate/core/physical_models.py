@@ -71,6 +71,61 @@ def vdw_couplings(
     return tuple(pairs)
 
 
+def vdw_couplings_from_c6_function(
+    coords_um: np.ndarray,
+    c6_fn,
+    quantization_axis: tuple[float, float, float] = (0.0, 0.0, 1.0),
+    max_range_um: float | None = None,
+) -> tuple:
+    """All-pairs anisotropic VdW couplings ``V_ij = C6(θ_ij, φ_ij) / R_ij^6``.
+
+    Generalizes :func:`vdw_couplings` to orientation-dependent C6 (e.g. Rydberg
+    P states): ``c6_fn(theta, phi)`` returns the pair C6 in rad/s·μm⁶ for a pair
+    axis at polar angle ``theta`` from ``quantization_axis`` and azimuth ``phi``
+    around it. 2D coordinates are treated as lying in the xy plane, so with the
+    default ``(0, 0, 1)`` quantization axis (B perpendicular to the lattice
+    plane) every in-plane pair — including 1D chains — has ``theta = pi/2``.
+
+    Parameters
+    ----------
+    coords_um : ndarray, shape (N, 2) or (N, 3)
+        Atom positions in microns.
+    c6_fn : callable
+        ``(theta, phi) -> C6`` in rad/s · μm^6.
+    quantization_axis : tuple of float
+        Direction of the quantization (B-field) axis.
+    max_range_um : float or None
+        If given, omit pairs with separation > max_range_um.
+
+    Returns
+    -------
+    tuple of (i, j, V_ij)
+        Upper-triangular list of pairs with V_ij in rad/s.
+    """
+    coords_um = np.asarray(coords_um, dtype=float)
+    if coords_um.ndim == 2 and coords_um.shape[1] == 2:
+        coords_um = np.column_stack([coords_um, np.zeros(len(coords_um))])
+    axis = np.asarray(quantization_axis, dtype=float)
+    axis = axis / np.linalg.norm(axis)
+    # Orthonormal transverse frame (e1, e2, axis) fixing the azimuth phi.
+    seed = np.array([1.0, 0.0, 0.0]) if abs(axis[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    e1 = seed - axis * (seed @ axis)
+    e1 = e1 / np.linalg.norm(e1)
+    e2 = np.cross(axis, e1)
+    N = len(coords_um)
+    pairs = []
+    for i in range(N):
+        for j in range(i + 1, N):
+            d = coords_um[j] - coords_um[i]
+            r = float(np.linalg.norm(d))
+            if max_range_um is not None and r > max_range_um:
+                continue
+            theta = float(np.arccos(np.clip((d @ axis) / r, -1.0, 1.0)))
+            phi = float(np.arctan2(d @ e2, d @ e1))
+            pairs.append((i, j, float(c6_fn(theta, phi)) / r ** 6))
+    return tuple(pairs)
+
+
 # ── Rb87 seven-level physical parameter sets ─────────────────────────────────
 
 
@@ -592,6 +647,109 @@ def _rb87_zero_420_couplings(
         / 2
         for F in (1, 2, 3)
     ]
+
+
+# ── Rb87 297 nm single-photon four-level model ───────────────────────────────
+
+
+def _rb87_297_pair_c6_fn(ryd_level: int):
+    """``(theta, phi) -> C6`` (rad/s·μm⁶) for the nP₃/₂ (mⱼ=-3/2, mⱼ=-3/2) pair.
+
+    First-version approximation: this single target-channel C6 feeds the shared
+    Rydberg pair-interaction term, i.e. the same strength is applied to *all*
+    pair projectors involving ``r`` or ``r_garb`` (r-r, r-r_garb,
+    r_garb-r_garb).
+    """
+    from ryd_gate.physics import arc_pair_c6_rad_s_um6
+
+    def c6_fn(theta: float, phi: float) -> float:
+        return arc_pair_c6_rad_s_um6(
+            n1=ryd_level, l1=1, j1=1.5, mj1=-1.5, theta=theta, phi=phi
+        )
+
+    return c6_fn
+
+
+def _apply_rb87_297_lattice_blocks(
+    model: "RydbergSystem",
+    *,
+    enable_rydberg_decay: bool = False,
+    magnetic_field_G: float = 20.0,
+    ryd_level: int = 53,
+    **unused,
+) -> None:
+    """Mount the 297 nm single-photon ``("0", "1", "r", "r_garb")`` physical blocks.
+
+    ``|1⟩`` is the clock-like ``|F=2, mF=0⟩`` ground state; a σ⁻ 297 nm beam
+    drives the target branch ``|5S₁/₂ mⱼ=-1/2⟩ → |nP₃/₂ mⱼ=-3/2⟩`` (``|r⟩``)
+    and the garbage branch ``|5S₁/₂ mⱼ=+1/2⟩ → |nP₃/₂ mⱼ=-1/2⟩``
+    (``|r_garb⟩``). The logical ``|0⟩`` (``|F=1, mF=0⟩``) is a dark spectator —
+    no 297 leg touches it; it carries only the static clock hyperfine energy
+    (same ``h[0,0] = -ω_hf`` convention as the seven-level model). The blocks
+    are unit-Rabi: the ``E[r,1]``/``E[r_garb,1]`` channel ratios carry only the
+    relative branch dipole factor, and the protocol (``Direct297PiProtocol``)
+    multiplies the physical target Rabi onto them.
+    """
+    _reject_unused(unused)
+    from arc import Rubidium87
+
+    from ryd_gate.physics import zeeman_shift_rad_s
+
+    atom = Rubidium87()
+    ryd_level = int(ryd_level)
+
+    # Garbage/target dipole ratio of the two σ⁻ branches (the clock-state
+    # 1/sqrt(2) amplitude factors are common to both legs and cancel).
+    d_garb_ratio = atom.getDipoleMatrixElement(
+        5, 0, 0.5, 0.5, ryd_level, 1, 1.5, -0.5, -1
+    ) / atom.getDipoleMatrixElement(5, 0, 0.5, -0.5, ryd_level, 1, 1.5, -1.5, -1)
+
+    # Magnetic garbage-branch detuning for the low-field hyperfine clock state:
+    # both clock components share the same |F=2,mF=0> ground-state energy, so
+    # only the excited nP3/2 Zeeman splitting separates the two branches.
+    garb_detuning = zeeman_shift_rad_s(
+        magnetic_field_G, l=1, j=1.5, delta_mj=1.0
+    )
+
+    # nP₃/₂ decay from ARC lifetimes: 0 K is radiative-only (RD); 300 K adds BBR
+    # (includeLevelsUpTo must exceed n for the finite-temperature calculation).
+    ryd_state_decay_rate = 1.0 / atom.getStateLifetime(
+        ryd_level, 1, 1.5, temperature=300, includeLevelsUpTo=ryd_level + 27
+    )
+    ryd_RD_rate = 1.0 / atom.getStateLifetime(ryd_level, 1, 1.5, temperature=0)
+
+    decay = ryd_state_decay_rate if enable_rydberg_decay else 0.0
+    h_const = np.zeros((4, 4), dtype=np.complex128)
+    h_const[0, 0] = -_RB87_CLOCK_HYPERFINE
+    h_const[2, 2] = -1j * decay / 2
+    h_const[3, 3] = garb_detuning - 1j * decay / 2
+    _add_static_diagonals(model, ("0", "1", "r", "r_garb"), h_const)
+
+    # Unit-Rabi σ⁻ legs: the protocol's laser coefficient c297(t) = Ω_r(t)
+    # multiplies these (Hamiltonian element Ω/2); the compiler adds each h.c.
+    ratios_297 = {
+        "E[r,1]": complex(0.5),
+        "E[r_garb,1]": complex(0.5 * d_garb_ratio),
+    }
+
+    model.metadata.update(
+        {
+            "physical_model": "rb87_297_clock_4",
+            "laser_channel_ratios": {"297": ratios_297},
+            "n_atoms": model.N,
+            "n_levels": 4,
+            "rydberg_indices": (2, 3),
+            "ryd_level": ryd_level,
+            "d_garb_ratio": float(d_garb_ratio),
+            "garb_zeeman_detuning": float(garb_detuning),
+            "magnetic_field_G": float(magnetic_field_G),
+            "ryd_state_decay_rate": float(ryd_state_decay_rate),
+            "ryd_RD_rate": float(ryd_RD_rate),
+            "ryd_BBR_rate": float(ryd_state_decay_rate - ryd_RD_rate),
+            "enable_rydberg_decay": bool(enable_rydberg_decay),
+            "v_ryd": _nearest_pair_strength(model.metadata.get("interaction_pairs", ())),
+        }
+    )
 
 
 def _nearest_pair_strength(pairs: tuple) -> float:

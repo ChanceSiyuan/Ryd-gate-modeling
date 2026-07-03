@@ -167,9 +167,11 @@ def test_builder_rb87_7_default_operating_point():
 
 
 def test_atom_level_table_lists_builtins():
-    assert set(_ATOM_LEVELS) == {"01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm"}
+    assert set(_ATOM_LEVELS) == {
+        "01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm", "rb87_297_clock_4"
+    }
     for entry in _ATOM_LEVELS.values():
-        assert entry["kind"] in {"symbolic", "analog_3", "rb87_7"}
+        assert entry["kind"] in {"symbolic", "analog_3", "rb87_7", "rb87_297"}
         assert isinstance(entry["level_kwargs"], frozenset)
         assert isinstance(entry["description"], str) and entry["description"]
 

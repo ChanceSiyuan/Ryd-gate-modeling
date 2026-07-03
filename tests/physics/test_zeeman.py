@@ -8,7 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ryd_gate.physics import lande_gj, rydberg_zeeman_shift_rad_s
+from ryd_gate.physics import lande_gj, rydberg_zeeman_shift_rad_s, zeeman_shift_rad_s
 
 
 def test_lande_gj_ns12_is_two():
@@ -49,3 +49,21 @@ def test_zeeman_shift_positive_for_positive_field():
 def test_zeeman_shift_rejects_unknown_manifold():
     with pytest.raises(ValueError, match="Unknown rb87 manifold"):
         rydberg_zeeman_shift_rad_s(20.0, manifold="xy")
+
+
+def test_general_zeeman_matches_rydberg_helper():
+    # The nS_1/2 (l=0, j=1/2, Δmj=1) case is exactly the specialized helper.
+    assert zeeman_shift_rad_s(20.0, l=0, j=0.5, delta_mj=1.0) == pytest.approx(
+        rydberg_zeeman_shift_rad_s(20.0, manifold="mp")
+    )
+
+
+def test_general_zeeman_p32_uses_lande_four_thirds():
+    # nP_3/2: g_J = 4/3 -> 20 G, Δmj=1 gives 2pi * ~37.3 MHz.
+    shift = zeeman_shift_rad_s(20.0, l=1, j=1.5, delta_mj=1.0)
+    assert shift / (2 * np.pi * 1e6) == pytest.approx(37.3, rel=2e-3)
+
+
+def test_general_zeeman_scales_with_delta_mj():
+    base = zeeman_shift_rad_s(10.0, l=1, j=1.5, delta_mj=1.0)
+    assert zeeman_shift_rad_s(10.0, l=1, j=1.5, delta_mj=-2.0) == pytest.approx(-2.0 * base)

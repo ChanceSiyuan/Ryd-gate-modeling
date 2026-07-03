@@ -2,7 +2,8 @@
 
 Defines the small dataclasses that describe a site's local energy levels and
 pairwise interactions, plus the built-in ``level_structure`` presets
-(``01`` / ``1r`` / ``01r`` / ``analog_3`` / ``rb87_7_mp`` / ``rb87_7_pm``).
+(``01`` / ``1r`` / ``01r`` / ``analog_3`` / ``rb87_7_mp`` / ``rb87_7_pm`` /
+``rb87_297_clock_4``).
 
 ``LevelStructureSpec`` is both the compiler-facing level spec and the
 user-facing atom model (there is no separate ``AtomModel`` class). Preset
@@ -45,7 +46,9 @@ _TN_CAPABLE = frozenset({"1r", "01r"})
 # (backend="peps") and the TeNPy MPS path (backend="mps").
 _TN_ANALOG = _TN_CAPABLE | {"analog_3"}
 _BACKEND_SUPPORT = {
-    "exact": frozenset({"01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm"}),
+    "exact": frozenset(
+        {"01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm", "rb87_297_clock_4"}
+    ),
     "mps": _TN_ANALOG,
     "peps": _TN_ANALOG,
     "stabilizer": frozenset({"01"}),
@@ -285,6 +288,22 @@ def level_structure(name: str) -> LevelStructureSpec:
             levels=("0", "1", "e1", "e2", "e3", "r", "r_garb"),
             rydberg_levels=("r", "r_garb"),
             transitions=_RB87_7_TRANSITIONS,
+            initial_level="0",
+        ),
+        # Physical Rb87 297 nm single-photon excitation from the clock-like
+        # |F=2, mF=0> ground state |1> to nP3/2 (default n=53): a σ⁻ beam drives
+        # the target (mJ=-1/2 -> mJ=-3/2) and garbage (mJ=+1/2 -> mJ=-1/2) Zeeman
+        # branches, resolved by the bias-field Zeeman detuning of |r_garb>.  The
+        # logical |0> (|F=1, mF=0>) is a dark spectator: no 297 transition
+        # touches it.
+        "rb87_297_clock_4": LevelStructureSpec(
+            name="rb87_297_clock_4",
+            levels=("0", "1", "r", "r_garb"),
+            rydberg_levels=("r", "r_garb"),
+            transitions=(
+                TransitionSpec("297", "1", "r", "E[r,1]"),
+                TransitionSpec("297_garb", "1", "r_garb", "E[r_garb,1]"),
+            ),
             initial_level="0",
         ),
     }

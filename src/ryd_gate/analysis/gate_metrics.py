@@ -2,6 +2,12 @@
 
 Unified implementations replacing _fidelity_avg (TO) and _avg_fidelity_AR (AR),
 plus error_budget, state_infidelity, and population_evolution.
+
+The ``*_297`` functions (``average_gate_infidelity_297``,
+``population_evolution_297``, ``error_budget_297``) are the four-level
+``rb87_297_clock_4`` counterparts: four-state Nielsen scoring without the
+01/10 symmetry assumption and a flat decay/residual budget. They reject
+non-297 systems; the unsuffixed functions remain the seven-level API.
 """
 
 from __future__ import annotations
@@ -511,6 +517,281 @@ def error_budget(
             "AL": errors["AL"] / n,
             "LG": errors["LG"] / n,
         }
+    return result
+
+
+# ── 297 nm four-level CZ metrics (rb87_297_clock_4) ──────────────────────────
+# Explicitly named *_297 functions so the seven-level API above stays intact:
+# the four-level model has no intermediate manifold and no 01/10 symmetry
+# assumption, so it gets its own overlap core, Nielsen formula, and a flat
+# decay/residual budget (no XYZ/AL/LG branching).
+
+
+def _require_297_system(system) -> None:
+    _require_rydberg_system(system)
+    tag = _system_value(system, "physical_model")
+    if tag != "rb87_297_clock_4":
+        raise ValueError(
+            f"297 gate metrics require an rb87_297_clock_4 system; "
+            f"got physical_model={tag!r}."
+        )
+
+
+def _cz297_overlaps(
+    system,
+    protocol: "Protocol",
+    x: list[float],
+    *,
+    collect_residuals: bool = False,
+) -> "tuple[dict[str, complex], float, dict[str, float] | None]":
+    """Evolve |00⟩, |01⟩, |10⟩, |11⟩ once and return phase-corrected CZ overlaps.
+
+    Four-level analog of :func:`_cz_overlaps` that evolves all four logical
+    inputs (no 01/10 symmetry assumption). The corrections ``e^{-iθ}``
+    (|01⟩, |10⟩) and ``e^{-2iθ-iπ}`` (|11⟩) remove the ideal single-qubit Rz
+    phases, so a perfect CZ gives ``a00 == a01 == a10 == a11 == 1``. Returns
+    ``(overlaps, theta, residuals)``; ``residuals`` holds the final ``r`` /
+    ``r_garb`` populations and the logical-subspace loss, averaged over the
+    four trajectories, when *collect_residuals*, else ``None``.
+    """
+    _require_297_system(system)
+    pulse, eval_x, theta = _bind_cz(system, protocol, x)
+
+    labels = ("00", "01", "10", "11")
+    corrections = {
+        "00": 1.0,
+        "01": np.exp(-1.0j * theta),
+        "10": np.exp(-1.0j * theta),
+        "11": np.exp(-2.0j * theta - 1.0j * np.pi),
+    }
+    logical_states = {label: system.product_state(label) for label in labels}
+
+    overlaps: dict[str, complex] = {}
+    residuals_accum = {"r": 0.0, "r_garb": 0.0, "logical_loss": 0.0}
+    for label in labels:
+        ini_state = logical_states[label]
+        res = _solve_state(system, pulse, eval_x, ini_state)
+        overlaps[f"a{label}"] = corrections[label] * complex(np.vdot(ini_state, res))
+        if collect_residuals:
+            residuals_accum["r"] += system.expectation("sum_n_r", res)
+            residuals_accum["r_garb"] += system.expectation("sum_n_r_garb", res)
+            p_logical = sum(
+                abs(np.vdot(ls, res)) ** 2 for ls in logical_states.values()
+            )
+            residuals_accum["logical_loss"] += 1.0 - p_logical
+
+    residuals = (
+        {key: val / 4.0 for key, val in residuals_accum.items()}
+        if collect_residuals
+        else None
+    )
+    return overlaps, float(theta), residuals
+
+
+def _nielsen_infidelity_297(overlaps: "dict[str, complex]") -> float:
+    """Four-state Nielsen infidelity from the phase-corrected 297 CZ overlaps.
+
+    ``F_avg = (|a00+a01+a10+a11|² + |a00|² + |a01|² + |a10|² + |a11|²) / 20``;
+    for ``a01 == a10`` this reduces to the three-state seven-level formula
+    (:func:`_nielsen_infidelity`).
+    """
+    a00, a01 = overlaps["a00"], overlaps["a01"]
+    a10, a11 = overlaps["a10"], overlaps["a11"]
+    avg_F = (1 / 20) * (
+        abs(a00 + a01 + a10 + a11) ** 2
+        + abs(a00) ** 2
+        + abs(a01) ** 2
+        + abs(a10) ** 2
+        + abs(a11) ** 2
+    )
+    return 1 - avg_F
+
+
+def average_gate_infidelity_297(
+    system,
+    protocol: "Protocol",
+    x: list[float],
+    return_residuals: bool = False,
+) -> "float | tuple[float, dict[str, float]]":
+    """Average CZ gate infidelity on an ``rb87_297_clock_4`` system.
+
+    Evolves |00⟩, |01⟩, |10⟩, |11⟩ and scores the four phase-corrected
+    overlaps with the four-state Nielsen formula (no 01/10 symmetry
+    assumption). Rejects non-297 systems — use
+    :func:`average_gate_infidelity` for the seven-level models.
+
+    Returns the infidelity, or ``(infidelity, residuals)`` with the final
+    ``r`` / ``r_garb`` populations and logical-subspace loss when
+    *return_residuals*.
+    """
+    overlaps, _theta, residuals = _cz297_overlaps(
+        system, protocol, x, collect_residuals=return_residuals
+    )
+    infidelity = _nielsen_infidelity_297(overlaps)
+    if return_residuals:
+        return float(infidelity), residuals
+    return infidelity
+
+
+@dataclass(frozen=True)
+class Theta297Projection:
+    """Outcome of :func:`project_theta_297`.
+
+    ``theta`` is the refit single-qubit Z phase and ``infidelity`` the
+    four-state Nielsen infidelity at that phase. ``seed_theta`` /
+    ``seed_infidelity`` are the values at the input ``x`` (so callers can
+    report the recovery), and ``x`` is the input vector with
+    ``x[protocol.theta_index]`` replaced by the refit value — same length,
+    all non-theta entries unchanged.
+    """
+
+    theta: float
+    infidelity: float
+    seed_theta: float
+    seed_infidelity: float
+    x: list[float]
+
+
+def project_theta_297(
+    system,
+    protocol: "Protocol",
+    x: list[float],
+    *,
+    window: float = np.pi,
+    xatol: float = 1e-10,
+) -> Theta297Projection:
+    """Refit only the single-qubit Z ``theta`` for ``rb87_297_clock_4`` CZ scoring.
+
+    297 analog of the theta-projection warm start inside
+    :func:`optimize_cz_parameters` (which is seven-level only — its basis is
+    hard-coded). The objective is ``average_gate_infidelity_297(system,
+    protocol, x_with_theta)``, minimized over ``theta`` alone with a bounded
+    1-D search on ``[x[theta_index] - window, x[theta_index] + window]``; no
+    other parameter is polished. As in the seven-level case the optimum winds
+    rapidly with the gate time (|0⟩ sits at the 6.835 GHz clock splitting), so
+    a fixed ``x[theta_index]`` is almost never optimal and this projection is
+    the first step of any 297 fidelity evaluation.
+
+    Requires ``protocol.theta_index`` (e.g. :class:`Direct297TOProtocol`);
+    rejects non-297 systems. The result never scores worse than the seed: if
+    the bounded search does not improve on ``x[theta_index]``, the seed is
+    returned unchanged.
+    """
+    _require_297_system(system)
+    ti = getattr(protocol, "theta_index", None)
+    if ti is None:
+        raise ValueError(
+            "project_theta_297 requires a protocol with theta_index "
+            "(e.g. Direct297TOProtocol); got "
+            f"{type(protocol).__name__} with theta_index=None."
+        )
+    x = [float(v) for v in x]
+
+    def f(theta: float) -> float:
+        return float(
+            average_gate_infidelity_297(
+                system, protocol, [*x[:ti], float(theta), *x[ti + 1:]]
+            )
+        )
+
+    seed_theta = x[ti]
+    seed_infidelity = f(seed_theta)
+    res = optimize.minimize_scalar(
+        f,
+        bounds=(seed_theta - float(window), seed_theta + float(window)),
+        method="bounded",
+        options={"xatol": float(xatol)},
+    )
+    if float(res.fun) < seed_infidelity:
+        theta, infidelity = float(res.x), float(res.fun)
+    else:  # never score worse than the seed
+        theta, infidelity = seed_theta, seed_infidelity
+    return Theta297Projection(
+        theta=theta,
+        infidelity=infidelity,
+        seed_theta=seed_theta,
+        seed_infidelity=seed_infidelity,
+        x=[*x[:ti], theta, *x[ti + 1:]],
+    )
+
+
+def population_evolution_297(
+    system,
+    protocol: "Protocol",
+    x: list[float],
+    initial_state: str,
+) -> "dict[str, NDArray[np.floating]]":
+    """Rydberg population time series for one logical input on the 297 model.
+
+    ``initial_state`` is a per-site logical label string (e.g. ``"01"``).
+
+    Returns
+    -------
+    dict
+        Keys: ``'t_list'``, ``'ryd'`` (``sum_n_r``), ``'ryd_garb'``
+        (``sum_n_r_garb``).
+    """
+    _require_297_system(system)
+    ini_state = system.product_state(initial_state)
+
+    pulse, eval_x, _ = _bind_cz(system, protocol, x)
+    t_gate = pulse.unpack_params(eval_x, system)["t_gate"]
+    t_eval = np.linspace(0, t_gate, 1000)
+
+    states, t_list = _solve_trajectory(system, pulse, eval_x, ini_state, t_eval)
+    return {
+        "t_list": np.asarray(t_list),
+        "ryd": np.array([system.expectation("sum_n_r", psi) for psi in states]),
+        "ryd_garb": np.array(
+            [system.expectation("sum_n_r_garb", psi) for psi in states]
+        ),
+    }
+
+
+def error_budget_297(
+    system,
+    protocol: "Protocol",
+    x: list[float],
+    initial_states: list[str] | None = None,
+) -> dict[str, float]:
+    """Flat 297 decay/residual error budget (no XYZ/AL/LG branching).
+
+    Averaged over ``initial_states`` (default ``["01", "10", "11"]`` — the 297
+    metrics do not assume 01/10 symmetry):
+
+    - ``p_target_ryd_decay = Γ · ∫ n_r dt`` and ``p_garb_decay = Γ · ∫
+      n_r_garb dt`` with ``Γ = system.meta("ryd_state_decay_rate")``;
+      ``p_ryd_decay`` is their sum.
+    - ``p_ryd_residual`` / ``p_garb_residual`` — final ``r`` / ``r_garb``
+      populations.
+    - ``p_total = p_ryd_decay + p_ryd_residual + p_garb_residual``.
+    """
+    _require_297_system(system)
+    if initial_states is None:
+        initial_states = ["01", "10", "11"]
+
+    gamma = float(_system_value(system, "ryd_state_decay_rate"))
+    keys = (
+        "p_ryd_decay", "p_target_ryd_decay", "p_garb_decay",
+        "p_ryd_residual", "p_garb_residual",
+    )
+    accum = dict.fromkeys(keys, 0.0)
+    for init_state in initial_states:
+        pops = population_evolution_297(system, protocol, x, init_state)
+        t_list = pops["t_list"]
+        p_target = decay_integrate(t_list, pops["ryd"], gamma)[0, -1]
+        p_garb = decay_integrate(t_list, pops["ryd_garb"], gamma)[0, -1]
+        accum["p_target_ryd_decay"] += p_target
+        accum["p_garb_decay"] += p_garb
+        accum["p_ryd_decay"] += p_target + p_garb
+        accum["p_ryd_residual"] += pops["ryd"][-1]
+        accum["p_garb_residual"] += pops["ryd_garb"][-1]
+
+    n = len(initial_states)
+    result = {key: float(val / n) for key, val in accum.items()}
+    result["p_total"] = (
+        result["p_ryd_decay"] + result["p_ryd_residual"] + result["p_garb_residual"]
+    )
     return result
 
 

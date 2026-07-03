@@ -68,11 +68,11 @@ class TestPresets:
     def test_physical_kwargs(self):
         # No preset needs factory kwargs anymore: the manifold is the tag name,
         # and there is no param_set.
-        for name in ("01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm"):
+        for name in ("01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm", "rb87_297_clock_4"):
             assert level_structure(name).physical_kwargs() == {}
 
     def test_supports_backend_matrix(self):
-        exact_ok = ("01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm")
+        exact_ok = ("01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm", "rb87_297_clock_4")
         analog_ok = ("1r", "01r", "analog_3")  # YASTN PEPS + TeNPy MPS lower analog_3
         for name in exact_ok:
             spec = level_structure(name)
@@ -109,7 +109,7 @@ class TestValidate:
         assert "level_structure.rydberg_levels" in codes
 
     def test_valid_preset_has_no_issues(self):
-        for name in ("01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm"):
+        for name in ("01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm", "rb87_297_clock_4"):
             assert level_structure(name).validate() == []
 
 

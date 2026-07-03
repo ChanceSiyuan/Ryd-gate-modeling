@@ -46,8 +46,11 @@ from ryd_gate.core.operators import (
 from ryd_gate.core.physical_models import (
     _apply_analog_3_lattice_blocks,
     _apply_rb87_7_lattice_blocks,
+    _apply_rb87_297_lattice_blocks,
+    _rb87_297_pair_c6_fn,
     _rb87_default_c6,
     vdw_couplings,
+    vdw_couplings_from_c6_function,
 )
 from ryd_gate.lattice import Register
 
@@ -72,6 +75,9 @@ _ANALOG3_KWARGS = frozenset({
 _RB87_7_KWARGS = frozenset({
     "detuning_sign", "Delta_Hz", "ryd_level", "C6_rad_s_um6", "t_rise",
     "enable_rydberg_decay", "enable_intermediate_decay", "magnetic_field_G",
+})
+_RB87_297_KWARGS = frozenset({
+    "enable_rydberg_decay", "magnetic_field_G", "ryd_level",
 })
 
 _ATOM_LEVELS: dict[str, dict[str, Any]] = {
@@ -101,6 +107,10 @@ _ATOM_LEVELS: dict[str, dict[str, Any]] = {
     "rb87_7_pm": {
         "kind": "rb87_7", "level_kwargs": _RB87_7_KWARGS,
         "description": "physical Rb87 seven-level model, sigma+/sigma- manifold",
+    },
+    "rb87_297_clock_4": {
+        "kind": "rb87_297", "level_kwargs": _RB87_297_KWARGS,
+        "description": "physical Rb87 297 nm single-photon clock -> nP3/2 four-level model",
     },
 }
 
@@ -334,11 +344,19 @@ class RydbergSystem(SystemModel):
         # rb87 manifold ("mp"/"pm") from the tag; static numbers are level_kwargs.
         manifold = spec.name.removeprefix("rb87_7_") if kind == "rb87_7" else None
 
+        # 297 model default: pair-dependent (theta, phi) nP3/2 C6 from ARC; an
+        # explicit InteractionSpec(C6=...) overrides with the isotropic scalar.
+        pairs_297 = None
         if interaction is None:
             if kind == "rb87_7":
                 c6 = level_kwargs.get("C6_rad_s_um6")
                 interaction = InteractionSpec(
                     C6=c6 if c6 is not None else _rb87_default_c6(manifold)
+                )
+            elif kind == "rb87_297":
+                pairs_297 = vdw_couplings_from_c6_function(
+                    geometry.coords,
+                    _rb87_297_pair_c6_fn(int(level_kwargs.get("ryd_level", 53))),
                 )
             else:
                 interaction = InteractionSpec(C6=DEFAULT_C6)
@@ -388,7 +406,7 @@ class RydbergSystem(SystemModel):
 
         # Static terms: the Rydberg pair interaction (+ physical-model diagonal
         # energies / static couplings appended by the _apply_* helpers below).
-        pairs = _interaction_pairs(geometry, interaction)
+        pairs = pairs_297 if pairs_297 is not None else _interaction_pairs(geometry, interaction)
         static_hamiltonian_terms: list[StaticHamiltonianTerm] = []
         if spec.rydberg_levels:
             static_hamiltonian_terms.append(
@@ -420,6 +438,8 @@ class RydbergSystem(SystemModel):
             _apply_analog_3_lattice_blocks(model, **level_kwargs)
         elif kind == "rb87_7":
             _apply_rb87_7_lattice_blocks(model, manifold, **level_kwargs)
+        elif kind == "rb87_297":
+            _apply_rb87_297_lattice_blocks(model, **level_kwargs)
 
         # Construction config for set_atom_geom() rebuilds.
         model._level_structure = level_structure

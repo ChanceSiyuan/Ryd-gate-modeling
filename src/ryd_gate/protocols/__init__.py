@@ -4,6 +4,9 @@ Contents
 --------
 - ``gate_cz``   — CZ gate protocols: CZProtocol (the laser-domain container),
   TOProtocol / ARProtocol builders, and the ``phase_from_chirp`` pulse helper
+- ``direct_297`` — 297 nm single-photon σ⁻ protocols: Direct297PiProtocol
+  (π-pulse), Direct297CZProtocol (CZ pulse container), Direct297TOProtocol
+  (Time-Optimal builder)
 - ``sweep``      — SweepProtocol: function-defined global Rydberg sweep
 - ``lattice_dynamics`` — TFIMQuenchProtocol / TFIMAnnealProtocol for 2D lattice dynamics
 - ``digital_analog`` — DigitalAnalogProtocol: piecewise digital-analog schedules
@@ -17,6 +20,11 @@ All protocol classes implement:
 
 from ryd_gate.protocols.base import Protocol
 from ryd_gate.protocols.digital_analog import DigitalAnalogProtocol
+from ryd_gate.protocols.direct_297 import (
+    Direct297CZProtocol,
+    Direct297PiProtocol,
+    Direct297TOProtocol,
+)
 from ryd_gate.protocols.gate_cz import (
     ARProtocol,
     CZProtocol,
@@ -38,6 +46,9 @@ __all__ = [
     "TOProtocol",
     "ARProtocol",
     "CZProtocol",
+    "Direct297CZProtocol",
+    "Direct297PiProtocol",
+    "Direct297TOProtocol",
     "EffectiveCZProtocol",
     "phase_from_chirp",
     "SweepProtocol",
