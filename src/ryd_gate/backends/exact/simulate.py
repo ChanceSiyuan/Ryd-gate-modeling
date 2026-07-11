@@ -61,6 +61,13 @@ def _resolve_backend(system, ir, opts, backend, force_kind):
     """Pick the solver: explicit ``backend`` > forced ``force_kind`` > auto-select."""
     if backend is not None:
         return backend
+    if force_kind == "ode":
+        # Adaptive scipy ODE integrator: no ``n_steps`` (it resolves the fast phase
+        # itself), so it bypasses the expm factory. Forward only tolerances actually set
+        # in backend_options; unset ones fall through to DenseODEBackend's own defaults.
+        from ryd_gate.backends.exact.dense_ode import DenseODEBackend
+
+        return DenseODEBackend(**{k: opts[k] for k in ("rtol", "atol") if k in opts})
     n_steps = resolve_n_steps(system, opts)
     if force_kind is not None:
         return make_forced_expm_backend(force_kind, n_steps=n_steps)
@@ -123,10 +130,12 @@ def simulate(
     Hamiltonian IR, a dense piecewise matrix-exponential for the small physical-ladder
     models (rb87 7-level/``analog_3``, whose ~GHz intermediate manifold makes
     ``expm_multiply`` pathologically slow), otherwise a dense ODE integrator. Pass
-    ``force_kind="dense"``/``"sparse"`` to force a piecewise-``expm`` solver (this is
-    how :func:`ryd_gate.simulate`'s ``exact_dense``/``exact_sparse`` keys route here),
-    or a concrete :class:`~ryd_gate.backends.exact.compiler.SolverBackend` as
-    ``backend`` to override entirely. Backend dispatch by name lives in
+    ``force_kind="dense"``/``"sparse"`` to force a piecewise-``expm`` solver, or
+    ``force_kind="ode"`` for the adaptive :class:`~ryd_gate.backends.exact.dense_ode.DenseODEBackend`
+    (alias-free, ignores ``n_steps``; tolerances via ``backend_options={"rtol":…,"atol":…}``);
+    these are how :func:`ryd_gate.simulate`'s ``exact_dense``/``exact_sparse``/``exact_ode`` keys
+    route here. Pass a concrete
+    :class:`~ryd_gate.backends.exact.compiler.SolverBackend` as ``backend`` to override entirely. Backend dispatch by name lives in
     :func:`ryd_gate.simulate`; tensor-network and external algorithms live under
     ``ryd_gate.backends``. ``backend_options`` accepts a dict or an
     :class:`ExactOptions`.

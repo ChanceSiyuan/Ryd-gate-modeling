@@ -61,6 +61,32 @@ def test_simulate_exact_dense_and_sparse_agree_on_small_system():
     assert np.allclose(r_dense.psi_final, r_sparse.psi_final, atol=1e-10)
 
 
+def test_simulate_exact_ode_returns_evolution_result():
+    system = _system()
+    psi0 = system.ground_state()
+    result = ryd_gate.simulate(system, [], psi0, backend="exact_ode")
+    assert isinstance(result, EvolutionResult)
+    assert result.psi_final.shape == (system.dim,)
+    assert np.isclose(np.linalg.norm(result.psi_final), 1.0)
+
+
+def test_simulate_exact_ode_agrees_with_dense_on_small_system():
+    system = _system()
+    psi0 = system.ground_state()
+    r_ode = ryd_gate.simulate(system, [], psi0, backend="exact_ode")
+    r_dense = ryd_gate.simulate(system, [], psi0, backend="exact_dense")
+    assert np.allclose(r_ode.psi_final, r_dense.psi_final, atol=1e-6)
+
+
+def test_simulate_batch_honors_exact_ode():
+    system = _system()
+    batch = _batch_labels(system)
+    batched = ryd_gate.simulate(system, [], batch, backend="exact_ode")
+    looped = [ryd_gate.simulate(system, [], s, backend="exact_ode") for s in batch]
+    for rb, rl in zip(batched, looped):
+        assert np.allclose(rb.psi_final, rl.psi_final, atol=1e-8)
+
+
 def test_simulate_legacy_expm_aliases_rejected():
     system = _system()
     psi0 = system.ground_state()

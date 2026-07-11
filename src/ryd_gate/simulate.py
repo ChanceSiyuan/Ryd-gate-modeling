@@ -20,10 +20,11 @@ import numpy as np
 from ryd_gate.ir import EvolutionResult
 
 # The exact state-vector engine must be selected explicitly: ``exact_dense`` forces a
-# dense per-step ``expm``, ``exact_sparse`` forces ``expm_multiply``. The old auto key
+# dense per-step ``expm``, ``exact_sparse`` forces ``expm_multiply``, ``exact_ode`` forces
+# the adaptive scipy ODE integrator (alias-free, no ``n_steps``). The old auto key
 # ``"exact"`` has been removed -- callers choose the solver themselves. The map doubles
 # as the membership test (``key in _EXACT_KINDS``) and the routing-key -> kind lookup.
-_EXACT_KINDS = {"exact_dense": "dense", "exact_sparse": "sparse"}
+_EXACT_KINDS = {"exact_dense": "dense", "exact_sparse": "sparse", "exact_ode": "ode"}
 
 
 def _is_state_batch(psi0) -> bool:
@@ -76,6 +77,13 @@ def simulate(
 
         * ``"exact_dense"`` (default) — :class:`~ryd_gate.backends.exact.dense_expm.DenseExpmBackend`
         * ``"exact_sparse"`` — :class:`~ryd_gate.backends.exact.sparse_expm.SparseExpmBackend`
+        * ``"exact_ode"`` — :class:`~ryd_gate.backends.exact.dense_ode.DenseODEBackend`, the
+          adaptive scipy ``solve_ivp`` (DOP853) integrator. Unlike the piecewise-``expm``
+          backends it resolves the fast intermediate-state (~GHz) phase with error control
+          rather than a fixed ``n_steps``, so it is free of the step-commensurability aliasing
+          that inflates the intermediate-state loss channels. Slower; use it for verification
+          and for the de-aliased loss maps. Tolerances via ``backend_options={"rtol":…,
+          "atol":…}``.
 
         Tensor-network names (``"mps"``, ``"peps"``) are also accepted.
     observables

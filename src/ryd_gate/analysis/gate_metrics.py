@@ -51,6 +51,7 @@ def _solve_state(
     t_eval: "NDArray[np.floating] | None" = None,
     ham_const_override: "NDArray[np.complexfloating] | None" = None,
     amplitude_scale: float = 1.0,
+    force_kind: "str | None" = None,
 ) -> "NDArray[np.complexfloating]":
     _require_rydberg_system(system)
     if ham_const_override is not None:
@@ -61,7 +62,7 @@ def _solve_state(
     from ryd_gate.backends.exact import simulate
 
     bound = system.with_protocol(protocol).with_amplitude_scale(amplitude_scale)
-    result = simulate(bound, x, state, t_eval=t_eval)
+    result = simulate(bound, x, state, t_eval=t_eval, force_kind=force_kind)
     return result.states if t_eval is not None else result.psi_final
 
 
@@ -72,17 +73,18 @@ def _observable_population(system, name: str, psi: np.ndarray, fallback_op) -> f
     return float(np.real(np.vdot(psi, fallback_op @ psi)))
 
 
-def _solve_trajectory(system, protocol, x, state, t_eval):
+def _solve_trajectory(system, protocol, x, state, t_eval, force_kind=None):
     """Return ``(state_seq, times)`` for a trajectory as a list of state vectors.
 
     Normalizes exact backend output onto row-major iteration: states as
     ``(n_t, dim)`` plus the times actually recorded (a piecewise backend may
-    record fewer points than requested).
+    record fewer points than requested). ``force_kind`` (``"dense"``/``"sparse"``/
+    ``"ode"``) overrides the auto-selected solver; ``None`` keeps auto-select.
     """
     _require_rydberg_system(system)
     from ryd_gate.backends.exact import simulate
 
-    res = simulate(system.with_protocol(protocol), x, state, t_eval=t_eval)
+    res = simulate(system.with_protocol(protocol), x, state, t_eval=t_eval, force_kind=force_kind)
     return list(np.asarray(res.states)), np.asarray(res.times)
 
 
@@ -384,8 +386,15 @@ def population_evolution(
     protocol: "Protocol",
     x: list[float],
     initial_state: str,
+    backend: "str | None" = None,
 ) -> "dict[str, NDArray[np.floating]]":
     """Run gate simulation and return per-level population time series.
+
+    ``backend`` selects the exact solver by the same public key as
+    :func:`ryd_gate.simulate` (``"exact_dense"``/``"exact_sparse"``/``"exact_ode"``);
+    ``None`` keeps the auto-selected solver. Use ``"exact_ode"`` for alias-free loss
+    channels: the fixed-step ``expm`` backends undersample the ~GHz intermediate-state
+    phase and produce spurious ``n_e`` spikes at commensurate ``n_steps``.
 
     Returns
     -------
@@ -397,11 +406,22 @@ def population_evolution(
         raise ValueError(f"Unsupported initial state: '{initial_state}'")
     ini_state = sss_states[initial_state]
 
+    from ryd_gate.simulate import _EXACT_KINDS
+
+    force_kind = None
+    if backend is not None:
+        if backend not in _EXACT_KINDS:
+            raise ValueError(
+                f"population_evolution backend must be one of {sorted(_EXACT_KINDS)} or None; "
+                f"got {backend!r}."
+            )
+        force_kind = _EXACT_KINDS[backend]
+
     pulse, eval_x, _ = _bind_cz(system, protocol, x)
     t_gate = pulse.unpack_params(eval_x, system)["t_gate"]
     t_eval = np.linspace(0, t_gate, 1000)
 
-    states, t_list = _solve_trajectory(system, pulse, eval_x, ini_state, t_eval)
+    states, t_list = _solve_trajectory(system, pulse, eval_x, ini_state, t_eval, force_kind)
 
     occ_specs = {
         "e1": ("pop_e1", build_occ_operator(2)),
