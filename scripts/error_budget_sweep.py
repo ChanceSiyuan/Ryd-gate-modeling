@@ -75,10 +75,10 @@ from pathlib import Path
 import numpy as np
 
 import ryd_gate as rg
-from ryd_gate import InteractionSpec, level_structure
-from ryd_gate.backends.exact.simulate import simulate as exact_simulate
+from ryd_gate import level_structure
 from ryd_gate.lattice import Register
-from ryd_gate.physics import our_laser_rabis
+from ryd_gate.physics import rb87_7_mp_rabi_frequencies
+from ryd_gate.protocols import SweepProtocol
 
 # ---- 'our' 70S constants (rad/s unless noted) -------------------------------
 P420_W = 6.4                     # 420 nm laser power (W)
@@ -88,7 +88,6 @@ N_BEAM_ATOMS = 200               # beam illuminates the full ~200-atom array
 BEAM_SHORT_AXIS_UM = 6.0         # fixed short axis of the rectangular top-hat
 RYD_LEVEL = 70
 
-C6 = 2 * np.pi * 874e9           # rad/s * um^6, Rb 70S van der Waals
 GAMMA_R = 1.0 / 151.55e-6        # Rydberg decay rate (~6598 rad/s)
 GAMMA_E = 1.0 / 110.7e-9         # intermediate-state decay rate (~9.03e6 rad/s)
 ETA_LOSS = 0.614                 # branching of scattering into atom-loss channels
@@ -122,7 +121,7 @@ def laser_rabis(a_um: float) -> tuple[float, float]:
     """
     beam_length_um = float(np.sqrt(N_BEAM_ATOMS) * a_um)
     beam_area_um2 = beam_length_um * BEAM_SHORT_AXIS_UM
-    return our_laser_rabis(
+    return rb87_7_mp_rabi_frequencies(
         _power_at_atoms(P420_W),
         _power_at_atoms(P1013_W),
         beam_area_um2,
@@ -184,34 +183,38 @@ def make_schedule(omega_eff_val, t_sweep, d_amp):
 # --------------------------------------------------------------------------- #
 # one point -> budget
 # --------------------------------------------------------------------------- #
-def build_base_system(lx: int, ly: int, a_um: float):
-    """A protocol-less 1r/nn RydbergSystem; rebind schedules with with_protocol()."""
-    geom = Register.rectangle(lx, ly, spacing_um=a_um)
-    return rg.RydbergSystem(level_structure=level_structure("1r"), register=geom,
-                            interaction=InteractionSpec(C6=C6, mode="nn"))
+def build_register(lx: int, ly: int, a_um: float) -> Register:
+    """The Lx x Ly square register for the 1r/nn sweep (protocol is bound per point)."""
+    return Register.rectangle(lx, ly, spacing_um=a_um)
 
 
-def evaluate(base_system, a_um, delta_e, t_sweep, *, d_amp, n_eval):
-    """forward + budget at one (a, Delta_e, t_sweep) point, reusing base_system."""
+def evaluate(register, a_um, delta_e, t_sweep, *, d_amp, n_eval):
+    """forward + budget at one (a, Delta_e, t_sweep) point on the given register."""
     o420, o1013 = laser_rabis(a_um)
     oeff = omega_eff(a_um, delta_e)
     omega_half_fn, delta_fn, env_fn = make_schedule(oeff, t_sweep, d_amp)
 
-    proto = rg.SweepProtocol(
-        t_gate=t_sweep, omega_half_fn=omega_half_fn, delta_fn=delta_fn
+    proto = SweepProtocol(
+        t_gate_s=t_sweep, omega_half_rad_s=omega_half_fn, detuning_rad_s=delta_fn,
     )
-    system = base_system.with_protocol(proto)
+    # NN vdW only: the cutoff at the lattice spacing keeps the a-distance pairs and
+    # drops the a*sqrt(2) diagonals; C6 is the "1r" preset's ARC 70S value.
+    system = rg.RydbergSystem(
+        level_structure=level_structure("1r", ryd_level=RYD_LEVEL),
+        register=register, protocol=proto, interaction_cutoff_um=a_um,
+    )
     N = system.N
     t_eval = np.linspace(0.0, t_sweep, n_eval)
-    # Adaptive DOP853 ODE solver (the old fixed-80-step expm convention is gone);
-    # sparse Hamiltonian storage is forced so larger lattices never densify.
-    res = exact_simulate(
-        system, "ground", t_eval=t_eval,
-        observables=system.observables.site_populations("r"),
+    obs = system.observables
+    # Adaptive DOP853 ODE solver with forced sparse Hamiltonian storage so larger
+    # lattices never densify. initial_state=None is |1...1>, the 1r ground manifold.
+    res = rg.simulate(
+        system, initial_state=None, backend="exact_ode", t_eval=t_eval,
+        observables={f"n_r_{i}": obs.n("r", i) for i in range(N)},
         backend_options={"hamiltonian_format": "sparse"},
     )
     n_r = np.stack(
-        [res.expectation(f"n_r_{i}").real for i in range(N)], axis=1
+        [res.expectation(f"n_r_{i}") for i in range(N)], axis=1
     )                                # [n_eval, N]
     n_1 = 1.0 - n_r                  # lossless 2-level
     env = np.asarray(env_fn(t_eval), dtype=float)
@@ -345,7 +348,7 @@ def run_sweep(args):
                     if np.isfinite(grids["eps_total"][li, ai, di, ti]):
                         continue
                     if base is None:
-                        base = build_base_system(lx, ly, a_um)
+                        base = build_register(lx, ly, a_um)
                     try:
                         b = evaluate(
                             base, a_um, 2 * np.pi * float(de[di]) * 1e9, float(ts[ti]) * 1e-6,

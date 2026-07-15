@@ -248,10 +248,25 @@ class LocalMatrixSumSpec:
 
 @dataclass(frozen=True)
 class RydbergPairInteractionSpec:
-    """Pair interaction ``sum_ij V_ij n_i^R n_j^R``."""
+    """Isotropic Rydberg pair interaction ``sum_ij V_ij n_i^R n_j^R`` (S-state, I05).
+
+    Every Rydberg-level combination on a pair shares the same ``V_ij``.
+    """
 
     pairs: tuple[tuple[int, int, float], ...]
     rydberg_levels: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ChannelResolvedPairSpec:
+    """Channel-resolved Rydberg pair interaction (P-state, I06).
+
+    ``channel_terms`` is a flat list of ``(site_i, site_j, level_a, level_b, V)``
+    contributing ``V * |a><a|_i ⊗ |b><b|_j`` to the diagonal. The resolver emits
+    both orderings for ``a != b`` so the pair term is symmetric.
+    """
+
+    channel_terms: tuple[tuple[int, int, str, str, float], ...]
 
 
 OperatorSpec = (
@@ -261,6 +276,7 @@ OperatorSpec = (
     | TransitionOperatorSpec
     | LocalMatrixSumSpec
     | RydbergPairInteractionSpec
+    | ChannelResolvedPairSpec
 )
 
 
@@ -368,6 +384,7 @@ def is_operator_spec(value) -> bool:
             TransitionOperatorSpec,
             LocalMatrixSumSpec,
             RydbergPairInteractionSpec,
+            ChannelResolvedPairSpec,
         ),
     )
 
@@ -392,6 +409,8 @@ def materialize_sparse_operator(
         return _local_matrix_sum(spec.matrix, basis)
     if isinstance(spec, RydbergPairInteractionSpec):
         return _rydberg_pair_interaction(spec, basis)
+    if isinstance(spec, ChannelResolvedPairSpec):
+        return _channel_resolved_pair_interaction(spec, basis)
     raise TypeError(f"Unsupported operator spec: {type(spec).__name__}")
 
 
@@ -453,6 +472,22 @@ def _rydberg_pair_interaction(spec: RydbergPairInteractionSpec, basis: BasisSpec
     h_diag = np.zeros(basis.total_dim, dtype=complex)
     for i, j, V_ij in spec.pairs:
         h_diag += V_ij * (ryd_mask_by_site[i] * ryd_mask_by_site[j])
+    return spdiags([h_diag], [0], shape=(basis.total_dim, basis.total_dim), format="csc")
+
+
+def _channel_resolved_pair_interaction(spec: ChannelResolvedPairSpec, basis: BasisSpec):
+    indices = np.arange(basis.total_dim, dtype=np.int64)
+    mask_cache: dict[tuple[int, str], np.ndarray] = {}
+
+    def mask(site: int, level: str) -> np.ndarray:
+        key = (site, level)
+        if key not in mask_cache:
+            mask_cache[key] = _site_level_mask(indices, basis, site, (level,)).astype(float)
+        return mask_cache[key]
+
+    h_diag = np.zeros(basis.total_dim, dtype=complex)
+    for i, j, level_a, level_b, V_ij in spec.channel_terms:
+        h_diag += V_ij * (mask(i, level_a) * mask(j, level_b))
     return spdiags([h_diag], [0], shape=(basis.total_dim, basis.total_dim), format="csc")
 
 

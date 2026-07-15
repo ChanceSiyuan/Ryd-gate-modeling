@@ -1,16 +1,6 @@
-"""Exact state-vector compiler and the ODE simulation backend."""
+"""Exact state-vector backend: adaptive DOP853 ODE integration (E03)."""
 
-from ryd_gate.ir import EvolutionResult
-
-from .compiler import ExactCompiler, SolverBackend
-from .ode import ExactODEBackend
+from .compiler import compile_exact
 from .simulate import simulate, simulate_states
 
-__all__ = [
-    "EvolutionResult",
-    "ExactCompiler",
-    "ExactODEBackend",
-    "SolverBackend",
-    "simulate",
-    "simulate_states",
-]
+__all__ = ["compile_exact", "simulate", "simulate_states"]

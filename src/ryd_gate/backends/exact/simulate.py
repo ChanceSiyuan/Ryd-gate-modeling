@@ -1,170 +1,104 @@
-"""Exact state-vector simulation entry point (ODE-only)."""
+"""Exact state-vector simulation entry point (adaptive DOP853, ODE-only)."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections import Counter
 
 import numpy as np
 
-from ryd_gate.ir import EvolutionResult
+from ryd_gate.core.observables import _dense_expectation
+from ryd_gate.core.states import dense_plus_state, dense_product_state, product_index
+from ryd_gate.ir import validate_evolution_request
+from ryd_gate.results import EvolutionResult
 
-if TYPE_CHECKING:
-    from ryd_gate.backends.exact.compiler import SolverBackend
+from .compiler import compile_exact
+from .ode import evolve_states, validated_exact_options
 
-# The exact backend options; anything else is an explicit error.
-_ALLOWED_OPTIONS = ("hamiltonian_format", "rtol", "atol")
-
-
-def validated_exact_options(backend_options) -> dict:
-    """Normalize/validate exact ``backend_options`` (unknown keys error)."""
-    opts = dict(backend_options or {})
-    unknown = set(opts) - set(_ALLOWED_OPTIONS)
-    if unknown:
-        raise ValueError(
-            f"unknown exact backend_options: {sorted(unknown)}; "
-            f"allowed: {list(_ALLOWED_OPTIONS)}."
-        )
-    return opts
+_IMAG_TOL = 1e-6
 
 
-def _make_backend(opts: dict) -> "SolverBackend":
-    from ryd_gate.backends.exact.ode import ExactODEBackend
-
-    return ExactODEBackend(**opts)
-
-
-def simulate(
-    system,
-    psi0="ground",
-    t_eval: np.ndarray | None = None,
-    observables: dict | None = None,
-    backend: "SolverBackend | None" = None,
-    compiler=None,
-    backend_options: dict | None = None,
-) -> EvolutionResult:
-    """Compile a protocol-bound Rydberg system and evolve exactly (internal seam).
-
-    ``system`` must have a fully specified protocol bound; the protocol's
-    normalized quantities are resolved against the system at compile time.
-    The solver is the adaptive DOP853 ODE integrator
-    (:class:`~ryd_gate.backends.exact.ode.ExactODEBackend`); the Hamiltonian
-    storage/matvec strategy and tolerances come from ``backend_options``
-    (``{"hamiltonian_format": "auto"|"dense"|"sparse", "rtol": ..., "atol": ...}``).
-    ``observables`` is a ``dict[str, ObservableExpr]`` evaluated at the
-    validated ``t_eval`` times (or at ``t_gate`` when ``t_eval=None``).
-    ``psi0`` may be a dense vector, ``"plus"``, or a per-site level-label list —
-    dense-vector ``psi0`` is the private continuation seam research scripts use
-    to hand in superpositions or chain evolutions from a previous
-    ``final_state``; the public :func:`ryd_gate.simulate` accepts only
-    label-based inputs.
-    """
-    from ryd_gate.backends.exact.compiler import ExactCompiler
-    from ryd_gate.core.system import RydbergSystem
-
-    if not isinstance(system, RydbergSystem):
-        raise TypeError(
-            "simulate() requires RydbergSystem instances with a bound protocol "
-            "(construct with protocol=... or call .with_protocol(...))."
-        )
-
-    opts = validated_exact_options(backend_options)
-    compiler = compiler or ExactCompiler()
-    ir = compiler.compile(system)
-    solver = backend if backend is not None else _make_backend(opts)
-    return solver.evolve(
-        ir, _exact_initial_state(system, psi0), ir.metadata["t_gate"], t_eval, observables
-    )
-
-
-def simulate_states(
-    system,
-    states,
-    t_eval=None,
-    observables: dict | None = None,
-    backend_options=None,
-    backend: "SolverBackend | None" = None,
-):
-    """Evolve several initial states under the same bound protocol, sharing work.
-
-    The Hamiltonian compilation and RHS construction are shared across the
-    batch; each initial state runs its own independent adaptive solve (per-state
-    error control).  Returns a list of
-    :class:`~ryd_gate.ir.EvolutionResult`, one per entry of *states*.
-    """
-    from ryd_gate.backends.exact.compiler import ExactCompiler
-    from ryd_gate.core.system import RydbergSystem
-
-    if not isinstance(system, RydbergSystem):
-        raise TypeError("simulate_states() requires a RydbergSystem with a bound protocol.")
-
-    opts = validated_exact_options(backend_options)
-    ir = ExactCompiler().compile(system)
-    solver = backend if backend is not None else _make_backend(opts)
-    psis = [_exact_initial_state(system, s) for s in states]
-    t_gate = ir.metadata["t_gate"]
-    if hasattr(solver, "evolve_many"):
-        return solver.evolve_many(ir, psis, t_gate, t_eval, observables)
-    return [solver.evolve(ir, p, t_gate, t_eval, observables) for p in psis]
-
-
-def _simulate_from(
-    system,
-    psi0: np.ndarray,
-    t_start: float,
-    *,
-    t_eval=None,
-    observables: dict | None = None,
-    backend_options=None,
-) -> EvolutionResult:
-    """Private exact continuation seam: resume from a dense state at ``t_start``.
-
-    Integrates the bound protocol's Hamiltonian over ``[t_start, t_gate]``
-    starting from ``psi0`` (a dense vector, e.g. a previous run's
-    ``final_state``).  ``t_eval`` must lie within ``[t_start, t_gate]``.
-    Not public API — used by scripts that chain evolutions.
-    """
-    from ryd_gate.backends.exact.compiler import ExactCompiler
-    from ryd_gate.backends.exact.ode import ExactODEBackend
-    from ryd_gate.core.system import RydbergSystem
-
-    if not isinstance(system, RydbergSystem):
-        raise TypeError("_simulate_from() requires a RydbergSystem with a bound protocol.")
-    if not isinstance(psi0, np.ndarray):
-        raise TypeError("_simulate_from() resumes from a dense state vector.")
-
-    opts = validated_exact_options(backend_options)
-    ir = ExactCompiler().compile(system)
-    solver = ExactODEBackend(**opts)
-    return solver.evolve_many(
-        ir, [psi0], ir.metadata["t_gate"], t_eval, observables, t_start=float(t_start)
+def simulate(system, state, *, t_eval=None, observables=None, backend_options=None):
+    """Evolve one initial state (label list or ``"plus"``); returns an EvolutionResult."""
+    return simulate_states(
+        system, [state], t_eval=t_eval, observables=observables, backend_options=backend_options,
     )[0]
 
 
-def _exact_initial_state(system, psi0):
-    """Lower an initial-state request to a dense vector (internal).
+def simulate_states(system, states, *, t_eval=None, observables=None, backend_options=None):
+    """Evolve a batch of initial states under one shared compilation (E10 tuple)."""
+    opts = validated_exact_options(backend_options)
+    t_gate = system.t_gate
+    times_pub, obs = validate_evolution_request(t_gate, t_eval, observables)
+    ham, t_gate = compile_exact(system, hamiltonian_format=opts["hamiltonian_format"])
 
-    Accepts a dense vector (the research-script superposition seam), the
-    literal ``"ground"`` (per-site preset initial level), ``"plus"``, or a
-    per-site level-label list.
-    """
-    if isinstance(psi0, np.ndarray):
-        return psi0
-    if isinstance(psi0, str):
-        if psi0 == "ground":
-            from ryd_gate.core.states import preset_initial_label
+    eval_times = np.array([t_gate]) if times_pub is None else np.asarray(times_pub, dtype=float)
+    solver_eval = np.unique(np.concatenate([eval_times, [t_gate]]))
+    final_col = int(np.argmin(np.abs(solver_eval - t_gate)))
+    eval_cols = [int(np.argmin(np.abs(solver_eval - t))) for t in eval_times]
 
-            label = preset_initial_label(system.basis.local_levels)
-            return system.product_state([label] * system.N)
-        if psi0 == "plus":
-            from ryd_gate.core.states import plus_local_amplitudes, product_superposition_state
+    psi0_list = [_initial_dense(system, s) for s in states]
+    ys = evolve_states(ham, t_gate, psi0_list, solver_eval, rtol=opts["rtol"], atol=opts["atol"])
 
-            return product_superposition_state(
-                plus_local_amplitudes(system.basis.local_levels), system.N
-            )
+    results = []
+    for y in ys:
+        states_at_eval = y[:, eval_cols].T  # (n_eval, dim)
+        expectations = {
+            name: _real_expectation(_dense_expectation(expr, states_at_eval), name)
+            for name, expr in obs.items()
+        }
+        reader = _DenseReader(y[:, final_col], system._basis)
+        results.append(EvolutionResult(times=eval_times, expectations=expectations, reader=reader))
+    return tuple(results)
+
+
+def _initial_dense(system, state) -> np.ndarray:
+    if isinstance(state, str) and state == "plus":
+        return dense_plus_state(system._basis)
+    return dense_product_state(state, system._basis)
+
+
+def _real_expectation(vals, name: str) -> np.ndarray:
+    v = np.asarray(vals, dtype=complex).reshape(-1)
+    scale = max(1.0, float(np.max(np.abs(v)))) if v.size else 1.0
+    if np.any(np.abs(v.imag) > _IMAG_TOL * scale):
         raise ValueError(
-            f"unknown initial-state string {psi0!r}; use 'ground', 'plus', or a "
-            "per-site level-label list."
+            f"observable {name!r} produced a non-real expectation (max imag "
+            f"{float(np.max(np.abs(v.imag))):.2e}); observables must be Hermitian."
         )
-    if isinstance(psi0, (list, tuple)):
-        return system.product_state(list(psi0))
-    return psi0
+    return v.real.astype(float)
+
+
+class _DenseReader:
+    """Private final-state reader for amplitude/sample (dense exact state)."""
+
+    __slots__ = ("_state", "_basis")
+
+    def __init__(self, state: np.ndarray, basis) -> None:
+        self._state = np.asarray(state, dtype=complex)
+        self._basis = basis
+
+    def amplitude(self, labels) -> complex:
+        _validate_labels(labels, self._basis)
+        return complex(self._state[product_index(labels, self._basis)])
+
+    def sample(self, shots: int, seed: int) -> Counter:
+        weights = np.abs(self._state) ** 2
+        total = float(weights.sum())
+        if not total > 0.0:
+            raise ValueError("cannot sample from a zero-norm final state.")
+        probs = weights / total
+        rng = np.random.default_rng(seed)
+        draws = rng.choice(probs.size, size=shots, p=probs)
+        d, n, levels = self._basis.local_dim, self._basis.n_sites, self._basis.local_levels
+        counts: Counter = Counter()
+        for idx in draws:
+            counts[tuple(levels[(int(idx) // d ** (n - 1 - i)) % d] for i in range(n))] += 1
+        return counts
+
+
+def _validate_labels(labels, basis) -> None:
+    if len(labels) != basis.n_sites:
+        raise ValueError(f"amplitude() needs {basis.n_sites} per-site labels, got {len(labels)}.")
+    for label in labels:
+        if label not in basis.local_levels:
+            raise ValueError(f"unknown level label {label!r}; levels are {basis.local_levels}.")

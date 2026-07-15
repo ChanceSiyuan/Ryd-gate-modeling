@@ -32,21 +32,29 @@ from pathlib import Path
 
 import numpy as np
 
-from ryd_gate import Register, RydbergSystem, level_structure
-from ryd_gate.backends.exact import simulate
-from ryd_gate.protocols.gate_cz import ARProtocol, TOProtocol
+from ryd_gate import Register, RydbergSystem, level_structure, simulate
+from ryd_gate.protocols import ARProtocol, TOProtocol
 
 X_TO_DARK = [
     -0.6894097925886826, 1.040962607910546, 0.3277877211544321,
     1.5639989822346387, 0.6689846026179691, 1.3407418093368753,
 ]
 
-_S0 = np.array([1, 0, 0, 0, 0, 0, 0], dtype=complex)
-_S1 = np.array([0, 1, 0, 0, 0, 0, 0], dtype=complex)
-_ST = {
-    "00": np.kron(_S0, _S0), "01": np.kron(_S0, _S1),
-    "10": np.kron(_S1, _S0), "11": np.kron(_S1, _S1),
+# Two-atom computational-basis labels: level "0" = |0>, level "1" = |1>.
+_LABELS = {
+    "00": ["0", "0"], "01": ["0", "1"],
+    "10": ["1", "0"], "11": ["1", "1"],
 }
+
+# Canonical σ⁻/σ⁺ (mp) Rabis + intermediate detuning + Blackman rise, formerly
+# the protocol/preset defaults; the TO/AR constructors now take them explicitly
+# (P19/P20). Every case here runs on the mp system, so all pulses use these.
+FIXED_MP = dict(
+    intermediate_detuning_rad_s=2 * np.pi * 9.1e9,
+    omega_420_max_rad_s=2 * np.pi * 491e6,
+    omega_1013_max_rad_s=2 * np.pi * 185e6,
+    rise_time_s=20e-9,
+)
 
 
 def _checkpoint_x(name: str):
@@ -58,24 +66,25 @@ def _build_pulse(Proto, x):
     """Concrete TO/AR pulse from the non-theta entries of the optimizer x-vector.
 
     x layouts: TO [A, w, phi0, d, theta, T] (theta = x[4]);
-    AR [w, A1, p1, A2, p2, d, T, theta] (theta = x[7]).
+    AR [w, A1, p1, A2, p2, d, T, theta] (theta = x[7]). All cases run on the mp
+    system, so every pulse carries FIXED_MP (Rabis, detuning, rise).
     """
     x = [float(v) for v in x]
     if Proto is TOProtocol:
-        return TOProtocol(phase_amplitude=x[0], frequency_ratio=x[1],
-                          phase_offset=x[2], detuning_ratio=x[3],
-                          duration_ratio=x[5])
-    return ARProtocol(frequency_ratio=x[0], phase_amplitude_1=x[1],
-                      phase_offset_1=x[2], phase_amplitude_2=x[3],
-                      phase_offset_2=x[4], detuning_ratio=x[5],
-                      duration_ratio=x[6])
+        return TOProtocol(phase_amplitude_rad=x[0], modulation_frequency_ratio=x[1],
+                          phase_offset_rad=x[2], frequency_offset_ratio=x[3],
+                          duration_ratio=x[5], **FIXED_MP)
+    return ARProtocol(modulation_frequency_ratio=x[0], phase_amplitude_1_rad=x[1],
+                      phase_offset_1_rad=x[2], phase_amplitude_2_rad=x[3],
+                      phase_offset_2_rad=x[4], frequency_offset_ratio=x[5],
+                      duration_ratio=x[6], **FIXED_MP)
 
 
 def _raw_overlaps(system, Proto, x):
     """r_kk = <kk|U|kk> for kk in 00,01,10,11 (no theta correction)."""
     bound = system.with_protocol(_build_pulse(Proto, x))
-    return {k: complex(np.vdot(_ST[k], simulate(bound, _ST[k]).final_state))
-            for k in ("00", "01", "10", "11")}
+    return {k: simulate(bound, labels).amplitude(labels)
+            for k, labels in _LABELS.items()}
 
 
 def _nielsen_inf_at_theta(r, theta):
@@ -91,6 +100,7 @@ def main() -> None:
     system = RydbergSystem(
         level_structure=level_structure("rb87_7_mp"),
         register=Register.chain(2, spacing_um=3.0),
+        protocol=_build_pulse(TOProtocol, X_TO_DARK),
     )
     cases = [
         ("TO dark  (X_TO_DARK)", TOProtocol, X_TO_DARK),

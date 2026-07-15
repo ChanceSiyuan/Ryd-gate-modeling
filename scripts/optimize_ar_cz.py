@@ -40,17 +40,29 @@ from pathlib import Path
 import numpy as np
 from scipy import optimize
 
-from ryd_gate import Register, RydbergSystem, level_structure
-from ryd_gate.backends.exact import simulate
-from ryd_gate.protocols.gate_cz import ARProtocol
+from ryd_gate import Register, RydbergSystem, level_structure, simulate
+from ryd_gate.protocols import ARProtocol
 
-# 7-level single-atom basis vectors: index 0 = |0>, index 1 = |1>.
-_S0 = np.array([1, 0, 0, 0, 0, 0, 0], dtype=complex)
-_S1 = np.array([0, 1, 0, 0, 0, 0, 0], dtype=complex)
-_BASIS = {"00": np.kron(_S0, _S0), "01": np.kron(_S0, _S1), "11": np.kron(_S1, _S1)}
+# Two-atom computational-basis labels: level "0" = |0>, level "1" = |1>.
+_LABELS = {"00": ["0", "0"], "01": ["0", "1"], "11": ["1", "1"]}
 
 
-def average_gate_infidelity(system, omega_kw, x):
+def _ar_pulse(fixed, x):
+    """Concrete AR pulse from the non-theta entries of the optimizer x-vector.
+
+    ``x`` layout: [modulation/Omega_eff, A1, phi1, A2, phi2, freq_offset/Omega_eff,
+    T/T_scale, theta]; theta = x[7] is a scoring parameter, not pulse shape.
+    ``fixed`` carries the manifold's Rabis, intermediate detuning and rise time.
+    """
+    return ARProtocol(
+        modulation_frequency_ratio=x[0], phase_amplitude_1_rad=x[1],
+        phase_offset_1_rad=x[2], phase_amplitude_2_rad=x[3],
+        phase_offset_2_rad=x[4], frequency_offset_ratio=x[5],
+        duration_ratio=x[6], **fixed,
+    )
+
+
+def average_gate_infidelity(system, fixed, x):
     """3-state Nielsen CZ infidelity, formulas written out.
 
     Build the concrete AR pulse from the non-theta entries of x (theta = x[7]
@@ -59,23 +71,18 @@ def average_gate_infidelity(system, omega_kw, x):
     average-gate-fidelity formula (d = 4, with |10> folded into |01> by
     exchange symmetry).
     """
-    pulse = ARProtocol(
-        frequency_ratio=x[0], phase_amplitude_1=x[1], phase_offset_1=x[2],
-        phase_amplitude_2=x[3], phase_offset_2=x[4], detuning_ratio=x[5],
-        duration_ratio=x[6], **omega_kw,
-    )
     theta = float(x[7])  # single-qubit Rz correction (AR x-vector, index 7)
-    bound = system.with_protocol(pulse)
+    bound = system.with_protocol(_ar_pulse(fixed, x))
     corrections = {"00": 1.0, "01": np.exp(-1j * theta),
                    "11": np.exp(-2j * theta - 1j * np.pi)}
-    a = {k: corrections[k] * complex(np.vdot(ini, simulate(bound, ini).final_state))
-         for k, ini in _BASIS.items()}
+    a = {k: corrections[k] * simulate(bound, labels).amplitude(labels)
+         for k, labels in _LABELS.items()}
     avg_f = (1 / 20) * (abs(a["00"] + 2 * a["01"] + a["11"]) ** 2
                         + abs(a["00"]) ** 2 + 2 * abs(a["01"]) ** 2 + abs(a["11"]) ** 2)
     return float(1 - avg_f)
 
 
-def optimize_start(system, omega_kw, x0, maxiter):
+def optimize_start(system, fixed, x0, maxiter):
     """Theta-projection warm start + Nelder-Mead polish.
 
     Theta (the single-qubit Z correction) is hyper-sensitive to the gate time
@@ -87,7 +94,7 @@ def optimize_start(system, omega_kw, x0, maxiter):
 
     Returns ``(x, infidelity, theta_infidelity)``.
     """
-    f = lambda xv: average_gate_infidelity(system, omega_kw, list(xv))
+    f = lambda xv: average_gate_infidelity(system, fixed, list(xv))
     x = [float(v) for v in x0]
     ti = 7  # theta position in the AR x-vector
     res_t = optimize.minimize_scalar(
@@ -105,8 +112,23 @@ def optimize_start(system, omega_kw, x0, maxiter):
 # Legacy seed: [omega/Omega_eff, A1, phi1, A2, phi2, delta/Omega_eff, T/T_scale, theta]
 X_AR_LEGACY = [0.85973359, 0.39146974, 0.99181418, 0.1924498, -1.17123748, -0.00826712, 1.67429728, 0.28527346]
 
-# Canonical σ⁺/σ⁻ (pm) single-photon Rabis (rad/s); pm is not the protocol default.
-OMEGA_PM = dict(omega_420_max=2 * np.pi * 237e6, omega_1013_max=2 * np.pi * 303e6)
+# Canonical single-photon Rabis + intermediate detuning + Blackman rise per
+# manifold (rad/s, rad/s, s). Formerly the protocol/preset defaults; the new
+# TO/AR constructors take them explicitly (P19/P20), so the caller supplies the
+# manifold's fixed physics: mp is σ⁻/σ⁺ (491/185 MHz, Delta=+9.1 GHz), pm is
+# σ⁺/σ⁻ (237/303 MHz, Delta=+7.8 GHz); both use the 20 ns dark-branch rise.
+FIXED_MP = dict(
+    intermediate_detuning_rad_s=2 * np.pi * 9.1e9,
+    omega_420_max_rad_s=2 * np.pi * 491e6,
+    omega_1013_max_rad_s=2 * np.pi * 185e6,
+    rise_time_s=20e-9,
+)
+FIXED_PM = dict(
+    intermediate_detuning_rad_s=2 * np.pi * 7.8e9,
+    omega_420_max_rad_s=2 * np.pi * 237e6,
+    omega_1013_max_rad_s=2 * np.pi * 303e6,
+    rise_time_s=20e-9,
+)
 
 
 # AR x-vector bounds: [omega/Omega_eff, A1, phi1, A2, phi2, delta/Omega_eff, T/T_scale, theta].
@@ -147,12 +169,13 @@ def main() -> None:
     if manifold not in {"mp", "pm"}:
         raise SystemExit(f"manifold must be 'mp' or 'pm', got {manifold!r}")
 
+    # mp/pm each carry their own canonical Rabis + intermediate detuning + rise.
+    fixed = FIXED_PM if manifold == "pm" else FIXED_MP
     system = RydbergSystem(
         level_structure=level_structure(f"rb87_7_{manifold}"),
         register=Register.chain(2, spacing_um=3.0),
+        protocol=_ar_pulse(fixed, X_AR_LEGACY),
     )
-    # pm is not the protocol default, so its canonical Rabis are explicit.
-    omega_kw = OMEGA_PM if manifold == "pm" else {}
     suffix = f"_{tag}" if tag else ""
     results_dir = Path("results") / "cz_gate" / "ar_optimization"
     out_path = results_dir / f"ar_opt_{manifold}{suffix}.json"
@@ -193,7 +216,7 @@ def main() -> None:
     for label, x0 in seeds:
         try:
             best_x, infidelity, theta_infidelity = optimize_start(
-                system, omega_kw, x0, maxiter=maxiter
+                system, fixed, x0, maxiter=maxiter
             )
         except Exception as exc:  # a bad random seed can throw inside the solver
             print(f"[{manifold}] start {label}: failed ({exc})", flush=True)

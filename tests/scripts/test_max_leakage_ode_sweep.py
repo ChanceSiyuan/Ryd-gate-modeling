@@ -689,8 +689,8 @@ def test_scatter_integrals_on_a_solved_toy_trajectory():
 
 def test_model_decay_rates_channel_mapping():
     stub = Namespace(level_structure=Namespace(
-        mid_state_decay_rate=9.0e6, ryd_state_decay_rate=6.6e3,
-        ryd_garb_decay_rate=7.7e3))
+        decay_rates_per_s={"e1": {"total": 9.0e6}, "r": {"total": 6.6e3},
+                           "r_garb": {"total": 7.7e3}}))
     rates = mls.model_decay_rates(stub)
     assert rates == {"p_mid": 9.0e6, "p_ryd": 6.6e3, "p_r_garb": 7.7e3}
 
@@ -805,7 +805,6 @@ def test_kernel_matches_repository_exact_ode_backend(real_ops):
     original-frame exact_ode backend at strict tolerance, on a short pulse."""
     import ryd_gate as rg
     from ryd_gate.protocols import CZProtocol
-    from ryd_gate.protocols.gate_cz import cz_effective_rabi, cz_rabi_maxes
 
     cfg, system, ops = real_ops
     t_gate = 0.02e-6
@@ -819,22 +818,27 @@ def test_kernel_matches_repository_exact_ode_backend(real_ops):
         ops, t_gate, np.array([omega_420]), np.array([d_sweep]), omega_1013,
         rtol=1e-10, atol=1e-13)
 
-    o420, o1013 = cz_rabi_maxes(system, omega_420, omega_1013)
-    _, time_scale = cz_effective_rabi(system, o420, o1013)
     proto = CZProtocol(
-        duration_ratio=t_gate / time_scale,
-        A_420=lambda s: float(np.sqrt(mls.envelope(s))),
-        phi_420=lambda s: float(mls.phase_rad(s * t_gate, t_gate, d_sweep, drmd1)),
-        A_1013=lambda s: float(np.sqrt(mls.envelope(s))),
-        phi_1013=lambda s: 0.0,
-        omega_420_max=omega_420, omega_1013_max=omega_1013,
+        t_gate_s=t_gate,
+        intermediate_detuning_rad_s=ops.delta_rad_s,
+        omega_420_max_rad_s=omega_420, omega_1013_max_rad_s=omega_1013,
+        envelope_420=lambda t: float(np.sqrt(mls.envelope(t / t_gate))),
+        phase_420_rad=lambda t: float(mls.phase_rad(t, t_gate, d_sweep, drmd1)),
+        envelope_1013=lambda t: float(np.sqrt(mls.envelope(t / t_gate))),
+        phase_1013_rad=lambda t: 0.0,
     )
     bound = system.with_protocol(proto)
     ref = rg.simulate(bound, [list(s) for s in mls.LOGICAL_INPUTS],
                       backend="exact_ode",
                       backend_options={"rtol": 1e-10, "atol": 1e-13})
+    # EvolutionResult's dense state is private (S-schema): reconstruct each
+    # reference vector from its public per-basis amplitudes (site 0 most
+    # significant), matching the kernel's product_index ordering.
+    levels = system._basis.local_levels
     for j in range(4):
-        dev = np.max(np.abs(res.psi_final[0, j] - ref[j].final_state))
+        ref_vec = np.array(
+            [ref[j].amplitude([a, b]) for a in levels for b in levels])
+        dev = np.max(np.abs(res.psi_final[0, j] - ref_vec))
         assert dev < 1e-7, f"input {mls.LOGICAL_INPUTS[j]}: max dev {dev:.2e}"
 
 

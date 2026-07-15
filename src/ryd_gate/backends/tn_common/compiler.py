@@ -1,4 +1,15 @@
-"""Lower unified Hamiltonian IR into TN evolution inputs."""
+"""Shared tensor-network lowering from a :class:`RydbergSystem` (the new seam).
+
+Both TN engines (MPS / PEPS) consume a ``RydbergSystem`` exactly like the exact
+backend: the private static terms (atomic diagonal + Rydberg pair interaction)
+plus the canonical lowered drive channels
+(:func:`ryd_gate.core.lowering.lower_drives`).  There is no ``TNProtocolContext``
+and no ``TNLatticeSpec`` — the system is the single object the backends see.
+
+Only the effective ``1r`` / ``01r`` presets are TN-capable (O09); their level
+labels are drawn from ``("0", "1", "r")`` so TeNPy operator names ``E_<ket>_<bra>``
+are valid identifiers.
+"""
 
 from __future__ import annotations
 
@@ -6,169 +17,177 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ryd_gate.core.level_structures import LevelStructure, level_structure
-from ryd_gate.core.system import RydbergSystem
-from ryd_gate.ir import HamiltonianIR, compile_hamiltonian_ir
+from ryd_gate.core.lowering import lower_drives
+from ryd_gate.core.operators import (
+    RydbergPairInteractionSpec,
+    SumProjectorSpec,
+    parse_E,
+)
 
-from .lattice_spec import TNLatticeSpec, snake_order_mapping
-
-SUPPORTED_TN_METHODS = frozenset({
-    "tdvp",
-    "mps_tdvp",
-    "peps_yastn",
-})
+_TN_PRESETS = frozenset({"1r", "01r"})
 
 
 @dataclass(frozen=True)
-class TNEvolutionIR:
-    """Tensor-network input derived from unified Hamiltonian IR."""
+class _Channel:
+    """One lowered drive channel with its per-site matrix-element callable."""
 
-    spec: TNLatticeSpec
-    protocol: object
-    params: dict
-    method: str = "tdvp"
-    metadata: dict | None = None
-    hamiltonian: HamiltonianIR | None = None
+    ket: str
+    bra: str
+    is_diag: bool
+    coefficient: object  # callable t -> complex scalar or (N,) complex array
 
 
 @dataclass(frozen=True)
-class TNCompiler:
-    """Lower unified Hamiltonian IR into TN metadata."""
+class TNTerms:
+    """The Hamiltonian ingredients a TN engine needs, all from the system."""
 
-    method: str = "tdvp"
+    t_gate: float
+    n_sites: int
+    levels: tuple[str, ...]
+    rydberg_levels: tuple[str, ...]
+    onsite_static: tuple[tuple[str, float], ...]      # (level, real energy)
+    pairs: tuple[tuple[int, int, float], ...]         # (i, j, V) with i < j
+    channels: tuple[_Channel, ...]
 
-    def compile(
-        self,
-        system_or_ir: RydbergSystem | HamiltonianIR,
-    ) -> TNEvolutionIR:
-        if self.method not in SUPPORTED_TN_METHODS:
-            supported = ", ".join(sorted(SUPPORTED_TN_METHODS))
-            raise ValueError(f"Unknown TN method {self.method!r}. Supported: {supported}.")
+    @property
+    def local_dim(self) -> int:
+        return len(self.levels)
 
-        hamiltonian = (
-            system_or_ir
-            if isinstance(system_or_ir, HamiltonianIR)
-            else compile_hamiltonian_ir(_require_rydberg_system(system_or_ir))
-        )
-        if hamiltonian.protocol is None or hamiltonian.params is None:
-            raise ValueError("TN lowering requires HamiltonianIR.protocol and HamiltonianIR.params.")
+    def _index(self, level: str) -> int:
+        return self.levels.index(level)
 
-        spec = tn_lattice_spec_from_hamiltonian_ir(hamiltonian)
-        metadata = dict(hamiltonian.metadata)
-        metadata.update(
-            {
-                "compiler": "tn",
-                "source_compiler": hamiltonian.metadata.get("compiler", "unknown"),
-                "tn_spec": spec,
-                "model_tag": hamiltonian.metadata.get("model_tag"),
-                "level_structure": spec.level_structure,
-                "n_sites": spec.N,
-                "local_dim": spec.level_spec.local_dim,
-            }
-        )
-        return TNEvolutionIR(
-            spec=spec,
-            protocol=hamiltonian.protocol,
-            params=hamiltonian.params,
-            method=self.method,
-            metadata=metadata,
-            hamiltonian=hamiltonian,
-        )
+    def rydberg_projector(self) -> np.ndarray:
+        """Diagonal ``(d, d)`` projector onto the Rydberg levels (``n_R``)."""
+        d = self.local_dim
+        m = np.zeros((d, d), dtype=complex)
+        for level in self.rydberg_levels:
+            m[self._index(level), self._index(level)] = 1.0
+        return m
 
+    def local_hamiltonians(self, t: float) -> np.ndarray:
+        """Per-site local Hamiltonian matrices ``(N, d, d)`` at time ``t``.
 
-def tn_lattice_spec_from_system(system: RydbergSystem) -> TNLatticeSpec:
-    """Create a TN lattice spec from a core system without compiling matrices."""
-    geometry = system.geometry
-    if geometry is None:
-        raise ValueError("TN lowering requires system.geometry.")
-
-    level_spec = system.level_structure
-    return _tn_lattice_spec_from_geometry(
-        geometry,
-        level_spec,
-        tuple(system.interaction_pairs),
-        1.0,
-        _analog_local_blocks(level_spec),
-    )
+        Hermitian by construction: diagonal atomic energies and diagonal drive
+        channels add to the diagonal; each off-diagonal channel adds the matrix
+        element and its conjugate transpose (P10 — no extra ``1/2``).
+        """
+        n, d = self.n_sites, self.local_dim
+        h = np.zeros((n, d, d), dtype=complex)
+        for level, energy in self.onsite_static:
+            k = self._index(level)
+            h[:, k, k] += float(energy)
+        for ch in self.channels:
+            values = _broadcast(ch.coefficient(t), n)
+            if ch.is_diag:
+                k = self._index(ch.ket)
+                h[:, k, k] += values.real
+            else:
+                up, lo = self._index(ch.ket), self._index(ch.bra)
+                h[:, up, lo] += values
+                h[:, lo, up] += np.conj(values)
+        return h
 
 
-def tn_lattice_spec_from_hamiltonian_ir(ir: HamiltonianIR) -> TNLatticeSpec:
-    """Create a TN lattice spec from the unified Hamiltonian IR."""
-    if ir.geometry is None:
-        raise ValueError("TN lowering requires HamiltonianIR.geometry.")
-    level_spec = ir.level_spec
-    if not isinstance(level_spec, LevelStructure):
-        level_spec = level_structure(ir.metadata.get("level_structure", "1r"))
-    interaction_pairs = tuple(ir.metadata.get("interaction_pairs", ()))
-    return _tn_lattice_spec_from_geometry(
-        ir.geometry,
-        level_spec,
-        interaction_pairs,
-        1.0,
-        _analog_local_blocks(level_spec),
-    )
-
-
-def _tn_lattice_spec_from_geometry(
-    geometry,
-    level_spec: LevelStructure,
-    interaction_pairs: tuple,
-    omega: float,
-    local_blocks=None,
-) -> TNLatticeSpec:
-    Lx, Ly = _infer_square_lattice_shape(np.asarray(geometry.coords, dtype=float), geometry.N)
-    snake_to_2d, inv_snake = snake_order_mapping(Lx, Ly)
-    return TNLatticeSpec(
-        Lx=Lx,
-        Ly=Ly,
-        N=geometry.N,
-        coords=np.asarray(geometry.coords, dtype=float),
-        sublattice=np.asarray(geometry.sublattice),
-        vdw_pairs=interaction_pairs,
-        V_nn=1.0,
-        Omega=omega,
-        level_spec=level_spec,
-        snake_to_2d=snake_to_2d,
-        inv_snake=inv_snake,
-        bc="open",
-        interaction_mode="system",
-        local_blocks=local_blocks,
-    )
-
-
-def _analog_local_blocks(level_spec: LevelStructure):
-    """Build analog_3 single-atom blocks from the resolved preset, else ``None``."""
-    if level_spec.name != "analog_3":
-        return None
-    from ryd_gate.core.physical_models import analog_3_local_blocks_from_level_structure
-
-    return analog_3_local_blocks_from_level_structure(level_spec)
-
-
-def _require_rydberg_system(system) -> RydbergSystem:
-    if not isinstance(system, RydbergSystem):
-        raise TypeError("TNCompiler.compile() requires RydbergSystem or HamiltonianIR.")
-    if system.geometry is None:
-        raise ValueError("TNCompiler requires lattice geometry.")
-    return system
-
-
-def _infer_square_lattice_shape(coords: np.ndarray, n_sites: int) -> tuple[int, int]:
-    if coords.ndim != 2 or coords.shape[1] < 2:
-        raise ValueError("TN lowering currently requires 2D lattice coordinates.")
-    x_vals = _unique_axis_values(coords[:, 0])
-    y_vals = _unique_axis_values(coords[:, 1])
-    Lx, Ly = len(x_vals), len(y_vals)
-    if Lx * Ly != n_sites:
+def compile_tn_terms(system, *, realization=None) -> TNTerms:
+    """Lower a protocol-bound system into :class:`TNTerms` (shared by MPS/PEPS)."""
+    name = system.level_structure.name
+    if name not in _TN_PRESETS:
         raise ValueError(
-            "TN lowering currently supports rectangular square-lattice geometries; "
-            f"could not infer Lx*Ly={n_sites} from coordinates."
+            f"tensor-network backends support only the {sorted(_TN_PRESETS)} "
+            f"presets; level structure {name!r} is not TN-capable (use "
+            "backend='exact_ode')."
         )
-    return Lx, Ly
+    t_gate, lowered = lower_drives(system, realization=realization)
+
+    onsite_static: list[tuple[str, float]] = []
+    pairs: list[tuple[int, int, float]] = []
+    rydberg_levels: tuple[str, ...] = ()
+    for term in system._static_terms:
+        op = term.operator
+        if isinstance(op, SumProjectorSpec):
+            onsite_static.append((op.level, float(complex(term.coefficient).real)))
+        elif isinstance(op, RydbergPairInteractionSpec):
+            rydberg_levels = op.rydberg_levels
+            scale = float(complex(term.coefficient).real)
+            for i, j, V in op.pairs:
+                a, b = (int(i), int(j)) if int(i) < int(j) else (int(j), int(i))
+                pairs.append((a, b, float(V) * scale))
+        else:  # pragma: no cover - 1r/01r only produce the two specs above
+            raise ValueError(
+                f"tensor-network backends cannot lower static operator "
+                f"{type(op).__name__}; only 1r/01r systems are TN-capable."
+            )
+
+    channels = []
+    for lc in lowered:
+        ket, bra = parse_E(lc.channel)
+        channels.append(_Channel(ket, bra, ket == bra, lc.coefficient))
+
+    levels = tuple(system.level_structure.levels)
+    return TNTerms(
+        t_gate=float(t_gate),
+        n_sites=int(system.N),
+        levels=levels,
+        rydberg_levels=tuple(rydberg_levels),
+        onsite_static=tuple(onsite_static),
+        pairs=tuple(pairs),
+        channels=tuple(channels),
+    )
 
 
-def _unique_axis_values(values: np.ndarray) -> np.ndarray:
-    scale = max(1.0, float(np.max(np.abs(values))) if values.size else 1.0)
-    rounded = np.round(values / (scale * 1e-12)).astype(np.int64)
-    _, idx = np.unique(rounded, return_index=True)
-    return np.sort(values[np.sort(idx)])
+def _broadcast(value, n: int) -> np.ndarray:
+    """Coerce a scalar or length-``n`` channel coefficient to a ``(n,)`` array."""
+    arr = np.asarray(value, dtype=complex)
+    if arr.ndim == 0:
+        return np.full(n, complex(arr))
+    if arr.shape != (n,):
+        raise ValueError(
+            f"channel coefficient must be a scalar or length-{n} array; got shape {arr.shape}."
+        )
+    return arr
+
+
+# ── anchor-exact stepping plan (E06/E23/E25) ────────────────────────────────
+
+
+@dataclass(frozen=True)
+class TNSegment:
+    """One anchor-to-anchor stretch: ``n_sub`` equal steps of ``dt_sub``.
+
+    ``record`` marks segments ending on a *requested* measurement anchor; the
+    trailing internal ``t_gate`` segment of an endpoint-free request evolves
+    without recording.
+    """
+
+    t0: float
+    t1: float
+    n_sub: int
+    dt_sub: float
+    record: bool
+
+
+def plan_segments(t_gate: float, record_times: np.ndarray, time_step_s: float) -> tuple[bool, list[TNSegment]]:
+    """Plan piecewise-constant TN stepping that hits every anchor exactly.
+
+    ``record_times`` are the validated measurement times (the requested
+    ``t_eval``, or ``[t_gate]``).  Between consecutive anchors ``[a, b]`` the
+    evolution takes ``ceil((b - a) / time_step_s)`` equal steps, so every anchor is
+    a true step boundary (E06 — never round-and-lie).  Returns
+    ``(record_at_start, segments)``; ``record_at_start`` is True when ``t=0`` was
+    itself requested.
+    """
+    t_gate = float(t_gate)
+    dt = float(time_step_s)
+    times = np.asarray(record_times, dtype=float)
+    record_at_start = bool(times.size and times[0] == 0.0)
+    anchors: list[tuple[float, bool]] = [(float(t), True) for t in times if t > 0.0]
+    if not anchors or not np.isclose(anchors[-1][0], t_gate, rtol=1e-12, atol=0.0):
+        anchors.append((t_gate, False))
+    segments: list[TNSegment] = []
+    prev = 0.0
+    for t_anchor, record in anchors:
+        span = t_anchor - prev
+        n_sub = max(1, int(np.ceil(span / dt * (1.0 - 1e-12))))
+        segments.append(TNSegment(prev, t_anchor, n_sub, span / n_sub, record))
+        prev = t_anchor
+    return record_at_start, segments

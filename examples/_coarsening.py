@@ -2,9 +2,8 @@
 
 Pure array post-processing (Manovitz et al., Methods): single-spin-flip
 correction, coarse-grained local staggered magnetization, boundary masks,
-and domain labeling.  Inlined verbatim from the removed
-``ryd_gate.analysis.coarsening`` module — these helpers consume plain
-occupation arrays, not evolution results.
+and domain labeling.  These helpers live here in ``examples`` because they
+consume plain occupation arrays, not ``ryd_gate`` evolution results.
 """
 
 from __future__ import annotations

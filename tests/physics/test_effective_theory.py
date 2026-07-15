@@ -15,8 +15,9 @@ import pytest
 from scipy.linalg import expm
 
 from ryd_gate import RydbergSystem, level_structure
-from ryd_gate.backends.exact import simulate
+from ryd_gate.backends.exact import compile_exact, simulate
 from ryd_gate.core.effective_theory import (
+    _single_pair_strength,
     _tex_frame_h7_fn,
     lower_cz_to_effective_01r,
     lower_cz_to_effective_pair,
@@ -26,15 +27,22 @@ from ryd_gate.core.effective_theory import (
     single_atom_hamiltonian_parts,
     vod4_s_terms,
 )
-from ryd_gate.ir import compile_hamiltonian_ir
+from ryd_gate.core.lowering import lower_drives
+from ryd_gate.core.operators import parse_E
 from ryd_gate.lattice import Register
-from ryd_gate.physics import our_laser_rabis
-from ryd_gate.protocols import CZProtocol, DigitalAnalogProtocol, TOProtocol
-from ryd_gate.protocols.gate_cz import cz_effective_rabi, phase_from_chirp
+from ryd_gate.physics import rb87_7_mp_rabi_frequencies
+from ryd_gate.protocols import CZProtocol, DigitalAnalogProtocol, TOProtocol, phase_from_chirp
+from ryd_gate.protocols._resolved import _LaserDrive
 
 # Canonical σ⁻/σ⁺ (rb87_7_mp) single-photon Rabis (rad/s) — used to restore the
 # full Rabi onto the unit-normalized 420/1013 blocks in these reductions.
 RABI_420_MP, RABI_1013_MP = 2 * np.pi * 491e6, 2 * np.pi * 185e6
+
+# Intermediate detuning is now a PROTOCOL input (P19): the effective-theory
+# helpers reconstruct Δ_e onto the |e> diagonals from the bound protocol, so the
+# tests pass it to the CZProtocol and reuse the same number as "Delta".
+DELTA_MP = 2 * np.pi * 9.1e9      # rb87_7_mp default intermediate detuning
+DELTA_ADIA = 2 * np.pi * 40.1e9   # find_phase adiabatic-gate detuning
 
 X_TO_DARK = [
     -0.6894097925886826, 1.040962607910546, 0.3277877211544321,
@@ -61,11 +69,40 @@ def _block(system, *names):
     raise KeyError(f"none of {names} known")
 
 
-def _one_atom_rb87_7(tag="rb87_7_mp"):
+def _probe_cz_protocol(t_gate_s=0.5e-6, delta=DELTA_MP):
+    """Minimal CZ pulse that only carries the intermediate detuning.
+
+    single_atom_hamiltonian_parts folds ``delta`` back onto the |e> diagonals;
+    the (constant unit) envelope/phase and the peak Rabis are irrelevant to the
+    pure-matrix reductions, which restore the Rabi on the unit blocks by hand.
+    """
+    return CZProtocol(
+        t_gate_s=t_gate_s,
+        intermediate_detuning_rad_s=delta,
+        omega_420_max_rad_s=RABI_420_MP,
+        omega_1013_max_rad_s=RABI_1013_MP,
+        envelope_420=lambda t: 1.0,
+        phase_420_rad=lambda t: 0.0,
+    )
+
+
+def _one_atom_rb87_7(tag="rb87_7_mp", delta=DELTA_MP):
     return RydbergSystem(
         level_structure=level_structure(tag),
         register=Register.chain(1, spacing_um=3.0),
+        protocol=_probe_cz_protocol(delta=delta),
     )
+
+
+def _da_channels(protocol):
+    """``channel -> coefficient(t)`` map exposed by a lowered protocol.
+
+    The lowering seam is ``protocol._resolve(system) -> _ResolvedProtocol``; a
+    DigitalAnalogProtocol ignores the system, so this reads the direct
+    matrix-element coefficients the converters produce.
+    """
+    resolved = protocol._resolve(None)
+    return {d.channel: d.coefficient for d in resolved.drives}
 
 
 def test_shift_coefficients_match_lowdin_diagonal():
@@ -105,7 +142,7 @@ def test_closed_forms_match_resolvent():
     hyperfine spread η_F (the closed form puts all three |e_F> at Δ_e)."""
     system = _one_atom_rb87_7()
     h_const = _block(system, "H_const")
-    De = system.level_structure.Delta
+    De = DELTA_MP
     R420, R1013 = (RABI_420_MP, RABI_1013_MP)
     # The 420/1013 blocks are unit-normalized; restore the full Rabi so the numeric
     # shifts match the closed forms (which carry R420/R1013).
@@ -148,7 +185,7 @@ def test_vod4_s_terms_hermitian_and_quartic():
     manifold quantity."""
     system = _one_atom_rb87_7()
     h_const = _block(system, "H_const")
-    De = system.level_structure.Delta
+    De = DELTA_MP
     R420, R1013 = (RABI_420_MP, RABI_1013_MP)
     h420 = R420 * _block(system, "drive_420")
     h1013 = R1013 * _block(system, "drive_1013", "H_1013")
@@ -207,8 +244,14 @@ def test_cz_protocol_drives_1013_on_rb87():
     """rb87 builds *unit* 420/1013 blocks; the protocol supplies their Rabi, so
     both 420 AND 1013 are *driven* channels (not static)."""
     protocol = TOProtocol(
-        phase_amplitude=X_TO_DARK[0], frequency_ratio=X_TO_DARK[1],
-        phase_offset=X_TO_DARK[2], detuning_ratio=X_TO_DARK[3],
+        intermediate_detuning_rad_s=DELTA_MP,
+        omega_420_max_rad_s=RABI_420_MP,
+        omega_1013_max_rad_s=RABI_1013_MP,
+        rise_time_s=2e-8,
+        phase_amplitude_rad=X_TO_DARK[0],
+        modulation_frequency_ratio=X_TO_DARK[1],
+        phase_offset_rad=X_TO_DARK[2],
+        frequency_offset_ratio=X_TO_DARK[3],
         duration_ratio=X_TO_DARK[5],
     )
     system = RydbergSystem(
@@ -216,45 +259,37 @@ def test_cz_protocol_drives_1013_on_rb87():
         register=Register.chain(2, spacing_um=3.0),
         protocol=protocol,
     )
-    ir = compile_hamiltonian_ir(system)
-
-    static_names = {term.name for term in ir.static_terms}
-    driven = {term.channel for term in ir.drive_terms}
-    # both the 420 (E[e_F,q]) and 1013 (E[r/r_garb,e_F]) legs are driven, not static.
+    _, channels = lower_drives(system)
+    driven = {ch.channel for ch in channels}
+    static_names = {term.name for term in system._static_terms}
+    # both the 420 (E[e1,1]) and 1013 (E[r,e1]) legs are driven, not static.
     assert {"E[e1,1]", "E[r,e1]"} <= driven
     assert "E[r,e1]" not in static_names
 
 
 def test_cz_protocol_drives_420_and_1013():
     """The container always drives 420 AND 1013 (unit blocks need the protocol to
-    restore the 1013 Rabi); the four normalized functions of ``s`` set both."""
-    from types import SimpleNamespace
-
-    # Unit ratio per group so the expanded primitive coeff equals the laser coeff;
-    # a duck-typed context supplies the ratio map and a unit time scale.
-    context = SimpleNamespace(
-        level_structure=SimpleNamespace(
-            name="duck",
-            laser_channel_ratios={"420": {"E[e1,1]": 1.0}, "1013": {"E[r,e1]": 1.0}},
-            time_scale=1.0,
-        )
-    )
+    restore the 1013 Rabi); each laser coefficient is ``Ω_max · env · e^{-iφ}``."""
     proto = CZProtocol(
-        duration_ratio=1e-6,
-        A_420=lambda s: 0.7,
-        phi_420=lambda s: 0.0,
-        A_1013=lambda s: 0.4,
-        phi_1013=lambda s: 0.5,
-        omega_420_max=2.0,
-        omega_1013_max=3.0,
+        t_gate_s=1e-6,
+        intermediate_detuning_rad_s=DELTA_MP,
+        omega_420_max_rad_s=2.0,
+        omega_1013_max_rad_s=3.0,
+        envelope_420=lambda t: 0.7,
+        phase_420_rad=lambda t: 0.0,
+        envelope_1013=lambda t: 0.4,
+        phase_1013_rad=lambda t: 0.5,
     )
-    assert {"E[e1,1]", "E[r,e1]"} <= proto.required_channels
-    ctx = proto._resolve(context)
-    assert ctx["t_gate"] == pytest.approx(1e-6)
-    coeffs = proto.get_drive_coefficients(0.3e-6, ctx)
-    # forward primitive channels only (the compiler adds each leg's h.c.)
-    assert coeffs["E[e1,1]"] == pytest.approx(2.0 * 0.7)
-    assert coeffs["E[r,e1]"] == pytest.approx(3.0 * 0.4 * np.exp(-1j * 0.5))
+    system = RydbergSystem(
+        level_structure=level_structure("rb87_7_mp"),
+        register=Register.chain(1, spacing_um=3.0),
+        protocol=proto,
+    )
+    lasers = {d.group: d for d in proto._resolve(system).drives if isinstance(d, _LaserDrive)}
+    # both lasers are present as driven groups, never static
+    assert set(lasers) == {"420", "1013"}
+    assert lasers["420"].coefficient(0.3e-6) == pytest.approx(2.0 * 0.7)
+    assert lasers["1013"].coefficient(0.3e-6) == pytest.approx(3.0 * 0.4 * np.exp(-1j * 0.5))
 
 
 def _wrap(a):
@@ -272,20 +307,27 @@ def _theta1(p):
 
 
 def _h7_fn(proto7, sys7):
-    """Single-atom H7(t) rebuilt from the protocol's drive coefficients,
-    exactly as lower_cz_to_effective_01r does internally."""
-    params = proto7._resolve(sys7)
+    """Single-atom lab-frame H7(t) rebuilt from the protocol's lowered drives,
+    exactly as lower_cz_to_effective_01r does internally (before the tex rotation).
+
+    ``single_atom_hamiltonian_parts`` already folds the constant intermediate
+    detuning onto the |e> diagonals, so only the off-diagonal laser legs from the
+    canonical lowering seam are added here."""
     h_const, _, _ = single_atom_hamiltonian_parts(sys7)
-    idx = {lvl: i for i, lvl in enumerate(sys7.basis.local_levels)}
+    idx = {lvl: i for i, lvl in enumerate(sys7._basis.local_levels)}
+    _, channels = lower_drives(sys7)
+    slots = []
+    for ch in channels:
+        ket, bra = parse_E(ch.channel)
+        if ket != bra:   # diagonal intermediate detuning is already in h_const
+            slots.append((ch.coefficient, idx[ket], idx[bra]))
 
     def h7(t):
         H = h_const.copy()
-        for chan, c in proto7.get_drive_coefficients(float(t), params).items():
-            ket, bra = chan[2:-1].split(",")
-            i, j = idx[ket], idx[bra]
+        for coeff, i, j in slots:
+            c = complex(coeff(float(t)))
             H[i, j] += c
-            if ket != bra:
-                H[j, i] += np.conj(c)
+            H[j, i] += np.conj(c)
         return H
 
     return h7
@@ -308,22 +350,23 @@ def test_converter_matrix_level_reduction():
     chirp = lambda t: -d_amp * np.cos(2 * np.pi * t / t_gate)
     # Fine phase sampling: the converter differentiates the *interpolated* phase,
     # the reference below uses the analytic chirp — keep the two within ~1e-6.
-    phi = phase_from_chirp(chirp, t_gate, 12001)
-    sys7 = RydbergSystem(
-        level_structure=level_structure("rb87_7_mp", detuning_sign=1),
-        register=Register.chain(2, spacing_um=spacing),
-    )
-    _, time_scale = cz_effective_rabi(sys7, o420, o1013)
+    phi = phase_from_chirp(chirp, t_gate, n_samples=12001)
     proto7 = CZProtocol(
-        duration_ratio=t_gate / time_scale,
-        A_420=lambda s: _smooth_env(float(np.clip(s, 0.0, 1.0)) * t_gate, t_gate),
-        phi_420=lambda s: phi(float(np.clip(s, 0.0, 1.0)) * t_gate),
-        omega_420_max=o420, omega_1013_max=o1013,
+        t_gate_s=t_gate,
+        intermediate_detuning_rad_s=DELTA_MP,
+        omega_420_max_rad_s=o420,
+        omega_1013_max_rad_s=o1013,
+        envelope_420=lambda t: _smooth_env(t, t_gate),
+        phase_420_rad=lambda t: phi(float(np.clip(t, 0.0, t_gate))),
+    )
+    sys7 = RydbergSystem(
+        level_structure=level_structure("rb87_7_mp"),
+        register=Register.chain(2, spacing_um=spacing),
+        protocol=proto7,
     )
     proto_eff = lower_cz_to_effective_01r(proto7, sys7)
-    assert proto_eff.required_channels == frozenset(
-        {"E[r,1]", "E[1,0]", "E[r,0]", "E[r,r]", "E[1,1]"}
-    )
+    co = _da_channels(proto_eff)
+    assert set(co) == {"E[r,1]", "E[1,0]", "E[r,0]", "E[r,r]", "E[1,1]"}
 
     h7 = _h7_fn(proto7, sys7)
     rotated = [2, 3, 4, 5, 6]   # {e1,e2,e3,r,r'}; phi_1013 = 0 -> one common angle
@@ -338,14 +381,14 @@ def test_converter_matrix_level_reduction():
 
     max_k0r = 0.0
     for t in np.linspace(0.05e-6, 0.45e-6, 7):
-        ref = h7_ref_tex(float(t))
+        t = float(t)
+        ref = h7_ref_tex(t)
         h3 = resolvent_elimination(ref, KEEP) + vod4_s_terms(ref, KEEP, [2, 3, 4])
-        co = proto_eff.get_drive_coefficients(float(t), {"n_sites": 1})
         recon = np.zeros((3, 3), dtype=complex)
-        recon[1, 1] = co["E[1,1]"]
-        recon[2, 2] = co["E[r,r]"]
+        recon[1, 1] = co["E[1,1]"](t)
+        recon[2, 2] = co["E[r,r]"](t)
         for (upper, lower), ch in (((2, 1), "E[r,1]"), ((1, 0), "E[1,0]"), ((2, 0), "E[r,0]")):
-            recon[upper, lower], recon[lower, upper] = co[ch], np.conj(co[ch])
+            recon[upper, lower], recon[lower, upper] = co[ch](t), np.conj(co[ch](t))
         ref3 = h3 - h3[0, 0] * np.eye(3)
         scale = 1 + np.max(np.abs(ref3))
         assert np.max(np.abs(np.diag(recon) - np.diag(ref3))) < 1e-6 * scale
@@ -364,16 +407,15 @@ def test_pair_diagonal_is_blockade_shifted_single_atom():
     light shift (the term that corrupts the ZZ phase in single-atom lowering).
     """
     spacing, t_gate = 3.0, 1.0e-6
-    o420, o1013 = our_laser_rabis(
-        p420_w=1.2, p1013_w=20.0, beam_area=7 * 20 * spacing, ryd_level=70
-    )
+    o420, o1013 = rb87_7_mp_rabi_frequencies(1.2, 20.0, 7 * 20 * spacing, ryd_level=70)
+    proto7 = _adia_cz_protocol(t_gate, 64, o420, o1013, DELTA_ADIA)
     sys7 = RydbergSystem(
-        level_structure=level_structure("rb87_7_mp", detuning_sign=1, Delta_Hz=40.1e9),
+        level_structure=level_structure("rb87_7_mp"),
         register=Register.chain(2, spacing_um=spacing),
+        protocol=proto7,
     )
-    proto7 = _adia_cz_protocol(t_gate, 64, o420, o1013, sys7)
     h7_tex, _ = _tex_frame_h7_fn(proto7, sys7)
-    v_nn = float(sys7.interaction_pairs[0][2])
+    v_nn = _single_pair_strength(sys7)
     pair = lower_cz_to_effective_pair(proto7, sys7)
 
     for s in (0.3, 0.5):
@@ -408,22 +450,24 @@ def _smooth_env(t, t_gate, ramp=_RAMP):
     return 1.0
 
 
-def _adia_cz_protocol(t_gate, n_steps, omega_420, omega_1013, system):
+def _adia_cz_protocol(t_gate, n_steps, omega_420, omega_1013, delta):
     """The find_phase adiabatic waveform as a plain CZProtocol (chirp-integral
-    420 phase, 0.15-ramped 420 envelope, 0.05-ramped 1013 envelope)."""
+    420 phase, 0.15-ramped 420 envelope, 0.05-ramped 1013 envelope).
+
+    Waveforms are physical-time callables (P24); ``delta`` is the signed
+    intermediate detuning that used to live in the level structure (P19)."""
     d_amp = 2 * np.pi * 20e6
     phi = phase_from_chirp(
-        lambda t: -d_amp * np.cos(2 * np.pi * t / t_gate), t_gate, 4 * n_steps + 1
+        lambda t: -d_amp * np.cos(2 * np.pi * t / t_gate), t_gate, n_samples=4 * n_steps + 1
     )
-    _, time_scale = cz_effective_rabi(system, omega_420, omega_1013)
     return CZProtocol(
-        duration_ratio=t_gate / time_scale,
-        A_420=lambda s: _smooth_env(float(np.clip(s, 0.0, 1.0)) * t_gate, t_gate),
-        phi_420=lambda s: phi(float(np.clip(s, 0.0, 1.0)) * t_gate),
-        A_1013=lambda s: _smooth_env(
-            float(np.clip(s, 0.0, 1.0)) * t_gate, t_gate, ramp=0.05
-        ),
-        omega_420_max=omega_420, omega_1013_max=omega_1013,
+        t_gate_s=t_gate,
+        intermediate_detuning_rad_s=delta,
+        omega_420_max_rad_s=omega_420,
+        omega_1013_max_rad_s=omega_1013,
+        envelope_420=lambda t: _smooth_env(t, t_gate),
+        phase_420_rad=lambda t: phi(float(np.clip(t, 0.0, t_gate))),
+        envelope_1013=lambda t: _smooth_env(t, t_gate, ramp=0.05),
     )
 
 
@@ -466,19 +510,19 @@ def _phases_via_converter(proto7, sys7, spacing, t_gate, n_steps):
         register=Register.chain(2, spacing_um=spacing),
         protocol=proto_eff,
     )
-    ch = proto_eff._function_fields
+    co = _da_channels(proto_eff)
 
     def h3(t):
         """Lowered 3x3 local Hamiltonian (matrix-element convention H[upper, lower])."""
         h = np.zeros((3, 3), dtype=complex)
-        h[1, 0] = ch["coupling_10"](t)
-        h[2, 0] = ch["coupling_r0"](t)
-        h[2, 1] = ch["coupling_r1"](t)
-        h[1, 1] = ch["energy_1"](t)
-        h[2, 2] = ch["energy_r"](t)
+        h[1, 0] = co["E[1,0]"](t)
+        h[2, 0] = co["E[r,0]"](t)
+        h[2, 1] = co["E[r,1]"](t)
+        h[1, 1] = co["E[1,1]"](t)
+        h[2, 2] = co["E[r,r]"](t)
         return h + h.conj().T - np.diag(h.diagonal())
 
-    v_nn = float(sys_eff.interaction_pairs[0][2])
+    v_nn = _single_pair_strength(sys_eff)
     phi, _ = _evolve_phases(h3, 3, np.diag([0.0, 0.0, 1.0]), v_nn, t_gate, n_steps)
     return phi
 
@@ -517,22 +561,19 @@ def test_effective_matches_seven_level_phases(case):
     Needs fine steps to resolve the ~40 GHz |e> manifold (slow-marked)."""
     spacing, t_gate, n_steps = 3.0, 1.0e-6, 3000
     if case == "weak":
-        o420, o1013 = our_laser_rabis(
-            p420_w=1.2, p1013_w=20.0, beam_area=7 * 20 * spacing, ryd_level=70
-        )
+        o420, o1013 = rb87_7_mp_rabi_frequencies(1.2, 20.0, 7 * 20 * spacing, ryd_level=70)
         o420, o1013, n_ref = 0.3 * o420, 0.3 * o1013, 32000
     else:
-        o420, o1013 = our_laser_rabis(
-            p420_w=0.641, p1013_w=10.0, beam_area=7 * 20 * spacing, ryd_level=70
-        )
+        o420, o1013 = rb87_7_mp_rabi_frequencies(0.641, 10.0, 7 * 20 * spacing, ryd_level=70)
         n_ref = 16000
+    proto7 = _adia_cz_protocol(t_gate, n_steps, o420, o1013, DELTA_ADIA)
     sys7 = RydbergSystem(
-        level_structure=level_structure("rb87_7_mp", detuning_sign=1, Delta_Hz=40.1e9),
+        level_structure=level_structure("rb87_7_mp"),
         register=Register.chain(2, spacing_um=spacing),
+        protocol=proto7,
     )
-    proto7 = _adia_cz_protocol(t_gate, n_steps, o420, o1013, sys7)
     h7_local = _h7_fn(proto7, sys7)
-    v_nn = float(sys7.interaction_pairs[0][2])
+    v_nn = _single_pair_strength(sys7)
 
     ryd7_int = np.diag([0, 0, 0, 0, 0, 1.0, 1.0])   # |r> + garbage |r'> interact
     phi7, ret7 = _evolve_phases(h7_local, 7, ryd7_int, v_nn, t_gate, n_ref)
@@ -559,19 +600,25 @@ def test_effective_matches_seven_level_phases(case):
     assert d_zz_p < 0.03
 
 
-def test_tn_path_accepts_nonzero_k0r():
-    """The TN 01r lowering supports the |0>-|r> (K0r) leg: a driven E[r,0]
-    coefficient lowers without error (the old guard is gone)."""
-    from types import SimpleNamespace
-
-    from ryd_gate.core.level_structures import (
-        level_structure,
-        three_level_profiles_from_coeffs,
+def test_effective_01r_accepts_nonzero_k0r():
+    """The 01r effective model supports the |0>-|r> (K0r) leg: a DigitalAnalog
+    drive with a nonzero coupling_r0 lowers and compiles on the exact path
+    (the old K0r guard is gone)."""
+    proto = DigitalAnalogProtocol(
+        t_gate_s=1e-6,
+        coupling_r1_rad_s=lambda t: 2 * np.pi * 1e6,
+        coupling_r0_rad_s=lambda t: 2 * np.pi * 0.3e6,
     )
-
-    spec = SimpleNamespace(level_spec=level_structure("01r"), N=1, level_structure="01r")
-    three_level_profiles_from_coeffs({"E[r,1]": 1.0 + 0j}, spec)
-    three_level_profiles_from_coeffs({"E[r,1]": 1.0 + 0j, "E[r,0]": 0.3 + 0j}, spec)
+    sys01r = RydbergSystem(
+        level_structure=level_structure("01r"),
+        register=Register.chain(1),
+        protocol=proto,
+    )
+    _, channels = lower_drives(sys01r)
+    names = {ch.channel for ch in channels}
+    assert {"E[r,1]", "E[r,0]"} <= names           # both K1r and K0r are driven
+    ham, _ = compile_exact(sys01r, hamiltonian_format="dense")
+    assert ham.dim == 3                            # compiles on 01r without error
 
 
 def test_digital_analog_effective_drive_runs_on_01r():
@@ -579,13 +626,12 @@ def test_digital_analog_effective_drive_runs_on_01r():
     01r model: a resonant constant drive Rabi-flops |1> <-> |r>."""
     t_gate, omega = 1e-6, 2 * np.pi * 1e6
     proto = DigitalAnalogProtocol(
-        t_gate=t_gate, coupling_r1=lambda t: 0.5 * omega
+        t_gate_s=t_gate, coupling_r1_rad_s=lambda t: 0.5 * omega
     )
     # Only the driven coupling exists — no K01/K0r channels, no energies.
-    assert proto.required_channels == frozenset({"E[r,1]"})
-    coeffs = proto.get_drive_coefficients(0.3e-6, {"t_gate": t_gate, "n_sites": 1})
-    assert coeffs["E[r,1]"] == pytest.approx(0.5 * omega)
-    assert set(coeffs) == {"E[r,1]"}
+    co = _da_channels(proto)
+    assert set(co) == {"E[r,1]"}
+    assert co["E[r,1]"](0.3e-6) == pytest.approx(0.5 * omega)
 
     sys01r = RydbergSystem(
         level_structure=level_structure("01r"),
@@ -594,7 +640,7 @@ def test_digital_analog_effective_drive_runs_on_01r():
     )
     t_eval = np.linspace(0.0, t_gate, 101)
     result = simulate(
-        sys01r, psi0=["1"], t_eval=t_eval,
+        sys01r, ["1"], t_eval=t_eval,
         observables={"n_r_0": sys01r.observables.n("r", 0)},
     )
     n_r = np.real(result.expectation("n_r_0"))

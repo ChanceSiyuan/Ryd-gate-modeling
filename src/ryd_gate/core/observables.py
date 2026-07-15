@@ -2,31 +2,24 @@
 
 :class:`ObservableExpr` is the only observable currency in ``ryd_gate``:
 ``simulate(..., observables={label: expr})`` takes a plain dict of named
-expressions, and every expression is built from the read-only factory exposed
-as ``system.observables`` (an :class:`ObservableFactory` bound to the system's
-level structure / basis)::
+expressions, and every expression is built from the read-only factory exposed as
+``system.observables`` — exactly two physical primitives (O11)::
 
     obs = system.observables
-    simulate(system, t_eval=t_eval, observables={
-        "n_r_total": obs.level_sum("r"),
-        "coh_01":    obs.E("0", "1", site=0),
-        "P_11":      obs.product_projector(["1", "1"]),
-    })
+    n_r = sum(obs.n("r", i) for i in range(system.N))     # total Rydberg population
+    P11 = obs.n("1", 0) @ obs.n("1", 1)                   # product-state projector
+    A   = obs.E("0", "1", site=0)
+    X   = A + A.dagger()                                  # Hermitian coherence
 
-The closed algebra (design: no user matrices, no callables, no vector values):
+The closed algebra: ``+``, ``-``, unary ``-``, scalar ``*`` (real or complex),
+operator product ``@``, ``.dagger()``, and the Python ``sum()`` seed (O13).
+Scalars may be complex intermediates, but the final expression handed to
+``simulate`` must be Hermitian (O06/O12); its expectation is real.
 
-- ``E(ket, bra, site)`` — transition ``|ket><bra|`` on one site
-- ``n(level, site)`` — local level projector
-- ``level_sum(level)`` / ``weighted_level_sum(level, weights)``
-- ``product_projector(labels)`` — full product-state projector
-- ``identity()`` — expectation = raw survival norm ``<psi|psi>``
-- ``+``, ``-``, scalar ``*``, operator product ``@``, ``.dagger()``
-
-Private lowered representation (backends may rely on it): every expression is
-a finite sum of terms ``coefficient x product of per-site local matrices``,
-stored as ``expr._terms`` — a tuple of :class:`_Term` with ``factors`` sorted
-by site index and at most one ``(d, d)`` matrix per site.  Expectations are
-raw ``<psi|O|psi>`` — complex, never divided by the norm.
+Private lowered representation (backends rely on it): every expression is a
+finite sum of terms ``coefficient x product of per-site local matrices``, stored
+as ``expr._terms`` — a tuple of :class:`_Term` with ``factors`` sorted by site
+index and at most one ``(d, d)`` matrix per site.
 """
 
 from __future__ import annotations
@@ -56,27 +49,17 @@ def _frozen(matrix: np.ndarray) -> np.ndarray:
 
 
 class ObservableExpr:
-    """An immutable scalar observable expression.
-
-    Constructed only through :class:`ObservableFactory` (``system.observables``)
-    and the closed algebra: ``a + b``, ``a - b``, ``scalar * a``, ``a @ b``
-    (operator product), ``a.dagger()``.  Expressions remember the level
-    structure shape ``(n_sites, local_dim)`` they were built for; combining
-    expressions from differently shaped systems is an error.
-    """
+    """An immutable scalar observable expression (built via ``system.observables``)."""
 
     __slots__ = ("_terms", "_n_sites", "_local_dim")
 
     def __init__(self, terms: tuple[_Term, ...], n_sites: int, local_dim: int) -> None:
-        # Private constructor — use ObservableFactory / the algebra.
         object.__setattr__(self, "_terms", tuple(terms))
         object.__setattr__(self, "_n_sites", int(n_sites))
         object.__setattr__(self, "_local_dim", int(local_dim))
 
     def __setattr__(self, name, value):  # immutability guard
         raise AttributeError("ObservableExpr is immutable.")
-
-    # -- algebra -----------------------------------------------------------
 
     def _check_compatible(self, other: "ObservableExpr") -> None:
         if not isinstance(other, ObservableExpr):
@@ -95,6 +78,15 @@ class ObservableExpr:
         self._check_compatible(other)
         return ObservableExpr(self._terms + other._terms, self._n_sites, self._local_dim)
 
+    def __radd__(self, other):
+        # Support Python sum(): only the additive seed 0 + expr is accepted (O13).
+        if isinstance(other, numbers.Number) and not isinstance(other, bool) and other == 0:
+            return self
+        raise TypeError(
+            "ObservableExpr only supports `0 + expr` (the sum() seed); a nonzero "
+            "number is not an identity operator."
+        )
+
     def __sub__(self, other: "ObservableExpr") -> "ObservableExpr":
         self._check_compatible(other)
         return self + (-1.0) * other
@@ -103,7 +95,7 @@ class ObservableExpr:
         return (-1.0) * self
 
     def __mul__(self, scalar) -> "ObservableExpr":
-        if isinstance(scalar, ObservableExpr) or not isinstance(scalar, numbers.Number):
+        if isinstance(scalar, ObservableExpr) or not isinstance(scalar, numbers.Number) or isinstance(scalar, bool):
             raise TypeError(
                 "`*` is scalar multiplication only; use `a @ b` for the operator "
                 f"product (got {type(scalar).__name__})."
@@ -149,10 +141,11 @@ class ObservableExpr:
 
 
 class ObservableFactory:
-    """Immutable, read-only :class:`ObservableExpr` factory bound to a basis.
+    """Read-only :class:`ObservableExpr` factory bound to a basis (``system.observables``).
 
-    Exposed as ``system.observables``.  There is no registration and no
-    string-name router: every observable is an expression built here.
+    Exactly two physical primitives (O11): ``E(ket, bra, site)`` and
+    ``n(level, site)``. Every other scalar operator is composed by the caller
+    with ``+``, ``-``, scalar ``*``, ``@``, ``.dagger()`` and ``sum()``.
     """
 
     __slots__ = ("_basis",)
@@ -162,8 +155,6 @@ class ObservableFactory:
 
     def __setattr__(self, name, value):  # immutability guard
         raise AttributeError("ObservableFactory is read-only.")
-
-    # -- internals -----------------------------------------------------------
 
     def _expr(self, terms: tuple[_Term, ...]) -> ObservableExpr:
         return ObservableExpr(terms, self._basis.n_sites, self._basis.local_dim)
@@ -181,65 +172,53 @@ class ObservableFactory:
         m.setflags(write=False)
         return m
 
-    # -- constructors ----------------------------------------------------------
-
     def E(self, ket: str, bra: str, site: int) -> ObservableExpr:
         """Transition operator ``|ket><bra|`` on ``site``."""
         site = self._site(site)
         return self._expr((_Term(1.0 + 0.0j, ((site, self._local_E(ket, bra)),)),))
 
     def n(self, level: str, site: int) -> ObservableExpr:
-        """Level projector ``|level><level|`` on ``site``."""
+        """Level projector ``|level><level|`` on ``site`` (== ``E(level, level, site)``)."""
         return self.E(level, level, site)
 
-    def level_sum(self, level: str) -> ObservableExpr:
-        """Total level population ``sum_i |level><level|_i``."""
-        m = self._local_E(level, level)
-        terms = tuple(_Term(1.0 + 0.0j, ((i, m),)) for i in range(self._basis.n_sites))
-        return self._expr(terms)
 
-    def weighted_level_sum(self, level: str, weights) -> ObservableExpr:
-        """Weighted level population ``sum_i w_i |level><level|_i``."""
-        w = [float(x) for x in weights]
-        if len(w) != self._basis.n_sites:
-            raise ValueError(
-                f"weighted_level_sum needs {self._basis.n_sites} weights, got {len(w)}."
-            )
-        m = self._local_E(level, level)
-        terms = tuple(
-            _Term(complex(wi), ((i, m),)) for i, wi in enumerate(w) if wi != 0.0
-        )
-        return self._expr(terms)
-
-    def product_projector(self, labels) -> ObservableExpr:
-        """Product-state projector ``|labels><labels|`` (one label per site)."""
-        labels = list(labels)
-        if len(labels) != self._basis.n_sites:
-            raise ValueError(
-                f"product_projector needs {self._basis.n_sites} per-site labels, "
-                f"got {len(labels)}."
-            )
-        factors = tuple(
-            (site, self._local_E(label, label)) for site, label in enumerate(labels)
-        )
-        return self._expr((_Term(1.0 + 0.0j, factors),))
-
-    def identity(self) -> ObservableExpr:
-        """Identity — its raw expectation is the survival norm ``<psi|psi>``."""
-        return self._expr((_Term(1.0 + 0.0j, ()),))
-
-    def site_populations(self, level: str) -> dict[str, ObservableExpr]:
-        """Per-site population profile: ``{"n_<level>_<i>": n(level, i)}``."""
-        return {
-            f"n_{level}_{i}": self.n(level, i) for i in range(self._basis.n_sites)
-        }
+# ── private dense evaluation + Hermiticity (used by the preflight/backends) ──
 
 
-# ── private dense evaluation (used by the exact backend) ─────────────────────
+def _support_operator(expr: ObservableExpr):
+    """Return ``(sites, matrix)`` for the dense operator on the touched sites only.
+
+    ``sites`` is the sorted union of sites appearing in any term; ``matrix`` is
+    the ``d^k x d^k`` operator on those ``k`` sites (identity on untouched ones).
+    Cheap because observables touch few sites even when ``N`` is large.
+    """
+    d = expr._local_dim
+    sites = sorted({site for term in expr._terms for site, _ in term.factors})
+    k = len(sites)
+    dim = d**k
+    pos = {s: i for i, s in enumerate(sites)}
+    eye = np.eye(d, dtype=complex)
+    op = np.zeros((dim, dim), dtype=complex)
+    for term in expr._terms:
+        mats = [eye] * k
+        for site, m in term.factors:
+            mats[pos[site]] = m
+        kron = np.array([[1.0 + 0.0j]])
+        for m in mats:
+            kron = np.kron(kron, m)
+        op += term.coefficient * kron
+    return sites, op
+
+
+def _is_hermitian(expr: ObservableExpr, atol: float = 1e-9) -> bool:
+    """Whether the expression is Hermitian (checked on its finite site support)."""
+    _sites, op = _support_operator(expr)
+    scale = max(1.0, float(np.max(np.abs(op)))) if op.size else 1.0
+    return bool(np.allclose(op, op.conj().T, atol=atol * scale, rtol=0.0))
 
 
 def _dense_expectation(expr: ObservableExpr, states: np.ndarray):
-    """Raw complex ``<psi|O|psi>`` per state — no norm division (private).
+    """Raw complex ``<psi|O|psi>`` per state (private).
 
     ``states`` is one dense vector ``(dim,)`` or a time-major batch
     ``(n_times, dim)``.  Returns a complex scalar or a ``(n_times,)`` complex

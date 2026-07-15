@@ -1,253 +1,64 @@
-"""Function-defined global Rydberg sweep protocol.
+"""SweepProtocol: a function-defined global Rydberg sweep on the |1>-|r> channels.
 
-``SweepProtocol`` is intentionally small: the schedule lives entirely on the
-protocol (fully specified at construction).
+Produces only effective ``_ChannelDrive`` primitives (P17/P32), so it rejects
+named physical-laser noise (N14). TFIM quench/anneal workflows are expressed by
+callers as explicit ``SweepProtocol`` instances (P16); there is no dedicated
+TFIM protocol class.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from pathlib import Path
-from typing import Any
+from typing import Callable
 
 import numpy as np
 
+from ryd_gate.protocols._resolved import _ChannelDrive, _ResolvedProtocol
 from ryd_gate.protocols.base import Protocol
-
-ScalarTimeFunction = Callable[[float], float]
-AddressTimeFunction = Callable[[float, int], float]
 
 
 class SweepProtocol(Protocol):
-    """Two-level global Rydberg sweep with arbitrary time functions.
+    """Global |1>-|r> sweep::
 
-    Parameters
-    ----------
-    t_gate : float
-        Total evolution time.
-    omega_half_fn : callable
-        Function ``t -> Omega(t)/2`` in the same angular-frequency units used
-        by the Hamiltonian.
-    delta_fn : callable
-        Function ``t -> Delta(t)`` for the global Rydberg detuning.
-    address_fn : callable, optional
-        Function ``(t, i) -> Delta_addr_i(t)`` for local-addressing detuning
-        shifts.  The total detuning on site ``i`` is
-        ``Delta(t) + Delta_addr_i(t)``.
-
-    Schedules emit ``E[r,1] = Omega(t)/2``, ``E[r,r] = -Delta(t)``, and,
-    when ``address_fn`` is provided, ``E[r,r]_i = -Delta_addr_i(t)``.
+        H[r,1](t)    = omega_half_rad_s(t)          # already Omega/2 (no extra 1/2)
+        H[r,r](t)    = -detuning_rad_s(t)
+        H_i[r,r](t) += -local_detuning_rad_s(t, i)  # optional per-site addressing
     """
+
+    _compatible_presets = frozenset({"1r", "01r"})
 
     def __init__(
         self,
         *,
-        t_gate: float,
-        omega_half_fn: ScalarTimeFunction,
-        delta_fn: ScalarTimeFunction,
-        address_fn: AddressTimeFunction | None = None,
+        t_gate_s: float,
+        omega_half_rad_s: Callable[[float], float],
+        detuning_rad_s: Callable[[float], float],
+        local_detuning_rad_s: Callable[[float, int], float] | None = None,
     ) -> None:
-        if t_gate <= 0:
-            raise ValueError("t_gate must be positive.")
-        if not callable(omega_half_fn):
-            raise TypeError("omega_half_fn must be callable.")
-        if not callable(delta_fn):
-            raise TypeError("delta_fn must be callable.")
-        if address_fn is not None and not callable(address_fn):
-            raise TypeError("address_fn must be callable when provided.")
+        t = float(t_gate_s)
+        if isinstance(t_gate_s, bool) or not np.isfinite(t) or t <= 0.0:
+            raise ValueError(f"t_gate_s must be finite and positive; got {t_gate_s!r}.")
+        if not callable(omega_half_rad_s):
+            raise TypeError("omega_half_rad_s must be callable f(t).")
+        if not callable(detuning_rad_s):
+            raise TypeError("detuning_rad_s must be callable f(t).")
+        if local_detuning_rad_s is not None and not callable(local_detuning_rad_s):
+            raise TypeError("local_detuning_rad_s must be callable f(t, i) or None.")
+        self._t_gate = t
+        self._omega_half = omega_half_rad_s
+        self._detuning = detuning_rad_s
+        self._local = local_detuning_rad_s
 
-        self.t_gate = float(t_gate)
-        self.omega_half_fn = omega_half_fn
-        self.delta_fn = delta_fn
-        self.address_fn = address_fn
-        self._phase_table: tuple[float, int, np.ndarray, np.ndarray] | None = None
-
-    def _resolve(self, system) -> dict:
-        n_sites = self._n_sites(system)
-        return {
-            "t_gate": self.t_gate,
-            "Omega": 2.0 * self.omega_half_at(self.t_gate),
-            "Delta": self.delta_at(self.t_gate),
-            "n_sites": n_sites,
-            "pin_deltas": {},
-            "scatter_rates": {},
-            "static_overlays": [],
-            "_system_type": "lattice",
-        }
-
-    @property
-    def required_channels(self) -> frozenset[str]:
-        return frozenset({"E[r,1]", "E[r,r]"})
-
-    def drive_channels(self, system) -> frozenset[str]:
-        n_sites = self._n_sites(system)
-        channels = {"E[r,1]", "E[r,r]"}
-        if self.address_fn is not None:
-            channels.update(f"E[r,r]_{i}" for i in range(n_sites))
-        return frozenset(channels)
-
-    def omega_half_at(self, t: float) -> float:
-        return float(self.omega_half_fn(self._clamp_time(t)))
-
-    def delta_at(self, t: float) -> float:
-        value = self.delta_fn(self._clamp_time(t))
-        arr = np.asarray(value, dtype=float)
-        if arr.ndim == 0:
-            return float(arr)
-        raise ValueError("delta_fn(t) must return a scalar global detuning.")
-
-    def address_at(self, t: float, n_sites: int) -> np.ndarray:
-        if n_sites < 1:
-            raise ValueError("n_sites must be positive.")
-        if self.address_fn is None:
-            return np.zeros(n_sites, dtype=float)
-        t_clamped = self._clamp_time(t)
-        return np.asarray([self.address_fn(t_clamped, i) for i in range(n_sites)], dtype=float)
-
-    def total_delta_at(self, t: float, n_sites: int) -> np.ndarray:
-        return self.delta_at(t) + self.address_at(t, n_sites)
-
-    def get_drive_coefficients(self, t: float, ctx: dict) -> dict[str, complex]:
-        coeffs: dict[str, complex] = {
-            "E[r,1]": self.omega_half_at(t),
-            "E[r,r]": -self.delta_at(t),
-        }
-        if self.address_fn is not None:
-            n_sites = ctx.get("n_sites")
-            if n_sites is None:
-                raise ValueError("SweepProtocol with address_fn requires ctx['n_sites'].")
-            coeffs.update(
-                {f"E[r,r]_{i}": -float(shift) for i, shift in enumerate(self.address_at(t, int(n_sites)))}
+    def _resolve(self, system) -> _ResolvedProtocol:
+        n = system.N
+        drives: list = [
+            _ChannelDrive("E[r,1]", lambda t: complex(self._omega_half(t))),
+            _ChannelDrive("E[r,r]", lambda t: -float(self._detuning(t))),
+        ]
+        if self._local is not None:
+            drives.append(
+                _ChannelDrive(
+                    "E[r,r]",
+                    lambda t, n=n: -np.array([float(self._local(t, i)) for i in range(n)]),
+                )
             )
-        return coeffs
-
-    def _phase_delta_at(self, t: float) -> float:
-        return self.delta_at(t)
-
-    def _pulse_traces_ctx(self, t: float, ctx: dict) -> dict[str, float]:
-        """Physical global pulse traces (Omega/2, Delta) at time *t* (rad/s);
-        the address-shift map is a separate 2D view, see :meth:`plot_address_map`."""
-        del ctx
-        return {r"$\Omega/2$": self.omega_half_at(t), r"$\Delta$": self.delta_at(t)}
-
-    def plot_address_map(
-        self,
-        system: Any | None = None,
-        *,
-        params: dict | None = None,
-        n_sites: int | None = None,
-        grid_shape: tuple[int, int] | None = None,
-        address_time: float | None = None,
-        savefig: bool | str | Path = False,
-        show: bool = False,
-    ):
-        """Heatmap of per-site addressing-shift magnitude ``|Delta_addr|/2pi`` (MHz).
-
-        The genuinely 2D spatial view that the single-axis :meth:`Protocol.plot`
-        cannot express.  Shifts are evaluated at ``address_time`` (default
-        ``t_gate``) and laid out on the lattice geometry.
-        """
-        if params is None:
-            params = self._resolve(system) if system is not None else {"t_gate": self.t_gate}
-        if n_sites is None:
-            n_sites = params.get("n_sites")
-        if n_sites is None and system is not None:
-            n_sites = self._n_sites(system)
-        if n_sites is None:
-            raise ValueError("plot_address_map() needs system, params['n_sites'], or n_sites.")
-        n_sites = int(n_sites)
-
-        import matplotlib.pyplot as plt
-
-        t_addr = self.t_gate if address_time is None else self._clamp_time(address_time)
-        address_shift_mhz = np.abs(self.address_at(t_addr, n_sites)) / (2.0 * np.pi * 1e6)
-        address_grid = self._profile_to_grid(address_shift_mhz, system, grid_shape)
-        shift_vmax = max(1.0, float(np.nanmax(address_grid)))
-
-        fig, ax = plt.subplots(figsize=(3.6, 3.2))
-        im = ax.imshow(address_grid.T, origin="lower", vmin=0.0, vmax=shift_vmax, cmap="magma")
-        ax.set_title("Addressing shift magnitude")
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        ax.set_xticks(range(address_grid.shape[0]))
-        ax.set_yticks(range(address_grid.shape[1]))
-        for ix in range(address_grid.shape[0]):
-            for iy in range(address_grid.shape[1]):
-                val = address_grid[ix, iy]
-                if np.isfinite(val):
-                    ax.text(ix, iy, f"{val:.2f}", ha="center", va="center", color="white")
-        fig.colorbar(im, ax=ax, label=r"$|\Delta_{\rm addr}|/2\pi$ (MHz)")
-        fig.tight_layout()
-
-        if savefig:
-            stem = Path("sweep_protocol_address" if savefig is True else savefig)
-            fig.savefig(stem.with_suffix(".png") if stem.suffix == "" else stem)
-        if show:
-            plt.show()
-        return fig, ax
-
-    @staticmethod
-    def _profile_to_grid(
-        profile: np.ndarray,
-        system: Any | None,
-        grid_shape: tuple[int, int] | None,
-    ) -> np.ndarray:
-        if system is not None and getattr(system, "geometry", None) is not None:
-            coords = np.asarray(system.geometry.coords, dtype=float)
-            x_vals = np.unique(coords[:, 0])
-            y_vals = np.unique(coords[:, 1])
-            if len(x_vals) * len(y_vals) == len(profile):
-                grid = np.full((len(x_vals), len(y_vals)), np.nan, dtype=float)
-                x_index = {x: i for i, x in enumerate(x_vals)}
-                y_index = {y: i for i, y in enumerate(y_vals)}
-                for site, (x, y) in enumerate(coords):
-                    grid[x_index[x], y_index[y]] = profile[site]
-                return grid
-
-        if grid_shape is not None:
-            if grid_shape[0] * grid_shape[1] != len(profile):
-                raise ValueError(f"grid_shape {grid_shape} does not match n_sites={len(profile)}.")
-            return profile.reshape(grid_shape)
-
-        side = int(round(np.sqrt(len(profile))))
-        if side * side == len(profile):
-            return profile.reshape((side, side))
-        return profile.reshape((len(profile), 1))
-
-    @staticmethod
-    def _n_sites(system) -> int:
-        basis = getattr(system, "basis", None)
-        n_sites = getattr(basis, "n_sites", None)
-        if n_sites is None:
-            n_sites = getattr(system, "N", None)
-        if n_sites is None:
-            raise TypeError("SweepProtocol needs a system-like object with basis.n_sites or N.")
-        return int(n_sites)
-
-    def phase_420(self, t: float) -> complex:
-        """Return exp(-i int_0^t Delta(t') dt') (accumulated detuning phase)."""
-        return np.exp(-1j * self._detuning_phase(t))
-
-    def _clamp_time(self, t: float) -> float:
-        return float(np.clip(float(t), 0.0, self.t_gate))
-
-    def _ensure_phase_table(self) -> None:
-        key = (self.t_gate, id(self.delta_fn))
-        if self._phase_table is not None and self._phase_table[:2] == key:
-            return
-
-        from scipy.integrate import cumulative_trapezoid
-
-        # Internal phase-integration accuracy (2001 samples matches the old
-        # max(2000, 10*n_steps+1) grid at the default 200-step resolution).
-        n_pts = 2001
-        ts = np.linspace(0.0, self.t_gate, n_pts)
-        deltas = np.array([self._phase_delta_at(t) for t in ts], dtype=float)
-        phases = np.zeros(n_pts, dtype=float)
-        phases[1:] = cumulative_trapezoid(deltas, ts)
-        self._phase_table = (key[0], key[1], ts, phases)
-
-    def _detuning_phase(self, t: float) -> float:
-        self._ensure_phase_table()
-        _, _, ts, phases = self._phase_table
-        return float(np.interp(self._clamp_time(t), ts, phases))
+        return _ResolvedProtocol(t_gate=self._t_gate, drives=tuple(drives))

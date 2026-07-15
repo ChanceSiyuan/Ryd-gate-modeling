@@ -28,11 +28,6 @@ env/
 .DS_Store
 Thumbs.db
 
-# Sphinx docs
-docs/_build/
-docs/.quarto/
-docs/reference/
-
 # Coverage
 .coverage
 htmlcov/
@@ -47,4 +42,3 @@ uv.lock
 # Julia TNQS sysimage (large, machine/Julia-version specific; build locally)
 src/ryd_gate/backends/itensor/julia/sysimages/
 src/ryd_gate/backends/itensor/julia/sysimage_build/Manifest.toml
-docs/objects.json

@@ -1,76 +1,62 @@
-"""Shared initial-state label resolution for tensor-network backends.
+"""Initial-state resolution for the tensor-network backends (E17).
 
-Both the MPS (TeNPy) and PEPS (YASTN) backends turn a user ``initial_state`` -- a
-named pattern, a 0/1 occupation array, or an explicit per-site label list -- into a
-list of generic level labels (``ground``/``"0"``/``"1"``/``"r"``) in 2D site order.
-They differ only in post-processing (MPS remaps to TeNPy site labels; PEPS uses the
-labels as-is), so the shared resolution lives here.
+``simulate`` hands the TN backends a single normalized initial state: either a
+flat physical level-label list (one product state) or the literal string
+``"plus"`` (the uniform ``(|0>+|1>)/sqrt(2)`` product state, matching
+``ryd_gate.core.states.dense_plus_state``).  The old named aliases
+(``all_ground`` / ``af1`` / ``af2`` / ...) are gone — callers pass explicit
+labels.  This module turns that input into per-site local amplitude vectors in
+the system's level order.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import TYPE_CHECKING
-
 import numpy as np
 
-if TYPE_CHECKING:
-    from ryd_gate.backends.tn_common.lattice_spec import TNLatticeSpec
 
+def initial_local_amplitudes(terms, initial_state) -> np.ndarray:
+    """Return per-site local amplitude vectors ``(N, d)`` in level order.
 
-def validate_level_labels(spec: TNLatticeSpec, labels: Sequence[str]) -> None:
-    """Raise ``ValueError`` if any label is not a level of ``spec``."""
-    allowed = set(spec.level_spec.levels)
-    unknown = sorted(set(labels) - allowed)
-    if unknown:
-        raise ValueError(f"Unknown level label(s) for {spec.level_structure}: {unknown}.")
-
-
-def named_level_labels(spec: TNLatticeSpec, name: str) -> list[str]:
-    """Generic per-site level labels for a named pattern (validated against ``spec``)."""
-    ground = spec.level_spec.initial_level_or_default()
-    if name == "ground":
-        # The public simulate() preset: label "1" if present, else the first
-        # local level (matches the exact backend's per-site preset level).
-        from ryd_gate.core.states import preset_initial_label
-
-        labels = [preset_initial_label(spec.level_spec.levels)] * spec.N
-    elif name == "all_ground":
-        labels = [ground] * spec.N
-    elif name == "all_1":
-        labels = ["1"] * spec.N
-    elif name in {"all_0", "all_zero"}:
-        labels = ["0"] * spec.N
-    elif name == "all_r":
-        labels = ["r"] * spec.N
-    elif name == "af1":
-        labels = ["r" if s > 0 else ground for s in spec.sublattice]
-    elif name == "af2":
-        labels = ["r" if s < 0 else ground for s in spec.sublattice]
-    else:
-        raise ValueError(f"Unknown initial-state string: {name!r}.")
-    validate_level_labels(spec, labels)
-    return labels
-
-
-def level_labels(spec: TNLatticeSpec, config) -> list[str]:
-    """Generic per-site level labels in 2D site order (validated against ``spec``).
-
-    ``config`` is a named-pattern string (see :func:`named_level_labels`), a 0/1
-    occupation array (``1`` -> ``|r>``, ``0`` -> the non-Rydberg reference level),
-    or an explicit per-site label list.
+    ``terms`` is the compiled :class:`~ryd_gate.backends.tn_common.compiler.TNTerms`
+    (it carries ``levels`` and ``n_sites``).
     """
-    if isinstance(config, str):
-        return named_level_labels(spec, config)
+    levels = terms.levels
+    n, d = terms.n_sites, terms.local_dim
 
-    arr = np.asarray(config)
-    if arr.shape != (spec.N,):
-        raise ValueError(f"initial_state must have shape ({spec.N},), got {arr.shape}.")
+    if isinstance(initial_state, str):
+        if initial_state != "plus":
+            raise ValueError(
+                f"unknown initial_state string {initial_state!r}; the TN backends "
+                "accept a flat level-label list or 'plus'."
+            )
+        if "0" not in levels or "1" not in levels:
+            raise ValueError(f"'plus' state requires '0' and '1' levels; got {levels}.")
+        vec = np.zeros(d, dtype=complex)
+        vec[levels.index("0")] = 1.0 / np.sqrt(2.0)
+        vec[levels.index("1")] = 1.0 / np.sqrt(2.0)
+        return np.tile(vec, (n, 1))
 
-    if arr.dtype.kind in {"U", "S", "O"}:
-        labels = [str(x) for x in arr]
-    else:
-        ground = spec.level_spec.initial_level_or_default()
-        labels = ["r" if int(c) == 1 else ground for c in arr.astype(int)]
-    validate_level_labels(spec, labels)
+    labels = list(initial_state)
+    if len(labels) != n:
+        raise ValueError(
+            f"initial_state has {len(labels)} per-site labels but the system has {n} sites."
+        )
+    amps = np.zeros((n, d), dtype=complex)
+    for i, label in enumerate(labels):
+        if label not in levels:
+            raise ValueError(f"unknown level label {label!r}; levels are {levels}.")
+        amps[i, levels.index(label)] = 1.0
+    return amps
+
+
+def validate_labels(terms, labels) -> list[str]:
+    """Validate a flat per-site label list for ``amplitude`` / ``phase_reference``."""
+    labels = list(labels)
+    if len(labels) != terms.n_sites:
+        raise ValueError(
+            f"expected {terms.n_sites} per-site labels, got {len(labels)}."
+        )
+    for label in labels:
+        if label not in terms.levels:
+            raise ValueError(f"unknown level label {label!r}; levels are {terms.levels}.")
     return labels

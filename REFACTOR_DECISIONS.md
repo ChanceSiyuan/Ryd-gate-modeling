@@ -1,6 +1,6 @@
 # Ryd-gate 简化重构决策日志
 
-最后更新：2026-07-14（Asia/Shanghai）
+最后更新：2026-07-15（Asia/Shanghai）
 适用仓库：`/home/chance/Ryd-gate-modeling`
 状态：持续更新；用于后续 grill、实现和审查
 
@@ -1863,6 +1863,12 @@ result.sample(shots=1000, seed=7)
 - PEPS contraction/environment 未达到调用者指定条件时抛 convergence error，不返回未经验证的 counts。
 - result 不公开 sampler、environment、概率表、truncation diagnostics 或 sampling metadata。
 
+### ER10 — sampling seed 统一为 non-negative integer（最终确认）
+
+- exact、MPS、PEPS 的 `EvolutionResult.sample()` 与 DMRG/PEPS 的 `GroundStateResult.sample()` 都要求 `seed` 是 non-negative Python/NumPy integer；`bool`、负数与其他类型在 result boundary 拒绝。
+- 所有 backends 使用同一个已经校验的 seed 初始化各自的 local RNG；禁止 global NumPy/Torch RNG mutation 或 backend-specific signed-seed canonicalization。
+- 相同 private state、`shots` 与 `seed` 的可复现语义不变；PEPS evidence 保存用户传入的这个 non-negative seed。
+
 ## 10. NoiseModel 与 ensemble
 
 ### N01 — NoiseModel 的统计边界（已确认）
@@ -2138,6 +2144,24 @@ result.amplitude(["0", "0"])
 | PEPS amplitude 通过 generic result metadata 报告 contraction 设置 | 已替代 | contraction 设置是显式 backend input；result 不重复公开 metadata |
 | public identity observable 用于 survival norm | 已替代 | non-Hermitian 已删除；public identity observable 删除 |
 | public result 暴露 `nfev`、自动 storage format 或 generic solver diagnostics | 已替代 | 数值选择由显式输入决定；失败报错；执行统计仅留内部测试/调试 |
+| PEPS 未达到内部 convergence tolerance 就必须报错 | 已替代 | PEPS02/PEPS03：返回最后一个数学有效的 estimate 与数值证据；只有 validity failure 才报错 |
+| PEPS 的 NTU error 称为 discarded Schmidt weight | 已替代 | PEPS04/PEPS17：使用 `NTU truncation error`；MPS 才继续使用 discarded weight |
+| PEPS 用 `discarded_weight_tolerance` / `truncation_error_tolerance` 同时控制 SVD 并 gate NTU error | 已替代 | PEPS17：删除两者；`svd_tolerance` 只控制局部 SVD，NTU error 只进入 evidence |
+| PEPS 把 NTU optimizer 的 `max_iter=4`、`tol_iter=1e-10` 固定为 private policy | 已替代 | PEPS18：公开 `ntu_max_iterations` 与 `ntu_iteration_tolerance`，忠实传给 real-time/ground-state NTU |
+| PEPS public options 直接镜像 YASTN `method` / `initialization` / `fix_metric` / `pinv_cutoffs` | 已拒绝 | PEPS19：这些共同定义一个受测试的 private NTU algorithm；public 只保留数值控制，不接受 engine kwargs |
+| PEPS imaginary-time ground state 固定在 CPU | 已替代 | PEPS20：ground-state `method_options` 也显式要求 `device="cpu" | "cuda"`，整个 result 生命周期保持同一设备 |
+| E25 的 PEPS real-time 八 key schema | 已替代 | PEPS21：冻结包含 `time_step_s`、SVD/NTU controls 的十 key mandatory schema |
+| E20 的 PEPS ground-state 七 key schema | 已替代 | PEPS22：冻结包含 SVD/NTU controls、dimensionless schedule 与 device 的九 key mandatory schema |
+| PEPS evidence 字段留给实现者自行扩张 | 已替代 | PEPS23/PEPS24：统一一个 immutable type，固定九个顶层字段与两个最小 lazy records |
+| PEPS27 允许直接 `Register(coords)` 只要可推断为 Cartesian product | 已替代 | PEPS31：当前 YASTN PEPS 只接受 `Register.chain/rectangle/square` 创建并私下标记的 grid register |
+| API06 规定 `ryd_gate.results.__all__` 只有三个 result types | 已替代 | PEPS25：追加三个 PEPS evidence record types；顶层 `ryd_gate` 六项仍不变 |
+| PEPS amplitude evidence 被理解为 public amplitude 调用日志 | 已修正 | PEPS33：它记录实际成功执行的 distinct product-bra coefficient contractions，ground phase reference 也是普通 labels record |
+| PEPS 不允许 result 暴露任何数值 trace | 已替代 | PEPS05：PEPS 参数与数值轨迹属于稳定 evidence；具体 public shape 继续 grill |
+| PEPS evidence 保存完整 per-step/per-iteration traces | 已替代 | PEPS14：只保存 numerical provenance 与免费产生的有界摘要；不为 evidence 增加 contraction |
+| MPS/PEPS real-time option 使用无单位后缀的 `time_step` | 已替代 | PEPS08：统一改为 physical-seconds `time_step_s`，不保留 alias |
+| PEPS ground-state schedule 直接乘 physical `rad/s` Hamiltonian | 已替代 | PEPS09：先按固定局域能标归一化 Hamiltonian，schedule 保持无量纲 |
+| PEPS amplitude 内部逐级增加 contraction bond dimension 并自动比较 | 已替代 | PEPS15：只执行用户指定 bond dimension 的一次 estimate；跨 dimension 比较由 caller 重跑完成 |
+| PEPS ground-state 在 schedule 中按 energy tolerance 自动收敛/提前停止 | 已替代 | PEPS16：完整执行 schedule，只在末尾做一次必要 CTM；删除 relative-energy gate/check interval |
 | ObservableExpr 只允许 real scalar multiplication | 已替代 | complex intermediate scalar 合法；传给 `simulate()` 的最终 expression 必须 Hermitian |
 | 保留 `TFIMQuenchProtocol` / `TFIMAnnealProtocol` 与 TFIM mapping helpers | 已替代 | 只保留 `SweepProtocol`；TFIM mapping 与 schedule 在使用它的 scripts/notebooks 中显式书写 |
 | Protocol 用 protected mapping hook 声明 laser group，或用 system/protocol channel 集合交集推断 | 已替代 | P17 的 `_LaserDrive` 直接保留物理 laser 身份；`_ChannelDrive` 明确表示 effective control |
@@ -2149,9 +2173,7 @@ result.amplitude(["0", "0"])
 
 ## 13. 尚待逐项 grill 的问题
 
-以下均不得由实现者自行决定：
-
-当前没有已经列明但尚未作答的条目。继续 grill 时仍须审计隐含边界，不能据此让实现者自行扩张 API。
+当前已列出的 PEPS option/evidence public-shape 问题均由 PEPS21-PEPS26 冻结。后续闭环审计若发现新的物理能力或数值语义缺口，必须先追加待 grill 项，不能由实现者自行决定。
 
 ## 14. 后续每次 grill 的记录格式
 
@@ -2164,4 +2186,477 @@ result.amplitude(["0", "0"])
 - 对 exact/MPS/PEPS/scripts/notebooks 的影响；
 - 若替代旧决定，注明旧 decision ID。
 
-每次实现审查都应先检查第 12 节，避免按旧 handoff 的过期条目工作。
+每次实现审查都应先检查第 12 节与第 15 节，避免按旧 handoff 或旧 fail-closed PEPS 条目的过期语义工作。
+
+## 15. PEPS 数值语义修订（2026-07-15）
+
+本节是 E16、E20、E23-E25、ER07-ER09 中 PEPS 数值语义的后续修订。发生冲突时以本节为准；旧条款作为历史保留，不得继续实现其 fail-closed 要求。
+
+### PEPS01 — PEPS 仍是本轮必须完整交付的 public backend（已确认）
+
+- 不把 PEPS 降级为 experimental API，也不以 guarded notebook、`NotImplementedError` 或 `xfail` 代替实现。
+- real-time PEPS 必须支持当前 `1r` / `01r` capability；PEPS imaginary-time ground state 继续只接受带明确二维 geometry 的 `1r` system。
+- `expectation()`、lazy `amplitude()` 与 lazy `sample()` 的 public 能力必须存在；禁止 dense fallback。
+- 本轮重构在 PEPS amplitude、数学有效的 sampling、调用方迁移和端到端测试完成前不能验收或提交。
+- “完整交付”表示功能与数值证据完整，不表示 `src` 自动认证 estimate 已收敛；后者由 PEPS02 修订。
+
+### PEPS02 — PEPS 返回 estimate 与 evidence，不替用户判定收敛（已确认，替代旧 fail-closed 语义）
+
+- 用户显式设置 PEPS state、NTU、BP/CTM、boundary contraction 与 imaginary-time 参数。
+- backend 忠实执行这些参数，并返回最后一个数学有效的近似结果。
+- CTM/BP 达到 iteration cap、NTU error 较大、energy 尚未稳定、amplitude 随 contraction bond dimension 仍变化，均不得仅因“看起来未收敛”而抛错。
+- schedule 或 resource cap 用尽时，只要仍有数学有效 estimate，就返回 estimate 与完整 evidence。
+- caller 在 scripts/notebooks 中改变 bond dimensions、schedule、step size、environment controls 或 initial state，收集多次 estimates 并自行完成 convergence study。
+- `src` 不提供“已物理收敛”或“已找到全局基态”的 certificate。
+
+### PEPS03 — 只保留数学有效性与 capability 检查（已确认）
+
+以下情况仍必须在边界处报错，不能作为低精度 estimate 返回：
+
+- 输入类型、shape、单位、option key、register geometry 或 backend capability 不合法；
+- 请求不支持的 observable term 或非最近邻 PEPS interaction；
+- 请求 CUDA 但环境不可用；
+- YASTN tensor operation 本身失败；
+- tensor、energy、expectation、amplitude、norm 或 probability 出现 `NaN` / `Inf`；
+- PEPS norm 非正，或 imaginary residual 大到无法解释为 real norm；
+- sampling conditional probabilities 显著为负、非 real、无法归一化或总权重非正。
+
+“没有达到 convergence tolerance”不是 validity failure；“没有数学意义的数值”才是。
+
+### PEPS04 — PEPS 使用 NTU truncation error，不冒充 discarded weight（已确认）
+
+- YASTN `Evolution_out.truncation_error` 是 NTU environment metric 下的 relative norm error，不是 Schmidt discarded weight。
+- MPS 继续使用 `discarded_weight_tolerance`；PEPS option 使用 `truncation_error_tolerance`。
+- real-time evidence 保存每一步的 worst-bond NTU error 与沿整段演化的累计曲线。
+- ground-state evidence 保存各 stage/window 的实际 NTU error；warmup 与 final-stage 数据都保留。
+- 这些值用于 caller 比较 runs，不作为 PEPS02 禁止的自动 acceptance gate。
+
+### PEPS05 — PEPS 数值参数与轨迹属于 result evidence（已确认，具体 shape 待 grill）
+
+- PEPS result 必须保留运行时实际使用的 algorithm parameters 与 convergence-study 所需的数值轨迹。
+- evidence 至少覆盖：NTU errors、BP/CTM residuals 与 iterations、imaginary-time energy history、amplitude contraction estimates/norm estimates，以及 sampling contraction 的有界统计。
+- 不暴露 YASTN tensor、environment、sampler 或任意 engine object。
+- 不恢复无约束 generic metadata bag；字段必须稳定、具名、只读，并能由 scripts 直接保存或画图。
+- eager evolution/expectation 与 lazy amplitude/sample 的 report 如何进入 public result，仍列于第 13 节继续 grill。
+
+### PEPS06 — PEPS amplitude 是 lazy normalized product-bra estimate（已确认，由 PEPS15 冻结 contraction schedule）
+
+- 真正计算发生在 `result.amplitude(labels)`，而不是 `simulate()`；未调用时不支付 contraction 成本。
+- 使用 single-layer product-bra boundary-MPS contraction，禁止 `Peps.to_tensor()` 或其他 dense conversion。
+- YASTN NTU 会丢失正实 global normalization scale，因此 raw product coefficient 不能直接作为 physical amplitude。
+- 每个 result 第一次 amplitude 调用时，用受相同用户 contraction controls 约束的独立 double-layer contraction 计算 finite、real-positive norm；norm 只在 private reader 内缓存一次。
+- 返回 `raw_amplitude / sqrt(norm)`；positive-real normalization 不删除 complex global phase。
+- ground-state target/reference amplitudes 复用同一 norm，再应用 explicit physical-label `phase_reference` gauge。
+- contraction 未表现出 convergence 时仍按 PEPS02 返回最后一个数学有效 estimate 与 evidence；fixed bond-dimension strategy 由 PEPS15 冻结。
+
+### PEPS07 — `t_eval` 是 expectation measurement cost 的唯一控制（已确认）
+
+- expectation expression 在 `simulate(..., observables=...)` 中显式请求，并在每个 `t_eval` 时刻计算；`result.expectation(name)` 只读取已记录数值。
+- amplitude/sample 继续是只作用于私有终态的 lazy readouts。
+- 不增加 `measurement_stride`、自动抽稀或隐藏时间网格。
+- PEPS 每个 measurement time 可能需要一次 BP/CTM contraction；文档必须明确成本大致随 `len(t_eval)` 线性增长。
+- 同一时刻的多个 requested observables 应共享该时刻的 measurement environment。
+
+### PEPS08 — real-time TN step 使用 physical-seconds 名称（已确认，修订 E23/E25）
+
+- MPS 与 PEPS real-time `backend_options` 都把 `time_step` 改名为 `time_step_s`。
+- 不保留旧 `time_step` alias、deprecated key 或 compatibility parser。
+- real-time gate 始终使用原始 physical `rad/s` Hamiltonian 与 seconds step；不得用 ground-state normalization 改变物理演化。
+- scripts/notebooks/tests 同步迁移。
+
+### PEPS09 — ground-state 使用 normalized Hamiltonian 与 dimensionless multi-stage schedule（已确认，修订 E20）
+
+- snapshot 仍由 `system.ground_state(at=...)` 冻结真实 physical Hamiltonian；ground-state method 只接受 `1r`。
+- solver 计算固定局域能标
+
+  ```text
+  Lambda = max(max_i ||h_i(at)||_2, max_(i,j) |V_ij|)
+  ```
+
+  并使用 `H_tilde = H / Lambda` 做 imaginary-time evolution。
+- `Lambda == 0` 表示完全零 Hamiltonian，无法选择唯一 ground-state representative，属于 validity failure。
+- `imaginary_time_schedule` 保持无量纲 sequence of `(dtau, max_steps)`；multi-stage capability 保留，单一 stage 也是合法的保守用法。
+- 较大 `dtau` stage 只是 warmup；最小 `dtau` stage 称为 final refinement stage。后者给出最细 estimate，但 PEPS02 禁止把它自动声明为 converged。
+- 每个 stage 精确执行其声明的 steps，但不做逐-stage CTM、energy measurement 或 history；只把整个 schedule 已自然产生的 maximum NTU summary 写入 PEPS24 的 bounded evidence。任何 non-finite 或 tensor failure 仍按 PEPS03 报错。
+- `GroundStateResult.expectation("energy")` 始终返回原始未缩放 Hamiltonian 的 real energy，单位 `rad/s`；report 保存 `hamiltonian_scale_rad_s=Lambda`。
+
+### PEPS10 — PEPS 调用方与验证要求（已确认）
+
+- `examples/demo_local_addressing_tn.py`、`scripts/bench_quench_check.py`、notebooks 03/04/05 必须迁移到最终 PEPS schemas。
+- 删除“backend under rewrite”、以宽泛 `except Exception` 隐藏旧参数错误、以及把 `NotImplementedError` 当作通过条件的测试。
+- 快速测试覆盖参数/shape/validity checks、lazy behavior、normalized complex amplitude、无 dense fallback 与 result evidence。
+- 小系统真实 YASTN tests 比较 exact/MPS/PEPS estimates，并至少改变一次 bond/environment dimensions 或 step controls，使 convergence-study workflow 可执行。
+- DGX 验证 4x4 CUDA smoke 与仓库实际保留的较大二维 workflow；slow physics tests 和完整 docs render 仍是最终审查门槛。
+
+### PEPS11 — numerical evidence 只属于 PEPS（已确认）
+
+- PEPS02 的 report-but-don't-gate 语义只扩张 PEPS result，不顺带扩张 exact/MPS diagnostics API。
+- exact 继续由 `rtol` / `atol` 与 solver success 控制；不公开 ODE step trace、`nfev` 或 storage-format diagnostics。
+- MPS real-time 与 DMRG 继续执行既有 discarded-weight / convergence gates；不新增 TDVP/DMRG public trace。
+- `EnsembleResult` 不新增 aggregate evidence；其中每个 PEPS `EvolutionResult` 自己携带对应 shot 的 PEPS evidence。
+- PEPS evidence 的访问入口必须显式带有 `peps` 语义，不能伪装成所有 backend 都支持的 generic result metadata；精确入口由 PEPS12 冻结。
+
+### PEPS12 — evidence 入口是只读 `result.peps_evidence` property（已确认）
+
+```python
+result = simulate(..., backend="peps")
+evidence = result.peps_evidence
+```
+
+- `EvolutionResult` 与 `GroundStateResult` 都提供 `peps_evidence` property。
+- PEPS result 返回具名、只读的 evidence object；exact/MPS result 返回 `None`。
+- property 只读取已经产生的数据，绝不能因访问 property 而触发 BP/CTM、amplitude、norm 或 sampling contraction。
+- 不增加 generic `result.metadata`、`result.diagnostics`、`result.convergence` 或任意 string-key escape hatch。
+- `EnsembleResult` 不汇总 evidence；其每个 PEPS child result 各自携带 shot-specific evidence。
+- evidence object 的 lazy operation 行为由 PEPS13 冻结；精确字段继续在第 13 节 grill。
+
+### PEPS13 — evidence ledger append-only，property 返回 immutable snapshot（已确认）
+
+- PEPS `simulate()` / `ground_state()` 返回时，ledger 已包含 eager evolution、requested expectation 与 ground-state optimization 产生的 evidence。
+- 每个成功的 lazy `amplitude()` / `sample()` 在完成后向 private ledger 追加对应 operation record。
+- `result.peps_evidence` 每次返回截至该时刻的 immutable snapshot；此前取得的 snapshot 永不变化。
+- property 本身不触发计算；只有用户显式调用 lazy readout 才能生成新 evidence。
+- `amplitude(labels)` 继续只返回 `complex`，`sample(shots=..., seed=...)` 继续只返回 `Counter`；不增加 `return_convergence` 或 tuple-return mode。
+- 相同 labels 的 amplitude 可复用 private cached norm/amplitude/evidence，不重复追加等价记录。
+- validity failure 抛错且不把半完成 operation 伪装成 successful evidence；异常本身应包含足够的 failure context。
+- physical expectations、times 与 amplitudes 的既有值不因 ledger 增长而改变；append-only 只描述后来执行了哪些 lazy numerical operations。
+
+### PEPS14 — evidence 只保留 provenance 与免费产生的有界摘要（已确认，收窄 PEPS04/05/09）
+
+- `peps_evidence` 不是完整 diagnostic trace；它的主要用途是记录 estimate 的 numerical provenance，并让 caller 比较不同参数 runs。
+- 保存实际使用的 PEPS public algorithm parameters；ground-state 另保存 PEPS09 的 derived `hamiltonian_scale_rad_s`。
+- 保存计算本身已经产生、无需额外 contraction 的 bounded summaries，例如 real-time cumulative NTU truncation error、ground-state max NTU truncation error、worst/final BP/CTM residual。
+- lazy amplitude 只追加该 labels estimate 的最终 contraction/norm error summary；不保存 adaptive sequence 的全部 intermediate estimates。
+- sampling 不保存 `shots * N` conditional trace，也不为 evidence 增加 instrumentation contraction；只保留输入 provenance，数学有效性仍按 PEPS03 检查。
+- 不保存完整 per-step NTU curve、per-iteration BP/CTM trace、逐 stage energy history或任意 backend log。
+- 不为了生成 evidence 额外运行 BP、CTM、norm、amplitude 或 sampling contraction；没有被实际 readout 需要的数值就不计算。
+- caller 判断 convergence 的主要依据是用不同 parameters 重跑后，比较 physical expectations/amplitudes/energies 是否稳定；evidence summary 只提供辅助背景。
+
+### PEPS15 — amplitude 只使用用户指定的固定 contraction bond dimension（已确认，替代早期 adaptive-chi 决定）
+
+- `result.amplitude(labels)` 每次只按 simulation/ground-state options 中的 `environment_bond_dimension` 执行一次 single-layer product-bra contraction。
+- 首次 amplitude 所需的 double-layer norm contraction 使用同一 bond dimension / tolerance / iteration cap，并按 PEPS06 在 private reader 中缓存。
+- backend 不内部尝试 `chi=...` sequence，不自动增加 bond dimension，也不因不同 chi estimates 未一致而报错。
+- contraction 产生 finite numerator、finite real-positive norm 时返回 normalized complex estimate；未达到 engine tolerance 只记录最终 free residual summary。
+- caller 通过分别运行 `environment_bond_dimension=16/32/64/...` 并比较 physical amplitudes，自行完成 bond-dimension convergence study。
+- `peps_evidence` 不保存不存在的 adaptive sequence，只保存实际固定参数与该次 contraction 已产生的最终摘要。
+
+### PEPS16 — ground-state 完整执行 schedule，只在末尾做一次必要 CTM（已确认，替代旧 convergence loop）
+
+- 每个 `imaginary_time_schedule` entry 的 `(dtau, max_steps)` 精确执行 `max_steps`；不因 energy change、NTU error 或 environment residual 提前停止。
+- 删除 PEPS ground-state public `relative_energy_tolerance`；不增加 `convergence_check_interval`。
+- coarse/final stages 之间不为 convergence evidence 运行 CTM，也不计算逐 stage energy history。
+- schedule 全部完成后，只构造一次最终 CTM environment，用于 reserved physical energy 与 caller-requested expectations。
+- 最终 CTM 达到 iteration cap 但仍产生 finite、数学有效的 energy/expectations 时，按 PEPS02 返回 estimate，并在 evidence 中记录实际 final residual/iterations；不因 residual 高于 tolerance 拒绝结果。
+- caller 通过改变 schedule、最小 `dtau`、state bond dimension 与 environment bond dimension 重跑并比较最终 physical results。
+- tensor failure、non-finite energy、invalid norm 等仍是 PEPS03 的 validity failures。
+
+### PEPS17 — PEPS 的截断输入只表达真实的 SVD cutoff（已确认，修订 PEPS04/E20/E25）
+
+- PEPS real-time 与 ground-state options 删除 `discarded_weight_tolerance` 和 `truncation_error_tolerance`；不保留 alias 或 deprecated compatibility key。
+- 新增 `svd_tolerance`，其唯一含义是传给 YASTN 局部 SVD 的 singular-value cutoff。
+- `bond_dimension` 是 PEPS state bond dimension 的硬上限；`svd_tolerance` 与它共同决定局部截断，但二者都不声明最终 physical estimate 已收敛。
+- YASTN 返回的 NTU truncation error 只按 PEPS14 汇总进 `peps_evidence`；backend 不把它与任何 tolerance 比较，也不据此提前停止或拒绝结果。
+- 禁止用 `min(svd_tolerance, 1e-12)` 或其他隐藏 clamp 改写用户输入；通过边界 validation 后，应忠实传给 engine。
+- MPS 的 `discarded_weight_tolerance` 及其既有 fail-closed 语义保持不变。
+
+### PEPS18 — NTU 局部优化停止控制由用户显式提供（已确认，修订 E20/E25）
+
+- PEPS real-time 与 ground-state options 都新增 `ntu_max_iterations` 和 `ntu_iteration_tolerance`。
+- `ntu_max_iterations` 是每个 bond truncation optimization 的正整数迭代上限；`ntu_iteration_tolerance` 是相邻局部 truncation-error objective 变化的 finite、strictly-positive 停止阈值。
+- 两个值分别原样传给 YASTN `evolution_step_(max_iter=..., tol_iter=...)`；删除 private `_NTU_MAX_ITER` / `_NTU_TOL_ITER` policy，不保留第二套隐藏 override。
+- 局部 optimizer 达到 iteration cap 但返回 finite tensor/update 时，不抛 convergence error；按 PEPS02 继续并返回最终数学有效 estimate。
+- 两个输入值进入 PEPS provenance；若 YASTN 本次计算已经返回 iteration counts，evidence 可以保存整个 operation 的 bounded maximum，不能保存逐 bond/逐 step trace，也不能为此增加计算。
+- 这些 controls 只属于 PEPS；MPS/DMRG API 不改变。
+
+### PEPS19 — 固定 NTU algorithm，拒绝 YASTN-shaped passthrough（已确认，延续 P01/API03）
+
+- `method="mpo"`、`initialization="EAT_SVD"`、`fix_metric=0` 与受测试的 pseudo-inverse cutoff ladder 共同定义当前 `ryd_gate` PEPS NTU algorithm，保持 private。
+- public PEPS options 不暴露 `method`、`initialization`、`fix_metric`、`pinv_cutoffs`、`opts_post_truncation` 或任意 `**yastn_kwargs`。
+- 用户仍显式控制用于 convergence study 的 physical step、state/environment bond dimensions、SVD cutoff、NTU iteration controls 与 contraction controls。
+- 固定算法选择必须集中定义并由测试覆盖，不能散落为调用点之间不一致的 magic values。
+- 将来若需要不同更新算法，应设计新的具名 method/algorithm capability 并单独审查，而不是把第三方 engine surface 泄漏进当前 schema。
+- 不影响 exact/MPS/DMRG public options。
+
+### PEPS20 — ground-state PEPS 与 real-time 一样显式选择 device（已确认，修订 E20）
+
+- `method="peps_imaginary_time"` 的 mandatory `method_options` 新增 `device`，public values 精确为 `"cpu"` 或 `"cuda"`。
+- imaginary-time NTU、最终 CTM、requested expectations 以及 private final state 上的 lazy `amplitude()` / `sample()` 全部保持在同一用户指定设备；禁止读出时偷偷搬到 CPU。
+- 请求 `"cuda"` 但 PyTorch、CUDA 或 YASTN CUDA support 不可用时，在开始演化前报 capability error；禁止 silent CPU fallback 或自动设备选择。
+- `peps_evidence` provenance 保存实际 `device`；访问 evidence 不执行 device probe 或 tensor transfer。
+- real-time PEPS 的同名 `device` key 与上述语义完全一致；exact/MPS/DMRG API 不改变。
+
+### PEPS21 — 冻结 real-time PEPS 十 key schema（已确认，替代 E25）
+
+```python
+backend_options={
+    "time_step_s": 1e-9,
+    "bond_dimension": 8,
+    "svd_tolerance": 1e-12,
+    "ntu_max_iterations": 20,
+    "ntu_iteration_tolerance": 1e-10,
+    "measurement_method": "ctm",  # 或 "belief_propagation"
+    "environment_bond_dimension": 32,
+    "environment_tolerance": 1e-8,
+    "environment_max_iterations": 50,
+    "device": "cuda",             # 或 "cpu"
+}
+```
+
+- 十个 keys 全部 mandatory；mapping 必须精确匹配，unknown/missing key 在 tensor allocation 前报错。
+- `time_step_s` 是 finite、strictly-positive physical-seconds Trotter substep upper bound；局部末步可缩短以命中 anchors。
+- `bond_dimension`、`ntu_max_iterations`、`environment_bond_dimension`、`environment_max_iterations` 是 positive integers；`svd_tolerance`、`ntu_iteration_tolerance`、`environment_tolerance` 是 finite、strictly-positive floats。
+- `measurement_method` 严格保留 E24 的 `"belief_propagation" | "ctm"`；`device` 严格遵守 PEPS20。
+- 前五项控制 real-time Trotter/NTU state evolution；measurement/environment controls 约束显式 expectation 与 private final-state lazy contractions。
+- 未请求 observables 时不构造 measurement environment；未调用 `amplitude()` / `sample()` 时不执行对应 lazy contractions。mandatory 参数声明不会触发不需要的计算。
+- 删除旧 `time_step`、`discarded_weight_tolerance`、`truncation_error_tolerance` 与所有 aliases/defaults；不接受 engine kwargs。
+- 所有输入及实际执行 device 进入 PEPS provenance，但仍按 PEPS14 只保存有界免费摘要。
+
+### PEPS22 — 冻结 ground-state PEPS 九 key schema（已确认，替代 E20）
+
+```python
+method_options={
+    "bond_dimension": 8,
+    "svd_tolerance": 1e-12,
+    "ntu_max_iterations": 20,
+    "ntu_iteration_tolerance": 1e-10,
+    "environment_bond_dimension": 32,
+    "environment_tolerance": 1e-8,
+    "environment_max_iterations": 50,
+    "imaginary_time_schedule": (
+        (0.10, 30),
+        (0.03, 30),
+        (0.01, 40),
+    ),
+    "device": "cuda",  # 或 "cpu"
+}
+```
+
+- 九个 keys 全部 mandatory；mapping 必须精确匹配，unknown/missing key 在 tensor allocation 前报错。
+- `bond_dimension`、`ntu_max_iterations`、`environment_bond_dimension`、`environment_max_iterations` 是 positive integers；三个 tolerances 是 finite、strictly-positive floats。
+- `imaginary_time_schedule` 是唯一 imaginary-time step/resource control：必须是非空 immutable sequence of `(dtau, max_steps)`，`dtau` finite、positive 且严格递减，`max_steps` 是 positive integer。
+- schedule 作用于 PEPS09 的 dimensionless normalized Hamiltonian，并严格遵守 PEPS16 的完整执行语义；adapter 不追加、删除或提前终止 stage。
+- ground-state 不接受 `time_step_s` 或 `measurement_method`；最终 reserved energy、requested expectations 与 lazy sampling 固定使用 CTM，lazy amplitude 使用 PEPS06/PEPS15 的 product-bra contraction。
+- 删除旧 `discarded_weight_tolerance`、`truncation_error_tolerance` 与 `relative_energy_tolerance`，不保留 aliases/defaults。
+- `device` 严格遵守 PEPS20；所有输入与 derived `hamiltonian_scale_rad_s` 进入 provenance。
+- 最终 CTM 达到 iteration cap 但产生 finite valid estimate 时返回；只把免费 residual/iteration summary 写入 evidence，不执行 convergence gate。
+
+### PEPS23 — real-time 与 ground-state 共用一个 `PEPSEvidence` 类型（已确认，具体化 PEPS12/13）
+
+```python
+evidence = result.peps_evidence  # PEPSEvidence | None
+```
+
+- PEPS `EvolutionResult` 与 PEPS `GroundStateResult` 都返回同一个 immutable `PEPSEvidence` public type；exact/MPS/DMRG 返回 `None`。
+- 不创建 `RealTimePEPSEvidence` / `GroundStatePEPSEvidence` inheritance hierarchy，也不暴露 backend-native report 类型。
+- `parameters` 是对应 PEPS strict option schema 的 immutable exact copy；禁止添加 schema 外 metadata keys 或把它变成任意扩展 bag。
+- mode-specific quantity 使用少量明确的 optional field：例如 `hamiltonian_scale_rad_s` 对 real-time 为 `None`，对 ground-state 保存 PEPS09 的 derived scale。
+- lazy amplitude/sample records 只允许两个小型 immutable record types；不为 eager evolution、BP、CTM、NTU 各创建 public class hierarchy。
+- 每次 property access 仍遵守 PEPS13 的 snapshot 语义；统一类型不意味着返回同一个可变 object。
+- 精确字段与两个 lazy record 的字段继续逐项 grill；实现者不能自行扩张。
+
+### PEPS24 — 冻结 `PEPSEvidence` 的九个字段与两个最小 lazy records（已确认，具体化 PEPS14/23）
+
+```python
+PEPSEvidence(
+    parameters=...,
+    hamiltonian_scale_rad_s=...,
+    max_ntu_truncation_error=...,
+    cumulative_ntu_truncation_error=...,
+    environment_residual=...,
+    environment_iterations=...,
+    norm_contraction_error=...,
+    amplitudes=(...),
+    samples=(...),
+)
+
+PEPSAmplitudeEvidence(
+    labels=("1", "r", ...),
+    contraction_error=...,
+)
+
+PEPSSampleEvidence(
+    shots=1000,
+    seed=123,
+)
+```
+
+- `parameters` 是 PEPS21 或 PEPS22 对应 strict schema 的 immutable exact copy，不接受额外 keys。
+- `hamiltonian_scale_rad_s` 对 real-time 为 `None`，对 ground-state 为 PEPS09 的 finite positive derived scale。
+- `max_ntu_truncation_error` 保存整次 state evolution 中已经产生的最大 finite non-negative NTU error。
+- `cumulative_ntu_truncation_error` 只对 real-time 保存；ground-state 为 `None`，避免把 schedule length 依赖的累计值误当基态质量指标。
+- real-time 的 `environment_residual` / `environment_iterations` 分别汇总所有 requested expectation times 的 worst residual / maximum iterations；没有 requested observables 时两者为 `None`。
+- ground-state 的 `environment_residual` / `environment_iterations` 保存最终必要 CTM 的 residual / iterations。
+- `norm_contraction_error` 在尚未调用 amplitude 时为 `None`；首次成功 normalized amplitude 后保存 cached double-layer norm contraction 已产生的最终 error summary。
+- 每个成功且此前未缓存的 labels amplitude 追加一个 `PEPSAmplitudeEvidence`；只保存 physical labels 与 single-layer final contraction error，不重复保存 value 或 norm error。
+- 每次成功 lazy sampling 追加 `PEPSSampleEvidence(shots, seed)`；不保存 conditional trace、Counter 副本或额外 sampling diagnostics。
+- 不保存 physical expectations、amplitudes、samples、`converged` boolean、完整 curves、逐 bond/逐 iteration data、timestamps 或 backend logs。
+- 所有 records 与 nested tuples/mapping views 必须深度不可变，并遵守 PEPS13 的 snapshot 行为。
+
+### PEPS25 — evidence types 只从 `ryd_gate.results` public 导入（已确认，延续 API01/API06）
+
+```python
+from ryd_gate.results import (
+    PEPSEvidence,
+    PEPSAmplitudeEvidence,
+    PEPSSampleEvidence,
+)
+```
+
+- 三个 immutable record types 加入 `ryd_gate.results.__all__`，与 `EvolutionResult`、`GroundStateResult`、`EnsembleResult` 位于同一个 result contract module。
+- 不加入 `ryd_gate.__all__`；API01 的顶层六个名字保持不变。
+- 普通调用者无需显式 import，直接读取 `result.peps_evidence`；显式 import 仅用于 type annotations、tests 或 tooling。
+- 不创建第二个 `ryd_gate.peps_results` module，也不从 backend implementation module 导出 public records。
+
+### PEPS26 — `PEPSEvidence.to_dict()` 是唯一 serialization helper（已确认）
+
+```python
+payload = result.peps_evidence.to_dict()
+json.dump(payload, file)
+```
+
+- 只在顶层 `PEPSEvidence` 提供 `to_dict()`；两个 lazy record types 不各自增加转换方法。
+- 每次调用返回全新的 mutable deep copy，只包含 JSON-compatible `dict`、`list`、`str`、`int`、finite `float` 与 `None`。
+- immutable parameter mapping、schedule/labels tuples、amplitude/sample record tuples 都递归转换为普通 dict/list；不泄漏 snapshot 内部容器。
+- 不提供 `from_dict()`、`.json()`、`.save()`、文件路径处理、I/O、analysis 或 convergence judgement。
+- 不在 evidence 中引入 schema-version field；public field names 本身受 PEPS24 的普通 API compatibility 约束。
+
+### PEPS27 — `Register` 是唯一 geometry，PEPS 只验证 Cartesian capability（已确认）
+
+- geometry 只能通过 `Register` 构建并由 `system.register` 传给所有 backends；PEPS 不增加 geometry factory、lattice object、coordinate option 或第二套 site ordering。
+- PEPS real-time 与 imaginary-time 共用同一个 preflight，只接受坐标构成完整 axis-aligned Cartesian product 的 `Register`。
+- 支持 `1×N`、`N×1` 与一般 `Nx×M`；两个坐标轴可非均匀 spacing，Register site order 任意。
+- 每个 Cartesian cell 必须恰好对应一个 site；preflight 必须验证完整 bijection，不能只检查 `len(xs) * len(ys) == N`。
+- capability 按 coordinates 的结构判断，不按 factory provenance 判断：直接 `Register(coords)` 手写出的完整 Cartesian grid 合法；不是只有 `Register.chain/rectangle/square` 的返回值才合法。
+- `Register.triangular(...)`、rotated/skewed grid、带洞 grid 与一般 irregular `Register(coords)` 仍是合法 public geometry，但本轮 PEPS 明确不支持；选择 PEPS 时在 tensor allocation 前报 capability error，exact/MPS 不受影响。
+- 不新增 `peps_geometry`、`lattice_shape` 或 backend-specific remapping 参数。
+
+### PEPS28 — PEPS 只使用有限 Register 的 open boundary（已确认）
+
+- real-time 与 imaginary-time PEPS 都把 `system.register` 解释为 finite open-boundary Cartesian lattice。
+- 不在 `Register`、`RydbergSystem`、`backend_options` 或 `method_options` 增加 `boundary`、`periodic`、`cylinder` 等 public input。
+- 禁止只切换 YASTN lattice boundary 而仍沿用 open-plane distances/interactions；这种实现会让物理 Hamiltonian 与 tensor topology 不一致。
+- periodic/cylindrical capability 若未来需要，必须同时设计 wrapped physical distance、pair topology、position noise、site ordering 与相应 tests，作为独立 API 决策。
+- 当前 exact/MPS 也继续模拟 `Register` 给出的有限坐标和 system 解析出的 interactions；本条不改变它们。
+
+### PEPS29 — PEPS nearest neighbour 是 Cartesian tensor-graph edge（已确认，具体化 PEPS03）
+
+- 在 PEPS27 验证后的 lattice indices 上，两个 sites 仅当一个 index 相差 `1` 且另一个相同时才是 PEPS graph neighbours。
+- system canonical lowering 产生的所有 nonzero pair terms 必须属于这些 graph edges；允许只包含 edge subset，也允许完全没有 interaction。
+- 不按最短 Euclidean distance shell 重新解释 neighbour；因此非均匀 Cartesian spacing 不会改变 tensor adjacency，interaction strength 仍来自真实坐标距离。
+- graph 外 diagonal/long-range pair 在 tensor allocation 前报 capability error；PEPS 禁止自动丢弃、近似合并或静默截断。
+- 不新增 PEPS-specific cutoff/range/topology input；`RydbergSystem(..., interaction_cutoff_um=...)` 仍是唯一 public pair-selection control。
+- `interaction_cutoff_um=None` 本身合法；只有它实际产生 graph 外 nonzero pair 时 PEPS 才拒绝。exact/MPS 继续接受 system 的完整 pair set。
+- position-noise realization 只改变 nominal graph 上已选 pairs 的 distance/direction/weight，不改变 pair topology。
+- real-time 与 imaginary-time PEPS 必须复用同一个 geometry/topology preflight，不能分别解释 neighbour。
+
+### PEPS30 — amplitude/norm 使用一次确定性的短边 boundary sweep（已确认，具体化 PEPS06/15/19）
+
+- normalized amplitude numerator 与 double-layer norm 都只执行一次完整 boundary contraction；不做正反方向 convergence check、重复平均或 hidden adaptive sweep。
+- 设 validated Cartesian grid shape 为 `(Nx, Ny)`：`Nx <= Ny` 时逐列收缩，使 boundary chain 长度为 `Nx`；`Nx > Ny` 时逐行收缩。
+- 正方形 tie 固定逐列；所有 sweeps 始终从低 lattice coordinate 向高 coordinate。
+- numerator 与 norm 必须使用完全相同的 orientation、order 和 boundary controls，避免 normalization 混合两种近似 convention。
+- orientation/order 是 PEPS19 固定算法的一部分，不增加 public option，也不写入每条 evidence；同一 register/options/library version 必须可复现。
+- 不允许为了 evidence 或“验证方向一致”额外收缩；caller 仍只通过提高 environment bond dimension/tightening controls 后重跑来研究稳定性。
+
+### PEPS31 — 当前 YASTN PEPS 只接受三个 grid factories；任意 unit-disk graph TN 独立设计（最终确认，替代 PEPS27 的 structural inference）
+
+- geometry 仍且只能由 public `Register` 构建；PEPS 不增加 geometry 参数或第二套坐标对象。
+- 当前 `backend="peps"` 与 `method="peps_imaginary_time"` 只接受由 `Register.chain(...)`、`Register.rectangle(...)` 或 `Register.square(...)` 创建的 register。
+- `Register(coords)` 与 `Register.triangular(...)` 对 exact/MPS 仍完全合法，但当前 YASTN PEPS 一律在 tensor allocation 前报 capability error；即使 direct coordinates 恰好排成矩形，也不做 shape inference。
+- `Register` 增加 private-only grid provenance，例如 `_peps_grid_shape: tuple[int, int] | None`：chain 为 `(N, 1)`，rectangle/square 为 `(rows, cols)`，direct/triangular 为 `None`。该信息不进入 public `Register` surface、`__all__`、repr/serialization 或 system API。
+- PEPS site-to-grid mapping 直接使用 factory 保证的 stable row order 与 private shape；同时验证 `rows * cols == register.N`。禁止通过 rounded unique coordinates 猜测 topology。
+- PEPS28 的 open boundary 与 PEPS29 的 graph-edge interaction rule 继续有效；graph adjacency 由 private shape 和 register site order 唯一定义，真实 interaction weights 仍来自 system canonical lowering。
+- 任意二维 Rydberg coordinates 上的 unit-disk-graph tensor network 是未来独立 backend/algorithm：它应复用 `RydbergSystem`、canonical Hamiltonian IR 与 result contract，但不能作为 `backend="peps"` 的 geometry mode、YASTN kwargs 或当前 refactor 的附带功能。
+- 本轮不得创建 future backend name、placeholder class、experimental flag 或空实现；只在 architecture/non-goals 中记录 seam。
+
+### PEPS32 — boundary controls、算法与 `contraction_error` 完全冻结（最终 pin-down，具体化 PEPS15/17/30）
+
+- amplitude numerator 与 double-layer norm 固定使用 YASTN `transfer_mpo + mps.zipper + one-site mps.compression_ + mps.vdot`；删除当前手写逐行 SVD contraction。
+- `environment_bond_dimension` 原样映射到 zipper 的 `D_total`；`environment_tolerance` 同时映射到 boundary SVD cutoff 与 compression `overlap_tol`；`environment_max_iterations` 映射到每个 absorbed layer 的 `max_sweeps`。
+- zipper 与 variational compression 都使用 `normalize=False`，完整保留 complex contraction factor；numerator 与 norm 逐字使用相同 controls、PEPS30 orientation/order。
+- norm 直接使用同一个 `environment_bond_dimension` 数值，不平方；`svd_tolerance` 只控制 NTU state truncation，绝不复用于 readout contraction。
+- iteration cap 用尽仍返回 finite estimate；不得比较 contraction summary 与 `environment_tolerance`，不得 reverse sweep、average、adaptive chi 或 dense fallback。
+- 单次 contraction 的 `contraction_error` 唯一定义为所有 absorbed boundary layers 已产生的 zipper discarded ratios 与 `abs(compression_out.doverlap)` 的 maximum；没有 compression 时为 `0.0`。
+- `contraction_error` 必须 finite、non-negative，但只是 dimensionless heuristic evidence，不是 physical error bound、discarded Schmidt weight 或 certificate。
+
+### PEPS33 — normalized coefficient cache、ground phase gauge 与 evidence transaction 冻结（最终 pin-down，修订 PEPS13/24）
+
+- simulation/ground-state 完成时的 PEPS34 local validity scan 同时保存每个 site tensor 的同设备 positive Frobenius scale；zero/non-finite scale 是 validity failure。lazy amplitude 复用这些 scales，使 numerator 与 norm 从同一临时 rescaled PEPS view 构造，不修改 private final state，也不计算可能 overflow 的 scale product或重复扫描。
+- double-layer norm lazy 计算一次并 private cache；必须 finite、按 PEPS34 real up to roundoff、strictly positive。normalized coefficient 为 `raw / sqrt(norm)`。
+- private coefficient cache 按 physical `labels` tuple；real-time amplitude 直接读取 coefficient。
+- ground-state amplitude 先取得 `phase_reference` coefficient，再取得 target coefficient，并返回 `target / (reference / abs(reference))`；reference normalized magnitude `<= sqrt(float64 epsilon)` 时要求用户更换 reference。
+- `PEPSEvidence.amplitudes` 不是 public-call pairing log，而是成功执行过的 distinct product-bra coefficient contractions：reference labels 与 target labels 都使用 PEPS24 已冻结的两字段 `PEPSAmplitudeEvidence(labels, contraction_error)`，不新增 `phase_reference` 字段。
+- reference/target 相同只 contraction/record 一次；换 reference 只计算未缓存 labels；重复 cached labels 不追加 record。
+- norm、coefficient cache 与 evidence 必须事务性提交：一次 public amplitude 调用任一步失败时，不发布 `norm_contraction_error` 或半完成 amplitude records；旧 snapshot 不变。
+- normalized amplitude 只要求 finite；即使 approximation 给出 `abs(amplitude) > 1` 也原样返回，不 clamp、不据此 gate。caller 通过改变 controls 重跑判断稳定性。
+
+### PEPS34 — 统一 complex128 数学有效性边界，不恢复 convergence gate（最终 pin-down，具体化 PEPS03）
+
+- private validity relative scale 固定为 `sqrt(np.finfo(np.float64).eps)`；对理论上 real 的 `z`，允许的 imaginary roundoff 为该值乘 `max(1, abs(z))`。
+- finite Hermitian expectation、ground energy 与 double-layer norm 在 slack 内取 real part；超过 slack 是无法满足 public real-result contract 的 validity failure。禁止用 `environment_tolerance` 或 contraction evidence 充当此 threshold。
+- ground energy 必须以 complex 累加完整 physical Hamiltonian expectation，最后统一做一次 reality check；禁止逐项 `np.real()` 隐藏问题。
+- PEPS state 每个 local tensor norm 必须 finite、strictly positive；这是 O(N) local scan，不触发 global norm contraction。
+- amplitude numerator/normalized coefficient 必须 finite；除 PEPS33 的 reference-zero gauge check 外不施加物理域或 convergence gate。
+- CUDA/CPU tensors、projected networks、environments 与 boundary MPS 全程留在用户指定 device；禁止 tensor/network/environment 整体搬到 host。只允许数学有效性 reduction、conditional sampling 的 scalar RNG branching、最终 public scalar与免费 evidence summary通过 `.item()` 变为 host Python `complex/float`。
+
+### PEPS35 — tolerance 区间与 BP/CTM residual 的 report-only 语义冻结（最终 pin-down，修订 PEPS21/22/24）
+
+- `0 < svd_tolerance < 1`、`0 < environment_tolerance < 1`；YASTN relative SVD cutoff 在 `>=1` 时会删除全部 singular values，因此边界 validation 必须拒绝。
+- `ntu_iteration_tolerance` 只要求 finite、strictly positive，不设置 `<1` 上限；所有 integer caps 拒绝 bool 且为 positive integer。
+- BP 的 `environment_tolerance` 是 message residual stopping target；CTM 中同时是 corner stopping target 与 environment SVD cutoff；boundary readouts 遵守 PEPS32。所有映射无 hidden clamp。
+- 环境运行到 engine early stop 或用户 iteration cap；`.converged` 不控制返回。finite high residual 与 cap exhaustion 都正常返回 estimate。
+- BP summary 使用 finite non-negative `max_diff`；BP expectation/sampling 的 message dimension 不受 `environment_bond_dimension` 控制，该 key 在 BP workflow 仍供 amplitude/norm 使用。
+- CTM 第一次 sweep 因没有前一组 corner spectra而产生 structurally unavailable `max_dsv` 时，evidence `environment_residual=None`；两次及以上 history 后 non-finite/negative residual 才是 validity failure。
+- real-time requested measurement times 的 `environment_iterations` 取 maximum；residual 全部可用时取 maximum，只要任一不可用则整体为 `None`。无 observables 时两者均为 `None`。
+- ground-state 保存最终唯一 CTM 的 residual/iterations。CTM actual `max_D` 不得超过用户 cap；低于 cap 合法。
+
+### PEPS36 — sampling 使用经过数学验证的 private conditional sampler（最终 pin-down，具体化 PEPS03/ER09）
+
+- 禁止直接把 YASTN `env.sample()` 的输出视为已验证结果，因为其内部可能先取 `.real` 且不暴露全部 candidate weights。
+- 分别实现 private BP 与 CTM sequential conditional adapters；严格使用 selected method，禁止 BP silent fallback CTM，禁止 dense conversion。
+- 每个 site 的所有 physical-level raw weights 必须 finite；imaginary parts 使用 PEPS34 slack。负权重 slack 必须逐 candidate 由其自身 magnitude 计算，不能由其他大权重放宽；各自只在 roundoff slack 内从微负 clamp 到 zero，显著 non-real/negative 立即 validity failure。
+- conditional total 必须 finite、strictly positive；概率固定做两次显式有限归一化并以 finite cumulative array 抽样。使用 `np.searchsorted(cdf, u, side="right")`，选择的概率必须 strictly positive，避免 `u == 0` 落入 leading zero-probability bin；RNG 固定为 local `np.random.default_rng(seed)`，禁止修改 global NumPy/Torch RNG state。
+- BP 与 CTM 都复用 PEPS30 的短边遍历：`Nx <= Ny` 时逐列，否则逐行；同一 layer 内低坐标到高坐标。输出 tuple 仍重排为 Register site order，candidate labels 固定按 `terms.levels`。
+- CTM conditional boundary 只需要概率比，固定使用 `zipper/compression normalize=True` 以稳定 conditioned boundary scale；PEPS32 的 `normalize=False` 只适用于必须保留 complex global factor 的 amplitude/norm contraction。
+- CTM sampling 的 boundary update 使用 `environment_bond_dimension`、`environment_tolerance`、`environment_max_iterations`；cap exhaustion 仍按 report-only 返回，只要 conditional distribution 合法。
+- 输出保持 `Counter[tuple[str, ...]]`，tuple 顺序严格为 Register site order。任一步失败不追加 evidence；成功后只追加 PEPS24 的 `(shots, seed)` record，不保存 `shots*N` trace或 Counter 副本。
+
+## 16. Documentation 简化（2026-07-15）
+
+### DOC01 — 用户文档只使用普通 Markdown（已确认）
+
+- 删除 Quarto、quartodoc、`.qmd` 页面、generated API reference、capability-matrix generator 与 GitHub Pages workflow。
+- 删除 `docs` optional dependency；文档不再需要独立 build/render 步骤。
+- public signature 以源码定义为唯一来源，用户可通过 IDE 或 `help(...)` 查看；实际 constructor/function 的 validation 与 error message 是最终准据，不声称 docstring 重复了每条校验规则。
+- README 与 `docs/*.md` 必须能由 GitHub 直接渲染；数学公式使用 GitHub Markdown 支持的 LaTeX 语法。
+
+### DOC02 — 公开文档冻结为 README 加三页（已确认）
+
+```text
+README.md
+docs/
+├── model.md
+├── simulation.md
+└── gates.md
+```
+
+- `README.md`：项目定位、安装、一个最短 exact 示例，以及三页文档入口。
+- `model.md`：回答“模拟的 Hamiltonian 是什么、怎样构造”，唯一负责 Register、presets、interaction、Hamiltonian 与 Protocol 共同规则。
+- `simulation.md`：回答“怎样求解、返回什么”，唯一负责 initial state、observables、`t_eval`、backend options、results、ground state、PEPS evidence 与 noise ensemble。
+- `gates.md`：回答“怎样从原始演化结果研究 gate”，唯一负责 gate protocol 选择、logical-basis evolution、Nielsen fidelity、conditional phase、leakage 与一阶 decay budget。
+
+### DOC03 — 文档事实只有一个 owner（已确认）
+
+- Hamiltonian、物理单位与 interaction convention 只在 `model.md` 定义。
+- solver/result/backend capability 只在 `simulation.md` 定义；不再维护第二份 capability matrix。
+- gate metrics 与 error-budget 公式只在 `gates.md` 定义；src 仍遵守 A02/A03，不恢复 report helper。
+- 完整可执行研究流程、优化、扫描、绘图与持久化继续放在 `examples/`、`scripts/` 和 notebooks，不复制进稳定文档。
+- 稳定文档不保存具体 optimum、benchmark pass/fail 或可能随 ARC/solver/研究结果变化的数值声称。
+
+### DOC04 — 内部记录与文档验收不进入公开 docs（已确认）
+
+- `REFACTOR_DECISIONS.md` 是架构决策源，不渲染为用户文档。
+- 一次性数值调查进入对应 `results/<topic>/`；`find_phase` 微扰调查迁入 `results/effective_theory/`。
+- notebook 验收脚本迁至 `scripts/check_notebooks.py`，不伪装成文档构建步骤。
+- `docs/` 最终只包含 DOC02 的三份 Markdown 文件，不保留 cache、HTML、reference、ADR 或 research 子目录。

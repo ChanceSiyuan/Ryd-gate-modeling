@@ -386,34 +386,33 @@ def build_system(cfg: ScanConfig, delta_e_hz: float):
     """
     import ryd_gate as rg
     from ryd_gate.protocols import CZProtocol
-    from ryd_gate.protocols.gate_cz import cz_effective_rabi, cz_rabi_maxes
     from ryd_gate.lattice import Register
 
-    system = rg.RydbergSystem(
-        level_structure=rg.level_structure(
-            "rb87_7_mp", detuning_sign=cfg.detuning_sign,
-            Delta_Hz=delta_e_hz, magnetic_field_G=cfg.magnetic_field_G),
-        register=Register.chain(2, spacing_um=cfg.spacing_um),
-    )
-    o420, o1013 = cz_rabi_maxes(system, 1.0, 1.0)
-    _, time_scale = cz_effective_rabi(system, o420, o1013)
+    delta_rad_s = cfg.detuning_sign * TAU * delta_e_hz
     proto = CZProtocol(
-        duration_ratio=1e-6 / time_scale,    # placeholder 1 us gate
-        A_420=lambda s: 1.0, phi_420=lambda s: 0.0,
-        A_1013=lambda s: 1.0, phi_1013=lambda s: 0.0,
-        omega_420_max=1.0, omega_1013_max=1.0,
+        t_gate_s=1e-6,                       # placeholder 1 us gate
+        intermediate_detuning_rad_s=delta_rad_s,
+        omega_420_max_rad_s=1.0, omega_1013_max_rad_s=1.0,
+        envelope_420=lambda t: 1.0, phase_420_rad=lambda t: 0.0,
+        envelope_1013=lambda t: 1.0, phase_1013_rad=lambda t: 0.0,
     )
-    return system.with_protocol(proto)
+    return rg.RydbergSystem(
+        level_structure=rg.level_structure(
+            "rb87_7_mp", ryd_level=cfg.ryd_level,
+            magnetic_field_G=cfg.magnetic_field_G),
+        register=Register.chain(2, spacing_um=cfg.spacing_um),
+        protocol=proto,
+    )
 
 
 def compute_omega_1013(cfg: ScanConfig) -> float:
     """Fixed 1013 Rabi (rad/s) under the notebook 100 W / optics_loss / top-hat convention."""
-    from ryd_gate.physics import our_laser_rabis
+    from ryd_gate.physics import rb87_7_mp_rabi_frequencies
 
-    _, omega_1013 = our_laser_rabis(
+    _, omega_1013 = rb87_7_mp_rabi_frequencies(
         1.0 * (1.0 - cfg.optics_loss),
         cfg.p1013_nominal_w * (1.0 - cfg.optics_loss),
-        beam_area=cfg.beam_area_um2,
+        cfg.beam_area_um2,
         ryd_level=cfg.ryd_level,
     )
     return float(omega_1013)
@@ -426,19 +425,28 @@ def _swap_permutation(local_dim: int = 7) -> np.ndarray:
 
 
 def aggregate_operators(system, delta_e_hz: float) -> PanelOperators:
-    """Compile the system IR and aggregate its channels into fixed dense blocks."""
-    from ryd_gate.backends.exact.compiler import ExactCompiler
+    """Compile the system and aggregate its channels into fixed dense blocks."""
+    from ryd_gate.backends.exact.compiler import compile_exact
+    from ryd_gate.core.states import product_index
 
-    ir = ExactCompiler().compile(system)
-    dim = ir.dim
+    ham, _t_gate = compile_exact(system, hamiltonian_format="dense")
+    dim = ham.dim
 
-    h_static = np.zeros((dim, dim), dtype=np.complex128)
-    for term in ir.static_terms:
-        coeff = term.coefficient(0) if callable(term.coefficient) else term.coefficient
-        op = _dense(term.operator)
-        h_static += coeff * op
-        if term.add_hermitian_conjugate:
-            h_static += np.conj(coeff) * op.conj().T
+    # ham.h_static carries the atomic diagonal + the Rydberg pair interaction, but
+    # not the intermediate detuning: the protocol now supplies Delta as constant
+    # diagonal drive channels (E[e1,e1]/E[e2,e2]/E[e3,e3]).  Fold those constants
+    # into the static diagonal, then split off the off-diagonal laser channels.
+    h_static = np.array(ham.h_static, dtype=np.complex128)
+    delta_rad_s = 0.0
+    laser_channels = []
+    for ch in ham.channels:
+        if ch.is_diag:
+            c = complex(ch.coeff(0.0))
+            h_static += c * _dense(ch.sum_op)
+            delta_rad_s = c.real
+        else:
+            laser_channels.append(ch)
+
     off_diag = h_static - np.diag(np.diag(h_static))
     if np.max(np.abs(off_diag)) > 0.0:
         raise RuntimeError("static Hamiltonian is not diagonal; kernel assumption broken")
@@ -449,14 +457,17 @@ def aggregate_operators(system, delta_e_hz: float) -> PanelOperators:
             "this scan requires closed Hermitian dynamics"
         )
 
-    ratios = system.level_structure.laser_channel_ratios
-    ops = {term.channel: _dense(term.operator) for term in ir.drive_terms}
+    ratios = {"420": {}, "1013": {}}
+    for leg in system.level_structure._laser_legs:
+        if leg.group in ratios:
+            ratios[leg.group][leg.channel] = leg.factor
+    ops = {ch._channel: _dense(ch.sum_op) for ch in laser_channels}
     missing = (set(ratios["420"]) | set(ratios["1013"])) - set(ops)
     if missing:
-        raise RuntimeError(f"drive channels missing from compiled IR: {sorted(missing)}")
-    for term in ir.drive_terms:
-        if not term.add_hermitian_conjugate:
-            raise RuntimeError(f"drive channel {term.channel} lacks the h.c. flag")
+        raise RuntimeError(f"drive channels missing from compiled Hamiltonian: {sorted(missing)}")
+    for ch in laser_channels:
+        if ch.sum_op_hc is None:
+            raise RuntimeError(f"drive channel {ch._channel} lacks the h.c. leg")
 
     b420 = sum(ratios["420"][ch] * ops[ch] for ch in ratios["420"])
     b1013 = sum(ratios["1013"][ch] * ops[ch] for ch in ratios["1013"])
@@ -466,9 +477,9 @@ def aggregate_operators(system, delta_e_hz: float) -> PanelOperators:
     y1013 = 1j * (b1013 - b1013.conj().T)
 
     logical = np.asarray(
-        [int(np.argmax(np.abs(system.product_state(list(s))))) for s in LOGICAL_INPUTS]
+        [product_index(list(s), system._basis) for s in LOGICAL_INPUTS]
     )
-    perm = _swap_permutation(system.basis.local_dim)
+    perm = _swap_permutation(system._basis.local_dim)
 
     def _swap_invariant(mat: np.ndarray) -> bool:
         return bool(np.array_equal(mat[np.ix_(perm, perm)], mat))
@@ -480,10 +491,10 @@ def aggregate_operators(system, delta_e_hz: float) -> PanelOperators:
 
     return PanelOperators(
         delta_e_hz=float(delta_e_hz),
-        delta_rad_s=float(system.level_structure.Delta),
+        delta_rad_s=float(delta_rad_s),
         h_static_diag=np.ascontiguousarray(diag.real),
         x420=x420, y420=y420, x1013=x1013, y1013=y1013,
-        amplitude_scale=float(system.amplitude_scale),
+        amplitude_scale=1.0,
         logical_indices=logical,
         swap_perm=perm,
         swap_symmetric=swap_ok,
@@ -506,44 +517,37 @@ def hamiltonian_equivalence_error(
     *same* analytic pulse bound as a real CZProtocol, then compares against the
     aggregated evaluation used by the production kernel.
     """
-    from ryd_gate.backends.exact.compiler import ExactCompiler
+    from ryd_gate.backends.exact.compiler import compile_exact
     from ryd_gate.protocols import CZProtocol
-    from ryd_gate.protocols.gate_cz import cz_effective_rabi, cz_rabi_maxes
 
     d1, dr = stark_coefficients(omega_420, omega_1013, ops.delta_rad_s)
     drmd1 = dr - d1
 
-    o420, o1013 = cz_rabi_maxes(system, omega_420, omega_1013)
-    _, time_scale = cz_effective_rabi(system, o420, o1013)
     proto = CZProtocol(
-        duration_ratio=t_gate / time_scale,
-        A_420=lambda s: float(np.sqrt(envelope(s, ramp))),
-        phi_420=lambda s: float(phase_rad(s * t_gate, t_gate, d_sweep, drmd1, ramp)),
-        A_1013=lambda s: float(np.sqrt(envelope(s, ramp))),
-        phi_1013=lambda s: 0.0,
-        omega_420_max=omega_420, omega_1013_max=omega_1013,
+        t_gate_s=t_gate,
+        intermediate_detuning_rad_s=ops.delta_rad_s,
+        omega_420_max_rad_s=omega_420, omega_1013_max_rad_s=omega_1013,
+        envelope_420=lambda t: float(np.sqrt(envelope(t / t_gate, ramp))),
+        phase_420_rad=lambda t: float(phase_rad(t, t_gate, d_sweep, drmd1, ramp)),
+        envelope_1013=lambda t: float(np.sqrt(envelope(t / t_gate, ramp))),
+        phase_1013_rad=lambda t: 0.0,
     )
     bound = system.with_protocol(proto)
-    ir = ExactCompiler().compile(bound)
+    ham, _ = compile_exact(bound, hamiltonian_format="dense")
 
-    static = np.zeros((ir.dim, ir.dim), dtype=np.complex128)
-    for term in ir.static_terms:
-        coeff = term.coefficient(0) if callable(term.coefficient) else term.coefficient
-        op = _dense(term.operator)
-        static += coeff * op
-        if term.add_hermitian_conjugate:
-            static += np.conj(coeff) * op.conj().T
-    drive = [(_dense(t_.operator), t_.coefficient, t_.add_hermitian_conjugate)
-             for t_ in ir.drive_terms]
+    static = np.asarray(ham.h_static, dtype=np.complex128)
+    drive = [(_dense(ch.sum_op), ch.coeff, ch.is_diag,
+              None if ch.is_diag else _dense(ch.sum_op_hc))
+             for ch in ham.channels]
 
     worst = 0.0
     for t in np.asarray(times, dtype=float):
         h_ref = static.copy()
-        for op, coeff_fn, add_hc in drive:
-            c = coeff_fn(t) if callable(coeff_fn) else coeff_fn
+        for op, coeff_fn, is_diag, op_hc in drive:
+            c = complex(coeff_fn(t))
             h_ref += c * op
-            if add_hc:
-                h_ref += np.conj(c) * op.conj().T
+            if not is_diag:
+                h_ref += np.conj(c) * op_hc
 
         s = t / t_gate
         amp = float(np.sqrt(envelope(s, ramp)))
@@ -1443,11 +1447,11 @@ def scattering_integrals(times: np.ndarray, states: np.ndarray,
 
 def model_decay_rates(system) -> dict[str, float]:
     """The rb87_7 decay rates (rad/s) used for the scattering integrals."""
-    g_r = float(system.level_structure.ryd_state_decay_rate)
+    rates = system.level_structure.decay_rates_per_s
     return {
-        "p_mid": float(system.level_structure.mid_state_decay_rate),
-        "p_ryd": g_r,
-        "p_r_garb": float(system.level_structure.ryd_garb_decay_rate),
+        "p_mid": float(rates["e1"]["total"]),
+        "p_ryd": float(rates["r"]["total"]),
+        "p_r_garb": float(rates["r_garb"]["total"]),
     }
 
 
@@ -2630,10 +2634,10 @@ def _scatter_equivalence_gate(runner: Runner, store: Store) -> dict:
 
     ref_sys = build_system(runner.cfg,
                            runner.cfg.delta_e_ghz[best_key.delta_idx] * 1e9)
-    g_r = float(ref_sys.level_structure.ryd_state_decay_rate)
-    ref_rates = {"p_mid": float(ref_sys.level_structure.mid_state_decay_rate),
-                 "p_ryd": g_r,
-                 "p_r_garb": float(ref_sys.level_structure.ryd_garb_decay_rate)}
+    _ref_rates_raw = ref_sys.level_structure.decay_rates_per_s
+    ref_rates = {"p_mid": float(_ref_rates_raw["e1"]["total"]),
+                 "p_ryd": float(_ref_rates_raw["r"]["total"]),
+                 "p_r_garb": float(_ref_rates_raw["r_garb"]["total"])}
     ref_levels = {"p_mid": (2, 3, 4), "p_ryd": (5,), "p_r_garb": (6,)}
     pops = np.abs(states) ** 2                       # (n_t, 4, dim)
     ref = {}

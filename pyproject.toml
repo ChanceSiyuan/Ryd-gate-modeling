@@ -30,17 +30,13 @@ dev = [
     "nbclient",
     "ipykernel",
 ]
-docs = [
-    "quartodoc>=0.7",
-    "griffe>=1.0,<2.0",
-]
 tn = [
     "physics-tenpy>=1.0",
 ]
 # 2D PEPS backend (backend="peps") runs on YASTN.
 tn-2d = [
     "physics-tenpy>=1.0",
-    "yastn @ git+https://github.com/yastn/yastn.git",
+    "yastn @ git+https://github.com/yastn/yastn.git@30b1d8bb4dc691a25bf6394b061c564128ede8e0",
 ]
 # torch for the YASTN PEPS-on-CUDA tensor backend (yastn_backend="torch", device="cuda").
 # Pinned to 2.5.1 because newer wheels (>=2.8 / cu130) drop Volta (sm_70) and fail on the

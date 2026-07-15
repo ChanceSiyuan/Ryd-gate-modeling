@@ -1,38 +1,62 @@
-"""ObservableExpr algebra, lowering, and dense evaluation (Patch 5).
+"""ObservableExpr algebra, lowering, and dense evaluation (rewritten API).
 
 Pure unit tests of the immutable scalar expression algebra exposed as
-``system.observables`` — no evolution.  The private lowered form (sum of
-coefficient x per-site local-matrix products) and the private dense evaluator
-(raw complex ``<psi|O|psi>``, no norm division) are pinned here because both
-backends build on them.
+``system.observables`` — exactly two primitives ``E(ket, bra, site)`` and
+``n(level, site)`` plus the closed set ``+``, ``-``, unary ``-``, scalar ``*``,
+``@``, ``.dagger()`` and the Python ``sum()`` seed (O11/O13). The private
+lowered form and the private dense evaluator (raw complex ``<psi|O|psi>``, no
+norm division) are pinned here because both backends build on them.
 """
 
 import numpy as np
 import pytest
 
-from ryd_gate import InteractionSpec, Register, RydbergSystem, level_structure
+from ryd_gate import Register, RydbergSystem, level_structure, simulate
+from ryd_gate.core.model import BasisSpec
 from ryd_gate.core.observables import (
     ObservableExpr,
     ObservableFactory,
     _dense_expectation,
 )
+from ryd_gate.core.states import dense_product_state
+from ryd_gate.protocols import SweepProtocol
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+
+def _idle_sweep(t_gate=1.0):
+    """A do-nothing sweep (compatible with 1r/01r), only needed to bind a system."""
+    return SweepProtocol(
+        t_gate_s=t_gate,
+        omega_half_rad_s=lambda t: 0.0,
+        detuning_rad_s=lambda t: 0.0,
+    )
 
 
 def _system(name="01r", n=2):
     return RydbergSystem(
         level_structure=level_structure(name),
         register=Register.chain(n),
-        interaction=InteractionSpec(C6=0.0),
+        protocol=_idle_sweep(),
     )
 
 
-def _psi(system, labels):
-    return system.product_state(labels)
+def _factory(levels, n):
+    """A bare ObservableFactory + BasisSpec (no ARC, no protocol)."""
+    basis = BasisSpec(
+        site_labels=tuple(str(i) for i in range(n)),
+        local_levels=levels,
+        local_dim=len(levels),
+        total_dim=len(levels) ** n,
+    )
+    return ObservableFactory(basis), basis
+
+
+# ── factory surface & immutability ───────────────────────────────────────────
 
 
 def test_factory_is_bound_and_read_only():
-    system = _system()
-    obs = system.observables
+    obs = _system().observables
     assert isinstance(obs, ObservableFactory)
     with pytest.raises(AttributeError):
         obs.anything = 1
@@ -42,46 +66,56 @@ def test_factory_is_bound_and_read_only():
         expr._terms = ()
 
 
-def test_unknown_levels_and_sites_rejected():
+def test_deleted_factories_raise_attributeerror():
     obs = _system().observables
+    for name in (
+        "level_sum",
+        "weighted_level_sum",
+        "product_projector",
+        "identity",
+        "site_populations",
+    ):
+        assert not hasattr(obs, name)
+        with pytest.raises(AttributeError):
+            getattr(obs, name)
+
+
+def test_unknown_levels_and_sites_rejected():
+    obs, _ = _factory(("0", "1", "r"), 2)
     with pytest.raises(ValueError, match="Level 'x'"):
         obs.n("x", 0)
     with pytest.raises(ValueError, match="site"):
         obs.n("r", 5)
-    with pytest.raises(ValueError, match="weights"):
-        obs.weighted_level_sum("r", [1.0])
-    with pytest.raises(ValueError, match="labels"):
-        obs.product_projector(["0"])
 
 
-def test_projector_and_level_sum_values():
-    system = _system()
-    obs = system.observables
-    psi = _psi(system, ["1", "r"])
+# ── primitive values (E/n) via the private dense evaluator ───────────────────
+
+
+def test_projector_and_manual_level_sum_values():
+    obs, basis = _factory(("0", "1", "r"), 2)
+    psi = dense_product_state(["1", "r"], basis)
     assert _dense_expectation(obs.n("r", 0), psi) == pytest.approx(0.0)
     assert _dense_expectation(obs.n("r", 1), psi) == pytest.approx(1.0)
-    assert _dense_expectation(obs.level_sum("r"), psi) == pytest.approx(1.0)
-    assert _dense_expectation(obs.level_sum("1"), psi) == pytest.approx(1.0)
-    assert _dense_expectation(
-        obs.weighted_level_sum("r", [2.0, -3.0]), psi
-    ) == pytest.approx(-3.0)
+    n_r = sum(obs.n("r", i) for i in range(2))
+    n_1 = sum(obs.n("1", i) for i in range(2))
+    assert _dense_expectation(n_r, psi) == pytest.approx(1.0)
+    assert _dense_expectation(n_1, psi) == pytest.approx(1.0)
+    weighted = 2.0 * obs.n("r", 0) + (-3.0) * obs.n("r", 1)
+    assert _dense_expectation(weighted, psi) == pytest.approx(-3.0)
 
 
-def test_product_projector_and_identity():
-    system = _system()
-    obs = system.observables
-    psi = _psi(system, ["1", "r"])
-    assert _dense_expectation(obs.product_projector(["1", "r"]), psi) == pytest.approx(1.0)
-    assert _dense_expectation(obs.product_projector(["r", "1"]), psi) == pytest.approx(0.0)
-    # identity = raw survival norm, no normalization
-    assert _dense_expectation(obs.identity(), 0.5 * psi) == pytest.approx(0.25)
+def test_product_projector_from_algebra():
+    obs, basis = _factory(("0", "1", "r"), 2)
+    psi = dense_product_state(["1", "r"], basis)
+    assert _dense_expectation(obs.n("1", 0) @ obs.n("r", 1), psi) == pytest.approx(1.0)
+    assert _dense_expectation(obs.n("r", 0) @ obs.n("1", 1), psi) == pytest.approx(0.0)
 
 
 def test_transition_expectation_is_raw_complex():
-    system = _system("01r", n=1)
-    obs = system.observables
+    obs, basis = _factory(("0", "1", "r"), 1)
     psi = (
-        _psi(system, ["0"]) + np.exp(1j * 0.7) * _psi(system, ["1"])
+        dense_product_state(["0"], basis)
+        + np.exp(1j * 0.7) * dense_product_state(["1"], basis)
     ) / np.sqrt(2)
     val = _dense_expectation(obs.E("0", "1", 0), psi)
     # <psi| |0><1| |psi> = conj(c0) * c1
@@ -90,29 +124,27 @@ def test_transition_expectation_is_raw_complex():
     assert dag == pytest.approx(np.conj(val))
 
 
-def test_algebra_add_sub_scale_product():
-    system = _system()
-    obs = system.observables
-    psi = _psi(system, ["1", "r"])
+# ── closed algebra ───────────────────────────────────────────────────────────
+
+
+def test_algebra_add_sub_scale_neg_product():
+    obs, basis = _factory(("0", "1", "r"), 2)
+    psi = dense_product_state(["1", "r"], basis)
     total = obs.n("r", 0) + obs.n("r", 1)
-    assert _dense_expectation(total, psi) == pytest.approx(
-        _dense_expectation(obs.level_sum("r"), psi)
-    )
-    diff = obs.level_sum("r") - obs.level_sum("1")
+    assert _dense_expectation(total, psi) == pytest.approx(1.0)
+    diff = sum(obs.n("r", i) for i in range(2)) - sum(obs.n("1", i) for i in range(2))
     assert _dense_expectation(diff, psi) == pytest.approx(0.0)
     scaled = 2.5 * obs.n("r", 1)
     assert _dense_expectation(scaled, psi) == pytest.approx(2.5)
     assert _dense_expectation(-scaled, psi) == pytest.approx(-2.5)
-    # operator product: pair correlation projector
     pair = obs.n("1", 0) @ obs.n("r", 1)
     assert _dense_expectation(pair, psi) == pytest.approx(1.0)
     assert _dense_expectation(obs.n("r", 0) @ obs.n("r", 1), psi) == pytest.approx(0.0)
 
 
 def test_same_site_product_multiplies_matrices():
-    system = _system("01r", n=1)
-    obs = system.observables
-    psi = (_psi(system, ["0"]) + _psi(system, ["1"])) / np.sqrt(2)
+    obs, basis = _factory(("0", "1", "r"), 1)
+    psi = (dense_product_state(["0"], basis) + dense_product_state(["1"], basis)) / np.sqrt(2)
     # |0><1| @ |1><0| = |0><0|
     composed = obs.E("0", "1", 0) @ obs.E("1", "0", 0)
     assert _dense_expectation(composed, psi) == pytest.approx(
@@ -125,22 +157,34 @@ def test_same_site_product_multiplies_matrices():
 
 def test_bell_projector_from_algebra():
     """|B><B| for B = (|01> + |10>)/sqrt(2) is expressible in the closed set."""
-    system = _system()
-    obs = system.observables
+    obs, basis = _factory(("0", "1", "r"), 2)
     proj = 0.5 * (
         (obs.n("0", 0) @ obs.n("1", 1))
         + (obs.n("1", 0) @ obs.n("0", 1))
         + (obs.E("0", "1", 0) @ obs.E("1", "0", 1))
         + (obs.E("1", "0", 0) @ obs.E("0", "1", 1))
     )
-    bell = (_psi(system, ["0", "1"]) + _psi(system, ["1", "0"])) / np.sqrt(2)
-    ortho = (_psi(system, ["0", "1"]) - _psi(system, ["1", "0"])) / np.sqrt(2)
+    bell = (dense_product_state(["0", "1"], basis) + dense_product_state(["1", "0"], basis)) / np.sqrt(2)
+    ortho = (dense_product_state(["0", "1"], basis) - dense_product_state(["1", "0"], basis)) / np.sqrt(2)
     assert _dense_expectation(proj, bell) == pytest.approx(1.0)
     assert _dense_expectation(proj, ortho) == pytest.approx(0.0, abs=1e-12)
 
 
+def test_sum_builtin_seed_and_nonzero_seed_rejected():
+    obs, basis = _factory(("0", "1", "r"), 2)
+    total = sum(obs.n("r", i) for i in range(2))  # 0 + expr + expr
+    assert isinstance(total, ObservableExpr)
+    psi = dense_product_state(["r", "r"], basis)
+    assert _dense_expectation(total, psi) == pytest.approx(2.0)
+    with pytest.raises(TypeError):
+        2 + obs.n("r", 0)  # a nonzero number is not an identity
+
+
+# ── type / shape guards ──────────────────────────────────────────────────────
+
+
 def test_scalar_star_rejects_operator_product_and_foreign_types():
-    obs = _system().observables
+    obs, _ = _factory(("0", "1", "r"), 2)
     with pytest.raises(TypeError, match="scalar"):
         obs.n("r", 0) * obs.n("r", 1)
     with pytest.raises(TypeError, match="ObservableExpr"):
@@ -148,30 +192,42 @@ def test_scalar_star_rejects_operator_product_and_foreign_types():
 
 
 def test_cross_system_combination_rejected():
-    a = _system("01r", n=2).observables
-    b = _system("1r", n=2).observables
+    a, _ = _factory(("0", "1", "r"), 2)
+    b, _ = _factory(("1", "r"), 2)
     with pytest.raises(ValueError, match="differently shaped"):
         a.n("r", 0) + b.n("r", 0)
 
 
 def test_batch_evaluation_time_major():
-    system = _system()
-    obs = system.observables
-    states = np.stack([_psi(system, ["1", "r"]), _psi(system, ["r", "r"])])
-    vals = _dense_expectation(obs.level_sum("r"), states)
+    obs, basis = _factory(("0", "1", "r"), 2)
+    total = obs.n("r", 0) + obs.n("r", 1)
+    states = np.stack(
+        [dense_product_state(["1", "r"], basis), dense_product_state(["r", "r"], basis)]
+    )
+    vals = _dense_expectation(total, states)
     assert vals.shape == (2,)
     np.testing.assert_allclose(vals, [1.0, 2.0])
 
 
 def test_dimension_mismatch_rejected():
-    obs = _system("01r", n=2).observables
+    obs, _ = _factory(("0", "1", "r"), 2)  # dim = 9
     with pytest.raises(ValueError, match="does not match"):
-        _dense_expectation(obs.level_sum("r"), np.zeros(4, dtype=complex))
+        _dense_expectation(obs.n("r", 0) + obs.n("r", 1), np.zeros(4, dtype=complex))
 
 
-def test_site_populations_profile_is_plain_dict():
-    system = _system()
-    profile = system.observables.site_populations("r")
-    assert sorted(profile) == ["n_r_0", "n_r_1"]
-    psi = _psi(system, ["1", "r"])
-    assert _dense_expectation(profile["n_r_1"], psi) == pytest.approx(1.0)
+# ── Hermiticity is enforced at simulate time, not in the algebra ─────────────
+
+
+def test_non_hermitian_observable_rejected_at_simulate():
+    system = _system("1r", 1)
+    obs = system.observables
+    with pytest.raises(ValueError, match="Hermitian"):
+        simulate(system, observables={"c": obs.E("1", "r", 0)})
+
+
+def test_hermitian_coherence_accepted_at_simulate():
+    system = _system("1r", 1)
+    obs = system.observables
+    A = obs.E("1", "r", 0)
+    result = simulate(system, observables={"x": A + A.dagger()})
+    assert result.expectation("x").dtype == np.float64

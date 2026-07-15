@@ -269,30 +269,37 @@ _KEEP_P3 = [_QUBIT_0, _QUBIT_1, _RYD]
 def single_atom_hamiltonian_parts(system):
     """Single-atom ``(h_const, h420, h1013)`` 7x7 matrices for an rb87 system.
 
-    Reconstructs the legacy dense matrices from the primitive operator model:
-    ``h_const`` sums the static diagonal-energy terms (``E[a,a]`` coefficients,
-    plus any h.c.-completed static coupling); ``h420`` / ``h1013`` are the
-    unit-Rabi laser legs ``Σ ratio·|ket><bra|`` over the ``laser_channel_ratios``
-    ``"420"`` / ``"1013"`` groups.
+    Reconstructs the legacy dense matrices from the private preset data (S17):
+    ``h_const`` is the atomic static diagonal (``_static_diag``) plus the bound
+    protocol's constant intermediate detuning (P19 moved ``Delta`` to the
+    protocol); ``h420`` / ``h1013`` are the unit-Rabi laser legs
+    ``Σ factor·|ket><bra|`` over the ``"420"`` / ``"1013"`` ``_LaserLeg`` groups.
     """
-    levels = system.basis.local_levels
+    from ryd_gate.protocols._resolved import _ChannelDrive
+
+    levels = system._basis.local_levels
     d = len(levels)
     idx = {lvl: i for i, lvl in enumerate(levels)}
     hc = np.zeros((d, d), dtype=complex)
-    for term in system.static_hamiltonian_terms:
-        if term.name == "H_pair":
-            continue
-        ket, bra = parse_E(term.name)
-        hc[idx[ket], idx[bra]] += term.coefficient
-        if term.add_hermitian_conjugate and ket != bra:
-            hc[idx[bra], idx[ket]] += np.conjugate(term.coefficient)
-    ratios = dict(system.level_structure.laser_channel_ratios or {})
+    for level, energy in system.level_structure._static_diag.items():
+        hc[idx[level], idx[level]] += complex(energy)
+    # Constant diagonal drives (the protocol's intermediate detuning) rejoin the
+    # static diagonal here so the elimination denominators carry Delta as before.
+    resolved = system.protocol._resolve(system)
+    for drive in resolved.drives:
+        if isinstance(drive, _ChannelDrive):
+            ket, bra = parse_E(drive.channel)
+            if ket == bra:
+                hc[idx[ket], idx[bra]] += complex(drive.coefficient(0.0))
+
+    legs = system.level_structure._laser_legs
 
     def _group(group: str) -> np.ndarray:
         m = np.zeros((d, d), dtype=complex)
-        for chan, ratio in ratios.get(group, {}).items():
-            ket, bra = parse_E(chan)
-            m[idx[ket], idx[bra]] += ratio
+        for leg in legs:
+            if leg.group == group:
+                ket, bra = parse_E(leg.channel)
+                m[idx[ket], idx[bra]] += leg.factor
         return m
 
     return hc, _group("420"), _group("1013")
@@ -315,54 +322,43 @@ def _tex_frame_h7_fn(protocol, system7):
     leg's amplitude vanishes the phase/chirp defaults to 0 — with no coupling
     the rotation is pure gauge on unoccupied levels.
     """
-    if not hasattr(protocol, "get_drive_coefficients"):
-        raise TypeError(
-            f"{type(protocol).__name__} does not expose get_drive_coefficients; "
-            "pass a concrete rb87_7 laser protocol (e.g. CZProtocol/TOProtocol)."
-        )
-    hc = single_atom_hamiltonian_parts(system7)[0]  # only the static part is needed here
-    if hc.shape[0] < 7:
+    from ryd_gate.core.lowering import lower_drives
+    from ryd_gate.protocols._resolved import _LaserDrive
+
+    idx = {lvl: i for i, lvl in enumerate(system7._basis.local_levels)}
+    if len(idx) < 7:
         raise ValueError("The effective-theory converters target the rb87_7 layout.")
-    idx = {lvl: i for i, lvl in enumerate(system7.basis.local_levels)}
 
-    params = protocol._resolve(system7)
-    t_gate = float(params["t_gate"])
-    scale = float(getattr(system7, "amplitude_scale", 1.0))
+    # Lab-frame single-atom H7(t) = static diagonal + Σ coeff(t)·E[ket,bra] (+h.c.).
+    hc = np.zeros((7, 7), dtype=complex)
+    for level, energy in system7.level_structure._static_diag.items():
+        hc[idx[level], idx[level]] += complex(energy)
 
-    # The driven channels and their (row, col) placement are constant across t,
-    # so parse each E[ket,bra] name once rather than at every lowering grid point.
+    t_gate, channels = lower_drives(system7)
     channel_slots = []
-    for chan in protocol.get_drive_coefficients(0.0, params):
-        ket, bra = parse_E(chan)
-        channel_slots.append((chan, idx[ket], idx[bra], ket != bra))
+    for ch in channels:
+        ket, bra = parse_E(ch.channel)
+        channel_slots.append((ch.coefficient, idx[ket], idx[bra], ket != bra))
 
-    # Reference channel per laser group for phase extraction (largest |ratio|).
-    ratios = dict(system7.level_structure.laser_channel_ratios or {})
-    refs = {
-        group: max(chans, key=lambda ch: abs(chans[ch]))
-        for group, chans in ratios.items()
-        if chans
-    }
+    # Per-laser-group coefficient (before leg expansion) for the tex-frame phase
+    # rotation: coefficient = |Omega|·e^{-i phi}.
+    resolved = system7.protocol._resolve(system7)
+    group_coeff = {d.group: d.coefficient for d in resolved.drives if isinstance(d, _LaserDrive)}
     eps = 1e-7 * t_gate
-    tol = 1e-12 * scale * max(
-        abs(params.get("omega_420_max", 1.0)), abs(params.get("omega_1013_max", 1.0)), 1.0
-    )
-
-    def coeffs(t: float):
-        return protocol.get_drive_coefficients(float(t), params)
+    tol = 1e-12 * max(
+        (abs(group_coeff[g](0.0)) for g in group_coeff), default=1.0
+    ) if group_coeff else 1e-12
 
     def _phase_chirp(group: str, t: float) -> tuple[float, float]:
         """(phi, dot_phi) of the group's laser at ``t``; coefficient = |.|e^{-i phi}."""
-        chan = refs.get(group)
-        if chan is None:
+        coeff = group_coeff.get(group)
+        if coeff is None:
             return 0.0, 0.0
-        c0 = coeffs(t).get(chan, 0j)
-        cp = coeffs(t + eps).get(chan, 0j)
-        cm = coeffs(t - eps).get(chan, 0j)
+        c0 = complex(coeff(t))
+        cp = complex(coeff(min(t + eps, t_gate)))
+        cm = complex(coeff(max(t - eps, 0.0)))
         if min(abs(c0), abs(cp), abs(cm)) < tol:
             return 0.0, 0.0
-        # The constant CG-ratio sign adds a global pi to phi — a harmless basis
-        # sign; the arg-ratio difference below is unaffected by it (and by wraps).
         return -float(np.angle(c0)), -float(np.angle(cp * np.conjugate(cm))) / (2.0 * eps)
 
     e_levels = list(_MID)
@@ -370,9 +366,8 @@ def _tex_frame_h7_fn(protocol, system7):
 
     def h7_tex(t: float) -> np.ndarray:
         H = hc.copy()
-        cs = coeffs(t)
-        for chan, i, j, off_diag in channel_slots:
-            c = scale * cs[chan]
+        for coeff, i, j, off_diag in channel_slots:
+            c = complex(coeff(t))
             H[i, j] += c
             if off_diag:
                 H[j, i] += np.conjugate(c)
@@ -452,12 +447,12 @@ def lower_cz_to_effective_01r(protocol, system7):
         return value
 
     return DigitalAnalogProtocol(
-        t_gate=t_gate,
-        coupling_10=lambda t: complex(h_eff(t)[1, 0]),
-        coupling_r0=lambda t: complex(h_eff(t)[2, 0]),
-        coupling_r1=lambda t: complex(h_eff(t)[2, 1]),
-        energy_1=_energy(1),
-        energy_r=_energy(2),
+        t_gate_s=t_gate,
+        coupling_10_rad_s=lambda t: complex(h_eff(t)[1, 0]),
+        coupling_r0_rad_s=lambda t: complex(h_eff(t)[2, 0]),
+        coupling_r1_rad_s=lambda t: complex(h_eff(t)[2, 1]),
+        energy_1_rad_s=_energy(1),
+        energy_r_rad_s=_energy(2),
     )
 
 
@@ -495,13 +490,7 @@ def lower_cz_to_effective_pair(protocol, system7, *, n_steps: int | None = None)
 
     Returns an :class:`EffectivePairModel`; evolve its ``h_eff(t)`` directly.
     """
-    pairs = tuple(system7.interaction_pairs)
-    if int(system7.N) != 2 or len(pairs) != 1:
-        raise ValueError(
-            "lower_cz_to_effective_pair needs a two-atom rb87_7 system with its "
-            "geometry bound (exactly one interaction pair)."
-        )
-    v_nn = float(pairs[0][2])
+    v_nn = _single_pair_strength(system7)
 
     h7_tex, t_gate = _tex_frame_h7_fn(protocol, system7)
     dim = 7
@@ -519,6 +508,21 @@ def lower_cz_to_effective_pair(protocol, system7, *, n_steps: int | None = None)
 
     return EffectivePairModel(
         t_gate=t_gate,
-        n_steps=n_steps if n_steps is not None else getattr(protocol, "n_steps", 200),
+        n_steps=n_steps if n_steps is not None else 200,
         h_eff=h_eff,
     )
+
+
+def _single_pair_strength(system7) -> float:
+    """Read the single nearest-neighbour Rydberg pair strength ``V`` (rad/s)."""
+    from ryd_gate.core.operators import RydbergPairInteractionSpec
+
+    if int(system7.N) != 2:
+        raise ValueError("lower_cz_to_effective_pair needs a two-atom rb87_7 system.")
+    for term in system7._static_terms:
+        if term.name == "H_pair" and isinstance(term.operator, RydbergPairInteractionSpec):
+            pairs = term.operator.pairs
+            if len(pairs) != 1:
+                raise ValueError("expected exactly one interaction pair for the two-atom system.")
+            return float(pairs[0][2])
+    raise ValueError("the two-atom system has no resolved Rydberg pair interaction.")

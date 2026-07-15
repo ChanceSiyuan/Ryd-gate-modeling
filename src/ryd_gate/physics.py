@@ -1,52 +1,20 @@
-"""Physics helpers for Rb87: pulse envelopes, AC Stark shifts, ARC decay branching.
+"""Forward physics helpers for Rb87 (expert module; not a top-level export).
 
-Pulse envelopes: continuous-time Blackman flat-top windows (``blackman_window`` /
-``blackman_pulse`` / ``blackman_pulse_sqrt``) used by the gate protocols'
-amplitude shaping (:mod:`ryd_gate.protocols.gate_cz`). These are pure-numpy and
-carry no atomic-physics dependency.
+``ryd_gate.physics`` computes Hamiltonian parameters and system physical data
+*forward* from experimental/atomic inputs — single-photon Rabi frequencies,
+linear Zeeman shifts and ARC pair-state C6 coefficients. Nothing here consumes
+an ``EvolutionResult``, expectation, amplitude, sample or ensemble statistic;
+that post-processing lives in scripts/notebooks.
 
-AC Stark shift physics: ARC-derived constants and calibrated shift/scatter.
-Provides the Grimm-formula calculation for D1+D2 contributions, including
-the scalar + vector decomposition for the alkali ground state, and
-calibration against Manovitz et al. measured values at 784 nm.
+The public surface is exactly the five functions in :data:`__all__`. Everything
+else (the ARC atom cache, branching-ratio builders, the top-hat field helper,
+the Landé/Rydberg-Zeeman helpers) is private implementation.
 
 Lazy ARC import
 ---------------
-``arc`` (the alkali-Rydberg calculator) is **imported lazily**: it is pulled in
-only when an ARC-derived value is first needed (atomic constants, calibrated
-shift/scatter, single-photon Rabi, branching ratios). Importing this module —
-and in particular the pulse-envelope helpers used on the CZ gate path — does
-*not* initialize ARC. ARC-derived module attributes (``FREQ_D1`` / ``FREQ_D2`` /
-``LAMBDA_D1`` / ``LAMBDA_D2`` / ``_atom``) are resolved on first access through
-the module-level ``__getattr__`` and cached.
-
-Vector light-shift model
-------------------------
-Following Grimm, Weidemüller & Ovchinnikov (2000), the dipole shift on an
-alkali ground-state hyperfine sub-level |F, m_F⟩ in a far-detuned field can
-be written
-
-    U ∝ (2 + P g_F m_F)/3 · 1/Δ_{D2}  +  (1 − P g_F m_F)/3 · 1/Δ_{D1}
-
-where P ∈ [−1, 1] is the laser helicity (P = 0 linear, P = ±1 σ±) and
-g_F m_F is the Landé factor times the magnetic quantum number of the
-ground state. We bundle these into a single dimensionless
-
-    pol  ≡  P · g_F · m_F        (default 0 = scalar / linear-pol limit)
-
-so that the existing scalar weights (2/3, 1/3) are recovered for ``pol=0``
-and the calibration to the Manovitz et al. linear-polarization measurement
-remains valid. Setting ``pol ≠ 0`` adds the vector contribution; positive
-``pol`` enhances the D2 weight at the expense of D1, negative does the
-opposite.
-
-For the experimentally relevant ⁸⁷Rb |5S₁/₂, F=2, m_F=−2⟩ state used in
-Manovitz et al., g_F = +1/2, so ``pol = -P/1`` (a pure σ⁺ beam gives
-``pol=-1``).
-
-Branching ratios: radiative decay branching for Rydberg and intermediate
-states, computed from ARC dipole matrix elements and Clebsch-Gordan
-coefficients.
+``arc`` is imported lazily: it is pulled in only when an ARC-derived value is
+first needed (Rabi frequency, pair C6, branching ratios). Importing this module
+does not initialize ARC.
 """
 
 from __future__ import annotations
@@ -58,91 +26,18 @@ from scipy.constants import c, epsilon_0, hbar, physical_constants
 
 _MU_B = physical_constants["Bohr magneton"][0]  # Bohr magneton, J/T
 
-# ======================================================================
-# PULSE ENVELOPE KERNELS (pure numpy; no ARC dependency)
-# ======================================================================
-
-
-def blackman_window(t, t_rise):
-    """Evaluate the Blackman window function.
-
-    Parameters
-    ----------
-    t : array_like
-        Time values.
-    t_rise : float
-        Rise time of the window.
-
-    Returns
-    -------
-    numpy.ndarray
-        Window amplitude in [0, 1].
-    """
-    return (0.42 - 0.5 * np.cos(2 * np.pi * t / (2 * t_rise)) +
-            0.08 * np.cos(4 * np.pi * t / (2 * t_rise)))
-
-
-def blackman_pulse(t, t_rise, t_gate):
-    """Blackman-windowed flat-top pulse.
-
-    Parameters
-    ----------
-    t : array_like
-        Time values.
-    t_rise : float
-        Rise/fall time.
-    t_gate : float
-        Total gate duration (must be >= 2 * t_rise).
-
-    Returns
-    -------
-    numpy.ndarray
-        Pulse envelope.
-    """
-    if t_gate < 2 * t_rise:
-        raise ValueError("t_gate is too small compared to t_rise")
-    ret = (blackman_window(t, t_rise) * np.heaviside(t_rise - t, 1) +
-           np.heaviside(t - t_rise, 0) * np.heaviside(t_gate - t - t_rise, 0) +
-           blackman_window(t_gate - t, t_rise) *
-           np.heaviside(t_rise - (t_gate - t), 1))
-    return ret
-
-
-def blackman_pulse_sqrt(t, t_rise, t_gate):
-    """Square-root of the Blackman-windowed flat-top pulse.
-
-    Parameters
-    ----------
-    t : array_like
-        Time values.
-    t_rise : float
-        Rise/fall time.
-    t_gate : float
-        Total gate duration (must be >= 2 * t_rise).
-
-    Returns
-    -------
-    numpy.ndarray
-        Square-root pulse envelope.
-    """
-    return np.sqrt(np.maximum(blackman_pulse(t, t_rise, t_gate), 0))
+__all__ = [
+    "single_photon_rabi",
+    "rb87_7_mp_rabi_frequencies",
+    "rb87_297_clock_rabi_frequencies",
+    "zeeman_shift_rad_s",
+    "arc_pair_c6_rad_s_um6",
+]
 
 
 # ======================================================================
-# ARC-DERIVED ATOMIC CONSTANTS (lazy — see module docstring)
+# ARC atom (lazy)
 # ======================================================================
-
-GAMMA_D2: float = 2 * np.pi * 6.065e6  # rad/s
-GAMMA_D1: float = 2 * np.pi * 5.746e6  # rad/s
-
-# Landé g-factor for ⁸⁷Rb 5S_{1/2} F=2 (used to convert pol → P·g_F·m_F).
-G_F_5S12_F2: float = 0.5
-
-# Calibration reference (Manovitz et al., linear polarization)
-LAMBDA_PAPER: float = 784.0                    # nm
-CALIBRATION_SHIFT_HZ: float = -12.2e6          # Hz at 160 uW
-CALIBRATION_SCATTER_HZ: float = 35.0           # Hz at 160 uW
-POWER_REF_UW: float = 160.0                    # uW reference power
 
 
 @functools.lru_cache(maxsize=1)
@@ -153,132 +48,40 @@ def _get_atom():
     return Rubidium87()
 
 
-@functools.lru_cache(maxsize=1)
-def _d_line_frequencies() -> tuple[float, float]:
-    """ARC D1/D2 transition frequencies (Hz), computed once and cached."""
-    atom = _get_atom()
-    freq_d2 = atom.getTransitionFrequency(5, 0, 0.5, 5, 1, 1.5)
-    freq_d1 = atom.getTransitionFrequency(5, 0, 0.5, 5, 1, 0.5)
-    return freq_d1, freq_d2
-
-
-@functools.lru_cache(maxsize=1)
-def _calibration() -> tuple[float, float]:
-    """Shift/scatter calibration factors against the 784 nm reference, cached.
-
-    Calibration is performed in the linear-polarization (pol=0) limit, matching
-    the experimental conditions of Manovitz et al.
-    """
-    s784, sc784 = _raw_shift_and_scatter(LAMBDA_PAPER, pol=0.0)
-    return float(CALIBRATION_SHIFT_HZ / s784), float(CALIBRATION_SCATTER_HZ / sc784)
-
-
-def __getattr__(name: str):
-    """Resolve ARC-derived module attributes on first access (then cached)."""
-    if name == "_atom":
-        return _get_atom()
-    if name in {"FREQ_D1", "FREQ_D2", "LAMBDA_D1", "LAMBDA_D2"}:
-        freq_d1, freq_d2 = _d_line_frequencies()
-        return {
-            "FREQ_D1": freq_d1,
-            "FREQ_D2": freq_d2,
-            "LAMBDA_D1": c / freq_d1 * 1e9,  # nm
-            "LAMBDA_D2": c / freq_d2 * 1e9,  # nm
-        }[name]
-    raise AttributeError(f"module 'ryd_gate.physics' has no attribute {name!r}")
-
-
-def _raw_shift_and_scatter(wavelengths_nm, pol: float = 0.0):
-    """Grimm formula for D1+D2 contributions, with scalar+vector weights.
-
-    Parameters
-    ----------
-    wavelengths_nm : float or ndarray
-        Laser wavelength(s) in nm.
-    pol : float, optional
-        Polarization parameter ``P · g_F · m_F`` (default 0, linear).
-        ``pol=0`` recovers the pure-scalar (2/3, 1/3) D2/D1 weights.
-
-    Returns
-    -------
-    shift, scatter : same shape as input, in consistent arbitrary units.
-    """
-    freq_d1, freq_d2 = _d_line_frequencies()
-    wavelengths_nm = np.asarray(wavelengths_nm, dtype=float)
-    omega = 2 * np.pi * c / (wavelengths_nm * 1e-9)
-
-    shift = np.zeros_like(omega)
-    scatter = np.zeros_like(omega)
-
-    weight_D2 = (2.0 + pol) / 3.0
-    weight_D1 = (1.0 - pol) / 3.0
-
-    for omega_line, Gamma_line, w in [
-        (2 * np.pi * freq_d2, GAMMA_D2, weight_D2),
-        (2 * np.pi * freq_d1, GAMMA_D1, weight_D1),
-    ]:
-        Dr = omega_line - omega
-        Dc = omega_line + omega
-        shift += w * Gamma_line / omega_line**3 * (1.0 / Dr + 1.0 / Dc)
-        scatter += (w * Gamma_line**2 / omega_line**3
-                    * (omega / omega_line)**3 * (1.0 / Dr + 1.0 / Dc)**2)
-
-    return shift, scatter
-
-
-def compute_shift_scatter(wavelengths_nm, pol: float = 0.0):
-    """Calibrated AC Stark shift (Hz) and scattering rate (Hz).
-
-    Calibrated to the paper's measured values at 784 nm (160 μW, 1 μm waist,
-    linear polarization). Accepts scalar or array input.
-
-    Parameters
-    ----------
-    wavelengths_nm : float or ndarray
-        Laser wavelength(s) in nm.
-    pol : float, optional
-        Polarization parameter ``P · g_F · m_F`` (default 0 = linear).
-        See module docstring for sign conventions. ``pol=0`` matches the
-        original scalar model and the experimental calibration condition.
-
-    Returns
-    -------
-    shift_Hz, scatter_Hz : same shape as input.
-    """
-    s, sc = _raw_shift_and_scatter(wavelengths_nm, pol=pol)
-    shift_cal, scatter_cal = _calibration()
-    return s * shift_cal, sc * scatter_cal
-
-
 # ======================================================================
 # LASER POWER -> SINGLE-PHOTON RABI
 # ======================================================================
 
-# Default Rydberg level for the 'our' 70S two-photon configuration.
-RYD_LEVEL_OUR: int = 70
 
+def _electric_field_uniform_beam(power_w: float, beam_area_um2: float) -> float:
+    """Peak electric field (V/m) of a top-hat beam of ``power_w`` over ``beam_area_um2``.
 
-def electric_field_uniform_beam(power_w: float, beam_area: float) -> float:
-    """Peak electric field (V/m) of a laser whose power fills a top-hat aperture.
-
-    The beam is modeled as a top-hat: total power ``power_w`` (W) spread
-    uniformly over an area ``beam_area`` (μm²), so the intensity is
-    ``I = P / A``. The plane-wave relation ``I = (c ε0 / 2) E0²`` then gives the
-    field amplitude, matching the convention ARC uses internally in
-    ``getRabiFrequency`` / ``getRabiFrequency2``.
+    Intensity ``I = P / A`` and the plane-wave relation ``I = (c ε0 / 2) E0²``,
+    matching the convention ARC uses internally in ``getRabiFrequency2``.
     """
-    if power_w < 0.0:
-        raise ValueError("power_w must be non-negative.")
-    if beam_area <= 0.0:
-        raise ValueError("beam_area must be positive.")
-    area_m2 = beam_area * (1e-6)**2
+    area_m2 = beam_area_um2 * (1e-6) ** 2
     intensity = power_w / area_m2
     return float(np.sqrt(2.0 * intensity / (c * epsilon_0)))
 
 
+def _is_int(v) -> bool:
+    return isinstance(v, (int, np.integer)) and not isinstance(v, bool)
+
+
+def _check_transition_level(tag: str, n: int, l: int, j: float, mj: float) -> None:
+    if not (_is_int(n) and n >= 1):
+        raise ValueError(f"{tag}: n must be a positive integer; got {n!r}.")
+    if not (_is_int(l) and 0 <= l < n):
+        raise ValueError(f"{tag}: l must be an integer in [0, n); got {l!r}.")
+    if j not in (abs(l - 0.5), l + 0.5):
+        raise ValueError(f"{tag}: j must be l±1/2 for a single valence electron; got {j!r}.")
+    if abs(mj) > j or (j - abs(mj)) % 1 != 0:
+        raise ValueError(f"{tag}: |mj| must be <= j with mj in the j ladder; got mj={mj!r}, j={j!r}.")
+
+
 def single_photon_rabi(
     power_w: float,
-    beam_area: float,
+    beam_area_um2: float,
     *,
     n1: int,
     l1: int,
@@ -291,36 +94,91 @@ def single_photon_rabi(
 ) -> float:
     """Resonant single-photon Rabi frequency (rad/s) for a uniform top-hat beam.
 
-    Combines :func:`electric_field_uniform_beam` with the ARC dipole matrix
-    element of the ``|n1 l1 j1 mj1⟩ → |n2 l2 j2 (mj1+q)⟩`` transition
-    (``Ω = |d| E0 / ħ``). ``q`` is the laser polarization (-1, 0, +1 for
-    σ⁻, π, σ⁺).
+    Combines the top-hat field of ``power_w`` (W) over ``beam_area_um2`` (μm²)
+    with the ARC dipole matrix element of the
+    ``|n1 l1 j1 mj1⟩ → |n2 l2 j2 (mj1+q)⟩`` transition (``Ω = |d| E0 / ħ``).
+    ``q`` is the laser polarization (-1, 0, +1 for σ⁻, π, σ⁺).
     """
-    e0 = electric_field_uniform_beam(power_w, beam_area)
+    if not np.isfinite(power_w) or power_w < 0.0:
+        raise ValueError(f"power_w must be finite and non-negative; got {power_w!r}.")
+    if not np.isfinite(beam_area_um2) or beam_area_um2 <= 0.0:
+        raise ValueError(f"beam_area_um2 must be finite and positive; got {beam_area_um2!r}.")
+    if isinstance(q, bool) or q not in (-1, 0, 1):
+        raise ValueError(f"q (polarization) must be -1, 0 or +1; got {q!r}.")
+    _check_transition_level("lower state", n1, l1, j1, mj1)
+    _check_transition_level("upper state", n2, l2, j2, mj1 + q)
+    e0 = _electric_field_uniform_beam(power_w, beam_area_um2)
     return float(_get_atom().getRabiFrequency2(n1, l1, j1, mj1, n2, l2, j2, q, e0))
 
 
+def rb87_7_mp_rabi_frequencies(
+    power_420_w: float,
+    power_1013_w: float,
+    beam_area_um2: float,
+    *,
+    ryd_level: int = 70,
+) -> tuple[float, float]:
+    """420/1013 nm single-photon Rabi frequencies (rad/s) for the σ⁻/σ⁺ path.
+
+    Both beams are top-hats of the given power filling the same
+    ``beam_area_um2`` (μm²). Transitions match the ``rb87_7_mp`` manifold
+    (σ⁻/σ⁺; was param_set ``our``):
+
+      * 420 nm:  5S₁/₂ (mⱼ=-1/2) --σ⁻--> 6P₃/₂ (mⱼ=-3/2)
+      * 1013 nm: 6P₃/₂ (mⱼ=-1/2) --σ⁺--> nS₁/₂ (mⱼ=+1/2)
+
+    Returns ``(omega_420, omega_1013)`` in rad/s. The 420 leg carries the
+    clock-state ``1/√2`` amplitude factor (mF=0 splitting into mJ=±1/2).
+    """
+    omega_420 = single_photon_rabi(
+        power_420_w, beam_area_um2,
+        n1=5, l1=0, j1=0.5, mj1=-0.5, n2=6, l2=1, j2=1.5, q=-1,
+    ) / np.sqrt(2)
+    omega_1013 = single_photon_rabi(
+        power_1013_w, beam_area_um2,
+        n1=6, l1=1, j1=1.5, mj1=-1.5, n2=ryd_level, l2=0, j2=0.5, q=1,
+    )
+    return omega_420, omega_1013
+
+
+def rb87_297_clock_rabi_frequencies(
+    power_297_w: float,
+    beam_area_um2: float,
+    *,
+    ryd_level: int = 53,
+) -> tuple[float, float]:
+    """297 nm σ⁻ single-photon Rabi frequencies (rad/s) from the clock state.
+
+    One top-hat beam of the given power filling ``beam_area_um2`` (μm²) drives
+    both Zeeman branches out of the clock-like ground state
+    ``|1⟩ = (|m_J=-1/2, m_I=+1/2⟩ + |m_J=+1/2, m_I=-1/2⟩)/√2``:
+
+      * target:  5S₁/₂ (mⱼ=-1/2) --σ⁻--> nP₃/₂ (mⱼ=-3/2)   (m_I=+1/2 spectator)
+      * garbage: 5S₁/₂ (mⱼ=+1/2) --σ⁻--> nP₃/₂ (mⱼ=-1/2)   (m_I=-1/2 spectator)
+
+    Both legs carry the clock-state ``1/√2`` amplitude factor. Returns
+    ``(omega_r, omega_r_garb)`` in rad/s.
+    """
+    omega_r = single_photon_rabi(
+        power_297_w, beam_area_um2,
+        n1=5, l1=0, j1=0.5, mj1=-0.5, n2=ryd_level, l2=1, j2=1.5, q=-1,
+    ) / np.sqrt(2)
+    omega_r_garb = single_photon_rabi(
+        power_297_w, beam_area_um2,
+        n1=5, l1=0, j1=0.5, mj1=0.5, n2=ryd_level, l2=1, j2=1.5, q=-1,
+    ) / np.sqrt(2)
+    return omega_r, omega_r_garb
+
+
 # ======================================================================
-# MAGNETIC FIELD -> RYDBERG ZEEMAN SHIFT
+# MAGNETIC FIELD -> ZEEMAN SHIFT
 # ======================================================================
 
 
-def lande_gj(l: int, j: float, s: float = 0.5) -> float:
+def _lande_gj(l: int, j: float, s: float = 0.5) -> float:
     """Landé g-factor g_J for a fine-structure level ``|l j⟩`` (spin ``s``).
 
-    Parameters
-    ----------
-    l : int
-        Orbital angular momentum quantum number.
-    j : float
-        Total (fine-structure) angular momentum quantum number.
-    s : float, optional
-        Spin quantum number (default 1/2 for an alkali valence electron).
-
-    Returns
-    -------
-    float
-        The Landé g-factor. For an nS_{1/2} level (l=0, j=1/2) this is 2.
+    For an nS_{1/2} level (l=0, j=1/2) this is 2.
     """
     return 1.0 + (j * (j + 1) + s * (s + 1) - l * (l + 1)) / (2 * j * (j + 1))
 
@@ -328,126 +186,24 @@ def lande_gj(l: int, j: float, s: float = 0.5) -> float:
 def zeeman_shift_rad_s(magnetic_field_G: float, *, l: int, j: float, delta_mj: float) -> float:
     """Linear Zeeman shift (rad/s) between two ``m_j`` states of a ``|l j⟩`` level.
 
-    ``Δω = (μ_B / ħ) · g_J(l, j) · Δm_j · B`` with ``B = magnetic_field_G · 1e-4``
-    (T) and :func:`lande_gj` for the fine-structure g-factor.
-
-    Parameters
-    ----------
-    magnetic_field_G : float
-        Bias magnetic field in Gauss.
-    l : int
-        Orbital angular momentum quantum number of the level.
-    j : float
-        Total (fine-structure) angular momentum quantum number of the level.
-    delta_mj : float
-        ``m_j`` difference between the two states.
-
-    Returns
-    -------
-    float
-        The Zeeman shift in rad/s.
+    ``Δω = (μ_B / ħ) · g_J(l, j) · Δm_j · B`` with ``B = magnetic_field_G · 1e-4`` (T).
     """
+    if not np.isfinite(magnetic_field_G):
+        raise ValueError(f"magnetic_field_G must be finite; got {magnetic_field_G!r}.")
     B_T = magnetic_field_G * 1e-4
-    return (_MU_B / hbar) * lande_gj(l, j) * delta_mj * B_T
+    return (_MU_B / hbar) * _lande_gj(l, j) * delta_mj * B_T
 
 
-def rydberg_zeeman_shift_rad_s(magnetic_field_G: float, *, manifold: str) -> float:
-    """Linear Zeeman splitting (rad/s) of the garbage Rydberg state ``r_garb``.
+def _rydberg_zeeman_shift_rad_s(magnetic_field_G: float, *, manifold: str) -> float:
+    """Linear Zeeman splitting (rad/s) of ``r_garb`` relative to ``r`` (nS_{1/2}).
 
-    The seven-level Rb87 gate model reaches an opposite-``m_j`` Rydberg Zeeman
-    state ``r_garb`` through polarization leakage. For an ``nS_{1/2}`` Rydberg
-    level the two states differ by ``Δm_j = 1`` (m_j = ±1/2), so the energy of
-    ``r_garb`` relative to ``r`` is the linear Zeeman shift
-    :func:`zeeman_shift_rad_s` with ``g_J = 2`` (``nS_{1/2}``). The result is
-    positive for positive ``B``, matching the Hamiltonian convention
-    ``h[6, 6] = +ryd_zeeman_shift`` (``r_garb`` above ``r``).
-
-    Parameters
-    ----------
-    magnetic_field_G : float
-        Bias magnetic field in Gauss.
-    manifold : str
-        ``"mp"`` (σ⁻/σ⁺) or ``"pm"`` (σ⁺/σ⁻); both are ``nS_{1/2}`` states with
-        opposite ``m_j = ±1/2`` (``Δm_j = 1``).
-
-    Returns
-    -------
-    float
-        The Zeeman shift in rad/s.
+    Both ``r`` and ``r_garb`` are ``nS_{1/2}`` states with opposite
+    ``m_j = ±1/2`` (``Δm_j = 1``, ``g_J = 2``). Positive for positive ``B``,
+    matching ``h[6, 6] = +ryd_zeeman_shift``.
     """
     if manifold not in ("mp", "pm"):
         raise ValueError(f"Unknown rb87 manifold '{manifold}' (expected 'mp' or 'pm').")
     return zeeman_shift_rad_s(magnetic_field_G, l=0, j=0.5, delta_mj=1.0)
-
-
-def our_laser_rabis(
-    p420_w: float,
-    p1013_w: float,
-    beam_area: float,
-    *,
-    ryd_level: int = RYD_LEVEL_OUR,
-) -> tuple[float, float]:
-    """420/1013 nm single-photon Rabi frequencies (rad/s) for the σ⁻/σ⁺ path.
-
-    Both beams are top-hats of the given power filling the same
-    ``beam_area`` (μm²). Transitions match the ``rb87_7_mp`` manifold
-    (σ⁻/σ⁺; was param_set ``our``):
-
-      * 420 nm:  5S₁/₂ (mⱼ=-1/2) --σ⁻--> 6P₃/₂ (mⱼ=-3/2)
-      * 1013 nm: 6P₃/₂ (mⱼ=-1/2) --σ⁺--> nS₁/₂ (mⱼ=+1/2)
-
-    Returns
-    -------
-    (omega_420, omega_1013) : tuple of float
-        Single-photon Rabi frequencies in rad/s.
-    """
-    omega_420 = single_photon_rabi(
-        p420_w, beam_area,
-        n1=5, l1=0, j1=0.5, mj1=-0.5, n2=6, l2=1, j2=1.5, q=-1,
-    )/np.sqrt(2)  # sqrt(2) factor for mF=0 splitting into mJ=-1/2 and mJ=+1/2 components
-    omega_1013 = single_photon_rabi(
-        p1013_w, beam_area,
-        n1=6, l1=1, j1=1.5, mj1=-1.5, n2=ryd_level, l2=0, j2=0.5, q=1,
-    )
-    return omega_420, omega_1013
-
-
-# Default Rydberg level for the 297 nm single-photon configuration.
-RYD_LEVEL_297: int = 53
-
-
-def direct_297_rabis(
-    power_w: float,
-    beam_area: float,
-    *,
-    ryd_level: int = RYD_LEVEL_297,
-) -> tuple[float, float]:
-    """297 nm σ⁻ single-photon Rabi frequencies (rad/s) from the clock state.
-
-    One top-hat beam of the given power filling ``beam_area`` (μm²) drives both
-    Zeeman branches out of the clock-like ground state
-    ``|1⟩ = (|m_J=-1/2, m_I=+1/2⟩ + |m_J=+1/2, m_I=-1/2⟩)/√2``:
-
-      * target:  5S₁/₂ (mⱼ=-1/2) --σ⁻--> nP₃/₂ (mⱼ=-3/2)   (m_I=+1/2 spectator)
-      * garbage: 5S₁/₂ (mⱼ=+1/2) --σ⁻--> nP₃/₂ (mⱼ=-1/2)   (m_I=-1/2 spectator)
-
-    Both legs carry the clock-state 1/sqrt(2) amplitude factor.
-
-    Returns
-    -------
-    (omega_r, omega_garb) : tuple of float
-        Single-photon Rabi frequencies in rad/s for the target and garbage
-        branches.
-    """
-    omega_r = single_photon_rabi(
-        power_w, beam_area,
-        n1=5, l1=0, j1=0.5, mj1=-0.5, n2=ryd_level, l2=1, j2=1.5, q=-1,
-    ) / np.sqrt(2)  # sqrt(2) factor for mF=0 splitting into mJ=-1/2 and mJ=+1/2 components
-    omega_garb = single_photon_rabi(
-        power_w, beam_area,
-        n1=5, l1=0, j1=0.5, mj1=0.5, n2=ryd_level, l2=1, j2=1.5, q=-1,
-    ) / np.sqrt(2)
-    return omega_r, omega_garb
 
 
 # ======================================================================
@@ -522,7 +278,7 @@ def arc_pair_c6_rad_s_um6(
     eigenvalue whose eigenvector has the largest overlap with the bare
     ``|mj1, mj2⟩`` channel is returned; a warning reports the overlap when it is
     not dominant (< 0.5). Results are cached (``theta``/``phi`` rounded to
-    1e-9 rad), so repeated per-pair lookups at the same orientation are free.
+    1e-9 rad).
     """
     if n2 is None:
         n2, l2, j2, mj2 = n1, l1, j1, mj1
@@ -536,12 +292,12 @@ def arc_pair_c6_rad_s_um6(
 
 
 # ======================================================================
-# BRANCHING RATIOS
+# BRANCHING RATIOS (private; consumed by core.physical_models)
 # ======================================================================
 
 
 def _rydberg_branching_ratios(atom, ryd_level, manifold):
-    """Compute branching ratios for Rydberg radiative decay.
+    """Branching ratios for Rydberg radiative decay.
 
     ``manifold`` is ``"mp"`` (σ⁻/σ⁺, Rydberg mⱼ=-1/2; was param_set "our") or
     ``"pm"`` (σ⁺/σ⁻, mⱼ=+1/2; was "lukin").
@@ -619,7 +375,7 @@ def _rydberg_branching_ratios(atom, ryd_level, manifold):
 
 
 def _mid_branching_ratios(atom, F, mF):
-    """Compute branching ratios for 6P3/2 intermediate state decay."""
+    """Branching ratios for 6P3/2 intermediate-state decay."""
     ne, le, je, fe, mfe = 6, 1, 3 / 2, F, mF
     ng, lg, jg = 5, 0, 1 / 2
 

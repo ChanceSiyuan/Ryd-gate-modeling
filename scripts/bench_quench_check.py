@@ -26,14 +26,19 @@ import time
 import numpy as np
 
 import ryd_gate as rg
-from ryd_gate import InteractionSpec, level_structure
+from ryd_gate import level_structure
 from ryd_gate.lattice import Register
+from ryd_gate.protocols import SweepProtocol
 
 
 def build_system(args):
+    # The interaction C6 is an atomic property of the Rydberg level and lives on
+    # the level_structure preset (70S -> ~2pi*874 GHz*um^6 via ARC); it is no
+    # longer passed as an explicit InteractionSpec. Nearest-neighbour coupling
+    # (the old mode="nn") is reproduced with a distance cutoff at the lattice
+    # spacing, which keeps the distance-a pairs and drops the a*sqrt(2) diagonals.
     Omega = 2 * np.pi * args.omega_mhz * 1e6
     geom = Register.rectangle(args.lx, args.ly, spacing_um=args.a_um)
-    C6 = 2 * np.pi * 874e9
     t_sweep = args.t_sweep
     delta_start = -2 * np.pi * 10.0e6
     delta_end = 2 * np.pi * 10.0e6
@@ -60,23 +65,26 @@ def build_system(args):
         delta_amp = 0.5 * (delta_end - delta_start)
         return delta_mid - delta_amp * np.cos(2.0 * np.pi * s)
 
-    protocol = rg.SweepProtocol(
-        t_gate=t_sweep,
-        omega_half_fn=omega_half_t,
-        delta_fn=delta_t,
-        address_fn=None,
+    # SweepProtocol drives H[r,1] = omega_half_rad_s (already Omega/2) and
+    # H[r,r] = -detuning_rad_s -- the same convention the old omega_half_fn /
+    # delta_fn schedule used.
+    protocol = SweepProtocol(
+        t_gate_s=t_sweep,
+        omega_half_rad_s=omega_half_t,
+        detuning_rad_s=delta_t,
     )
     system = rg.RydbergSystem(
         level_structure=level_structure("1r"),
         register=geom,
-        interaction=InteractionSpec(C6=C6, mode="nn"),
         protocol=protocol,
+        interaction_cutoff_um=args.a_um,
     )
     return system, Omega, t_sweep
 
 
 def run_exact(system, t_eval):
-    observables = system.observables.site_populations("r")  # {"n_r_i": n('r', i)}
+    obs = system.observables
+    observables = {f"n_r_{i}": obs.n("r", i) for i in range(system.N)}  # per-site "n_r_i"
     t0 = time.perf_counter()
     res = rg.simulate(system, t_eval=t_eval, observables=observables)  # default exact_ode (adaptive DOP853)
     elapsed = time.perf_counter() - t0
@@ -86,9 +94,9 @@ def run_exact(system, t_eval):
 
 
 def run_tn(system, backend, t_eval, opts):
-    factory = system.observables
-    observables = factory.site_populations("r")  # per-site scalar labels "n_r_i"
-    observables["n_mean"] = (1.0 / system.N) * factory.level_sum("r")
+    obs = system.observables
+    observables = {f"n_r_{i}": obs.n("r", i) for i in range(system.N)}  # per-site "n_r_i"
+    observables["n_mean"] = (1.0 / system.N) * sum(obs.n("r", i) for i in range(system.N))
     t0 = time.perf_counter()
     res = rg.simulate(
         system, backend=backend, t_eval=t_eval,
@@ -122,10 +130,21 @@ def main():
     dt_tn = args.dt_frac / Omega
 
     tn_opts = {
-        "mps": {"chi_max": args.chi_max, "dt": dt_tn, "svd_min": 1e-10},
-        "peps": {"chi_max": min(args.chi_max, 10), "dt": dt_tn, "svd_min": 1e-8,
-                 "measurement_environment": "bp", "update_environment": "ntu", "max_iter": 10,
-                 "use_cuda": args.peps_cuda},
+        # MPS TDVP options are exactly these three keys (E23).
+        "mps": {"time_step_s": dt_tn, "bond_dimension": args.chi_max, "discarded_weight_tolerance": 1e-10},
+        # PEPS real-time options are exactly these ten keys; NTU/environment choices are report-only.
+        "peps": {
+            "time_step_s": dt_tn,
+            "bond_dimension": min(args.chi_max, 10),
+            "svd_tolerance": 1e-8,
+            "ntu_max_iterations": 100,
+            "ntu_iteration_tolerance": 1e-10,
+            "measurement_method": "belief_propagation",
+            "environment_bond_dimension": min(args.chi_max, 16),
+            "environment_tolerance": 1e-8,
+            "environment_max_iterations": 50,
+            "device": "cuda" if args.peps_cuda else "cpu",
+        },
     }
 
     results = {}

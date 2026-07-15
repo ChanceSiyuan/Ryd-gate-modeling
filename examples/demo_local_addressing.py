@@ -11,16 +11,23 @@ atom array:
   2. Higgs mode (Fig 5): One sublattice is pinned then released,
      producing long-lived oscillations of the staggered magnetization.
 
+The whole demo is dimensionless: energies and times are in units of the
+Rabi frequency Omega (fixed to OMEGA = 1 rad/s below). The nearest-neighbour
+van der Waals interaction is fixed to V_NN by choosing the lattice spacing so
+that C6/spacing^6 = V_NN, with an interaction cutoff just past the NN distance
+so the model stays nearest-neighbour only.
+
 Usage:
-    uv run python scripts/demo_local_addressing.py
-    uv run python scripts/demo_local_addressing.py --experiment domain
-    uv run python scripts/demo_local_addressing.py --experiment higgs
-    uv run python scripts/demo_local_addressing.py --Lx 3 --Ly 3
+    python examples/demo_local_addressing.py
+    python examples/demo_local_addressing.py --experiment domain
+    python examples/demo_local_addressing.py --experiment higgs
+    python examples/demo_local_addressing.py --Lx 3 --Ly 3
 """
 
 import argparse
 import os
 import time as _time
+from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -32,18 +39,15 @@ from _coarsening import (
     local_staggered_magnetization,
 )
 
-from ryd_gate import RydbergSystem, SweepProtocol, level_structure
-from ryd_gate.backends.exact import simulate
-from ryd_gate.core.level_structures import InteractionSpec
-from ryd_gate.core.states import (
-    domain_config,
-    product_state,
-)
-from ryd_gate.lattice import Register, is_in_domain
+from ryd_gate import Register, RydbergSystem, level_structure, simulate
+from ryd_gate.physics import arc_pair_c6_rad_s_um6
+from ryd_gate.protocols import SweepProtocol
 
 # ---------------------------------------------------------------------------
 # Physics constants (in units of Omega = 1)
 # ---------------------------------------------------------------------------
+OMEGA = 1.0  # rad/s; sets the (arbitrary) physical unit — all else is Omega-scaled
+RYD_LEVEL = 70  # nS Rydberg level backing the effective "1r" interaction
 V_NN = 24.0  # nearest-neighbor van der Waals interaction
 DELTA_START = -3.0  # sweep start (deep in disordered phase)
 DELTA_PIN = -4.0  # local pinning detuning strength
@@ -51,51 +55,95 @@ T_SWEEP = 55.0  # adiabatic sweep duration
 OMEGA_RAMP_FRAC = 0.1  # fraction of sweep for Omega ramp-up
 
 
-def _make_sweep_protocol(delta_start, delta_end, t_gate, *, addressing=None):
+def _build_config(Lx, Ly):
+    """Shared lattice + level-structure setup for both experiments.
+
+    Fixes the nearest-neighbour van der Waals interaction to ``V_NN`` (in units
+    of ``OMEGA``) by choosing the spacing so ``C6/spacing**6 == V_NN * OMEGA`` and
+    a cutoff just past the NN distance, reproducing the old NN-only interaction.
+    """
+    c6 = arc_pair_c6_rad_s_um6(
+        n1=RYD_LEVEL, l1=0, j1=0.5, mj1=-0.5, mj2=-0.5,
+        theta=0.0, phi=0.0, degenerate=False,
+    )
+    spacing = (c6 / (V_NN * OMEGA)) ** (1.0 / 6.0)
+    cfg = SimpleNamespace(
+        ls=level_structure("1r", ryd_level=RYD_LEVEL),
+        register=Register.rectangle(Lx, Ly, spacing_um=spacing),
+        cutoff=spacing * 1.2,  # NN only (NNN at sqrt(2)*spacing is excluded)
+        sublattice=np.array([(-1) ** (r + c) for r in range(Lx) for c in range(Ly)]),
+        grid=np.array([(r, c) for r in range(Lx) for c in range(Ly)], dtype=float),
+        Lx=Lx, Ly=Ly, N=Lx * Ly,
+    )
+    print(f"  Built {Lx}x{Ly} lattice system ({cfg.N} atoms, dim = {2 ** cfg.N})")
+    return cfg
+
+
+def _build_system(cfg, proto):
+    return RydbergSystem(
+        level_structure=cfg.ls,
+        register=cfg.register,
+        protocol=proto,
+        interaction_cutoff_um=cfg.cutoff,
+    )
+
+
+def _make_continuous_protocol(delta_start, delta_end, t_sweep, t_hold, addressing=None):
+    """One continuous piecewise sweep+hold schedule (units of Omega).
+
+    Sweep phase (``t <= t_sweep``): Omega ramps up over the first
+    ``OMEGA_RAMP_FRAC`` of the sweep then holds at full; Delta chirps
+    ``delta_start -> delta_end``; the local pinning (``addressing``) is on.
+    Hold phase (``t > t_sweep``): Omega and Delta stay at their end-of-sweep
+    values and the pinning is released — one continuous schedule, no seam.
+    """
     addressing = addressing or {}
+    ramp_time = OMEGA_RAMP_FRAC * t_sweep
 
-    def omega_half_t(t):
-        ramp_time = OMEGA_RAMP_FRAC * t_gate
-        if ramp_time == 0:
-            return 0.5
-        return 0.5 * min(1.0, max(0.0, t / ramp_time))
+    def omega_half(t):
+        frac = 1.0 if ramp_time == 0 else min(1.0, max(0.0, t / ramp_time))
+        return 0.5 * OMEGA * frac
 
-    def delta_t(t):
-        ramp_time = OMEGA_RAMP_FRAC * t_gate
+    def detuning(t):
         if t <= ramp_time:
-            return delta_start
-        chirp_time = max(t_gate - ramp_time, np.finfo(float).eps)
-        frac = np.clip((t - ramp_time) / chirp_time, 0.0, 1.0)
-        return delta_start + (delta_end - delta_start) * frac
+            d = delta_start
+        elif t <= t_sweep:
+            chirp = max(t_sweep - ramp_time, np.finfo(float).eps)
+            frac = np.clip((t - ramp_time) / chirp, 0.0, 1.0)
+            d = delta_start + (delta_end - delta_start) * frac
+        else:
+            d = delta_end
+        return d * OMEGA
+
+    def local_detuning(t, i):
+        return addressing.get(i, 0.0) * OMEGA if t <= t_sweep else 0.0
 
     return SweepProtocol(
-        t_gate=t_gate,
-        omega_half_fn=omega_half_t,
-        delta_fn=delta_t,
-        address_fn=(lambda t, i: addressing.get(i, 0.0)) if addressing else None,
+        t_gate_s=t_sweep + t_hold,
+        omega_half_rad_s=omega_half,
+        detuning_rad_s=detuning,
+        local_detuning_rad_s=local_detuning if addressing else None,
     )
 
 
-# ---------------------------------------------------------------------------
-# Shared setup
-# ---------------------------------------------------------------------------
+def _is_in_domain(ix, iy, cx, cy, radius):
+    """Whether grid site ``(ix, iy)`` lies in a square domain around ``(cx, cy)``."""
+    return abs(ix - cx) <= radius and abs(iy - cy) <= radius
 
 
-def _setup_experiment(Lx, Ly):
-    """Build the lattice system (shared by both experiments)."""
-    geom = Register.rectangle(Lx, Ly, spacing_um=1.0)
-    system = RydbergSystem(
-        level_structure=level_structure("1r"),
-        register=geom,
-        interaction=InteractionSpec(C6=V_NN, mode="nn"),
-    )
-    print(f"  Built {Lx}x{Ly} lattice system ({system.N} atoms, dim = {2**system.N})")
-    return system
+def _domain_config(grid, sublattice, center, radius):
+    """AF1 bulk with an AF2 domain in a square region around ``center``."""
+    config = (sublattice > 0).astype(int)  # AF1: sublattice +1 sites excited
+    cx, cy = center
+    for i, (ix, iy) in enumerate(grid):
+        if _is_in_domain(ix, iy, cx, cy, radius):
+            config[i] = 1 if sublattice[i] < 0 else 0
+    return config
 
 
 def _site_occupations(result, N):
     """(n_times, N) per-site ``<n_r_i>`` from the requested expectations."""
-    return np.column_stack([result.expectation(f"n_r_{i}").real for i in range(N)])
+    return np.column_stack([result.expectation(f"n_r_{i}") for i in range(N)])
 
 
 # ---------------------------------------------------------------------------
@@ -103,78 +151,59 @@ def _site_occupations(result, N):
 # ---------------------------------------------------------------------------
 
 
-def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
+def run_domain_shrinking(cfg, n_steps, figdir):
     """Prepare an AF2 domain inside AF1 bulk, release, and watch it shrink."""
     print("=" * 60)
     print("Experiment 1: Domain Shrinking (curvature-driven coarsening)")
     print("=" * 60)
 
-    system = setup or _setup_experiment(Lx, Ly)
-    N = system.N
-    coords = system.geometry.coords
-    sublattice = system.geometry.sublattice
-    site_obs = system.observables.site_populations("r")  # {"n_r_i": n(r, i)}
+    N, grid, sublattice = cfg.N, cfg.grid, cfg.sublattice
+    Lx, Ly = cfg.Lx, cfg.Ly
 
     Delta_f = 2.5
     cx, cy = (Lx - 1) / 2.0, (Ly - 1) / 2.0
     domain_radius = 0.8
+    t_hold = 6.0
 
-    # --- Phase 1: Adiabatic sweep with pinning ---
-    print("\n  Phase 1: Adiabatic sweep with local pinning...")
-    psi0 = product_state([0] * N, N)
-    target = domain_config(coords, sublattice, (cx, cy), domain_radius)
+    # Pin the bulk (target-ground) sites during the sweep so the AF2 domain forms;
+    # the pinning is released for the hold phase (all within one protocol).
+    print("\n  One continuous sweep (with pinning) + hold (pinning off)...")
+    target = _domain_config(grid, sublattice, (cx, cy), domain_radius)
     addressing = {i: DELTA_PIN for i in range(N) if target[i] == 0}
 
-    sweep_proto = _make_sweep_protocol(
-        DELTA_START,
-        Delta_f,
-        T_SWEEP,
-        addressing=addressing,
-    )
+    proto = _make_continuous_protocol(DELTA_START, Delta_f, T_SWEEP, t_hold, addressing)
+    system = _build_system(cfg, proto)
+    site_obs = {f"n_r_{i}": system.observables.n("r", i) for i in range(N)}
 
+    t_eval = np.linspace(T_SWEEP, T_SWEEP + t_hold, n_steps)
     t0 = _time.time()
-    sweep_result = simulate(system.with_protocol(sweep_proto), psi0, observables=site_obs)
-    psi_after_sweep = sweep_result.final_state
-    print(f"    Sweep done in {_time.time() - t0:.1f}s")
+    result = simulate(system, ["1"] * N, t_eval=t_eval, observables=site_obs)
+    print(f"    Sweep+hold done in {_time.time() - t0:.1f}s")
 
-    occ_sw = _site_occupations(sweep_result, N)[0]  # endpoint profile (times == [t_gate])
+    occ_all = _site_occupations(result, N)
+    hold_times = t_eval - T_SWEEP  # hold clock: 0 at end of sweep
+
+    # End-of-sweep profile (t == T_SWEEP, pinning still on).
+    occ_sw = occ_all[0]
     ms_sw = (occ_sw * 2 - 1) @ sublattice / N
     n_sw = occ_sw.mean()
     print(f"    m_s after sweep: {ms_sw:.4f}")
     print(f"    <n> after sweep: {n_sw:.4f}")
 
-    # --- Phase 2: Free evolution (hold) ---
-    print("  Phase 2: Free evolution (pinning off)...")
-    t_hold = 6.0
-
-    hold_proto = _make_sweep_protocol(Delta_f, Delta_f, t_hold)
-    t0 = _time.time()
-    # Chaining from a previous run's dense final_state is the private research
-    # seam of backends.exact.simulate (dense-vector psi0), not public API.
-    hold_result = simulate(
-        system.with_protocol(hold_proto),
-        psi_after_sweep,
-        t_eval=np.linspace(0, t_hold, n_steps),
-        observables=site_obs,
-    )
-    hold_times = hold_result.times
-    print(f"    Hold evolution done in {_time.time() - t0:.1f}s")
-
     print("  Computing observables...")
-    occ_all = _site_occupations(hold_result, N)
     ms = (occ_all * 2 - 1) @ sublattice / N
     n_mean = occ_all.mean(axis=1)
 
     # Domain area via vectorized dot product
     domain_weight = np.zeros(N)
-    for i, (ix, iy) in enumerate(coords):
-        if is_in_domain(ix, iy, cx, cy, domain_radius):
+    for i, (ix, iy) in enumerate(grid):
+        if _is_in_domain(ix, iy, cx, cy, domain_radius):
             domain_weight[i] = 1.0 if sublattice[i] < 0 else -1.0
     domain_areas = occ_all @ domain_weight + np.sum(domain_weight < 0)
 
     # --- Post-processing: both methods ---
     print("  Post-processing (coarsening analysis)...")
-    nn_lists, nnn_lists = build_neighbor_lists(coords)
+    nn_lists, nnn_lists = build_neighbor_lists(grid)
 
     # Pick the final snapshot for the comparison figure
     snap_idx = len(hold_times) - 1
@@ -227,7 +256,7 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
     # (0,0): ms.tex -- raw occupation n_i
     _draw_lattice(
         axes[0, 0],
-        coords,
+        grid,
         occ_bin,
         "coolwarm",
         0,
@@ -240,7 +269,7 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
     # (1,0): ms.tex -- continuous m_i
     sc = _draw_lattice(
         axes[1, 0],
-        coords,
+        grid,
         m_local,
         "RdBu",
         -1,
@@ -254,7 +283,7 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
     # (0,1): coarsen.tex -- corrected occupation (flipped sites highlighted)
     _draw_lattice(
         axes[0, 1],
-        coords,
+        grid,
         occ_corr,
         "coolwarm",
         0,
@@ -275,7 +304,7 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
     cmap_class = mcolors.ListedColormap(["#2196F3", "#FF9800", "#E53935"])
     _draw_lattice(
         axes[1, 1],
-        coords,
+        grid,
         class_map,
         cmap_class,
         -0.5,
@@ -339,56 +368,42 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
 # ---------------------------------------------------------------------------
 
 
-def run_higgs_mode(Lx, Ly, n_steps, figdir, setup=None):
+def run_higgs_mode(cfg, n_steps, figdir):
     """Pin one sublattice, release, and observe order parameter oscillations."""
     print("\n" + "=" * 60)
     print("Experiment 2: Higgs Mode Oscillations")
     print("=" * 60)
 
-    system = setup or _setup_experiment(Lx, Ly)
-    N = system.N
-    sublattice = system.geometry.sublattice
-    site_obs = system.observables.site_populations("r")  # {"n_r_i": n(r, i)}
+    N, sublattice = cfg.N, cfg.sublattice
+    Lx, Ly = cfg.Lx, cfg.Ly
 
     Delta_values = [0.0, 1.1, 2.5]
     colors = plt.cm.viridis(np.linspace(0.1, 0.9, len(Delta_values)))
     addressing = {i: DELTA_PIN for i, s in enumerate(sublattice) if s > 0}
+    t_hold = 10.0
 
     all_results = {}
     for Delta_f in Delta_values:
         print(f"\n  --- Delta/Omega = {Delta_f:.1f} ---")
-        psi0 = product_state([0] * N, N)
 
-        # Sweep phase with sublattice pinning
-        sweep_proto = _make_sweep_protocol(
-            DELTA_START,
-            Delta_f,
-            T_SWEEP,
-            addressing=addressing,
-        )
+        # One continuous protocol: sweep with sublattice pinning, then hold with
+        # the pinning released — no continuation seam, one simulate() call.
+        proto = _make_continuous_protocol(DELTA_START, Delta_f, T_SWEEP, t_hold, addressing)
+        system = _build_system(cfg, proto)
+        site_obs = {f"n_r_{i}": system.observables.n("r", i) for i in range(N)}
+
+        t_eval = np.linspace(T_SWEEP, T_SWEEP + t_hold, n_steps)
         t0 = _time.time()
-        sweep_result = simulate(system.with_protocol(sweep_proto), psi0, observables=site_obs)
-        psi = sweep_result.final_state
-        occ_sw = _site_occupations(sweep_result, N)[0]
-        ms_sw = (occ_sw * 2 - 1) @ sublattice / N
-        print(f"    Sweep: {_time.time() - t0:.1f}s, m_s = {ms_sw:.4f}")
+        result = simulate(system, ["1"] * N, t_eval=t_eval, observables=site_obs)
 
-        # Hold phase (pinning off); dense-psi0 chaining is the private research
-        # seam of backends.exact.simulate.
-        hold_proto = _make_sweep_protocol(Delta_f, Delta_f, 10.0)
-        t0 = _time.time()
-        hold_result = simulate(
-            system.with_protocol(hold_proto),
-            psi,
-            t_eval=np.linspace(0, 10.0, n_steps),
-            observables=site_obs,
-        )
-        print(f"    Hold: {_time.time() - t0:.1f}s")
+        occ = _site_occupations(result, N)
+        hold_times = t_eval - T_SWEEP
+        ms_sw = (occ[0] * 2 - 1) @ sublattice / N
+        print(f"    Sweep+hold: {_time.time() - t0:.1f}s, m_s(sweep) = {ms_sw:.4f}")
 
-        occ = _site_occupations(hold_result, N)
         ms = (occ * 2 - 1) @ sublattice / N
         n_mean = occ.mean(axis=1)
-        all_results[Delta_f] = {"times": hold_result.times, "ms": ms, "n_mean": n_mean}
+        all_results[Delta_f] = {"times": hold_times, "ms": ms, "n_mean": n_mean}
 
     # --- Plotting ---
     os.makedirs(figdir, exist_ok=True)
@@ -447,20 +462,21 @@ def main():
     parser.add_argument("--Ly", type=int, default=4, help="Lattice height (default: 4)")
     parser.add_argument("--n-steps", type=int, default=200,
                         help="Hold-phase t_eval samples (default: 200); the exact solver itself is adaptive")
-    parser.add_argument("--figdir", type=str, default="docs/figures", help="Output directory for figures")
+    parser.add_argument("--figdir", type=str,
+                        default="results/lattice_dynamics/local_addressing/plots",
+                        help="Output directory for figures")
     args = parser.parse_args()
 
     print("Rydberg Array Local Addressing Demo")
     print(f"Lattice: {args.Lx} x {args.Ly} ({args.Lx * args.Ly} atoms, dim = {2 ** (args.Lx * args.Ly)})")
     print()
 
-    run_both = args.experiment == "both"
-    setup = _setup_experiment(args.Lx, args.Ly) if run_both else None
+    cfg = _build_config(args.Lx, args.Ly)
 
     if args.experiment in ("domain", "both"):
-        run_domain_shrinking(args.Lx, args.Ly, args.n_steps, args.figdir, setup)
+        run_domain_shrinking(cfg, args.n_steps, args.figdir)
     if args.experiment in ("higgs", "both"):
-        run_higgs_mode(args.Lx, args.Ly, args.n_steps, args.figdir, setup)
+        run_higgs_mode(cfg, args.n_steps, args.figdir)
 
     print("\nDone.")
 

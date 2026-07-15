@@ -1,20 +1,25 @@
-"""Tests for the primitive ``E[ket,bra]`` operator factory and the operator-model
-surface of ``RydbergSystem`` (no public ``blocks``)."""
+"""Tests for the primitive ``E[ket,bra]`` operator factory, the symbolic
+interaction specs (isotropic :class:`RydbergPairInteractionSpec` and the
+channel-resolved :class:`ChannelResolvedPairSpec`), and the ``ObservableFactory``
+lowering — all built directly on a :class:`BasisSpec` (no RydbergSystem)."""
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
-from ryd_gate import RydbergSystem, level_structure
 from ryd_gate.core.model import BasisSpec
+from ryd_gate.core.observables import ObservableFactory
 from ryd_gate.core.operators import (
     BasisOperatorFactory,
+    ChannelResolvedPairSpec,
     LocalProjectorSpec,
+    RydbergPairInteractionSpec,
     SumProjectorSpec,
     TransitionOperatorSpec,
+    materialize_sparse_operator,
     parse_E,
 )
-from ryd_gate.lattice import Register
 
 
 def _factory():
@@ -25,6 +30,9 @@ def _factory():
         total_dim=49,
     )
     return BasisOperatorFactory(basis)
+
+
+# ── E[ket,bra] name parsing & factory ────────────────────────────────────────
 
 
 def test_parse_E_tolerates_underscore_labels():
@@ -58,65 +66,72 @@ def test_is_hermitian():
     assert BasisOperatorFactory.is_hermitian("E[r_garb,r_garb]") is True
 
 
-def _chain2(name, spacing_um=4.0):
-    return RydbergSystem(
-        level_structure=level_structure(name),
-        register=Register.chain(2, spacing_um=spacing_um),
+# ── isotropic Rydberg-pair interaction spec (I05) ────────────────────────────
+
+
+def _basis_2site(levels):
+    d = len(levels)
+    return BasisSpec(
+        site_labels=("0", "1"),
+        local_levels=levels,
+        local_dim=d,
+        total_dim=d ** 2,
     )
 
 
-def test_system_has_no_public_blocks():
-    s = _chain2("1r")
-    assert not hasattr(s, "blocks")
-    assert isinstance(s.operators, BasisOperatorFactory)
+def test_pair_projector_builds_isotropic_spec():
+    f = BasisOperatorFactory(_basis_2site(("1", "r")))
+    spec = f.pair_projector([(0, 1, 3.5)], ("r",))
+    assert isinstance(spec, RydbergPairInteractionSpec)
+    assert spec.pairs == ((0, 1, 3.5),)
+    assert spec.rydberg_levels == ("r",)
 
 
-def test_symbolic_hamiltonian_channels_are_E_names():
-    o1r = _chain2("01r")
-    assert set(o1r.hamiltonian_channels) == {"E[r,1]", "E[1,0]", "E[r,0]", "E[r,r]", "E[1,1]"}
-    one_r = _chain2("1r")
-    assert set(one_r.hamiltonian_channels) == {"E[r,1]", "E[r,r]"}
-    # every channel key is an E[...] name (no physical aliases)
-    for chan in set(o1r.hamiltonian_channels) | set(one_r.hamiltonian_channels):
-        assert chan.startswith("E[") and chan.endswith("]")
+def test_isotropic_pair_interaction_materializes_double_rydberg_diagonal():
+    basis = _basis_2site(("1", "r"))  # index r == 1, site 0 most significant
+    spec = RydbergPairInteractionSpec(((0, 1, 2.0),), ("r",))
+    h = materialize_sparse_operator(spec, basis).toarray()
+    diag = np.real(np.diag(h))
+    # only |rr> (index 3) carries the pair energy V = 2.0
+    np.testing.assert_allclose(diag, [0.0, 0.0, 0.0, 2.0])
+    assert np.allclose(h, np.diag(np.diag(h)))  # purely diagonal
 
 
-def test_observables_factory_lowers_to_local_projectors():
-    """system.observables builds expressions whose lowered form is per-site
-    |level><level| matrices on the declared basis."""
-    import numpy as np
+# ── channel-resolved Rydberg-pair interaction spec (I06) ─────────────────────
 
-    s = _chain2("1r")
-    n_r_0 = s.observables.n("r", 0)
+
+def test_channel_resolved_pair_materializes_per_channel_diagonal():
+    # Two rydberg levels: index r == 0, r_garb == 1 (site 0 most significant).
+    # Basis order: |rr>=0, |r rg>=1, |rg r>=2, |rg rg>=3.
+    basis = _basis_2site(("r", "r_garb"))
+    v_rr, v_gg, v_rg = 5.0, 7.0, 3.0
+    spec = ChannelResolvedPairSpec((
+        (0, 1, "r", "r", v_rr),
+        (0, 1, "r_garb", "r_garb", v_gg),
+        (0, 1, "r", "r_garb", v_rg),
+        (0, 1, "r_garb", "r", v_rg),  # both orderings -> symmetric cross term
+    ))
+    h = materialize_sparse_operator(spec, basis).toarray()
+    diag = np.real(np.diag(h))
+    np.testing.assert_allclose(diag, [v_rr, v_rg, v_rg, v_gg])
+    assert np.allclose(h, np.diag(np.diag(h)))
+
+
+# ── ObservableFactory lowers to per-site local projectors ────────────────────
+
+
+def test_observable_factory_lowers_to_local_projector_matrix():
+    basis = _basis_2site(("1", "r"))
+    obs = ObservableFactory(basis)
+    n_r_0 = obs.n("r", 0)
     (term,) = n_r_0._terms
     assert term.coefficient == 1.0
     ((site, matrix),) = term.factors
     assert site == 0
-    r_idx = s.basis.level_index("r")
+    r_idx = basis.level_index("r")
     expected = np.zeros((2, 2), dtype=complex)
     expected[r_idx, r_idx] = 1.0
     np.testing.assert_array_equal(matrix, expected)
-    # level_sum('r') = one such term per site
-    total = s.observables.level_sum("r")
+    # a total-Rydberg observable is one such term per site (via Python sum()).
+    total = sum(obs.n("r", i) for i in range(basis.n_sites))
     assert [t.factors[0][0] for t in total._terms] == [0, 1]
-
-
-@pytest.mark.parametrize("tag", ["rb87_7_mp", "rb87_7_pm"])
-def test_rb87_primitive_channels(tag):
-    s = RydbergSystem(level_structure=level_structure(tag), register=Register.chain(1))
-    expected = {
-        "E[e1,1]", "E[e2,1]", "E[e3,1]", "E[e1,0]", "E[e2,0]", "E[e3,0]",
-        "E[r,e1]", "E[r,e2]", "E[r,e3]", "E[r_garb,e1]", "E[r_garb,e2]", "E[r_garb,e3]",
-    }
-    assert set(s.hamiltonian_channels) == expected
-    # the diagonal energies live in static terms (E[a,a]); the pair term too.
-    assert any(t.name == "H_pair" for t in s.static_hamiltonian_terms)
-    assert any(t.name.startswith("E[") for t in s.static_hamiltonian_terms)
-
-
-def test_no_laser_system_still_has_channels():
-    # A no-protocol rb87 system still exposes its allowed primitive channels.
-    s = _chain2("rb87_7_mp", spacing_um=3.0)
-    assert s.protocol is None
-    assert "E[e1,1]" in s.hamiltonian_channels
-    assert "E[r,e1]" in s.hamiltonian_channels

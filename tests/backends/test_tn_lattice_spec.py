@@ -1,208 +1,116 @@
-"""Tests for TN lattice spec and snake-order mapping."""
+"""Tests for the shared TN lowering seam (compile_tn_terms).
+
+The old ``TNLatticeSpec`` / snake-ordering machinery is gone; the TN backends now
+consume a ``RydbergSystem`` directly. These tests cover the shared lowering that
+both the MPS and PEPS engines build their Hamiltonians from.
+"""
 
 import numpy as np
 import pytest
 
-from ryd_gate import RydbergSystem, SweepProtocol
-from ryd_gate.backends.tn_common.compiler import TNCompiler, tn_lattice_spec_from_system
-from ryd_gate.backends.tn_common.lattice_spec import (
-    create_tn_lattice_spec,
-    snake_order_mapping,
+from ryd_gate import RydbergSystem, level_structure
+from ryd_gate.backends.tn_common.compiler import (
+    TNSegment,
+    compile_tn_terms,
+    plan_segments,
 )
-from ryd_gate.core.level_structures import DEFAULT_C6, InteractionSpec, level_structure
-from ryd_gate.ir import compile_hamiltonian_ir
 from ryd_gate.lattice import Register
+from ryd_gate.protocols.digital_analog import DigitalAnalogProtocol
+from ryd_gate.protocols.sweep import SweepProtocol
+
+TWO_PI = 2 * np.pi
 
 
-def _sweep(t_gate=1.0, omega=1.0, delta=0.0):
-    return SweepProtocol(
-        t_gate=t_gate,
-        omega_half_fn=lambda t: 0.5 * omega,
-        delta_fn=lambda t: delta,
+def _sweep_system(preset="1r", n=4, spacing=8.0, cutoff=9.0, local=None):
+    proto = SweepProtocol(
+        t_gate_s=0.3e-6,
+        omega_half_rad_s=lambda t: TWO_PI * 2.0e6,
+        detuning_rad_s=lambda t: TWO_PI * 1.0e6,
+        local_detuning_rad_s=local,
     )
+    return RydbergSystem(level_structure=level_structure(preset),
+                         register=Register.chain(n, spacing_um=spacing),
+                         protocol=proto, interaction_cutoff_um=cutoff)
 
 
-class TestSnakeOrderMapping:
-    def test_roundtrip(self):
-        """inv_snake[snake_to_2d[i]] == i for all i."""
-        for Lx, Ly in [(2, 2), (3, 3), (4, 4), (5, 3), (16, 16)]:
-            s2d, inv = snake_order_mapping(Lx, Ly)
-            N = Lx * Ly
-            np.testing.assert_array_equal(inv[s2d], np.arange(N))
-            np.testing.assert_array_equal(s2d[inv], np.arange(N))
+class TestCompileTNTerms:
+    def test_levels_and_channels_1r(self):
+        terms = compile_tn_terms(_sweep_system("1r"))
+        assert terms.levels == ("1", "r")
+        assert terms.rydberg_levels == ("r",)
+        channels = {(c.ket, c.bra) for c in terms.channels}
+        assert ("r", "1") in channels  # E[r,1] drive
+        assert ("r", "r") in channels  # E[r,r] detuning
 
-    def test_is_permutation(self):
-        """Snake order is a permutation of [0, N)."""
-        s2d, inv = snake_order_mapping(4, 4)
-        assert set(s2d) == set(range(16))
-        assert set(inv) == set(range(16))
+    def test_nn_cutoff_limits_pairs(self):
+        terms = compile_tn_terms(_sweep_system("1r", n=4, spacing=8.0, cutoff=9.0))
+        assert len(terms.pairs) == 3  # nearest-neighbour chain bonds only
+        for i, j, V in terms.pairs:
+            assert i < j and V > 0.0
 
-    def test_first_row_left_to_right(self):
-        """Row 0 goes left-to-right."""
-        Ly = 5
-        s2d, _ = snake_order_mapping(3, Ly)
-        # First Ly entries should be 0,1,2,...,Ly-1
-        np.testing.assert_array_equal(s2d[:Ly], np.arange(Ly))
+    def test_local_hamiltonians_are_hermitian(self):
+        terms = compile_tn_terms(_sweep_system("01r"))
+        h = terms.local_hamiltonians(0.1e-6)
+        assert h.shape == (4, 3, 3)
+        for i in range(4):
+            np.testing.assert_allclose(h[i], h[i].conj().T, atol=1e-9)
 
-    def test_second_row_right_to_left(self):
-        """Row 1 goes right-to-left."""
-        Ly = 4
-        s2d, _ = snake_order_mapping(3, Ly)
-        row1 = s2d[Ly:2*Ly]
-        expected = np.array([1*Ly + (Ly-1-j) for j in range(Ly)])
-        np.testing.assert_array_equal(row1, expected)
+    def test_per_site_local_detuning_is_site_resolved(self):
+        addr = [0.0, TWO_PI * 1e6, -TWO_PI * 2e6, TWO_PI * 3e6]
+        terms = compile_tn_terms(_sweep_system("1r", local=lambda t, i: addr[i]))
+        h = terms.local_hamiltonians(0.1e-6)
+        r = terms.levels.index("r")
+        diag_r = np.array([h[i, r, r].real for i in range(4)])
+        assert len(set(np.round(diag_r, 6))) == 4  # four distinct site energies
 
+    def test_digital_analog_complex_channels(self):
+        proto = DigitalAnalogProtocol(
+            t_gate_s=0.3e-6,
+            coupling_r1_rad_s=lambda t: 1.0 + 0.5j,
+            coupling_10_rad_s=lambda t: 0.3j,
+        )
+        system = RydbergSystem(level_structure=level_structure("01r"),
+                               register=Register.chain(2, spacing_um=8.0), protocol=proto)
+        terms = compile_tn_terms(system)
+        h = terms.local_hamiltonians(0.05e-6)
+        r, one, zero = (terms.levels.index(x) for x in ("r", "1", "0"))
+        # E[r,1] = 1+0.5j on the (r,1) element; conjugate on (1,r)
+        np.testing.assert_allclose(h[0, r, one], 1.0 + 0.5j)
+        np.testing.assert_allclose(h[0, one, r], 1.0 - 0.5j)
+        np.testing.assert_allclose(h[0, one, zero], 0.3j)
 
-class TestCreateTNLatticeSpec:
-    def test_basic_properties(self):
-        spec = create_tn_lattice_spec(Lx=3, Ly=3, V_nn=24.0)
-        assert spec.N == 9
-        assert spec.Lx == 3
-        assert spec.Ly == 3
-        assert spec.V_nn == 24.0
-        assert spec.bc == "open"
-        assert spec.level_structure == "1r"
-        assert spec.level_spec.name == "1r"
-        assert spec.level_spec.levels == level_structure("1r").levels
-        assert spec.interaction_mode == "nnn"
-        assert len(spec.snake_to_2d) == 9
-        assert len(spec.inv_snake) == 9
+    def test_non_tn_preset_rejected(self):
+        from ryd_gate.protocols.gate_cz import CZProtocol
+        from ryd_gate.protocols.pulses import blackman_pulse
 
-    def test_three_level_spec(self):
-        spec = create_tn_lattice_spec(Lx=2, Ly=2, level_structure="01r")
-        assert spec.level_structure == "01r"
-        assert spec.level_spec.name == "01r"
-        assert spec.level_spec.levels == level_structure("01r").levels
-
-    def test_accepts_shared_level_structure_spec(self):
-        shared_spec = level_structure("01r")
-        spec = create_tn_lattice_spec(Lx=2, Ly=2, level_structure=shared_spec)
-        assert spec.level_spec is shared_spec
-
-    def test_invalid_level_structure_raises(self):
-        with pytest.raises(ValueError, match="level_structure"):
-            create_tn_lattice_spec(Lx=2, Ly=2, level_structure="bad")
-
-    def test_analog_3_spec_supported(self):
-        spec = create_tn_lattice_spec(Lx=1, Ly=2, level_structure="analog_3")
-        assert spec.level_structure == "analog_3"
-        assert spec.level_spec.levels == ("g", "e", "r")
-        lb = spec.local_blocks
-        assert lb is not None
-        assert lb.static.shape == (3, 3) and lb.drive_420.shape == (3, 3)
-        assert lb.hermitian  # decay disabled
-        assert lb.rydberg_index == 2
-        assert np.isclose(lb.drive_420[1, 0], np.pi * 491e6)  # |e><g| * rabi_420/2
-
-    def test_registered_but_unsupported_level_structure_raises(self):
-        with pytest.raises(ValueError, match="not supported"):
-            create_tn_lattice_spec(Lx=2, Ly=2, level_structure="rb87_7_mp")
-
-    def test_nn_interaction_mode_filters_diagonals(self):
-        spec = create_tn_lattice_spec(Lx=2, Ly=2, interaction_mode="nn")
-        assert spec.interaction_mode == "nn"
-        assert len(spec.vdw_pairs) == 4
-        assert all(np.isclose(v_rel, 1.0) for _, _, v_rel in spec.vdw_pairs)
-
-    def test_invalid_interaction_mode_raises(self):
-        with pytest.raises(ValueError, match="interaction_mode"):
-            create_tn_lattice_spec(Lx=2, Ly=2, interaction_mode="all")
-
-    def test_sublattice_consistency(self):
-        """Sublattice matches ryd_gate.lattice convention."""
-
-        spec = create_tn_lattice_spec(Lx=4, Ly=4)
-        sq = Register.rectangle(4, 4, spacing_um=1.0)
-        np.testing.assert_array_equal(spec.sublattice, sq.sublattice)
-        np.testing.assert_array_equal(spec.coords, sq.coords)
-
-    def test_vdw_pairs_consistency(self):
-        """VdW pairs match the shared NN/NNN lattice convention."""
-        from ryd_gate.lattice import nn_nnn_relative_pairs
-
-        spec = create_tn_lattice_spec(Lx=3, Ly=3)
-        assert spec.vdw_pairs == nn_nnn_relative_pairs(3, 3)
-
-    def test_frozen(self):
-        """Spec is immutable."""
-        spec = create_tn_lattice_spec(Lx=2, Ly=2)
-        with pytest.raises(AttributeError):
-            spec.Lx = 5
+        proto = CZProtocol(
+            t_gate_s=0.2e-6, intermediate_detuning_rad_s=TWO_PI * 7.8e9,
+            omega_420_max_rad_s=TWO_PI * 100e6, omega_1013_max_rad_s=TWO_PI * 100e6,
+            envelope_420=lambda t: blackman_pulse(t, 20e-9, 0.2e-6),
+            phase_420_rad=lambda t: 0.0,
+        )
+        system = RydbergSystem(
+            level_structure=level_structure("rb87_7_mp", magnetic_field_G=20.0),
+            register=Register.chain(2, spacing_um=5.0), protocol=proto)
+        with pytest.raises(ValueError, match="TN-capable"):
+            compile_tn_terms(system)
 
 
-def test_tn_compiler_uses_system_level_spec_and_interactions():
-    proto = _sweep(omega=2.0)
-    system = RydbergSystem(
-        level_structure=level_structure("1r"),
-        register=Register.rectangle(2, 2, spacing_um=10.0),
-        interaction=InteractionSpec(C6=DEFAULT_C6, mode="nn"),
-        protocol=proto,
-    )
+class TestPlanSegments:
+    def test_anchor_is_exact_step_boundary(self):
+        record_at_start, segs = plan_segments(1.0, np.array([0.5, 1.0]), 0.3)
+        assert not record_at_start
+        assert all(isinstance(s, TNSegment) for s in segs)
+        assert segs[0].t1 == 0.5 and segs[-1].t1 == 1.0
+        # 0.5 is not a multiple of 0.3: ceil(0.5/0.3)=2 equal steps hit it exactly
+        assert segs[0].n_sub == 2
+        np.testing.assert_allclose(segs[0].n_sub * segs[0].dt_sub, 0.5)
 
-    ir = TNCompiler().compile(system)
+    def test_endpoint_only_appends_unrecorded_t_gate(self):
+        record_at_start, segs = plan_segments(1.0, np.array([1.0]), 0.4)
+        assert not record_at_start
+        assert segs[-1].t1 == 1.0 and segs[-1].record is True
 
-    assert ir.spec.level_spec is system.level_structure
-    assert ir.spec.vdw_pairs == system.interaction_pairs
-    assert ir.spec.interaction_mode == "system"
-    assert ir.spec.Omega == 1.0  # placeholder; the drive amplitude comes from the protocol
-    assert ir.hamiltonian is not None
-
-
-def test_incompatible_protocol_level_structure_is_rejected():
-    # A protocol that drives a primitive channel the level structure does not
-    # declare is rejected: 1r has only {E[r,1], E[r,r]} (no |0> level), so a
-    # protocol emitting E[r,0] is incompatible.
-    class _BadProto:
-        def _resolve(self, system):
-            return {"t_gate": 0.1, "pin_deltas": {}, "scatter_rates": {}, "static_overlays": []}
-
-        def drive_channels(self, system):
-            return frozenset({"E[r,0]"})
-
-        def get_drive_coefficients(self, t, ctx):
-            return {"E[r,0]": 1.0}
-
-    system = RydbergSystem(
-        level_structure=level_structure("1r"),
-        register=Register.chain(2, spacing_um=4.0),
-        interaction=InteractionSpec(C6=0.0),
-        protocol=_BadProto(),
-    )
-
-    with pytest.raises(ValueError, match="channel mismatch"):
-        compile_hamiltonian_ir(system)
-
-
-def test_unified_hamiltonian_ir_lowers_to_exact_and_tn():
-    proto = _sweep(omega=2.0)
-    system = RydbergSystem(
-        level_structure=level_structure("1r"),
-        register=Register.rectangle(2, 2, spacing_um=10.0),
-        interaction=InteractionSpec(C6=DEFAULT_C6, mode="nn"),
-        protocol=proto,
-    )
-
-    hamiltonian = compile_hamiltonian_ir(system)
-    tn_ir = TNCompiler().compile(hamiltonian)
-
-    from ryd_gate.backends.exact.compiler import ExactCompiler
-
-    exact_ir = ExactCompiler(max_dim=1000).compile(hamiltonian)
-
-    assert tn_ir.hamiltonian is hamiltonian
-    assert tn_ir.spec.vdw_pairs == hamiltonian.metadata["interaction_pairs"]
-    assert exact_ir.metadata["source_compiler"] == "ryd_gate"
-    assert exact_ir.static_terms
-    assert exact_ir.drive_terms
-
-
-def test_tn_lattice_spec_from_system_rejects_non_rectangular_geometry():
-
-    system = RydbergSystem(
-        level_structure=level_structure("1r"),
-        register=Register.triangular(2, 2),
-        interaction=InteractionSpec(mode="nn"),
-        protocol=_sweep(),
-    )
-    with pytest.raises(ValueError, match="rectangular"):
-        tn_lattice_spec_from_system(system)
+    def test_t0_recorded_when_zero_requested(self):
+        record_at_start, segs = plan_segments(1.0, np.array([0.0, 1.0]), 0.5)
+        assert record_at_start

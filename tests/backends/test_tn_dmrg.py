@@ -1,145 +1,127 @@
-"""Tests for TN DMRG backend (requires tenpy)."""
+"""DMRG ground-state solver tests on the new system-based seam (E12-E21).
+
+``system.ground_state(at, method="dmrg", initial_state, observables, method_options)``
+-> GroundStateResult with expectation("energy") + observables + amplitude + sample.
+"""
 
 import numpy as np
 import pytest
+from scipy.sparse.linalg import eigsh
 
-from ryd_gate.backends.tenpy_mps.backends import TenpyDMRGBackend
-from ryd_gate.backends.tenpy_mps.model import build_tenpy_model
-from ryd_gate.backends.tenpy_mps.observables import (
-    measure_mean_rydberg,
-    measure_site_occupations,
-    measure_staggered_magnetization,
-)
-from ryd_gate.backends.tenpy_mps.state import mps_fidelity, product_state_mps, product_superposition_mps
-from ryd_gate.backends.tn_common.lattice_spec import create_tn_lattice_spec
+from ryd_gate import RydbergSystem, level_structure
+from ryd_gate.backends.exact.compiler import compile_exact
+from ryd_gate.lattice import Register
+from ryd_gate.protocols.sweep import SweepProtocol
 
 pytest.importorskip("tenpy")
 
-
-@pytest.fixture
-def spec_2x2():
-    return create_tn_lattice_spec(Lx=2, Ly=2, V_nn=24.0, Omega=1.0)
-
-
-@pytest.fixture
-def spec_3x3():
-    return create_tn_lattice_spec(Lx=3, Ly=3, V_nn=24.0, Omega=1.0)
+TWO_PI = 2 * np.pi
+_AT = 0.15e-6
+_DMRG_OPTS = {
+    "bond_dimension": 32, "discarded_weight_tolerance": 1e-10,
+    "relative_energy_tolerance": 1e-9, "entropy_tolerance": 1e-7, "max_sweeps": 30,
+}
 
 
-class TestBuildTenpyModel:
-    def test_model_builds(self, spec_2x2):
-        """Model builds without error."""
-        model = build_tenpy_model(spec_2x2, Delta=2.0)
-        assert model is not None
-
-    def test_model_with_pinning(self, spec_2x2):
-        """Model builds with local detunings."""
-        pin = np.array([-4.0, 0.0, 0.0, -4.0])
-        model = build_tenpy_model(spec_2x2, Delta=2.0, pin_deltas=pin)
-        assert model is not None
+def _system(n=6, spacing=8.0):
+    proto = SweepProtocol(
+        t_gate_s=0.3e-6,
+        omega_half_rad_s=lambda t: TWO_PI * 2.0e6,
+        detuning_rad_s=lambda t: TWO_PI * 1.5e6,
+    )
+    return RydbergSystem(level_structure=level_structure("1r"),
+                         register=Register.chain(n, spacing_um=spacing),
+                         protocol=proto, interaction_cutoff_um=9.0)
 
 
-class TestProductStateMPS:
-    def test_all_ground(self, spec_2x2):
-        psi = product_state_mps(spec_2x2, "all_ground")
-        occ = measure_site_occupations(psi, spec_2x2)
-        np.testing.assert_allclose(occ, 0.0, atol=1e-12)
+def _exact_ground_energy(system, at):
+    ham, _ = compile_exact(system, hamiltonian_format="dense")
+    dim = system._basis.total_dim
+    H = np.zeros((dim, dim), dtype=complex)
+    for k in range(dim):
+        e = np.zeros(dim, complex)
+        e[k] = 1.0
+        H[:, k] = ham.apply(at, e)
+    return float(eigsh(H, k=1, which="SA", return_eigenvectors=False)[0])
 
-    def test_af1(self, spec_2x2):
-        psi = product_state_mps(spec_2x2, "af1")
-        occ = measure_site_occupations(psi, spec_2x2)
-        expected = (spec_2x2.sublattice > 0).astype(float)
-        np.testing.assert_allclose(occ, expected, atol=1e-12)
 
-    def test_af2(self, spec_2x2):
-        psi = product_state_mps(spec_2x2, "af2")
-        occ = measure_site_occupations(psi, spec_2x2)
-        expected = (spec_2x2.sublattice < 0).astype(float)
-        np.testing.assert_allclose(occ, expected, atol=1e-12)
+def test_dmrg_energy_matches_exact():
+    system = _system(n=6)
+    res = system.ground_state(
+        at=_AT, method="dmrg",
+        initial_state=["1", "r", "1", "r", "1", "r"],
+        observables={"n_r": sum(system.observables.n("r", i) for i in range(6))},
+        method_options=_DMRG_OPTS,
+    )
+    e_exact = _exact_ground_energy(system, _AT)
+    np.testing.assert_allclose(res.expectation("energy"), e_exact, rtol=1e-7)
+    assert isinstance(res.expectation("n_r"), float)
 
-    def test_three_level_complex_superposition_preserves_phase(self):
-        spec = create_tn_lattice_spec(Lx=2, Ly=2, level_structure="01r")
-        psi = product_superposition_mps(
-            spec,
-            zero_amp=-1j / np.sqrt(2),
-            ground_amp=1 / np.sqrt(2),
-            rydberg_amp=0.0,
+
+def test_dmrg_amplitude_phase_reference_is_real_positive():
+    system = _system(n=4)
+    res = system.ground_state(
+        at=_AT, method="dmrg", initial_state=["1", "r", "1", "r"],
+        method_options=_DMRG_OPTS,
+    )
+    ref = ["1", "1", "1", "1"]
+    a_ref = res.amplitude(ref, phase_reference=ref)
+    assert abs(a_ref.imag) < 1e-9 and a_ref.real >= 0.0
+    # sampling returns tuple-keyed counts
+    counts = res.sample(shots=200, seed=0)
+    assert sum(counts.values()) == 200
+    assert all(isinstance(k, tuple) and len(k) == 4 for k in counts)
+
+
+def test_dmrg_reserved_energy_observable_rejected():
+    system = _system(n=4)
+    with pytest.raises(ValueError, match="reserved"):
+        system.ground_state(
+            at=_AT, method="dmrg", initial_state=["1", "1", "1", "1"],
+            observables={"energy": system.observables.n("r", 0)},
+            method_options=_DMRG_OPTS,
         )
-        np.testing.assert_allclose(mps_fidelity(psi, psi), 1.0, atol=1e-12)
 
 
-class TestDMRG:
-    @pytest.mark.slow
-    def test_2x2_energy_vs_exact(self, spec_2x2):
-        """DMRG energy matches exact diagonalization for 2x2."""
-        from ryd_gate import RydbergSystem, level_structure
-        from ryd_gate.backends.exact.compiler import _compile_exact_ir
-        from ryd_gate.core.level_structures import InteractionSpec
-        from ryd_gate.ir import compile_hamiltonian_ir
-        from ryd_gate.lattice import Register
-        from ryd_gate.protocols.sweep import SweepProtocol
+def test_dmrg_option_schema_enforced():
+    system = _system(n=4)
+    with pytest.raises(ValueError, match="unknown"):
+        system.ground_state(at=_AT, method="dmrg", initial_state=["1"] * 4,
+                            method_options={**_DMRG_OPTS, "svd_min": 1e-12})
+    with pytest.raises(ValueError, match="missing"):
+        system.ground_state(at=_AT, method="dmrg", initial_state=["1"] * 4,
+                            method_options={"bond_dimension": 8})
 
-        Delta = 2.0
-        proto = SweepProtocol(
-            t_gate=1.0,
-            omega_half_fn=lambda t: 0.5,
-            delta_fn=lambda t: Delta,
+
+def test_dmrg_requires_1r_and_explicit_initial_state():
+    system = _system(n=4)
+    with pytest.raises(TypeError, match="explicit level-label"):
+        system.ground_state(at=_AT, method="dmrg", initial_state=None,
+                            method_options=_DMRG_OPTS)
+    with pytest.raises(ValueError, match=r"\[0, t_gate"):
+        system.ground_state(at=1.0, method="dmrg", initial_state=["1"] * 4,
+                            method_options=_DMRG_OPTS)
+
+    # 01r is not a ground-state-capable preset (E12)
+    sys01r = RydbergSystem(
+        level_structure=level_structure("01r"),
+        register=Register.chain(3, spacing_um=8.0),
+        protocol=SweepProtocol(t_gate_s=0.3e-6, omega_half_rad_s=lambda t: 1.0,
+                               detuning_rad_s=lambda t: 1.0),
+    )
+    with pytest.raises(ValueError, match="'1r'"):
+        sys01r.ground_state(at=0.1e-6, method="dmrg", initial_state=["1", "1", "1"],
+                            method_options=_DMRG_OPTS)
+
+
+def test_dmrg_unmet_convergence_raises():
+    # bond_dimension=1 cannot represent the entangled ground state, so the
+    # discarded-weight criterion is not met within max_sweeps.
+    system = _system(n=6, spacing=5.0)  # strong blockade
+    with pytest.raises(RuntimeError, match="convergence"):
+        system.ground_state(
+            at=_AT, method="dmrg", initial_state=["1", "r", "1", "r", "1", "r"],
+            method_options={"bond_dimension": 1, "discarded_weight_tolerance": 1e-10,
+                            "relative_energy_tolerance": 1e-9, "entropy_tolerance": 1e-9,
+                            "max_sweeps": 4},
         )
-        system = RydbergSystem(
-            level_structure=level_structure("1r"),
-            register=Register.rectangle(2, 2, spacing_um=1.0),
-            interaction=InteractionSpec(C6=24.0, mode="nnn"),
-            protocol=proto,
-        )
-        ham = compile_hamiltonian_ir(system)
-        ir = _compile_exact_ir(ham)
-
-        # Build full Hamiltonian at t=0.5 (midpoint, Omega fully on)
-        t_mid = 0.5
-        H_full = None
-        for term in ir.static_terms:
-            c = term.coefficient(t_mid) if callable(term.coefficient) else term.coefficient
-            contrib = c * term.operator
-            H_full = contrib if H_full is None else H_full + contrib
-        for term in ir.drive_terms:
-            c = term.coefficient(t_mid) if callable(term.coefficient) else term.coefficient
-            H_full = H_full + c * term.operator
-            if term.add_hermitian_conjugate:
-                H_full = H_full + np.conjugate(c) * term.operator.conj().T
-
-        from scipy.sparse.linalg import eigsh
-
-        E_exact = eigsh(H_full.tocsc(), k=1, which="SA", return_eigenvectors=False)[0]
-
-        backend = TenpyDMRGBackend(chi_max=32, n_sweeps=20)
-        result = backend.find_ground_state(spec_2x2, Delta)
-        E_dmrg = result.metadata["energy"]
-
-        np.testing.assert_allclose(E_dmrg, E_exact, atol=1e-6, err_msg=f"DMRG E={E_dmrg}, exact E={E_exact}")
-
-    @pytest.mark.slow
-    def test_3x3_dmrg_converges(self, spec_3x3):
-        """DMRG converges for 3x3 lattice."""
-        backend = TenpyDMRGBackend(chi_max=64, n_sweeps=20)
-        result = backend.find_ground_state(spec_3x3, Delta=2.0)
-        assert result.metadata["energy"] < 0  # should be negative for Delta>0
-        assert result.metadata["chi"] > 0
-
-
-class TestMPSObservables:
-    def test_all_ground_ms(self, spec_2x2):
-        psi = product_state_mps(spec_2x2, "all_ground")
-        ms = measure_staggered_magnetization(psi, spec_2x2)
-        # All ground: n_i = 0, so (2*0 - 1) = -1 for all sites
-        # ms = (1/N) sum s_i * (-1) = 0 for checkerboard sublattice
-        np.testing.assert_allclose(ms, 0.0, atol=1e-12)
-
-    def test_af1_ms_positive(self, spec_2x2):
-        psi = product_state_mps(spec_2x2, "af1")
-        ms = measure_staggered_magnetization(psi, spec_2x2)
-        assert ms > 0.5
-
-    def test_mean_rydberg_af1(self, spec_2x2):
-        psi = product_state_mps(spec_2x2, "af1")
-        n_mean = measure_mean_rydberg(psi, spec_2x2)
-        np.testing.assert_allclose(n_mean, 0.5, atol=1e-12)

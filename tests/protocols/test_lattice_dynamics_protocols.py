@@ -1,103 +1,139 @@
+"""TFIM quench/anneal physics expressed as a SweepProtocol (P16).
+
+The dedicated TFIM protocol classes are deleted. The transverse-field Ising
+dynamics is written directly on the |1>-|r> channels of a ``1r`` system::
+
+    H[r,1](t) = Omega/2 = h_x(t)        # transverse field
+    H[r,r](t) = -Delta(t)               # longitudinal field / detuning
+    H[r,r]_i += -local_detuning(t, i)   # optional per-site (boundary) pinning
+
+These tests build such SweepProtocols and assert the compiled channel drives.
+"""
+
+from __future__ import annotations
+
+import matplotlib
+
+matplotlib.use("Agg")
+
 import numpy as np
+import pytest
+from matplotlib.figure import Figure
 
-from ryd_gate import (
-    InteractionSpec,
-    RydbergSystem,
-    TFIMAnnealProtocol,
-    TFIMQuenchProtocol,
-    level_structure,
-)
-from ryd_gate.backends.exact.compiler import _compile_exact_ir
-from ryd_gate.ir import compile_hamiltonian_ir
-from ryd_gate.lattice import Register
-from ryd_gate.protocols.base import Protocol
-from ryd_gate.protocols.lattice_dynamics import tfim_to_rydberg_controls
+from ryd_gate import Register, RydbergSystem, level_structure, simulate
+from ryd_gate.core.lowering import lower_drives
+from ryd_gate.protocols import SweepProtocol
+
+MHZ = 2 * np.pi * 1e6
 
 
-def _nn_square_system(L=2):
+def _square_system(protocol, *, side=2, cutoff=None):
     return RydbergSystem(
         level_structure=level_structure("1r"),
-        register=Register.rectangle(L, L, spacing_um=1.0),
-        interaction=InteractionSpec(C6=4.0, mode="nn"),
+        register=Register.square(side, spacing_um=9.0),
+        protocol=protocol,
+        interaction_cutoff_um=cutoff,
     )
 
 
-def test_tfim_to_rydberg_controls_uniform_2x2_nn():
-    system = _nn_square_system(2)
-
-    controls = tfim_to_rydberg_controls(system, hx=0.5, hz=0.0)
-
-    assert np.isclose(controls.Omega, 1.0)
-    assert np.isclose(controls.Delta, 4.0)
-    assert controls.pin_deltas == {}
-    np.testing.assert_allclose(controls.interaction_shifts, np.full(4, 2.0))
+def _channels_by_name(system):
+    _t_gate, channels = lower_drives(system)
+    return {c.channel: c for c in channels}
 
 
-def test_tfim_to_rydberg_controls_compensates_open_boundary_shifts():
-    system = _nn_square_system(3)
-
-    controls = tfim_to_rydberg_controls(system, hx=1.0, hz=0.25)
-    effective_hz = controls.interaction_shifts - 0.5 * controls.delta_profile
-
-    np.testing.assert_allclose(effective_hz, np.full(system.N, 0.25))
-    assert controls.pin_deltas
-
-
-def test_tfim_quench_protocol_emits_existing_lattice_channels():
-    system = _nn_square_system(2).with_protocol(TFIMQuenchProtocol(hx=0.75, hz=0.0, t_gate=1.25))
-
-    params = system.protocol._resolve(system)
-    coeffs = system.protocol.get_drive_coefficients(0.5, params)
-
-    assert params["t_gate"] == 1.25
-    assert np.isclose(coeffs["E[r,1]"], 0.75)
-    assert np.isclose(coeffs["E[r,r]"], -4.0)
-
-
-def test_tfim_anneal_protocol_piecewise_schedule():
-    system = _nn_square_system(2)
-    proto = TFIMAnnealProtocol(
-        hx_peak=3.0,
-        hz_initial=-8.0,
-        hz_final=0.0,
-        t_rise=1.5,
-        t_sweep=1.5,
-        t_fall=1.5,
+def test_tfim_quench_emits_constant_transverse_field_and_detuning():
+    h_x = 1.0 * MHZ
+    delta = 4.0 * MHZ
+    t_gate = 0.5e-6
+    quench = SweepProtocol(
+        t_gate_s=t_gate,
+        omega_half_rad_s=lambda t: h_x,
+        detuning_rad_s=lambda t: delta,
     )
+    system = _square_system(quench)
+    by = _channels_by_name(system)
 
-    params = proto._resolve(system)
-
-    assert np.isclose(proto.hx_at(0.0), 0.0)
-    assert np.isclose(proto.hx_at(1.5), 3.0)
-    assert np.isclose(proto.hz_at(1.5), -8.0)
-    assert np.isclose(proto.hz_at(3.0), 0.0)
-    assert np.isclose(params["t_gate"], 4.5)
-    assert np.isclose(proto.get_drive_coefficients(1.5, params)["E[r,1]"], 3.0)
+    assert system.t_gate == pytest.approx(t_gate)
+    assert set(by) == {"E[r,1]", "E[r,r]"}
+    t = 0.5 * t_gate
+    assert complex(by["E[r,1]"].coefficient(t)) == pytest.approx(h_x)      # h_x = Omega/2
+    assert float(by["E[r,r]"].coefficient(t)) == pytest.approx(-delta)     # -Delta
 
 
-def test_exact_compiler_accepts_site_dependent_detuning_channels():
-    class SiteDetuningProtocol(Protocol):
-        @property
-        def required_channels(self):
-            return frozenset({"E[r,r]_0", "E[r,r]_1"})
+def test_tfim_anneal_piecewise_transverse_field_and_swept_detuning():
+    h_x_peak = 1.0 * MHZ
+    delta_i, delta_f = -3.0 * MHZ, 3.0 * MHZ
+    t_rise, t_sweep, t_fall = 0.2e-6, 0.6e-6, 0.2e-6
+    t_gate = t_rise + t_sweep + t_fall
 
-        def drive_channels(self, system):
-            return self.required_channels
+    def h_x(t):
+        if t < t_rise:
+            return h_x_peak * t / t_rise
+        if t < t_rise + t_sweep:
+            return h_x_peak
+        return h_x_peak * (t_gate - t) / t_fall
 
-        def _resolve(self, system):
-            return {"t_gate": 1.0}
+    def delta(t):
+        return delta_i + (delta_f - delta_i) * (t / t_gate)
 
-        def get_drive_coefficients(self, t, ctx):
-            return {"E[r,r]_0": -1.0, "E[r,r]_1": -2.0}
+    anneal = SweepProtocol(t_gate_s=t_gate, omega_half_rad_s=h_x, detuning_rad_s=delta)
+    system = _square_system(anneal)
+    by = _channels_by_name(system)
 
-    system = RydbergSystem(
-        level_structure=level_structure("1r"),
-        register=Register.rectangle(1, 2, spacing_um=1.0),
-        interaction=InteractionSpec(C6=0.0, mode="nn"),
-        protocol=SiteDetuningProtocol(),
+    assert system.t_gate == pytest.approx(t_gate)
+    # transverse field: ramps up, holds at the peak, ramps down
+    assert complex(by["E[r,1]"].coefficient(0.1e-6)) == pytest.approx(0.5 * h_x_peak)
+    assert complex(by["E[r,1]"].coefficient(0.5e-6)) == pytest.approx(h_x_peak)
+    assert complex(by["E[r,1]"].coefficient(0.9e-6)) == pytest.approx(0.5 * h_x_peak)
+    # detuning sweep passes through zero at the mid-point (delta_i == -delta_f)
+    assert float(by["E[r,r]"].coefficient(0.0)) == pytest.approx(-delta_i)
+    assert float(by["E[r,r]"].coefficient(0.5 * t_gate)) == pytest.approx(0.0)
+    assert float(by["E[r,r]"].coefficient(t_gate)) == pytest.approx(-delta_f)
+
+
+def test_tfim_anneal_local_boundary_pinning_is_per_site():
+    # Compensate open-boundary interaction shifts by pinning the corner sites.
+    pin = 5.0 * MHZ
+    delta = 4.0 * MHZ
+    t_gate = 1.0e-6
+    corners = {0, 3}
+    anneal = SweepProtocol(
+        t_gate_s=t_gate,
+        omega_half_rad_s=lambda t: 1.0 * MHZ,
+        detuning_rad_s=lambda t: delta,
+        local_detuning_rad_s=lambda t, i: pin if i in corners else 0.0,
     )
+    system = _square_system(anneal, side=2)  # N = 4
+    by = _channels_by_name(system)
 
-    ham = compile_hamiltonian_ir(system)
-    ir = _compile_exact_ir(ham)
+    err = np.asarray(by["E[r,r]"].coefficient(0.5 * t_gate))
+    assert err.shape == (4,)
+    expected = -delta - np.array([pin, 0.0, 0.0, pin])
+    np.testing.assert_allclose(err, expected)
 
-    assert {term.name for term in ir.drive_terms} == {"E[r,r]_0", "E[r,r]_1"}
+
+def test_quench_simulation_runs_and_stays_physical():
+    # A small quench on a 2x2 array evolves to a physical state (populations in
+    # [0, 1], norm conserved). Interactions are the isotropic 1r pair C6.
+    quench = SweepProtocol(
+        t_gate_s=0.3e-6,
+        omega_half_rad_s=lambda t: 1.0 * MHZ,
+        detuning_rad_s=lambda t: 2.0 * MHZ,
+    )
+    system = _square_system(quench, side=2)
+    obs = system.observables
+    n_r = sum(obs.n("r", i) for i in range(system.N))
+    result = simulate(system, observables={"n_r": n_r})
+    total = result.expectation("n_r")[0]
+    assert 0.0 <= total <= system.N
+
+
+def test_plot_returns_single_figure():
+    quench = SweepProtocol(
+        t_gate_s=0.5e-6,
+        omega_half_rad_s=lambda t: 1.0 * MHZ,
+        detuning_rad_s=lambda t: 4.0 * MHZ,
+    )
+    system = _square_system(quench)
+    fig = quench.plot(system)
+    assert isinstance(fig, Figure)

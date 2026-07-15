@@ -1,192 +1,138 @@
-"""Tests for ryd_gate package initialization."""
+"""Pin the four frozen public namespaces of ryd_gate.
+
+After the breaking rewrite the public API is exactly four frozen surfaces, each
+declared by its module ``__all__``:
+
+  * ``ryd_gate``            — 6 names
+  * ``ryd_gate.protocols``  — 10 names
+  * ``ryd_gate.physics``    — 5 names
+  * ``ryd_gate.results``    — 6 names (3 result types + 3 PEPS evidence records)
+
+For each namespace this file asserts ``__all__`` equals the exact list below (in
+API order), every listed name is importable, and names removed by the rewrite
+are gone from the namespace.
+"""
+
+import importlib
+
+import pytest
 
 TOP_LEVEL_API = [
     "Register",
     "RydbergSystem",
-    "InteractionSpec",
-    "level_structure",
     "NoiseModel",
-    "EvolutionResult",
-    "EnsembleResult",
+    "level_structure",
     "simulate",
     "simulate_ensemble",
-    "SweepProtocol",
-    "TFIMQuenchProtocol",
-    "TFIMAnnealProtocol",
 ]
 
 PROTOCOLS_API = [
     "CZProtocol",
     "TOProtocol",
     "ARProtocol",
+    "SweepProtocol",
+    "DigitalAnalogProtocol",
     "Direct297PiProtocol",
     "Direct297CZProtocol",
     "Direct297TOProtocol",
-    "SweepProtocol",
+    "blackman_pulse",
+    "phase_from_chirp",
+]
+
+PHYSICS_API = [
+    "single_photon_rabi",
+    "rb87_7_mp_rabi_frequencies",
+    "rb87_297_clock_rabi_frequencies",
+    "zeeman_shift_rad_s",
+    "arc_pair_c6_rad_s_um6",
+]
+
+RESULTS_API = [
+    "EvolutionResult",
+    "GroundStateResult",
+    "EnsembleResult",
+    "PEPSAmplitudeEvidence",
+    "PEPSSampleEvidence",
+    "PEPSEvidence",
+]
+
+FROZEN_NAMESPACES = [
+    ("ryd_gate", TOP_LEVEL_API),
+    ("ryd_gate.protocols", PROTOCOLS_API),
+    ("ryd_gate.physics", PHYSICS_API),
+    ("ryd_gate.results", RESULTS_API),
+]
+
+# Names removed from the top-level namespace by the rewrite (deleted outright,
+# or relocated into ryd_gate.protocols / ryd_gate.results).
+REMOVED_TOP_LEVEL = [
+    "InteractionSpec",
+    "DEFAULT_C6",
     "TFIMQuenchProtocol",
     "TFIMAnnealProtocol",
-    "DigitalAnalogProtocol",
+    "EvolutionResult",
+    "EnsembleResult",
+    "GroundStateResult",
+    "CZProtocol",
+    "SweepProtocol",
+    "blackman_pulse",
+    "phase_from_chirp",
+]
+
+# Names removed from ryd_gate.protocols (deleted, or living only in a submodule).
+REMOVED_PROTOCOLS = [
+    "TFIMQuenchProtocol",
+    "TFIMAnnealProtocol",
+    "Protocol",
+    "TFIMRydbergControls",
+    "tfim_to_rydberg_controls",
+    "interaction_longitudinal_shifts",
 ]
 
 
-class TestPackageImports:
-    """Tests for package-level imports."""
-
-    def test_version_defined(self):
-        """Package should have __version__."""
+class TestVersion:
+    def test_version_is_str(self):
         import ryd_gate
-        assert hasattr(ryd_gate, "__version__")
+
         assert isinstance(ryd_gate.__version__, str)
 
-    def test_product_layer_exports(self):
-        """Geometry, interaction, and level-structure entry points are top-level."""
-        from ryd_gate import InteractionSpec, Register, level_structure
 
-        assert all(
-            item is not None for item in (Register, InteractionSpec, level_structure)
-        )
+class TestFrozenNamespaces:
+    @pytest.mark.parametrize("module_name, expected", FROZEN_NAMESPACES)
+    def test_all_is_exactly_frozen_list(self, module_name, expected):
+        """``__all__`` equals the frozen list, in API order."""
+        module = importlib.import_module(module_name)
+        assert module.__all__ == expected
 
-    def test_removed_top_level_exports(self):
-        """Kernel blackman helpers are soft-closed: not top-level API."""
-        import pytest
+    @pytest.mark.parametrize("module_name, expected", FROZEN_NAMESPACES)
+    def test_every_all_name_is_importable(self, module_name, expected):
+        """Every name in ``__all__`` is a resolvable attribute of the module."""
+        module = importlib.import_module(module_name)
+        for name in expected:
+            assert hasattr(module, name), f"{module_name}.{name} is missing"
+            assert getattr(module, name) is not None
 
-        with pytest.raises(ImportError):
-            from ryd_gate import blackman_pulse  # noqa: F401
-        with pytest.raises(ImportError):
-            from ryd_gate import blackman_window  # noqa: F401
-        with pytest.raises(ImportError):
-            from ryd_gate import blackman_pulse_sqrt  # noqa: F401
+    def test_top_level_import_star_binds_exactly_the_six(self):
+        """``from ryd_gate import *`` binds exactly the six frozen names."""
+        namespace: dict = {}
+        exec("from ryd_gate import *", namespace)
+        bound = {k for k in namespace if not k.startswith("__")}
+        assert bound == set(TOP_LEVEL_API)
 
-    def test_demoted_top_level_exports(self):
-        """Symbols moved to submodules or deleted are no longer top-level."""
-        import pytest
 
+class TestRemovedNames:
+    @pytest.mark.parametrize("name", REMOVED_TOP_LEVEL)
+    def test_removed_from_top_level(self, name):
         import ryd_gate
 
-        for name in (
-            "TOProtocol",
-            "ARProtocol",
-            "CZProtocol",
-            "CZGateReport",
-            "cz_gate_report",
-            "average_gate_infidelity",
-            "error_budget",
-            "Protocol",
-            "DigitalAnalogProtocol",
-            "HamiltonianIR",
-            "HamiltonianTerm",
-            "compile_hamiltonian_ir",
-            "SystemModel",
-            "BasisSpec",
-            "ObservableRegistry",
-            "Observable",
-            "DEFAULT_C6",  # lives in ryd_gate.core.level_structures
-            "phase_from_chirp",  # lives in ryd_gate.protocols.gate_cz
-            "RegisterLayout",  # deleted with the layout/serialization layer
-            "LevelStructureSpec",  # deleted: no public level-structure DSL
-            "TransitionSpec",
-            "ValidationIssue",
-            "raise_for_errors",
-            "AddressingEvaluator",
-            "compute_shift_scatter",
-            "TFIMRydbergControls",
-            "tfim_to_rydberg_controls",
-            "interaction_longitudinal_shifts",
-            "configure_monte_carlo_runner",  # deleted with the Monte-Carlo runner layer
-        ):
-            assert name not in ryd_gate.__all__
-            with pytest.raises(AttributeError):
-                getattr(ryd_gate, name)
+        assert name not in ryd_gate.__all__
+        with pytest.raises(AttributeError):
+            getattr(ryd_gate, name)
 
-    def test_all_exports_match(self):
-        """__all__ is exactly the minimal top-level surface, in API order."""
-        import ryd_gate
-
-        assert ryd_gate.__all__ == TOP_LEVEL_API
-
-    def test_all_exports_defined(self):
-        """All items in __all__ should be defined."""
-        import ryd_gate
-
-        for name in ryd_gate.__all__:
-            assert hasattr(ryd_gate, name)
-
-    def test_protocols_namespace_is_user_selectable_protocols(self):
-        """ryd_gate.protocols exports exactly the user-selectable protocols."""
-        import pytest
-
+    @pytest.mark.parametrize("name", REMOVED_PROTOCOLS)
+    def test_removed_from_protocols(self, name):
         import ryd_gate.protocols as protocols
 
-        assert protocols.__all__ == PROTOCOLS_API
-        for name in PROTOCOLS_API:
-            assert hasattr(protocols, name)
-        # The Protocol ABC and pulse helpers live only in their modules.
-        for name in (
-            "Protocol",
-            "phase_from_chirp",
-            "TFIMRydbergControls",
-            "tfim_to_rydberg_controls",
-            "interaction_longitudinal_shifts",
-        ):
-            assert name not in protocols.__all__
-            with pytest.raises(AttributeError):
-                getattr(protocols, name)
-
-        from ryd_gate.protocols.base import Protocol
-        from ryd_gate.protocols.gate_cz import phase_from_chirp
-        from ryd_gate.protocols.lattice_dynamics import (
-            TFIMRydbergControls,
-            interaction_longitudinal_shifts,
-            tfim_to_rydberg_controls,
-        )
-
-        assert all(
-            item is not None
-            for item in (
-                Protocol,
-                phase_from_chirp,
-                TFIMRydbergControls,
-                tfim_to_rydberg_controls,
-                interaction_longitudinal_shifts,
-            )
-        )
-
-    def test_architecture_types_importable_from_submodules(self):
-        """Core/IR types are importable from their owning submodules."""
-        from ryd_gate import EvolutionResult, RydbergSystem
-        from ryd_gate.core import BasisSpec, ObservableExpr, ObservableFactory
-        from ryd_gate.ir import HamiltonianIR, HamiltonianTerm, compile_hamiltonian_ir
-
-        assert all(
-            item is not None
-            for item in (
-                EvolutionResult,
-                RydbergSystem,
-                BasisSpec,
-                ObservableExpr,
-                ObservableFactory,
-                HamiltonianIR,
-                HamiltonianTerm,
-                compile_hamiltonian_ir,
-            )
-        )
-
-    def test_new_package_namespaces(self):
-        """Core, IR, backend, and simulate namespaces should be importable."""
-        from ryd_gate.backends.exact import ExactCompiler, ExactODEBackend, simulate
-        from ryd_gate.core import BasisSpec, RydbergSystem
-        from ryd_gate.ir import HamiltonianIR, HamiltonianTerm, compile_hamiltonian_ir
-
-        assert all(
-            item is not None
-            for item in (
-                BasisSpec,
-                ExactCompiler,
-                ExactODEBackend,
-                HamiltonianIR,
-                HamiltonianTerm,
-                compile_hamiltonian_ir,
-                RydbergSystem,
-                simulate,
-            )
-        )
+        assert name not in protocols.__all__
+        with pytest.raises(AttributeError):
+            getattr(protocols, name)
