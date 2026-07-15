@@ -52,7 +52,11 @@ def simulate_tn(
         return EvolutionResult(times=out_times, expectations=expectations, reader=reader)
     if key == "peps":
         return _simulate_peps(system, initial_state, terms, out_times, obs, backend_options)
-    raise ValueError(f"unknown TN backend {backend!r}; use 'mps' or 'peps'.")  # pragma: no cover
+    if key == "graph_peps":
+        return _simulate_graph_peps(system, initial_state, terms, out_times, obs, backend_options)
+    raise ValueError(  # pragma: no cover
+        f"unknown TN backend {backend!r}; use 'mps', 'peps' or 'graph_peps'."
+    )
 
 
 def _simulate_peps(system, initial_state, terms, out_times, obs, backend_options) -> EvolutionResult:
@@ -79,6 +83,25 @@ def _simulate_peps(system, initial_state, terms, out_times, obs, backend_options
     )
     # PEPS returns already validity-checked real expectation arrays (PEPS §9.3): do not
     # re-apply the shared MPS 1e-6 converter.
+    return EvolutionResult(times=out_times, expectations=expectations, reader=reader)
+
+
+def _simulate_graph_peps(system, initial_state, terms, out_times, obs, backend_options) -> EvolutionResult:
+    """Real-time graph-PEPS: dependency-free preflight, then lazy quimb engine."""
+    from ryd_gate.backends.graph_tn import build_graph, evolve_graph_tn, validate_real_time_options
+    from ryd_gate.backends.tn_common.initial_state import initial_local_amplitudes
+
+    opts = validate_real_time_options(backend_options)          # exact six-key options
+    amps = initial_local_amplitudes(terms, initial_state)       # validated (N, d) amplitudes
+    preflight_tn_observables(                                    # shape check (any arity supported)
+        obs, n_sites=terms.n_sites, local_dim=terms.local_dim,
+        backend="graph_peps", max_term_sites=None,
+    )
+    graph = build_graph(terms)                                  # arbitrary interaction graph
+    out_times, complex_expect, reader = evolve_graph_tn(        # lazy quimb import + run
+        terms, graph, amps, out_times, obs, opts,
+    )
+    expectations = {name: _real_expectation(vals, name) for name, vals in complex_expect.items()}
     return EvolutionResult(times=out_times, expectations=expectations, reader=reader)
 
 

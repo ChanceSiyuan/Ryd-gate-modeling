@@ -39,9 +39,10 @@ def solve_ground_state(system, *, at, method, initial_state, observables=None, m
     at = float(at)
     if not np.isfinite(at) or at < 0.0 or at > t_gate * (1 + 1e-12):
         raise ValueError(f"`at` must be finite and within [0, t_gate={t_gate}]; got {at!r}.")
-    if method not in ("dmrg", "peps_imaginary_time"):
+    if method not in ("dmrg", "peps_imaginary_time", "graph_peps_imaginary_time"):
         raise ValueError(
-            f"method must be 'dmrg' or 'peps_imaginary_time' (E14); got {method!r}."
+            f"method must be 'dmrg', 'peps_imaginary_time' or 'graph_peps_imaginary_time' "
+            f"(E14); got {method!r}."
         )
     obs = _validate_ground_observables(observables)
     if initial_state is None or isinstance(initial_state, str):
@@ -54,6 +55,8 @@ def solve_ground_state(system, *, at, method, initial_state, observables=None, m
         preflight_tn_observables(obs, n_sites=terms.n_sites, local_dim=terms.local_dim,
                                  backend="mps", max_term_sites=None)
         return _solve_dmrg(terms, at, labels, obs, method_options)
+    if method == "graph_peps_imaginary_time":
+        return _solve_graph_peps_ground(terms, at, labels, obs, method_options)
     # PEPS imaginary time: dependency-free preflight (PEPS §5.3) then lazy YASTN engine.
     from ryd_gate.backends.peps import (
         peps_lattice_spec,
@@ -73,6 +76,20 @@ def solve_ground_state(system, *, at, method, initial_state, observables=None, m
     expectations, reader = solve_peps_ground_state(
         terms, lattice_spec, pair_bonds, at, amps, obs, opts,
     )
+    return GroundStateResult(expectations=expectations, reader=reader)
+
+
+def _solve_graph_peps_ground(terms, at, labels, obs, method_options):
+    """Arbitrary-geometry graph-PEPS imaginary-time ground state (lazy quimb engine)."""
+    from ryd_gate.backends.graph_tn import build_graph, solve_graph_tn_ground, validate_ground_options
+    from ryd_gate.backends.tn_common.initial_state import initial_local_amplitudes
+
+    opts = validate_ground_options(method_options)              # exact six-key options
+    amps = initial_local_amplitudes(terms, labels)             # explicit product-state labels
+    preflight_tn_observables(obs, n_sites=terms.n_sites, local_dim=terms.local_dim,
+                             backend="graph_peps", max_term_sites=None)
+    graph = build_graph(terms)                                 # arbitrary interaction graph
+    expectations, reader = solve_graph_tn_ground(terms, graph, at, amps, obs, opts)
     return GroundStateResult(expectations=expectations, reader=reader)
 
 

@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from ryd_gate.results import EvolutionResult
 
 _EXACT = "exact_ode"
-_TN = frozenset({"mps", "peps"})
+_TN = frozenset({"mps", "peps", "graph_peps"})
 
 
 def simulate(
@@ -32,7 +32,8 @@ def simulate(
     ``initial_state``: ``None`` starts every site in ``|1>`` (E27); ``"plus"``
     starts every site in ``(|0>+|1>)/sqrt(2)``; a flat label list is one product
     state; a nested list of label lists is a batch (returns a tuple). ``backend``
-    is ``"exact_ode"`` (default), ``"mps"`` or ``"peps"``. ``t_eval`` are
+    is ``"exact_ode"`` (default), ``"mps"``, ``"peps"`` (Cartesian grids) or
+    ``"graph_peps"`` (arbitrary 2D geometry). ``t_eval`` are
     measurement times only (``None`` -> record at ``t_gate``). ``observables`` is
     a ``dict[str, ObservableExpr]`` from ``system.observables``.
     """
@@ -71,4 +72,6 @@ def simulate(
             observables=observables, backend_options=backend_options,
         )
 
-    raise ValueError(f"unknown backend {backend!r}; use 'exact_ode', 'mps' or 'peps'.")
+    raise ValueError(
+        f"unknown backend {backend!r}; use 'exact_ode', 'mps', 'peps' or 'graph_peps'."
+    )

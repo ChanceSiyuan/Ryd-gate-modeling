@@ -319,6 +319,51 @@ Convergence studies belong in the caller: rerun with different time steps,
 state/environment bond dimensions, and tolerances, then compare the physical
 expectations, amplitudes, samples, or energies.
 
+## Graph-PEPS (arbitrary geometry)
+
+`backend="graph_peps"` is a second 2D tensor-network backend, for **arbitrary
+atom geometry**. Where `backend="peps"` requires a Cartesian
+`Register.chain`/`rectangle`/`square` grid, `graph_peps` accepts **any**
+register — triangular, direct coordinates, or a grid — and contracts on the
+arbitrary interaction graph (every atom pair kept within
+`interaction_cutoff_um`). It runs on [quimb](https://quimb.readthedocs.io)
+(install the `tn-graph` extra) with a simple-update graph-PEPS: a symmetric
+second-order Trotter simple-update sweep for real time and `SimpleUpdateGen`
+imaginary time for the ground state, with belief-propagation / cluster
+environments for observables.
+
+```python
+graph_options = {
+    "time_step_s": 0.2e-6 / 400,
+    "bond_dimension": 8,
+    "svd_cutoff": 1e-12,
+    "measurement_method": "cluster",   # "exact" (small N) | "cluster" | "bp"
+    "cluster_max_distance": 3,
+    "device": "cpu",
+}
+result = simulate(
+    system,                             # any register — e.g. Register.triangular(...)
+    backend="graph_peps",
+    backend_options=graph_options,
+    observables={"n_r": n_r},
+)
+```
+
+`measurement_method` selects the observable environment: `"exact"` (full
+contraction — ground truth, small systems), `"cluster"` (converges to exact as
+`cluster_max_distance` grows — the recommended choice for larger loopy graphs),
+and `"bp"` (cheap belief propagation, poor on loops — not for quantitative
+measurement). Every atom must share at least one interaction edge.
+
+Capability limits: the imaginary-time simple update converges on loopy graphs
+only in a moderate-blockade regime (`V` up to a few times `Omega`); strong
+blockade on a loop does not converge (real time is far more forgiving, and tree
+geometries are near-exact). `amplitude()` and `sample()` are exact but densify
+the state, so they are limited to small systems. `device="cuda"` is not
+supported and is rejected with a clear error (use `backend="peps"` for CUDA).
+Use `graph_peps` for irregular/loopy geometry and `peps` for large regular
+Cartesian grids.
+
 ## Ground-state search
 
 Ground-state search is not a `simulate()` backend. It freezes a complete `1r`
@@ -390,6 +435,18 @@ The Hamiltonian is normalized by a derived local energy scale, the complete
 dimensionless schedule runs in decreasing step sizes, and one final CTM
 measurement produces energy and requested observables. The returned estimate
 and free numerical summaries follow the same PEPS evidence contract.
+
+### Graph-PEPS imaginary time
+
+`method="graph_peps_imaginary_time"` is the arbitrary-geometry counterpart (see
+[Graph-PEPS](#graph-peps-arbitrary-geometry)): it runs quimb `SimpleUpdateGen`
+imaginary time on the interaction graph of **any** register and takes six
+options (`bond_dimension`, `svd_cutoff`, `imaginary_time_schedule`,
+`measurement_method`, `cluster_max_distance`, `device`). The
+`imaginary_time_schedule` `tau` values are in seconds on the raw rad/s
+Hamiltonian (strictly decreasing), not the Λ-normalized dimensionless step of
+`peps_imaginary_time`. `energy` is the reserved expectation; convergence on
+loopy graphs is limited to the moderate-blockade regime noted above.
 
 ### `GroundStateResult`
 

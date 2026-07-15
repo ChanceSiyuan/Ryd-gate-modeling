@@ -38,6 +38,12 @@ tn-2d = [
     "physics-tenpy>=1.0",
     "yastn @ git+https://github.com/yastn/yastn.git@30b1d8bb4dc691a25bf6394b061c564128ede8e0",
 ]
+# Arbitrary-geometry graph-PEPS backend (backend="graph_peps") runs on quimb.
+# quimb>=1.14 requires Python >=3.11; the marker keeps requires-python>=3.10 valid
+# (on 3.10 the extra installs no quimb and the backend is simply unavailable).
+tn-graph = [
+    "quimb>=1.14; python_version >= '3.11'",
+]
 # torch for the YASTN PEPS-on-CUDA tensor backend (yastn_backend="torch", device="cuda").
 # Pinned to 2.5.1 because newer wheels (>=2.8 / cu130) drop Volta (sm_70) and fail on the
 # DGX V100s with "no kernel image available". uv pulls 2.5.1+cu121 from the PyTorch index
