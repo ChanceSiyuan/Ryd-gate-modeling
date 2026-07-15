@@ -395,24 +395,6 @@ def materialize_sparse_operator(
     raise TypeError(f"Unsupported operator spec: {type(spec).__name__}")
 
 
-def measure_state_vector_operator(spec: OperatorSpec, basis: BasisSpec, psi: np.ndarray) -> float:
-    """Measure a symbolic observable against an exact state vector."""
-    if psi.shape[0] != basis.total_dim:
-        raise ValueError(f"State dimension {psi.shape[0]} does not match basis dimension {basis.total_dim}.")
-
-    if isinstance(spec, LocalProjectorSpec):
-        return _projector_expectation(spec.level, spec.site, basis, psi)
-    if isinstance(spec, SumProjectorSpec):
-        return float(sum(_projector_expectation(spec.level, i, basis, psi) for i in range(basis.n_sites)))
-    if isinstance(spec, WeightedProjectorSumSpec):
-        return float(
-            sum(weight * _projector_expectation(spec.level, i, basis, psi) for i, weight in enumerate(spec.weights))
-        )
-
-    op = materialize_sparse_operator(spec, basis)
-    return float(np.real(np.vdot(psi, op @ psi)))
-
-
 def _check_exact_dim(basis: BasisSpec, max_dim: int | None) -> None:
     if max_dim is not None and basis.total_dim > max_dim:
         raise ValueError(
@@ -472,13 +454,6 @@ def _rydberg_pair_interaction(spec: RydbergPairInteractionSpec, basis: BasisSpec
     for i, j, V_ij in spec.pairs:
         h_diag += V_ij * (ryd_mask_by_site[i] * ryd_mask_by_site[j])
     return spdiags([h_diag], [0], shape=(basis.total_dim, basis.total_dim), format="csc")
-
-
-def _projector_expectation(level: str, site: int, basis: BasisSpec, psi: np.ndarray) -> float:
-    indices = np.arange(basis.total_dim, dtype=np.int64)
-    mask = _site_level_mask(indices, basis, site, (level,))
-    probs = np.abs(psi[mask]) ** 2
-    return float(np.real(np.sum(probs)))
 
 
 def _site_level_mask(indices: np.ndarray, basis: BasisSpec, site: int, levels: tuple[str, ...]):

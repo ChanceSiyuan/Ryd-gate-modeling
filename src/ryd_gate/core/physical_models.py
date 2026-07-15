@@ -9,28 +9,23 @@ Three pieces of atomic/interaction physics in one module:
 - Rb87 seven-level static physical parameters per manifold/polarization
   convention — ``rb87_7_mp`` (σ⁻/σ⁺, was ``our``) and ``rb87_7_pm`` (σ⁺/σ⁻,
   was ``lukin``) — covering level energies, decay/branching rates, and VdW
-  strengths (no laser Rabi: those belong to the protocol), and the helper
-  that flattens them into a system metadata dict.
-- Single-atom physics for ``analog_3`` and the Rb87 seven-level models, lowered
-  to primitive ``E[ket,bra]`` form: static diagonal energies (and the analog
-  static e-r coupling) become ``StaticHamiltonianTerm`` s, and the off-diagonal
-  laser legs become per-channel CG/dipole ratios (``laser_channel_ratios``
-  metadata) that a protocol multiplies onto its laser coefficient.
+  strengths (no laser Rabi: those belong to the protocol).
+- The ``*_level_fields`` resolvers that turn a preset's physical kwargs into
+  the typed fields of :class:`~ryd_gate.core.level_structures.LevelStructure`:
+  the single-atom static energy matrix (``local_static``), static off-diagonal
+  couplings, and the per-channel CG/dipole ratios (``laser_channel_ratios``)
+  a protocol multiplies onto its laser coefficient.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from functools import lru_cache as _functools_lru_cache
+from typing import Any
 
 import numpy as np
 
-from ryd_gate.core.level_structures import DEFAULT_C6, level_structure
-from ryd_gate.core.operators import StaticHamiltonianTerm
-
-if TYPE_CHECKING:
-    from ryd_gate.core.system import RydbergSystem
-
+from ryd_gate.core.level_structures import DEFAULT_C6
 
 _RB87_CLOCK_HYPERFINE = 2 * np.pi * 6.835e9
 
@@ -190,15 +185,14 @@ def _rb87_physical_params(
     ``t_rise``, ``Delta_Hz`` (Hz; → ``Delta = detuning_sign·2π·Delta_Hz``)
     override them.  No laser Rabi amplitudes are computed here.
     """
-    from arc import Rubidium87
-
     from ryd_gate.physics import (
+        _get_atom,
         _mid_branching_ratios,
         _rydberg_branching_ratios,
         rydberg_zeeman_shift_rad_s,
     )
 
-    atom = Rubidium87()
+    atom = _get_atom()
     if manifold == "mp":  # σ⁻(420)/σ⁺(1013); was param_set="our"
         ryd_level = 70 if ryd_level is None else int(ryd_level)
         Delta = detuning_sign * 2 * np.pi * 9.1e9
@@ -271,48 +265,7 @@ def _rb87_physical_params(
     )
 
 
-def _metadata_from_rb87_params(system: Rb87SevenLevelParams) -> dict[str, Any]:
-    # The laser Rabi scale is not a system property — the unit-normalized blocks
-    # carry no Rabi, and the CZ protocol owns the 420/1013 amplitudes.  Static
-    # atom/manifold energies (Delta, manifold, decays) stay here.
-    return {
-        "rb87_manifold": system.manifold,
-        "t_rise": system.t_rise,
-        "n_atoms": system.n_atoms,
-        "n_levels": system.n_levels,
-        "Delta": system.Delta,
-        "v_ryd": system.v_ryd,
-        "v_ryd_garb": system.v_ryd_garb,
-        "ryd_state_decay_rate": system.ryd_state_decay_rate,
-        "ryd_RD_rate": system.ryd_RD_rate,
-        "ryd_BBR_rate": system.ryd_BBR_rate,
-        "mid_state_decay_rate": system.mid_state_decay_rate,
-        "ryd_branch": system.ryd_branch,
-        "mid_branch": system.mid_branch,
-        "rydberg_indices": system.rydberg_indices,
-        "enable_rydberg_decay": system.enable_rydberg_decay,
-        "enable_intermediate_decay": system.enable_intermediate_decay,
-        "magnetic_field_G": system.magnetic_field_G,
-        "ryd_zeeman_shift": system.ryd_zeeman_shift,
-    }
-
-
 # ── Single-atom physics → primitive E[ket,bra] terms/ratios ──────────────────
-
-
-def _add_static_diagonals(model, levels: tuple[str, ...], h_const: np.ndarray) -> None:
-    """Append a static ``coeff·sum_i E[a,a]_i`` term per nonzero diagonal energy.
-
-    ``levels`` are the basis labels in index order; ``h_const[i,i]`` is the
-    (possibly complex, decay-bearing) single-atom energy of level ``i``.
-    """
-    for i, level in enumerate(levels):
-        coeff = complex(h_const[i, i])
-        if coeff != 0:
-            name = f"E[{level},{level}]"
-            model.static_hamiltonian_terms.append(
-                StaticHamiltonianTerm(name, model.operators.sum(name), coeff)
-            )
 
 
 def _offdiag_ratios(
@@ -411,25 +364,23 @@ def analog_3_local_blocks(
     return _analog3_blocks(Delta, rabi_420, rabi_1013, mid_decay, ryd_decay, rabi_eff, time_scale)
 
 
-def analog_3_local_blocks_from_metadata(metadata: dict | None) -> Analog3Blocks:
-    """Reconstruct analog_3 blocks from a system/IR metadata dict (angular rad/s scalars).
+def analog_3_local_blocks_from_level_structure(ls) -> Analog3Blocks:
+    """Reconstruct analog_3 blocks from a resolved :class:`LevelStructure`.
 
-    Falls back to the default analog_3 constants when the scalars are absent.
+    Falls back to the default analog_3 constants when *ls* carries no Delta
+    (e.g. a bare structural spec in a TN lattice context).
     """
-    if not metadata or "Delta" not in metadata:
+    if ls is None or getattr(ls, "Delta", None) is None:
         return analog_3_local_blocks()
-    Delta = float(metadata["Delta"])
-    rabi_420 = float(metadata["rabi_420"])
-    rabi_1013 = float(metadata["rabi_1013"])
-    rabi_eff = float(metadata.get("rabi_eff") or rabi_420 * rabi_1013 / (2 * abs(Delta)))
-    time_scale = float(metadata.get("time_scale") or 2 * np.pi / rabi_eff)
-    mid_decay = float(metadata.get("mid_state_decay_rate", 0.0)) if metadata.get("enable_intermediate_decay") else 0.0
-    ryd_decay = float(metadata.get("ryd_state_decay_rate", 0.0)) if metadata.get("enable_rydberg_decay") else 0.0
-    return _analog3_blocks(Delta, rabi_420, rabi_1013, mid_decay, ryd_decay, rabi_eff, time_scale)
+    mid_decay = float(ls.mid_state_decay_rate or 0.0) if ls.enable_intermediate_decay else 0.0
+    ryd_decay = float(ls.ryd_state_decay_rate or 0.0) if ls.enable_rydberg_decay else 0.0
+    return _analog3_blocks(
+        float(ls.Delta), float(ls.rabi_420), float(ls.rabi_1013),
+        mid_decay, ryd_decay, float(ls.rabi_eff), float(ls.time_scale),
+    )
 
 
-def _apply_analog_3_lattice_blocks(
-    model: "RydbergSystem",
+def analog_3_level_fields(
     *,
     detuning_sign: int = 1,
     enable_rydberg_decay: bool = False,
@@ -437,10 +388,13 @@ def _apply_analog_3_lattice_blocks(
     Delta_Hz: float | None = None,
     rabi_420_Hz: float | None = None,
     rabi_1013_Hz: float | None = None,
-    **unused,
-) -> None:
-    _reject_unused(unused)
-    ryd_level = 70
+) -> dict[str, Any]:
+    """Resolved analog_3 physical fields for :func:`level_structure`.
+
+    Diagonal g/e/r energies land in ``local_static``; the e-r 1013 leg is a
+    static (h.c.-completed) ``E[r,e]`` coupling; the g-e 420 leg is a driveable
+    channel whose full Rabi is carried as the ``E[e,g]`` ratio.
+    """
     blk = analog_3_local_blocks(
         Delta_Hz=Delta_Hz,
         rabi_420_Hz=rabi_420_Hz,
@@ -450,53 +404,33 @@ def _apply_analog_3_lattice_blocks(
         enable_intermediate_decay=enable_intermediate_decay,
     )
     ryd_RD_rate = 1 / 410.41e-6
-    ryd_BBR_rate = _ANALOG3_RYD_DECAY_RATE - ryd_RD_rate
-
-    # Diagonal g/e/r energies become static E[a,a] terms; the e-r 1013 leg is a
-    # static (non-Hermitian, h.c.-completed) E[r,e] coupling; the g-e 420 leg is a
-    # driveable channel whose full Rabi is carried as the E[e,g] ratio.
-    _add_static_diagonals(model, ("g", "e", "r"), blk.h_const)
     c_er = complex(blk.h_1013[2, 1])
-    if c_er != 0:
-        model.static_hamiltonian_terms.append(
-            StaticHamiltonianTerm(
-                "E[r,e]", model.operators.sum("E[r,e]"), c_er, add_hermitian_conjugate=True
-            )
-        )
-    ratios = {"420": {"E[e,g]": complex(blk.drive_420[1, 0])}}
-
-    model.metadata.update(
-        {
-            "physical_model": "analog_3",
-            "laser_channel_ratios": ratios,
-            "rabi_eff": blk.rabi_eff,
-            "time_scale": blk.time_scale,
-            "t_rise": 20e-9,
-            "n_atoms": model.N,
-            "n_levels": 3,
-            "rabi_420": blk.rabi_420,
-            "rabi_1013": blk.rabi_1013,
-            "rabi_420_garbage": 0.0,
-            "rabi_1013_garbage": 0.0,
-            "Delta": blk.Delta,
-            "v_ryd": _nearest_pair_strength(model.metadata.get("interaction_pairs", ())),
-            "v_ryd_garb": 0.0,
-            "ryd_level": ryd_level,
-            "ryd_state_decay_rate": _ANALOG3_RYD_DECAY_RATE,
-            "ryd_RD_rate": ryd_RD_rate,
-            "ryd_BBR_rate": ryd_BBR_rate,
-            "mid_state_decay_rate": _ANALOG3_MID_DECAY_RATE,
-            "ryd_branch": {},
-            "mid_branch": {},
-            "rydberg_indices": (2,),
-            "enable_rydberg_decay": enable_rydberg_decay,
-            "enable_intermediate_decay": enable_intermediate_decay,
-        }
-    )
+    return {
+        "local_static": blk.h_const,
+        "static_couplings": ((("E[r,e]", c_er),) if c_er != 0 else ()),
+        "laser_channel_ratios": {"420": {"E[e,g]": complex(blk.drive_420[1, 0])}},
+        "physical_model": "analog_3",
+        "Delta": blk.Delta,
+        "t_rise": 20e-9,
+        "rabi_eff": blk.rabi_eff,
+        "time_scale": blk.time_scale,
+        "rabi_420": blk.rabi_420,
+        "rabi_1013": blk.rabi_1013,
+        "ryd_level": 70,
+        "ryd_state_decay_rate": _ANALOG3_RYD_DECAY_RATE,
+        "ryd_RD_rate": ryd_RD_rate,
+        "ryd_BBR_rate": _ANALOG3_RYD_DECAY_RATE - ryd_RD_rate,
+        "mid_state_decay_rate": _ANALOG3_MID_DECAY_RATE,
+        "ryd_branch": {},
+        "mid_branch": {},
+        "rydberg_indices": (2,),
+        "enable_rydberg_decay": enable_rydberg_decay,
+        "enable_intermediate_decay": enable_intermediate_decay,
+        "default_c6": DEFAULT_C6,
+    }
 
 
-def _apply_rb87_7_lattice_blocks(
-    model: "RydbergSystem",
+def rb87_7_level_fields(
     manifold: str,
     *,
     detuning_sign: int = 1,
@@ -507,9 +441,15 @@ def _apply_rb87_7_lattice_blocks(
     C6_rad_s_um6: float | None = None,
     t_rise: float | None = None,
     Delta_Hz: float | None = None,
-    **unused,
-) -> None:
-    _reject_unused(unused)
+) -> dict[str, Any]:
+    """Resolved rb87 seven-level physical fields for :func:`level_structure`.
+
+    Unit-Rabi, phase-free 420/1013 legs are decomposed into per-channel
+    CG/dipole ratios (the off-diagonal entries of the drive matrices, all
+    real).  A CZ protocol multiplies its laser coefficient c420(t)/c1013(t)
+    onto these; the compiler auto-adds each leg's h.c.  420: |0>,|1> -> |e_F>;
+    1013: |e_F> -> |r>,|r_garb>.
+    """
     physical = _rb87_physical_params(
         manifold,
         detuning_sign=detuning_sign,
@@ -528,34 +468,37 @@ def _apply_rb87_7_lattice_blocks(
         physical.mid_state_decay_rate if enable_intermediate_decay else 0.0,
         physical.ryd_state_decay_rate if enable_rydberg_decay else 0.0,
     )
-    _add_static_diagonals(
-        model, ("0", "1", "e1", "e2", "e3", "r", "r_garb"), h_const
-    )
 
-    # Unit-Rabi, phase-free 420/1013 legs decomposed into per-channel CG/dipole
-    # ratios (the off-diagonal entries of the old drive matrices, all real).  A CZ
-    # protocol multiplies its laser coefficient c420(t)/c1013(t) onto these; the
-    # compiler auto-adds each leg's h.c.  420: |0>,|1> -> |e_F>; 1013: |e_F> -> |r>,|r_garb>.
     h420 = _rb87_local_h420(manifold, 1.0, physical.d_mid_ratio)
     h1013 = _rb87_local_h1013(manifold, 1.0, physical.d_ryd_ratio)
     mid = [(2, "e1"), (3, "e2"), (4, "e3")]
     ratios_420 = _offdiag_ratios(h420, mid, [(1, "1"), (0, "0")])
     ratios_1013 = _offdiag_ratios(h1013, [(5, "r"), (6, "r_garb")], mid)
 
-    tag = f"rb87_7_{manifold}"
-    model.metadata.update(_metadata_from_rb87_params(physical))
-    model.metadata.update(
-        {
-            "physical_model": tag,
-            "n_atoms": model.N,
-            "n_sites": model.N,
-            "level_structure": tag,
-            "level_spec": level_structure(tag),
-            "laser_channel_ratios": {"420": ratios_420, "1013": ratios_1013},
-            "v_ryd": _nearest_pair_strength(model.metadata.get("interaction_pairs", ())),
-            "ryd_level": physical.ryd_level,
-        }
+    default_c6 = (
+        float(C6_rad_s_um6) if C6_rad_s_um6 is not None else _rb87_default_c6(manifold)
     )
+    return {
+        "local_static": h_const,
+        "laser_channel_ratios": {"420": ratios_420, "1013": ratios_1013},
+        "physical_model": f"rb87_7_{manifold}",
+        "Delta": physical.Delta,
+        "t_rise": physical.t_rise,
+        "ryd_level": physical.ryd_level,
+        "ryd_state_decay_rate": physical.ryd_state_decay_rate,
+        "ryd_RD_rate": physical.ryd_RD_rate,
+        "ryd_BBR_rate": physical.ryd_BBR_rate,
+        "ryd_garb_decay_rate": physical.ryd_garb_decay_rate,
+        "mid_state_decay_rate": physical.mid_state_decay_rate,
+        "ryd_branch": physical.ryd_branch,
+        "mid_branch": physical.mid_branch,
+        "rydberg_indices": physical.rydberg_indices,
+        "magnetic_field_G": physical.magnetic_field_G,
+        "ryd_zeeman_shift": physical.ryd_zeeman_shift,
+        "enable_rydberg_decay": enable_rydberg_decay,
+        "enable_intermediate_decay": enable_intermediate_decay,
+        "default_c6": default_c6,
+    }
 
 
 def _rb87_local_h_const(
@@ -670,33 +613,13 @@ def _rb87_297_pair_c6_fn(ryd_level: int):
     return c6_fn
 
 
-def _apply_rb87_297_lattice_blocks(
-    model: "RydbergSystem",
-    *,
-    enable_rydberg_decay: bool = False,
-    magnetic_field_G: float = 20.0,
-    ryd_level: int = 53,
-    **unused,
-) -> None:
-    """Mount the 297 nm single-photon ``("0", "1", "r", "r_garb")`` physical blocks.
+@_functools_lru_cache(maxsize=None)
+def _rb87_297_level_fields_cached(
+    enable_rydberg_decay: bool, magnetic_field_G: float, ryd_level: int
+) -> dict[str, Any]:
+    from ryd_gate.physics import _get_atom, zeeman_shift_rad_s
 
-    ``|1⟩`` is the clock-like ``|F=2, mF=0⟩`` ground state; a σ⁻ 297 nm beam
-    drives the target branch ``|5S₁/₂ mⱼ=-1/2⟩ → |nP₃/₂ mⱼ=-3/2⟩`` (``|r⟩``)
-    and the garbage branch ``|5S₁/₂ mⱼ=+1/2⟩ → |nP₃/₂ mⱼ=-1/2⟩``
-    (``|r_garb⟩``). The logical ``|0⟩`` (``|F=1, mF=0⟩``) is a dark spectator —
-    no 297 leg touches it; it carries only the static clock hyperfine energy
-    (same ``h[0,0] = -ω_hf`` convention as the seven-level model). The blocks
-    are unit-Rabi: the ``E[r,1]``/``E[r_garb,1]`` channel ratios carry only the
-    relative branch dipole factor, and the protocol (``Direct297PiProtocol``)
-    multiplies the physical target Rabi onto them.
-    """
-    _reject_unused(unused)
-    from arc import Rubidium87
-
-    from ryd_gate.physics import zeeman_shift_rad_s
-
-    atom = Rubidium87()
-    ryd_level = int(ryd_level)
+    atom = _get_atom()
 
     # Garbage/target dipole ratio of the two σ⁻ branches (the clock-state
     # 1/sqrt(2) amplitude factors are common to both legs and cancel).
@@ -723,7 +646,6 @@ def _apply_rb87_297_lattice_blocks(
     h_const[0, 0] = -_RB87_CLOCK_HYPERFINE
     h_const[2, 2] = -1j * decay / 2
     h_const[3, 3] = garb_detuning - 1j * decay / 2
-    _add_static_diagonals(model, ("0", "1", "r", "r_garb"), h_const)
 
     # Unit-Rabi σ⁻ legs: the protocol's laser coefficient c297(t) = Ω_r(t)
     # multiplies these (Hamiltonian element Ω/2); the compiler adds each h.c.
@@ -731,25 +653,47 @@ def _apply_rb87_297_lattice_blocks(
         "E[r,1]": complex(0.5),
         "E[r_garb,1]": complex(0.5 * d_garb_ratio),
     }
+    return {
+        "local_static": h_const,
+        "laser_channel_ratios": {"297": ratios_297},
+        "physical_model": "rb87_297_clock_4",
+        "rydberg_indices": (2, 3),
+        "ryd_level": ryd_level,
+        "d_garb_ratio": float(d_garb_ratio),
+        "garb_zeeman_detuning": float(garb_detuning),
+        "magnetic_field_G": float(magnetic_field_G),
+        "ryd_state_decay_rate": float(ryd_state_decay_rate),
+        "ryd_RD_rate": float(ryd_RD_rate),
+        "ryd_BBR_rate": float(ryd_state_decay_rate - ryd_RD_rate),
+        "ryd_garb_decay_rate": float(ryd_state_decay_rate),
+        "enable_rydberg_decay": bool(enable_rydberg_decay),
+    }
 
-    model.metadata.update(
-        {
-            "physical_model": "rb87_297_clock_4",
-            "laser_channel_ratios": {"297": ratios_297},
-            "n_atoms": model.N,
-            "n_levels": 4,
-            "rydberg_indices": (2, 3),
-            "ryd_level": ryd_level,
-            "d_garb_ratio": float(d_garb_ratio),
-            "garb_zeeman_detuning": float(garb_detuning),
-            "magnetic_field_G": float(magnetic_field_G),
-            "ryd_state_decay_rate": float(ryd_state_decay_rate),
-            "ryd_RD_rate": float(ryd_RD_rate),
-            "ryd_BBR_rate": float(ryd_state_decay_rate - ryd_RD_rate),
-            "enable_rydberg_decay": bool(enable_rydberg_decay),
-            "v_ryd": _nearest_pair_strength(model.metadata.get("interaction_pairs", ())),
-        }
-    )
+
+def rb87_297_level_fields(
+    *,
+    enable_rydberg_decay: bool = False,
+    magnetic_field_G: float = 20.0,
+    ryd_level: int = 53,
+) -> dict[str, Any]:
+    """Resolved 297 nm single-photon ``("0","1","r","r_garb")`` physical fields.
+
+    ``|1⟩`` is the clock-like ``|F=2, mF=0⟩`` ground state; a σ⁻ 297 nm beam
+    drives the target branch ``|5S₁/₂ mⱼ=-1/2⟩ → |nP₃/₂ mⱼ=-3/2⟩`` (``|r⟩``)
+    and the garbage branch ``|5S₁/₂ mⱼ=+1/2⟩ → |nP₃/₂ mⱼ=-1/2⟩``
+    (``|r_garb⟩``). The logical ``|0⟩`` (``|F=1, mF=0⟩``) is a dark spectator —
+    no 297 leg touches it; it carries only the static clock hyperfine energy
+    (same ``h[0,0] = -ω_hf`` convention as the seven-level model). The blocks
+    are unit-Rabi: the ``E[r,1]``/``E[r_garb,1]`` channel ratios carry only the
+    relative branch dipole factor, and the protocol multiplies the physical
+    target Rabi onto them.  The pairwise nP₃/₂ interaction defaults to the
+    anisotropic ARC C6 via ``pair_c6_fn`` (lazy: evaluated at system build).
+    """
+    fields = dict(_rb87_297_level_fields_cached(
+        bool(enable_rydberg_decay), float(magnetic_field_G), int(ryd_level)
+    ))
+    fields["pair_c6_fn"] = _rb87_297_pair_c6_fn(int(ryd_level))
+    return fields
 
 
 def _nearest_pair_strength(pairs: tuple) -> float:

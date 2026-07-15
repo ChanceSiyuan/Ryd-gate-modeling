@@ -72,8 +72,8 @@ class TestDMRG:
     @pytest.mark.slow
     def test_2x2_energy_vs_exact(self, spec_2x2):
         """DMRG energy matches exact diagonalization for 2x2."""
-        from ryd_gate import RydbergSystem
-        from ryd_gate.backends.exact import compile_expm_ir
+        from ryd_gate import RydbergSystem, level_structure
+        from ryd_gate.backends.exact.compiler import _compile_exact_ir
         from ryd_gate.core.level_structures import InteractionSpec
         from ryd_gate.ir import compile_hamiltonian_ir
         from ryd_gate.lattice import Register
@@ -85,13 +85,14 @@ class TestDMRG:
             omega_half_fn=lambda t: 0.5,
             delta_fn=lambda t: Delta,
         )
-        system = RydbergSystem.set_atom_level("1r", Omega=1.0).set_atom_geom(
-            Register.rectangle(2, 2, spacing_um=1.0),
+        system = RydbergSystem(
+            level_structure=level_structure("1r"),
+            register=Register.rectangle(2, 2, spacing_um=1.0),
             interaction=InteractionSpec(C6=24.0, mode="nnn"),
-        ).set_protocol(proto)
-        params = system.unpack_params([])
-        ham = compile_hamiltonian_ir(system, params)
-        ir = compile_expm_ir(ham)
+            protocol=proto,
+        )
+        ham = compile_hamiltonian_ir(system)
+        ir = _compile_exact_ir(ham)
 
         # Build full Hamiltonian at t=0.5 (midpoint, Omega fully on)
         t_mid = 0.5

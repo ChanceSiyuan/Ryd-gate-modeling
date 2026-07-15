@@ -1,7 +1,7 @@
 """Function-defined global Rydberg sweep protocol.
 
-``SweepProtocol`` is intentionally small: the schedule lives on the protocol,
-so the parameter vector passed to ``simulate()`` is empty.
+``SweepProtocol`` is intentionally small: the schedule lives entirely on the
+protocol (fully specified at construction).
 """
 
 from __future__ import annotations
@@ -34,8 +34,6 @@ class SweepProtocol(Protocol):
         Function ``(t, i) -> Delta_addr_i(t)`` for local-addressing detuning
         shifts.  The total detuning on site ``i`` is
         ``Delta(t) + Delta_addr_i(t)``.
-    n_steps : int
-        Number of piecewise-constant time steps used by exact sparse evolution.
 
     Schedules emit ``E[r,1] = Omega(t)/2``, ``E[r,r] = -Delta(t)``, and,
     when ``address_fn`` is provided, ``E[r,r]_i = -Delta_addr_i(t)``.
@@ -48,12 +46,9 @@ class SweepProtocol(Protocol):
         omega_half_fn: ScalarTimeFunction,
         delta_fn: ScalarTimeFunction,
         address_fn: AddressTimeFunction | None = None,
-        n_steps: int = 200,
     ) -> None:
         if t_gate <= 0:
             raise ValueError("t_gate must be positive.")
-        if n_steps < 1:
-            raise ValueError("n_steps must be positive.")
         if not callable(omega_half_fn):
             raise TypeError("omega_half_fn must be callable.")
         if not callable(delta_fn):
@@ -65,19 +60,9 @@ class SweepProtocol(Protocol):
         self.omega_half_fn = omega_half_fn
         self.delta_fn = delta_fn
         self.address_fn = address_fn
-        self.n_steps = int(n_steps)
         self._phase_table: tuple[float, int, np.ndarray, np.ndarray] | None = None
 
-    @property
-    def n_params(self) -> int:
-        return 0
-
-    def validate_params(self, x) -> None:
-        if len(x) != 0:
-            raise ValueError(f"SweepProtocol takes no x parameters; got {len(x)}.")
-
-    def unpack_params(self, x, system) -> dict:
-        self.validate_params(x)
+    def _resolve(self, system) -> dict:
         n_sites = self._n_sites(system)
         return {
             "t_gate": self.t_gate,
@@ -122,15 +107,15 @@ class SweepProtocol(Protocol):
     def total_delta_at(self, t: float, n_sites: int) -> np.ndarray:
         return self.delta_at(t) + self.address_at(t, n_sites)
 
-    def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
+    def get_drive_coefficients(self, t: float, ctx: dict) -> dict[str, complex]:
         coeffs: dict[str, complex] = {
             "E[r,1]": self.omega_half_at(t),
             "E[r,r]": -self.delta_at(t),
         }
         if self.address_fn is not None:
-            n_sites = params.get("n_sites")
+            n_sites = ctx.get("n_sites")
             if n_sites is None:
-                raise ValueError("SweepProtocol with address_fn requires params['n_sites'].")
+                raise ValueError("SweepProtocol with address_fn requires ctx['n_sites'].")
             coeffs.update(
                 {f"E[r,r]_{i}": -float(shift) for i, shift in enumerate(self.address_at(t, int(n_sites)))}
             )
@@ -139,13 +124,10 @@ class SweepProtocol(Protocol):
     def _phase_delta_at(self, t: float) -> float:
         return self.delta_at(t)
 
-    def pulse_traces(self, t: float, params: dict) -> dict[str, float]:
-        """Physical global pulse traces (Omega/2, Delta) at time *t*.
-
-        The generic :meth:`Protocol.plot` samples these and applies its
-        ``unit_scale`` (e.g. ``1/(2*pi*1e6)`` for MHz); the address-shift map is
-        a separate 2D view, see :meth:`plot_address_map`.
-        """
+    def _pulse_traces_ctx(self, t: float, ctx: dict) -> dict[str, float]:
+        """Physical global pulse traces (Omega/2, Delta) at time *t* (rad/s);
+        the address-shift map is a separate 2D view, see :meth:`plot_address_map`."""
+        del ctx
         return {r"$\Omega/2$": self.omega_half_at(t), r"$\Delta$": self.delta_at(t)}
 
     def plot_address_map(
@@ -166,7 +148,7 @@ class SweepProtocol(Protocol):
         ``t_gate``) and laid out on the lattice geometry.
         """
         if params is None:
-            params = self.unpack_params([], system) if system is not None else {"t_gate": self.t_gate}
+            params = self._resolve(system) if system is not None else {"t_gate": self.t_gate}
         if n_sites is None:
             n_sites = params.get("n_sites")
         if n_sites is None and system is not None:
@@ -238,14 +220,12 @@ class SweepProtocol(Protocol):
         n_sites = getattr(basis, "n_sites", None)
         if n_sites is None:
             n_sites = getattr(system, "N", None)
-        if n_sites is None and hasattr(system, "meta"):
-            n_sites = system.meta("n_sites", None)
         if n_sites is None:
-            raise TypeError("SweepProtocol needs a system-like object with basis.n_sites, N, or meta('n_sites').")
+            raise TypeError("SweepProtocol needs a system-like object with basis.n_sites or N.")
         return int(n_sites)
 
-    def phase_420(self, t: float, params: dict) -> complex:
-        """Return exp(-i int_0^t Delta(t') dt') for legacy phase consumers."""
+    def phase_420(self, t: float) -> complex:
+        """Return exp(-i int_0^t Delta(t') dt') (accumulated detuning phase)."""
         return np.exp(-1j * self._detuning_phase(t))
 
     def _clamp_time(self, t: float) -> float:
@@ -258,7 +238,9 @@ class SweepProtocol(Protocol):
 
         from scipy.integrate import cumulative_trapezoid
 
-        n_pts = max(2000, 10 * self.n_steps + 1)
+        # Internal phase-integration accuracy (2001 samples matches the old
+        # max(2000, 10*n_steps+1) grid at the default 200-step resolution).
+        n_pts = 2001
         ts = np.linspace(0.0, self.t_gate, n_pts)
         deltas = np.array([self._phase_delta_at(t) for t in ts], dtype=float)
         phases = np.zeros(n_pts, dtype=float)

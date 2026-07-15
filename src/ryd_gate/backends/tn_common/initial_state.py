@@ -29,7 +29,13 @@ def validate_level_labels(spec: TNLatticeSpec, labels: Sequence[str]) -> None:
 def named_level_labels(spec: TNLatticeSpec, name: str) -> list[str]:
     """Generic per-site level labels for a named pattern (validated against ``spec``)."""
     ground = spec.level_spec.initial_level_or_default()
-    if name == "all_ground":
+    if name == "ground":
+        # The public simulate() preset: label "1" if present, else the first
+        # local level (matches the exact backend's per-site preset level).
+        from ryd_gate.core.states import preset_initial_label
+
+        labels = [preset_initial_label(spec.level_spec.levels)] * spec.N
+    elif name == "all_ground":
         labels = [ground] * spec.N
     elif name == "all_1":
         labels = ["1"] * spec.N

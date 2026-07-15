@@ -7,10 +7,10 @@ against a run captured after it.
 Run with ``uv run`` (project convention):
 
     # capture a baseline (on the untouched branch)
-    uv run python scripts/bench_quench_check.py --backends exact_dense mps peps --out /tmp/base.json
+    uv run python scripts/bench_quench_check.py --backends exact_ode mps peps --out /tmp/base.json
 
     # after a change, compare to the baseline
-    uv run python scripts/bench_quench_check.py --backends exact_dense mps peps \
+    uv run python scripts/bench_quench_check.py --backends exact_ode mps peps \
         --out /tmp/after.json --baseline /tmp/base.json --atol 1e-10
 
 Phase 1 (pure plumbing) should pass at ``--atol 1e-10``. Phase 2 (speed hoist) is
@@ -26,7 +26,7 @@ import time
 import numpy as np
 
 import ryd_gate as rg
-from ryd_gate import InteractionSpec
+from ryd_gate import InteractionSpec, level_structure
 from ryd_gate.lattice import Register
 
 
@@ -65,34 +65,38 @@ def build_system(args):
         omega_half_fn=omega_half_t,
         delta_fn=delta_t,
         address_fn=None,
-        n_steps=args.n_steps,
     )
-    system = (
-        rg.RydbergSystem.set_atom_level("1r")
-        .set_atom_geom(geom, interaction=InteractionSpec(C6=C6, mode="nn"))
-        .set_protocol(protocol)
+    system = rg.RydbergSystem(
+        level_structure=level_structure("1r"),
+        register=geom,
+        interaction=InteractionSpec(C6=C6, mode="nn"),
+        protocol=protocol,
     )
     return system, Omega, t_sweep
 
 
 def run_exact(system, t_eval):
+    observables = system.observables.site_populations("r")  # {"n_r_i": n('r', i)}
     t0 = time.perf_counter()
-    res = rg.simulate(system, [], "all_ground", backend="exact_dense", t_eval=t_eval)
+    res = rg.simulate(system, t_eval=t_eval, observables=observables)  # default exact_ode (adaptive DOP853)
     elapsed = time.perf_counter() - t0
-    n_i = np.asarray([[system.expectation(f"n_r_{i}", psi) for i in range(system.N)] for psi in res.states])
+    n_i = np.stack([res.expectation(f"n_r_{i}").real for i in range(system.N)], axis=1)
     n_mean = n_i.mean(axis=1)
     return n_mean, n_i, elapsed
 
 
 def run_tn(system, backend, t_eval, opts):
+    factory = system.observables
+    observables = factory.site_populations("r")  # per-site scalar labels "n_r_i"
+    observables["n_mean"] = (1.0 / system.N) * factory.level_sum("r")
     t0 = time.perf_counter()
     res = rg.simulate(
-        system, [], "all_ground", backend=backend, t_eval=t_eval,
-        observables=["n_mean", "n_i"], backend_options=opts,
+        system, backend=backend, t_eval=t_eval,
+        observables=observables, backend_options=opts,
     )
     elapsed = time.perf_counter() - t0
-    n_mean = np.asarray(res.metadata["obs"]["n_mean"])
-    n_i = np.asarray(res.metadata["obs"]["n_i"])
+    n_mean = res.expectation("n_mean").real
+    n_i = np.stack([res.expectation(f"n_r_{i}").real for i in range(system.N)], axis=1)
     return n_mean, n_i, elapsed
 
 
@@ -103,11 +107,10 @@ def main():
     p.add_argument("--a-um", type=float, default=10.0)
     p.add_argument("--omega-mhz", type=float, default=3.8)
     p.add_argument("--t-sweep", type=float, default=1.5e-6)
-    p.add_argument("--n-steps", type=int, default=40, help="protocol/exact piecewise steps")
     p.add_argument("--n-eval", type=int, default=5)
     p.add_argument("--chi-max", type=int, default=16)
     p.add_argument("--dt-frac", type=float, default=0.2, help="dt = dt_frac / Omega")
-    p.add_argument("--backends", nargs="+", default=["exact_dense", "mps"])
+    p.add_argument("--backends", nargs="+", default=["exact_ode", "mps"])
     p.add_argument("--peps-cuda", action="store_true", help="run YASTN PEPS on CUDA (needs torch); default CPU")
     p.add_argument("--out", type=str, default=None)
     p.add_argument("--baseline", type=str, default=None)
@@ -129,7 +132,7 @@ def main():
     exact_n_mean = None
     for backend in args.backends:
         try:
-            if backend == "exact_dense":
+            if backend == "exact_ode":
                 n_mean, n_i, elapsed = run_exact(system, t_eval)
                 exact_n_mean = n_mean
             else:
@@ -139,7 +142,7 @@ def main():
             print(f"[{backend}] ERROR: {repr(exc)[:200]}")
             continue
         entry = {"n_mean": n_mean.tolist(), "n_i": n_i.tolist(), "elapsed_s": elapsed}
-        if exact_n_mean is not None and backend != "exact_dense":
+        if exact_n_mean is not None and backend != "exact_ode":
             entry["max_abs_diff_n_mean"] = float(np.max(np.abs(n_mean - exact_n_mean)))
         results[backend] = entry
         diff = entry.get("max_abs_diff_n_mean")

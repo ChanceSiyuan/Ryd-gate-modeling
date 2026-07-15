@@ -8,6 +8,117 @@ import numpy as np
 
 if TYPE_CHECKING:
     from ryd_gate.backends.tn_common.lattice_spec import TNLatticeSpec
+    from ryd_gate.core.observables import ObservableExpr
+
+
+class MPSExpressionPlan:
+    """Lowered ``ObservableExpr`` measurement plan for a TeNPy MPS.
+
+    Built once per evolution by :func:`lower_expressions`; :meth:`measure`
+    evaluates every labelled expression on the current state per sampling
+    anchor: single-site factors are grouped by *distinct* local matrix — one
+    bulk ``psi.expectation_value`` sweep per matrix covers all its sites (so a
+    per-site population profile is a single call) — and multi-site products go
+    through ``psi.expectation_value_multi_sites`` (identity-padded between
+    factor sites).  Note TeNPy indexes a heterogeneous ops list by *site*
+    (``ops[i % len(ops)]``), so mixed operators must never share one call.
+    Values are raw complex ``<psi|O|psi>`` — the canonical-form TeNPy
+    expectations times ``psi.norm**2``, never divided by the norm.
+    """
+
+    def __init__(self, lowered: dict, groups: dict) -> None:
+        self._lowered = lowered
+        self._groups = groups  # matrix-bytes key -> (npc op, sorted site positions)
+
+    def measure(self, psi: object) -> dict[str, complex]:
+        scale = complex(psi.norm) ** 2
+        site_values: dict[bytes, dict[int, complex]] = {}
+        for key, (op, positions) in self._groups.items():
+            values = np.asarray(psi.expectation_value([op], sites=positions))
+            site_values[key] = {
+                pos: complex(value) for pos, value in zip(positions, values)
+            }
+        out: dict[str, complex] = {}
+        for label, (identity_coeff, singles, multis) in self._lowered.items():
+            value = identity_coeff
+            for coeff, key, pos in singles:
+                value += coeff * site_values[key][pos]
+            for coeff, i0, ops_list in multis:
+                value += coeff * complex(psi.expectation_value_multi_sites(ops_list, i0))
+            out[label] = scale * value
+        return out
+
+
+def lower_expressions(
+    exprs: "dict[str, ObservableExpr]", spec: TNLatticeSpec
+) -> MPSExpressionPlan:
+    """Lower validated observable expressions onto the TeNPy MPS geometry.
+
+    Register site indices map to 1D MPS positions through ``spec.inv_snake``
+    (the same permutation the Hamiltonian builder uses).  Local matrices are
+    permuted from the shared level order (``spec.level_spec.levels``) into the
+    TeNPy site basis — for the ``1r`` ``SpinHalfSite`` that is the
+    ``|up>=|r>, |down>=|1>`` order, so arbitrary 2x2 matrices work without
+    touching the site's named operators — and converted to npc arrays once.
+    """
+    from tenpy.linalg import np_conserved as npc
+
+    from .model import build_tenpy_site
+    from .state import _tenpy_label
+
+    site = build_tenpy_site(spec.level_spec)
+    perm = [
+        site.state_index(_tenpy_label(spec, level)) for level in spec.level_spec.levels
+    ]
+    inv_snake = np.asarray(spec.inv_snake, dtype=int)
+    d = int(spec.level_spec.local_dim)
+
+    npc_cache: dict[bytes, object] = {}
+
+    def to_npc(matrix: np.ndarray) -> tuple[bytes, object]:
+        permuted = np.zeros((d, d), dtype=complex)
+        permuted[np.ix_(perm, perm)] = np.asarray(matrix, dtype=complex)
+        key = permuted.tobytes()
+        op = npc_cache.get(key)
+        if op is None:
+            op = npc.Array.from_ndarray_trivial(permuted, dtype=complex, labels=["p", "p*"])
+            npc_cache[key] = op
+        return key, op
+
+    group_sites: dict[bytes, set[int]] = {}
+    lowered: dict = {}
+    for label, expr in exprs.items():
+        identity_coeff = 0.0 + 0.0j
+        singles: list[tuple[complex, bytes, int]] = []
+        multis: list[tuple[complex, int, list]] = []
+        for term in expr._terms:
+            if not term.factors:
+                identity_coeff += complex(term.coefficient)
+            elif len(term.factors) == 1:
+                site_2d, matrix = term.factors[0]
+                key, _ = to_npc(matrix)
+                pos = int(inv_snake[site_2d])
+                group_sites.setdefault(key, set()).add(pos)
+                singles.append((complex(term.coefficient), key, pos))
+            else:
+                positioned = sorted(
+                    ((int(inv_snake[site_2d]), matrix) for site_2d, matrix in term.factors),
+                    key=lambda pair: pair[0],
+                )
+                i0 = positioned[0][0]
+                ops_list: list = []
+                prev = i0 - 1
+                for pos, matrix in positioned:
+                    ops_list.extend(["Id"] * (pos - prev - 1))
+                    ops_list.append(to_npc(matrix)[1])
+                    prev = pos
+                multis.append((complex(term.coefficient), i0, ops_list))
+        lowered[label] = (identity_coeff, singles, multis)
+    groups = {
+        key: (npc_cache[key], sorted(positions))
+        for key, positions in group_sites.items()
+    }
+    return MPSExpressionPlan(lowered, groups)
 
 
 def measure_site_occupations(
@@ -168,7 +279,7 @@ def measure_centerline_connected_zz(
     axis: str = "horizontal",
 ) -> np.ndarray:
     """Measure connected ``C_zz`` from a center site along a center line."""
-    from ryd_gate.analysis.observables import line_pairs_from_reference
+    from ryd_gate.backends.tn_common._geometry import line_pairs_from_reference
 
     return np.array([
         measure_connected_zz(psi, spec, i, j)

@@ -6,12 +6,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ryd_gate.core.level_structures import LevelStructureSpec, level_structure
+from ryd_gate.core.level_structures import LevelStructure, level_structure
 from ryd_gate.core.system import RydbergSystem
 from ryd_gate.ir import HamiltonianIR, compile_hamiltonian_ir
 
 from .lattice_spec import TNLatticeSpec, snake_order_mapping
-from .sites import resolve_level_structure
 
 SUPPORTED_TN_METHODS = frozenset({
     "tdvp",
@@ -41,7 +40,6 @@ class TNCompiler:
     def compile(
         self,
         system_or_ir: RydbergSystem | HamiltonianIR,
-        params: dict | None = None,
     ) -> TNEvolutionIR:
         if self.method not in SUPPORTED_TN_METHODS:
             supported = ", ".join(sorted(SUPPORTED_TN_METHODS))
@@ -50,7 +48,7 @@ class TNCompiler:
         hamiltonian = (
             system_or_ir
             if isinstance(system_or_ir, HamiltonianIR)
-            else compile_hamiltonian_ir(_require_rydberg_system(system_or_ir), _require_params(params))
+            else compile_hamiltonian_ir(_require_rydberg_system(system_or_ir))
         )
         if hamiltonian.protocol is None or hamiltonian.params is None:
             raise ValueError("TN lowering requires HamiltonianIR.protocol and HamiltonianIR.params.")
@@ -84,13 +82,13 @@ def tn_lattice_spec_from_system(system: RydbergSystem) -> TNLatticeSpec:
     if geometry is None:
         raise ValueError("TN lowering requires system.geometry.")
 
-    level_spec = _system_level_spec(system)
+    level_spec = system.level_structure
     return _tn_lattice_spec_from_geometry(
         geometry,
         level_spec,
-        tuple(system.meta("interaction_pairs", ())),
-        system.meta("Omega", 1.0),
-        _analog_local_blocks(level_spec, getattr(system, "metadata", None)),
+        tuple(system.interaction_pairs),
+        1.0,
+        _analog_local_blocks(level_spec),
     )
 
 
@@ -99,25 +97,21 @@ def tn_lattice_spec_from_hamiltonian_ir(ir: HamiltonianIR) -> TNLatticeSpec:
     if ir.geometry is None:
         raise ValueError("TN lowering requires HamiltonianIR.geometry.")
     level_spec = ir.level_spec
-    if not isinstance(level_spec, LevelStructureSpec):
-        level_spec = resolve_level_structure(level_structure(ir.metadata.get("level_structure", "1r")))
+    if not isinstance(level_spec, LevelStructure):
+        level_spec = level_structure(ir.metadata.get("level_structure", "1r"))
     interaction_pairs = tuple(ir.metadata.get("interaction_pairs", ()))
-    omega = ir.metadata.get("Omega", 1.0)
-    if omega is None:
-        omega = 1.0
-    resolved = resolve_level_structure(level_spec)
     return _tn_lattice_spec_from_geometry(
         ir.geometry,
-        resolved,
+        level_spec,
         interaction_pairs,
-        omega,
-        _analog_local_blocks(resolved, ir.metadata),
+        1.0,
+        _analog_local_blocks(level_spec),
     )
 
 
 def _tn_lattice_spec_from_geometry(
     geometry,
-    level_spec: LevelStructureSpec,
+    level_spec: LevelStructure,
     interaction_pairs: tuple,
     omega: float,
     local_blocks=None,
@@ -142,20 +136,13 @@ def _tn_lattice_spec_from_geometry(
     )
 
 
-def _analog_local_blocks(level_spec: LevelStructureSpec, metadata):
-    """Build analog_3 single-atom blocks from system/IR metadata, else ``None``."""
+def _analog_local_blocks(level_spec: LevelStructure):
+    """Build analog_3 single-atom blocks from the resolved preset, else ``None``."""
     if level_spec.name != "analog_3":
         return None
-    from ryd_gate.core.physical_models import analog_3_local_blocks_from_metadata
+    from ryd_gate.core.physical_models import analog_3_local_blocks_from_level_structure
 
-    return analog_3_local_blocks_from_metadata(metadata)
-
-
-def _system_level_spec(system: RydbergSystem) -> LevelStructureSpec:
-    spec = system.meta("level_spec", None)
-    if isinstance(spec, LevelStructureSpec):
-        return resolve_level_structure(spec)
-    return resolve_level_structure(level_structure(system.meta("level_structure", "1r")))
+    return analog_3_local_blocks_from_level_structure(level_spec)
 
 
 def _require_rydberg_system(system) -> RydbergSystem:
@@ -164,12 +151,6 @@ def _require_rydberg_system(system) -> RydbergSystem:
     if system.geometry is None:
         raise ValueError("TNCompiler requires lattice geometry.")
     return system
-
-
-def _require_params(params: dict | None) -> dict:
-    if params is None:
-        raise TypeError("TNCompiler.compile() requires params when given a RydbergSystem.")
-    return params
 
 
 def _infer_square_lattice_shape(coords: np.ndarray, n_sites: int) -> tuple[int, int]:

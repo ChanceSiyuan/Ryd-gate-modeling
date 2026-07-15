@@ -13,7 +13,7 @@ drive amplitudes in rad/s, time in seconds, distances in µm.
 
 | Symbol | Meaning | Code |
 |---|---|---|
-| $\lvert\ell\rangle$ | single-atom level with label $\ell$ (e.g. $\lvert 0\rangle, \lvert 1\rangle, \lvert e\rangle, \lvert r\rangle$) | `LevelStructureSpec.levels` |
+| $\lvert\ell\rangle$ | single-atom level with label $\ell$ (e.g. $\lvert 0\rangle, \lvert 1\rangle, \lvert e\rangle, \lvert r\rangle$) | `system.level_structure.levels` |
 | $n^{\ell}_i = \lvert\ell\rangle\langle\ell\rvert_i$ | projector onto level $\ell$ at site $i$ | observables `n_<level>_<i>`, `sum_n_<level>` |
 | $\sigma^x_i = \lvert r\rangle\langle 1\rvert_i + \lvert 1\rangle\langle r\rvert_i$ | two-level transition operator | channel `E[r,1]` (+ auto h.c.) |
 | $\Omega$ | Rabi frequency (rad/s); protocols emit the coefficient $\Omega/2$ | `get_drive_coefficients` |
@@ -57,7 +57,7 @@ n^{R}_i \;=\; \sum_{\ell \,\in\, \text{rydberg\_levels}} n^{\ell}_i ,
 $$
 
 with the pair list built by `vdw_couplings` over the register coordinates
-(`RydbergSystem.set_atom_geom` → static term `H_pair`).
+(the `register=` constructor argument → static term `H_pair`).
 
 ## Two-level lattice (`1r`) — the TFIM workhorse
 
@@ -103,25 +103,35 @@ shifts. `TFIMQuenchProtocol(hx, hz, t_gate)` holds these fields constant;
 
 ## Three-level lattice (`01r`) — digital-analog
 
-Levels $(\lvert 0\rangle, \lvert 1\rangle, \lvert r\rangle)$; channels
-`E[r,1]` $\to \Omega_R/2$ on $\lvert r\rangle\langle 1\rvert$,
-`E[1,0]` $\to \Omega_{hf}/2$ on $\lvert 1\rangle\langle 0\rvert$,
-`E[r,r]` $\to -\Delta_R$ on $n^r$, `E[1,1]` $\to -\Delta_{hf}$ on $n^1$
-(`protocols/digital_analog.py::get_drive_coefficients`):
+Levels $(\lvert 0\rangle, \lvert 1\rangle, \lvert r\rangle)$.
+`DigitalAnalogProtocol` supplies the full local $3\times 3$ Hermitian
+Hamiltonian (with the $\lvert 0\rangle$ energy as gauge zero) as five
+independent control functions in **direct matrix-element** convention —
+`coupling_10` $= H_{10}(t)$ on `E[1,0]`, `coupling_r0` $= H_{r0}(t)$ on
+`E[r,0]`, `coupling_r1` $= H_{r1}(t)$ on `E[r,1]` (complex allowed; the
+compiler adds only the Hermitian conjugate, no extra $1/2$), and real
+`energy_1` $= E_1(t)$ on `E[1,1]`, `energy_r` $= E_r(t)$ on `E[r,r]`:
 
 $$
 H(t) = \sum_i \Big[
-\frac{\Omega_{R,i}(t)}{2} \lvert r\rangle\langle 1\rvert_i
-+ \frac{\Omega_{hf,i}(t)}{2} \lvert 1\rangle\langle 0\rvert_i
+H_{r1,i}(t) \lvert r\rangle\langle 1\rvert_i
++ H_{10,i}(t) \lvert 1\rangle\langle 0\rvert_i
++ H_{r0,i}(t) \lvert r\rangle\langle 0\rvert_i
 + \text{h.c.}
-- \Delta_{R,i}(t)\, n^{r}_i
-- \Delta_{hf,i}(t)\, n^{1}_i
++ E_{1,i}(t)\, n^{1}_i
++ E_{r,i}(t)\, n^{r}_i
 \Big]
 + \sum_{i<j} V_{ij}\, n^{r}_i n^{r}_j .
 $$
 
-All four profiles may be global or per-site (`DigitalAnalogProtocol`
-schedules; per-site channels use the `f"{base}_{i}"` key convention).
+A resonant Rabi drive of full Rabi frequency $\Omega$ is therefore
+`coupling_r1 = lambda t: 0.5 * Omega * np.exp(-1j * phi)`, and a Rydberg
+*detuning* $\Delta_R$ enters as `energy_r = lambda t: -Delta_R`.  All five
+profiles may be global or per-site (per-site channels use the
+`f"{base}_{i}"` key convention); an absent function means the channel does
+not exist.  All of exact, MPS, and PEPS support the full local Hamiltonian,
+including the $\lvert 0\rangle\!\leftrightarrow\!\lvert r\rangle$ leg and
+complex coupling phases.
 
 ## Three-level ladder (`analog_3`)
 
@@ -148,11 +158,11 @@ included only when the corresponding `enable_*_decay` flag is set.
 $c_{420}(t)$ is the protocol's complex drive coefficient (envelope × phase,
 see [Gate drives](#gate-drive-coefficients)).
 
-For a fully *symbolic* three-level ladder (every coefficient — including the
-$e \leftrightarrow r$ coupling — chosen by the protocol), hand-build a
-`LevelStructureSpec` with the same transitions and pass it to
-`RydbergSystem.set_atom_level`; custom specs never mount physical operators
-(Decision D11/D13).
+Custom level structures are not constructible from user code —
+`level_structure(name, ...)` resolves built-in presets only. A fully
+*symbolic* three-level ladder (every coefficient — including the
+$e \leftrightarrow r$ coupling — chosen by the protocol) would be a new
+preset implemented and tested in `src` (`core/level_structures.py`).
 
 ## Seven-level Rb87 (`rb87_7_mp` / `rb87_7_pm`) — the gate model
 
@@ -269,10 +279,10 @@ optimization parameters $x$.
 Decay is modeled as norm loss: every enabled rate $\gamma$ enters as
 $-\tfrac{i}{2}\gamma$ on the corresponding diagonal, so
 $1 - \lVert\psi(t)\rVert^2$ is the accumulated scattering/decay
-probability. `analysis.gate_metrics.residuals_to_branching` redistributes
-that loss over hyperfine ground states using the ARC branching ratios
+probability. Analysis scripts redistribute that loss over hyperfine
+ground states using the ARC branching ratios
 (`physics._rydberg_branching_ratios`, `physics._mid_branching_ratios`).
-Shot-to-shot noise (`NoiseModel`, `MonteCarloRunner`) samples static
+Shot-to-shot noise (`NoiseModel`, `simulate_ensemble`) samples static
 detuning offsets, amplitude scale factors $s$ (entering as $s\,c_{420}$ and
-$s^2 c_{\text{ls}}$), local RIN, and atom positions, then averages
-observables over shots.
+$s^2 c_{\text{ls}}$), local RIN, and atom positions; the raw shot-major
+ensemble is returned and any averaging happens in the calling script.

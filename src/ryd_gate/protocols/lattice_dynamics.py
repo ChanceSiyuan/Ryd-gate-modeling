@@ -127,16 +127,7 @@ class TFIMQuenchProtocol(Protocol):
         self.t_gate = float(t_gate)
         self.compensate_site_fields = compensate_site_fields
 
-    @property
-    def n_params(self) -> int:
-        return 0
-
-    def validate_params(self, x: list[float]) -> None:
-        if len(x) != 0:
-            raise ValueError(f"TFIMQuenchProtocol expects no parameters, got {len(x)}.")
-
-    def unpack_params(self, x: list[float], system) -> dict:
-        self.validate_params(x)
+    def _resolve(self, system) -> dict:
         controls = tfim_to_rydberg_controls(
             system,
             hx=self.hx,
@@ -163,14 +154,14 @@ class TFIMQuenchProtocol(Protocol):
     def required_channels(self) -> frozenset[str]:
         return frozenset({"E[r,1]", "E[r,r]"})
 
-    def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
+    def get_drive_coefficients(self, t: float, ctx: dict) -> dict[str, complex]:
         return {
-            "E[r,1]": 0.5 * params["Omega"],
-            "E[r,r]": -params["Delta"],
+            "E[r,1]": 0.5 * ctx["Omega"],
+            "E[r,r]": -ctx["Delta"],
         }
 
-    def pulse_traces(self, t: float, params: dict) -> dict[str, float]:
-        return _tfim_pulse_traces(self.get_drive_coefficients(t, params))
+    def _pulse_traces_ctx(self, t: float, ctx: dict) -> dict[str, float]:
+        return _tfim_pulse_traces(self.get_drive_coefficients(t, ctx))
 
 
 class TFIMAnnealProtocol(Protocol):
@@ -206,21 +197,12 @@ class TFIMAnnealProtocol(Protocol):
         self.compensate_site_fields = compensate_site_fields
 
     @property
-    def n_params(self) -> int:
-        return 0
-
-    @property
     def t_gate(self) -> float:
         return self.t_rise + self.t_sweep + self.t_fall
 
-    def validate_params(self, x: list[float]) -> None:
-        if len(x) != 0:
-            raise ValueError(f"TFIMAnnealProtocol expects no parameters, got {len(x)}.")
+    def _resolve(self, system) -> dict:
         if self.t_gate <= 0:
             raise ValueError("Anneal duration must be positive.")
-
-    def unpack_params(self, x: list[float], system) -> dict:
-        self.validate_params(x)
         n_sites = _n_sites(system)
         shifts = interaction_longitudinal_shifts(n_sites, _interaction_pairs(system))
         if self.compensate_site_fields:
@@ -258,17 +240,17 @@ class TFIMAnnealProtocol(Protocol):
     def required_channels(self) -> frozenset[str]:
         return frozenset({"E[r,1]", "E[r,r]"})
 
-    def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
+    def get_drive_coefficients(self, t: float, ctx: dict) -> dict[str, complex]:
         hx_t = self.hx_at(t)
         hz_t = self.hz_at(t)
-        Delta_t = 2.0 * (params["shift_reference"] - hz_t)
+        Delta_t = 2.0 * (ctx["shift_reference"] - hz_t)
         return {
             "E[r,1]": hx_t,
             "E[r,r]": -Delta_t,
         }
 
-    def pulse_traces(self, t: float, params: dict) -> dict[str, float]:
-        return _tfim_pulse_traces(self.get_drive_coefficients(t, params))
+    def _pulse_traces_ctx(self, t: float, ctx: dict) -> dict[str, float]:
+        return _tfim_pulse_traces(self.get_drive_coefficients(t, ctx))
 
     def hx_at(self, t: float) -> float:
         t = float(np.clip(t, 0.0, self.t_gate))
@@ -309,17 +291,13 @@ def _n_sites(system) -> int:
         return int(system.N)
     if hasattr(system, "basis"):
         return int(system.basis.n_sites)
-    n_sites = system.meta("n_sites", None) if hasattr(system, "meta") else None
-    if n_sites is None:
-        raise ValueError("Cannot infer number of lattice sites from protocol context.")
-    return int(n_sites)
+    raise ValueError("Cannot infer number of lattice sites from protocol context.")
 
 
 def _interaction_pairs(system) -> tuple[tuple[int, int, float], ...]:
-    if hasattr(system, "meta"):
-        pairs = system.meta("interaction_pairs", None)
-        if pairs is not None:
-            return tuple((int(i), int(j), float(v)) for i, j, v in pairs)
+    pairs = getattr(system, "interaction_pairs", None)
+    if pairs is not None:
+        return tuple((int(i), int(j), float(v)) for i, j, v in pairs)
     spec = getattr(system, "_spec", None)
     if spec is not None:
         return tuple(
@@ -327,8 +305,8 @@ def _interaction_pairs(system) -> tuple[tuple[int, int, float], ...]:
             for i, j, v_rel in spec.vdw_pairs
         )
     raise ValueError(
-        "TFIM lattice protocols require interaction pair metadata. "
-        "Use RydbergSystem.set_atom_level(...).set_atom_geom(...) or create_tn_lattice_spec(...)."
+        "TFIM lattice protocols require interaction pairs. "
+        "Use a RydbergSystem (register-derived pairs) or create_tn_lattice_spec(...)."
     )
 
 

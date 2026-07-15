@@ -1,25 +1,22 @@
-"""Level-structure and interaction specifications for Rydberg systems.
+"""Level-structure presets and interaction specs for Rydberg systems.
 
-Defines the small dataclasses that describe a site's local energy levels and
-pairwise interactions, plus the built-in ``level_structure`` presets
-(``01`` / ``1r`` / ``01r`` / ``analog_3`` / ``rb87_7_mp`` / ``rb87_7_pm`` /
-``rb87_297_clock_4``).
+:func:`level_structure` is the only way to obtain a level structure: it
+resolves a *preset name* plus its physical keyword arguments into an
+immutable, fully specified :class:`LevelStructure` — structural level/
+transition data plus the real physical quantities of that atom model
+(detunings, decay rates, branching ratios, Rydberg level, laser channel
+ratios, physical scales) as typed read-only fields.  There is no public
+DSL for assembling arbitrary transition/detuning channels; new physical
+level structures are implemented and tested as presets in ``src``.
 
-``LevelStructureSpec`` is both the compiler-facing level spec and the
-user-facing atom model (there is no separate ``AtomModel`` class). Preset
-*names* encode Hamiltonian construction semantics — ``analog_3`` mounts the
-physical Rb87 analog blocks, and ``rb87_7_mp`` / ``rb87_7_pm`` mount the
-seven-level model for the two manifold/polarization conventions (σ⁻/σ⁺ vs
-σ⁺/σ⁻). Static numerical values are explicit ``set_atom_level`` kwargs (there
-is no ``param_set``). Fully custom (symbolic) models are hand-built
-``LevelStructureSpec`` instances passed straight to
-``RydbergSystem.set_atom_level``.
+Presets: ``1r`` / ``01r`` / ``analog_3`` / ``rb87_7_mp`` / ``rb87_7_pm`` /
+``rb87_297_clock_4``.
 
 Also hosts the shared lowering helpers for protocol channels: the exact
 sparse compiler and TN backends both consume protocol coefficients, but they
 materialize them into different representations.  Keeping the channel naming
-rules in one place keeps per-site addressing, custom level specs, and
-Hermitian-conjugate handling consistent.
+rules in one place keeps per-site addressing and Hermitian-conjugate handling
+consistent.
 """
 
 from __future__ import annotations
@@ -29,16 +26,7 @@ from typing import Any, Literal, Mapping
 
 import numpy as np
 
-from ryd_gate.core.serialization import (
-    ValidationIssue,
-    check_schema,
-    json_ready,
-    schema_tag,
-)
-
 DEFAULT_C6 = 2 * np.pi * 874e9
-
-_INTERACTION_KINDS = ("none", "ising_c6", "xy_c3", "custom")
 
 # Backend support matrix (preset name -> capable backends).
 _TN_CAPABLE = frozenset({"1r", "01r"})
@@ -46,18 +34,17 @@ _TN_CAPABLE = frozenset({"1r", "01r"})
 # (backend="peps") and the TeNPy MPS path (backend="mps").
 _TN_ANALOG = _TN_CAPABLE | {"analog_3"}
 _BACKEND_SUPPORT = {
-    "exact": frozenset(
-        {"01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm", "rb87_297_clock_4"}
+    "exact_ode": frozenset(
+        {"1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm", "rb87_297_clock_4"}
     ),
     "mps": _TN_ANALOG,
     "peps": _TN_ANALOG,
-    "stabilizer": frozenset({"01"}),
 }
 
 
 @dataclass(frozen=True)
-class TransitionSpec:
-    """Single-site transition block definition.
+class Transition:
+    """Single-site transition block definition (internal preset plumbing).
 
     ``operator`` is ``|upper><lower|``.  Protocols decide whether to add
     the Hermitian conjugate through the compiler channel map.
@@ -69,23 +56,67 @@ class TransitionSpec:
     channel: str
 
 
-@dataclass(frozen=True)
-class LevelStructureSpec:
-    """Local energy-level structure (the atom model) for every site."""
+@dataclass(frozen=True, eq=False)
+class LevelStructure:
+    """Immutable resolved level-structure preset (internal type).
 
+    Obtained only through :func:`level_structure`; carries the structural
+    level/transition data plus the preset's real physical quantities as typed
+    read-only fields.  Fields that do not apply to a preset are ``None`` /
+    empty.  All rates and energies are angular frequencies (rad/s); times are
+    seconds.
+    """
+
+    # -- structural ---------------------------------------------------------
     name: str
     levels: tuple[str, ...]
     rydberg_levels: tuple[str, ...]
-    transitions: tuple[TransitionSpec, ...] = ()
-    detuning_levels: dict[str, str] = field(default_factory=dict)
+    transitions: tuple[Transition, ...] = ()
+    detuning_levels: Mapping[str, str] = field(default_factory=dict)
     initial_level: str | None = None
-    species: str = "Rb87"
-    interaction_kind: Literal["none", "ising_c6", "xy_c3", "custom"] = "ising_c6"
-    params: Mapping[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.name, str) or not self.name:
-            raise ValueError("LevelStructureSpec.name must be a non-empty string.")
+    # -- single-atom static Hamiltonian --------------------------------------
+    # d x d complex matrix of static level energies (may carry -i*gamma/2 decay
+    # terms on the diagonal); None for purely symbolic presets.
+    local_static: np.ndarray | None = None
+    # Static off-diagonal couplings as (channel, coefficient) entries (the
+    # compiler adds each Hermitian conjugate), e.g. analog_3's static 1013 leg.
+    static_couplings: tuple[tuple[str, complex], ...] = ()
+
+    # -- laser structure ------------------------------------------------------
+    # Per-laser-group CG/dipole channel ratios the protocols multiply their
+    # laser coefficients onto, e.g. {"420": {...}, "1013": {...}} / {"297": {...}}.
+    laser_channel_ratios: Mapping[str, Mapping[str, complex]] = field(default_factory=dict)
+
+    # -- physical data (None where not applicable) ----------------------------
+    physical_model: str | None = None
+    Delta: float | None = None                   # intermediate-state detuning
+    t_rise: float | None = None                  # envelope rise time (s)
+    rabi_eff: float | None = None                # effective two-photon Rabi
+    time_scale: float | None = None              # 2*pi / rabi_eff
+    rabi_420: float | None = None
+    rabi_1013: float | None = None
+    ryd_level: int | None = None
+    ryd_state_decay_rate: float | None = None
+    ryd_RD_rate: float | None = None
+    ryd_BBR_rate: float | None = None
+    ryd_garb_decay_rate: float | None = None
+    mid_state_decay_rate: float | None = None
+    ryd_branch: Mapping[str, float] | None = None
+    mid_branch: Mapping[int, Mapping[str, float]] | None = None
+    rydberg_indices: tuple[int, ...] | None = None
+    magnetic_field_G: float | None = None
+    ryd_zeeman_shift: float | None = None
+    d_garb_ratio: float | None = None            # 297 garbage/target dipole ratio
+    garb_zeeman_detuning: float | None = None    # 297 garbage-branch Zeeman detuning
+    enable_rydberg_decay: bool = False
+    enable_intermediate_decay: bool = False
+
+    # -- interaction defaults --------------------------------------------------
+    default_c6: float | None = None              # isotropic C6 when no InteractionSpec given
+    pair_c6_fn: Any | None = None                # (theta, phi) -> C6 (297 anisotropic; lazy ARC)
+
+    # -- interface -------------------------------------------------------------
 
     @property
     def local_dim(self) -> int:
@@ -101,98 +132,12 @@ class LevelStructureSpec:
         """The level each atom starts in by default: ``initial_level`` or ``levels[0]``."""
         return self.initial_level if self.initial_level is not None else self.levels[0]
 
-    def physical_kwargs(self) -> dict[str, Any]:
-        """Atom-level keyword arguments the system factory needs for this model.
-
-        The manifold/polarization convention is encoded in the preset *name*
-        (e.g. ``rb87_7_mp`` / ``rb87_7_pm``), not in a ``param_set``; built-in
-        presets need no factory kwargs. Extra entries in ``params`` (custom
-        specs) pass through unchanged, minus any legacy ``param_set``.
-        """
-        return {k: v for k, v in self.params.items() if k != "param_set"}
-
     def supports_backend(self, backend: str) -> bool:
-        """Whether *backend* can simulate this model (Stage 1 truth table)."""
+        """Whether *backend* can simulate this model."""
         allowed = _BACKEND_SUPPORT.get(backend)
         if allowed is None:
             return False
         return self.name in allowed
-
-    def validate(self) -> list[ValidationIssue]:
-        """Semantic self-check; structural problems raise at construction instead."""
-        issues: list[ValidationIssue] = []
-        if not self.levels:
-            issues.append(ValidationIssue(
-                "error", "level_structure.empty_levels",
-                "levels must not be empty.", ("level_structure", "levels"),
-            ))
-        if len(set(self.levels)) != len(self.levels):
-            issues.append(ValidationIssue(
-                "error", "level_structure.duplicate_levels",
-                f"levels contain duplicates: {self.levels}.", ("level_structure", "levels"),
-            ))
-        if self.initial_level is not None and self.initial_level not in self.levels:
-            issues.append(ValidationIssue(
-                "error", "level_structure.initial_level",
-                f"initial_level {self.initial_level!r} is not in levels {self.levels}.",
-                ("level_structure", "initial_level"),
-            ))
-        for level in self.rydberg_levels:
-            if level not in self.levels:
-                issues.append(ValidationIssue(
-                    "error", "level_structure.rydberg_levels",
-                    f"rydberg level {level!r} is not in levels {self.levels}.",
-                    ("level_structure", "rydberg_levels"),
-                ))
-        for channel, level in self.detuning_levels.items():
-            if level not in self.levels:
-                issues.append(ValidationIssue(
-                    "error", "level_structure.detuning_levels",
-                    f"detuning channel {channel!r} targets unknown level {level!r}.",
-                    ("level_structure", "detuning_levels"),
-                ))
-        if self.interaction_kind not in _INTERACTION_KINDS:
-            issues.append(ValidationIssue(
-                "error", "level_structure.interaction_kind",
-                f"interaction_kind must be one of {_INTERACTION_KINDS}, got {self.interaction_kind!r}.",
-                ("level_structure", "interaction_kind"),
-            ))
-        return issues
-
-    def to_dict(self) -> dict:
-        return {
-            "schema": schema_tag("level-structure"),
-            "name": self.name,
-            "levels": list(self.levels),
-            "rydberg_levels": list(self.rydberg_levels),
-            "transitions": [
-                {"name": t.name, "lower": t.lower, "upper": t.upper, "channel": t.channel}
-                for t in self.transitions
-            ],
-            "detuning_levels": dict(self.detuning_levels),
-            "initial_level": self.initial_level,
-            "species": self.species,
-            "interaction_kind": self.interaction_kind,
-            "params": json_ready(dict(self.params), "level_structure.params"),
-        }
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "LevelStructureSpec":
-        check_schema(data, "level-structure")
-        return cls(
-            name=data["name"],
-            levels=tuple(data["levels"]),
-            rydberg_levels=tuple(data["rydberg_levels"]),
-            transitions=tuple(
-                TransitionSpec(t["name"], t["lower"], t["upper"], t["channel"])
-                for t in data.get("transitions", [])
-            ),
-            detuning_levels=dict(data.get("detuning_levels", {})),
-            initial_level=data.get("initial_level"),
-            species=data.get("species", "Rb87"),
-            interaction_kind=data.get("interaction_kind", "ising_c6"),
-            params=dict(data.get("params", {})),
-        )
 
 
 @dataclass(frozen=True)
@@ -209,104 +154,115 @@ class InteractionSpec:
 # by the protocol coefficient, not in which transitions exist).  420 nm drives
 # |0>,|1> -> |e_F>; 1013 nm drives |e_F> -> |r>,|r_garb>.
 _RB87_7_TRANSITIONS = (
-    TransitionSpec("e1_1", "1", "e1", "E[e1,1]"),
-    TransitionSpec("e2_1", "1", "e2", "E[e2,1]"),
-    TransitionSpec("e3_1", "1", "e3", "E[e3,1]"),
-    TransitionSpec("e1_0", "0", "e1", "E[e1,0]"),
-    TransitionSpec("e2_0", "0", "e2", "E[e2,0]"),
-    TransitionSpec("e3_0", "0", "e3", "E[e3,0]"),
-    TransitionSpec("r_e1", "e1", "r", "E[r,e1]"),
-    TransitionSpec("r_e2", "e2", "r", "E[r,e2]"),
-    TransitionSpec("r_e3", "e3", "r", "E[r,e3]"),
-    TransitionSpec("rg_e1", "e1", "r_garb", "E[r_garb,e1]"),
-    TransitionSpec("rg_e2", "e2", "r_garb", "E[r_garb,e2]"),
-    TransitionSpec("rg_e3", "e3", "r_garb", "E[r_garb,e3]"),
+    Transition("e1_1", "1", "e1", "E[e1,1]"),
+    Transition("e2_1", "1", "e2", "E[e2,1]"),
+    Transition("e3_1", "1", "e3", "E[e3,1]"),
+    Transition("e1_0", "0", "e1", "E[e1,0]"),
+    Transition("e2_0", "0", "e2", "E[e2,0]"),
+    Transition("e3_0", "0", "e3", "E[e3,0]"),
+    Transition("r_e1", "e1", "r", "E[r,e1]"),
+    Transition("r_e2", "e2", "r", "E[r,e2]"),
+    Transition("r_e3", "e3", "r", "E[r,e3]"),
+    Transition("rg_e1", "e1", "r_garb", "E[r_garb,e1]"),
+    Transition("rg_e2", "e2", "r_garb", "E[r_garb,e2]"),
+    Transition("rg_e3", "e3", "r_garb", "E[r_garb,e3]"),
 )
 
+# Structural preset skeletons; physical fields are resolved per call in
+# level_structure() (physical kwargs -> physical_models resolution).
+_STRUCTURAL_PRESETS: dict[str, dict[str, Any]] = {
+    "1r": dict(
+        levels=("1", "r"),
+        rydberg_levels=("r",),
+        transitions=(Transition("1_r", "1", "r", "E[r,1]"),),
+        detuning_levels={"E[r,r]": "r"},
+        initial_level="1",
+    ),
+    "01r": dict(
+        levels=("0", "1", "r"),
+        rydberg_levels=("r",),
+        transitions=(
+            Transition("R", "1", "r", "E[r,1]"),
+            Transition("hf", "0", "1", "E[1,0]"),
+            # |0>-|r> (K0r) leg of the full effective CZ Hamiltonian.
+            Transition("0r", "0", "r", "E[r,0]"),
+        ),
+        detuning_levels={"E[r,r]": "r", "E[1,1]": "1"},
+        initial_level="1",
+    ),
+    # Physical Rb87 three-level ladder: analog blocks with static e-r coupling.
+    "analog_3": dict(
+        levels=("g", "e", "r"),
+        rydberg_levels=("r",),
+        transitions=(
+            Transition("420", "g", "e", "E[e,g]"),
+            Transition("1013", "e", "r", "E[r,e]"),
+        ),
+        detuning_levels={"E[e,e]": "e", "E[r,r]": "r"},
+        initial_level="g",
+    ),
+    # Physical Rb87 seven-level gate model, split by manifold/polarization
+    # convention (the suffix encodes the 420/1013 polarizations):
+    #   rb87_7_mp  ->  sigma-(420) / sigma+(1013)   (was param_set="our")
+    #   rb87_7_pm  ->  sigma+(420) / sigma-(1013)   (was param_set="lukin")
+    "rb87_7_mp": dict(
+        levels=("0", "1", "e1", "e2", "e3", "r", "r_garb"),
+        rydberg_levels=("r", "r_garb"),
+        transitions=_RB87_7_TRANSITIONS,
+        initial_level="0",
+    ),
+    "rb87_7_pm": dict(
+        levels=("0", "1", "e1", "e2", "e3", "r", "r_garb"),
+        rydberg_levels=("r", "r_garb"),
+        transitions=_RB87_7_TRANSITIONS,
+        initial_level="0",
+    ),
+    # Physical Rb87 297 nm single-photon excitation from the clock-like
+    # |F=2, mF=0> ground state |1> to nP3/2 (default n=53): a σ⁻ beam drives
+    # the target (mJ=-1/2 -> mJ=-3/2) and garbage (mJ=+1/2 -> mJ=-1/2) Zeeman
+    # branches, resolved by the bias-field Zeeman detuning of |r_garb>.  The
+    # logical |0> (|F=1, mF=0>) is a dark spectator: no 297 transition
+    # touches it.
+    "rb87_297_clock_4": dict(
+        levels=("0", "1", "r", "r_garb"),
+        rydberg_levels=("r", "r_garb"),
+        transitions=(
+            Transition("297", "1", "r", "E[r,1]"),
+            Transition("297_garb", "1", "r_garb", "E[r_garb,1]"),
+        ),
+        initial_level="0",
+    ),
+}
 
-def level_structure(name: str) -> LevelStructureSpec:
-    """Return a built-in level-structure preset."""
-    presets = {
-        "01": LevelStructureSpec(
-            name="01",
-            levels=("0", "1"),
-            rydberg_levels=(),
-            transitions=(),
-            detuning_levels={},
-            initial_level="0",
-            interaction_kind="none",
-        ),
-        "1r": LevelStructureSpec(
-            name="1r",
-            levels=("1", "r"),
-            rydberg_levels=("r",),
-            transitions=(TransitionSpec("1_r", "1", "r", "E[r,1]"),),
-            detuning_levels={"E[r,r]": "r"},
-            initial_level="1",
-        ),
-        "01r": LevelStructureSpec(
-            name="01r",
-            levels=("0", "1", "r"),
-            rydberg_levels=("r",),
-            transitions=(
-                TransitionSpec("R", "1", "r", "E[r,1]"),
-                TransitionSpec("hf", "0", "1", "E[1,0]"),
-                # |0>-|r> (K0r) leg of the full effective CZ Hamiltonian.  Exact
-                # backend only; the TN 01r lowering rejects a nonzero E[r,0].
-                TransitionSpec("0r", "0", "r", "E[r,0]"),
-            ),
-            detuning_levels={"E[r,r]": "r", "E[1,1]": "1"},
-            initial_level="1",
-        ),
-        # Physical Rb87 three-level ladder: analog blocks with static e-r coupling.
-        # The *name* mounts the physics (stageplans/README D11/D13); symbolic
-        # three-level models are hand-built LevelStructureSpec instances.
-        "analog_3": LevelStructureSpec(
-            name="analog_3",
-            levels=("g", "e", "r"),
-            rydberg_levels=("r",),
-            transitions=(
-                TransitionSpec("420", "g", "e", "E[e,g]"),
-                TransitionSpec("1013", "e", "r", "E[r,e]"),
-            ),
-            detuning_levels={"E[e,e]": "e", "E[r,r]": "r"},
-            initial_level="g",
-        ),
-        # Physical Rb87 seven-level gate model, split by manifold/polarization
-        # convention (the suffix encodes the 420/1013 polarizations):
-        #   rb87_7_mp  ->  sigma-(420) / sigma+(1013)   (was param_set="our")
-        #   rb87_7_pm  ->  sigma+(420) / sigma-(1013)   (was param_set="lukin")
-        "rb87_7_mp": LevelStructureSpec(
-            name="rb87_7_mp",
-            levels=("0", "1", "e1", "e2", "e3", "r", "r_garb"),
-            rydberg_levels=("r", "r_garb"),
-            transitions=_RB87_7_TRANSITIONS,
-            initial_level="0",
-        ),
-        "rb87_7_pm": LevelStructureSpec(
-            name="rb87_7_pm",
-            levels=("0", "1", "e1", "e2", "e3", "r", "r_garb"),
-            rydberg_levels=("r", "r_garb"),
-            transitions=_RB87_7_TRANSITIONS,
-            initial_level="0",
-        ),
-        # Physical Rb87 297 nm single-photon excitation from the clock-like
-        # |F=2, mF=0> ground state |1> to nP3/2 (default n=53): a σ⁻ beam drives
-        # the target (mJ=-1/2 -> mJ=-3/2) and garbage (mJ=+1/2 -> mJ=-1/2) Zeeman
-        # branches, resolved by the bias-field Zeeman detuning of |r_garb>.  The
-        # logical |0> (|F=1, mF=0>) is a dark spectator: no 297 transition
-        # touches it.
-        "rb87_297_clock_4": LevelStructureSpec(
-            name="rb87_297_clock_4",
-            levels=("0", "1", "r", "r_garb"),
-            rydberg_levels=("r", "r_garb"),
-            transitions=(
-                TransitionSpec("297", "1", "r", "E[r,1]"),
-                TransitionSpec("297_garb", "1", "r_garb", "E[r_garb,1]"),
-            ),
-            initial_level="0",
-        ),
-    }
+# The exact set of physical keyword arguments each preset accepts.
+_PRESET_KWARGS: dict[str, frozenset[str]] = {
+    "1r": frozenset(),
+    "01r": frozenset(),
+    "analog_3": frozenset({
+        "detuning_sign", "Delta_Hz", "rabi_420_Hz", "rabi_1013_Hz",
+        "enable_rydberg_decay", "enable_intermediate_decay",
+    }),
+    "rb87_7_mp": frozenset({
+        "detuning_sign", "Delta_Hz", "ryd_level", "C6_rad_s_um6", "t_rise",
+        "enable_rydberg_decay", "enable_intermediate_decay", "magnetic_field_G",
+    }),
+    "rb87_7_pm": frozenset({
+        "detuning_sign", "Delta_Hz", "ryd_level", "C6_rad_s_um6", "t_rise",
+        "enable_rydberg_decay", "enable_intermediate_decay", "magnetic_field_G",
+    }),
+    "rb87_297_clock_4": frozenset({
+        "enable_rydberg_decay", "magnetic_field_G", "ryd_level",
+    }),
+}
+
+
+def level_structure(name: str, **physical_kwargs) -> LevelStructure:
+    """Resolve a built-in level-structure preset with its physical kwargs.
+
+    Returns the immutable, fully specified :class:`LevelStructure` — the only
+    supported way to obtain a level structure.  Unknown preset names and
+    unknown physical kwargs raise.
+    """
     if name == "rb87_7":
         raise ValueError(
             "'rb87_7' has been split by manifold/polarization convention: use "
@@ -314,10 +270,38 @@ def level_structure(name: str) -> LevelStructureSpec:
             "(sigma+/sigma-, was param_set='lukin'), with explicit static kwargs "
             "(Delta_Hz, ryd_level, C6_rad_s_um6, t_rise)."
         )
-    try:
-        return presets[name]
-    except KeyError:
-        raise ValueError(f"Unknown level-structure preset '{name}'.") from None
+    if name == "01":
+        raise ValueError(
+            "the '01' preset has been removed (no production calls; its "
+            "Hamiltonian was the identity)."
+        )
+    structural = _STRUCTURAL_PRESETS.get(name)
+    if structural is None:
+        raise ValueError(f"Unknown level-structure preset '{name}'.")
+
+    allowed = _PRESET_KWARGS[name]
+    unknown = set(physical_kwargs) - allowed
+    if unknown:
+        allowed_names = ", ".join(sorted(allowed)) or "none"
+        raise TypeError(
+            f"{name} does not accept physical parameter(s): "
+            f"{', '.join(sorted(unknown))}. Allowed parameters: {allowed_names}."
+        )
+
+    from ryd_gate.core import physical_models
+
+    if name == "analog_3":
+        fields = physical_models.analog_3_level_fields(**physical_kwargs)
+    elif name in ("rb87_7_mp", "rb87_7_pm"):
+        fields = physical_models.rb87_7_level_fields(
+            name.removeprefix("rb87_7_"), **physical_kwargs
+        )
+    elif name == "rb87_297_clock_4":
+        fields = physical_models.rb87_297_level_fields(**physical_kwargs)
+    else:
+        fields = {}
+
+    return LevelStructure(name=name, **structural, **fields)
 
 
 # ── Protocol-channel lowering helpers ────────────────────────────────────────
@@ -331,7 +315,7 @@ def split_site_channel(channel: str) -> tuple[str, int | None]:
     return channel, None
 
 
-def declared_channels(level_spec: LevelStructureSpec) -> set[str]:
+def declared_channels(level_spec: LevelStructure) -> set[str]:
     """Return channels declared by a central level structure."""
     channels = {transition.channel for transition in level_spec.transitions}
     channels.update(level_spec.detuning_levels)
@@ -340,7 +324,7 @@ def declared_channels(level_spec: LevelStructureSpec) -> set[str]:
 
 def validate_coeff_channels(
     coeffs: dict[str, complex],
-    level_spec: LevelStructureSpec,
+    level_spec: LevelStructure,
     *,
     level_structure_name: str | None = None,
 ) -> None:
@@ -359,7 +343,7 @@ def validate_coeff_channels(
         )
 
 
-def transition_channel(level_spec: LevelStructureSpec, lower: str, upper: str) -> str | None:
+def transition_channel(level_spec: LevelStructure, lower: str, upper: str) -> str | None:
     """Find the channel for a declared ``|lower> <-> |upper>`` transition."""
     for transition in level_spec.transitions:
         if transition.lower == lower and transition.upper == upper:
@@ -367,7 +351,7 @@ def transition_channel(level_spec: LevelStructureSpec, lower: str, upper: str) -
     return None
 
 
-def detuning_channel(level_spec: LevelStructureSpec, level: str) -> str | None:
+def detuning_channel(level_spec: LevelStructure, level: str) -> str | None:
     """Find the detuning channel for a declared level projector."""
     for channel, detuned_level in level_spec.detuning_levels.items():
         if detuned_level == level:
@@ -379,26 +363,22 @@ def site_profile_from_coeffs(
     coeffs: dict[str, complex],
     channel: str,
     n_sites: int,
-    *,
-    scale: float,
 ) -> np.ndarray | None:
-    """Return a per-site profile if ``coeffs`` contains site-specific keys."""
+    """Return a complex per-site profile if ``coeffs`` contains site-specific keys."""
     keys = [f"{channel}_{i}" for i in range(n_sites)]
     if not any(key in coeffs for key in keys):
         return None
-    return np.array([scale * float(np.real(coeffs.get(key, 0.0))) for key in keys])
+    return np.array([complex(coeffs.get(key, 0.0)) for key in keys])
 
 
 def channel_profile_from_coeffs(
     coeffs: dict[str, complex],
     channel: str,
     n_sites: int,
-    *,
-    scale: float,
 ) -> np.ndarray:
-    """Return a per-site profile from either global or site-specific coeffs."""
-    site_profile = site_profile_from_coeffs(coeffs, channel, n_sites, scale=scale)
-    global_value = scale * float(np.real(coeffs.get(channel, 0.0)))
+    """Return a complex per-site profile from either global or site-specific coeffs."""
+    site_profile = site_profile_from_coeffs(coeffs, channel, n_sites)
+    global_value = complex(coeffs.get(channel, 0.0))
     if site_profile is not None:
         return global_value + site_profile
     return np.full(n_sites, global_value)
@@ -408,47 +388,42 @@ def profile_for_optional_channel(
     coeffs: dict[str, complex],
     channel: str | None,
     n_sites: int,
-    *,
-    scale: float,
 ) -> np.ndarray:
     """Return zeros when an optional channel is absent from a level spec."""
     if channel is None:
-        return np.zeros(n_sites)
-    return channel_profile_from_coeffs(coeffs, channel, n_sites, scale=scale)
+        return np.zeros(n_sites, dtype=complex)
+    return channel_profile_from_coeffs(coeffs, channel, n_sites)
 
 
 def three_level_profiles_from_coeffs(
     coeffs: dict[str, complex],
     spec: Any,
 ) -> dict[str, np.ndarray]:
-    """Map protocol coefficients to explicit 01r-style per-site profiles."""
+    """Map protocol coefficients to 01r per-site matrix-element profiles.
+
+    Direct matrix-element convention: each coupling profile is the (complex)
+    Hamiltonian entry ``H[upper, lower]`` on that channel — the backend adds
+    only the Hermitian conjugate — and each energy profile is the real diagonal
+    entry ``H[l, l]`` itself (an energy, not a negated detuning).
+    """
     level_spec = spec.level_spec
     validate_coeff_channels(
         coeffs,
         level_spec,
         level_structure_name=getattr(spec, "level_structure", level_spec.name),
     )
-    drive_0r = transition_channel(level_spec, "0", "r")
-    if drive_0r is not None and any(
-        abs(complex(v)) > 0
-        for k, v in coeffs.items()
-        if split_site_channel(k)[0] == drive_0r
-    ):
-        raise ValueError(
-            "TN backends do not support the |0>-|r> (K0r) coupling; "
-            "use the exact backend (e.g. EffectiveCZProtocol from "
-            "lower_cz_to_effective_01r runs exact-only)."
-        )
-    drive_r = transition_channel(level_spec, "1", "r")
-    drive_hf = transition_channel(level_spec, "0", "1")
-    delta_r = detuning_channel(level_spec, "r")
-    delta_hf = detuning_channel(level_spec, "1")
+    drive_r1 = transition_channel(level_spec, "1", "r")
+    drive_10 = transition_channel(level_spec, "0", "1")
+    drive_r0 = transition_channel(level_spec, "0", "r")
+    energy_r = detuning_channel(level_spec, "r")
+    energy_1 = detuning_channel(level_spec, "1")
 
     return {
-        "omega_R": profile_for_optional_channel(coeffs, drive_r, spec.N, scale=2.0),
-        "omega_hf": profile_for_optional_channel(coeffs, drive_hf, spec.N, scale=2.0),
-        "delta_R": profile_for_optional_channel(coeffs, delta_r, spec.N, scale=-1.0),
-        "delta_hf": profile_for_optional_channel(coeffs, delta_hf, spec.N, scale=-1.0),
+        "coupling_r1": profile_for_optional_channel(coeffs, drive_r1, spec.N),
+        "coupling_10": profile_for_optional_channel(coeffs, drive_10, spec.N),
+        "coupling_r0": profile_for_optional_channel(coeffs, drive_r0, spec.N),
+        "energy_1": np.real(profile_for_optional_channel(coeffs, energy_1, spec.N)),
+        "energy_r": np.real(profile_for_optional_channel(coeffs, energy_r, spec.N)),
     }
 
 
@@ -467,21 +442,22 @@ def two_level_drive_and_detuning_from_coeffs(
     """Map protocol channels onto the effective TN 1/r Hamiltonian."""
     profiles = three_level_profiles_from_coeffs(coeffs, spec)
 
-    if np.any(np.abs(profiles["omega_hf"]) > 0):
-        raise ValueError(
-            "TN TDVP supports the |1>-|r> two-level subspace only; "
-            "DigitalAnalogProtocol segments with omega_hf != 0 are not supported."
-        )
+    for coupling_name in ("coupling_10", "coupling_r0"):
+        if np.any(np.abs(profiles[coupling_name]) > 0):
+            raise ValueError(
+                "TN TDVP supports the |1>-|r> two-level subspace only; "
+                f"segments with {coupling_name} != 0 are not supported (no |0> level on 1r)."
+            )
 
-    omega_profile = profiles["omega_R"]
+    omega_profile = 2.0 * np.real(profiles["coupling_r1"])
     if np.allclose(omega_profile, omega_profile[0]):
         Omega_t: float | np.ndarray = float(omega_profile[0])
     else:
         Omega_t = omega_profile
 
-    # 01r -> effective 1r mapping:
-    # -Delta_R n_r - Delta_hf n_1 = const - (Delta_R - Delta_hf) n_r.
+    # Energies -> effective 1r detuning on the {|1>, |r>} subspace:
+    # energy_1 n_1 + energy_r n_r = const - (energy_1 - energy_r) n_r.
     Delta_t, delta_profile = split_uniform_profile(
-        profiles["delta_R"] - profiles["delta_hf"]
+        profiles["energy_1"] - profiles["energy_r"]
     )
     return Omega_t, Delta_t, delta_profile

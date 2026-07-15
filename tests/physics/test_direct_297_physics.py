@@ -68,6 +68,7 @@ def test_arc_c6_53p_degenerate_finite_and_warns_on_weak_overlap():
     assert np.isfinite(c6) and c6 != 0.0
 
 
+@pytest.mark.filterwarnings("ignore:arc_pair_c6_rad_s_um6:UserWarning")
 def test_arc_c6_cache_keys_on_rounded_angles():
     kw = dict(n1=53, l1=1, j1=1.5, mj1=-1.5, theta=np.pi / 2, phi=0.321)
     a = arc_pair_c6_rad_s_um6(**kw)

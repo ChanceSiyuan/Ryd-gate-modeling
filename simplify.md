@@ -26,9 +26,15 @@ result = simulate(system, ...)
 ### 2. CZ gate workflow
 
 ```python
-from ryd_gate.gates import TOProtocol, cz_gate_report
+from ryd_gate import RydbergSystem, simulate
+from ryd_gate.gates import TOProtocol
 
-report = cz_gate_report(...)
+protocol = TOProtocol(...)
+system = RydbergSystem(..., protocol=protocol)
+evolutions = simulate(system, initial_state=[["0", "0"], ["0", "1"], ["1", "1"]])
+
+# In scripts/notebooks, explicitly compute the corrected overlaps, Nielsen
+# fidelity, conditional phase, and any desired aggregation from evolutions.
 ```
 
 The current codebase has accumulated too much complexity in `src/ryd_gate`.
@@ -90,7 +96,24 @@ Do **not** expand the functionality of the project.
    For every proposed change, explain whether it reduces API surface, removes a wrapper, consolidates files, or simplifies a function signature.
 
 10. **Do not change numerical or physical behavior.**  
-    Refactoring must not change simulation results, gate reports, fidelity calculations, noise behavior, or backend behavior covered by tests.
+    Refactoring must not change state evolutions, CZ overlaps or fidelity values, noise behavior, or backend behavior covered by tests.
+
+11. **Keep experiment-specific CZ analysis explicit.**  
+    Delete `cz_gate_report`, `CZGateReport`, and any deterministic or noisy CZ
+    report wrapper. The package should return the raw evolution results needed
+    for the calculation; scripts and notebooks should explicitly select the CZ
+    basis states and write the overlap, fidelity, phase, error-budget, and
+    ensemble-aggregation formulas they intend to use. Do not replace the
+    deleted report API with another report object or gate-specific Monte Carlo
+    helper.
+
+12. **Keep CZ optimizer objectives private.**  
+    Remove `average_gate_infidelity` and `average_gate_infidelity_297` from the
+    public API. Preserve their numerical logic only as private objectives used
+    by `optimize_cz_parameters` and the 297-nm theta projection/optimization
+    path. Scripts and notebooks that evaluate a fixed protocol must show the
+    basis-state evolution and Nielsen formula explicitly instead of calling a
+    public one-line fidelity helper.
 
 ---
 
@@ -214,17 +237,18 @@ Examples:
 
 ### `gates.py`
 
-User-facing CZ gate API only.
+User-facing CZ protocol API only.
 
 Examples:
 
+- `CZProtocol`
 - `TOProtocol`
 - `ARProtocol`
-- `DoubleARPProtocol`
-- `cz_gate_report`
-- `CZGateReport`
 
 Avoid duplicating gate logic between `gates.py` and `protocols/gate_cz.py`.
+Do not add report containers or one-call fidelity/report helpers here. A script
+or notebook that analyses a CZ gate should visibly perform that analysis from
+simulation results.
 
 ---
 
@@ -233,6 +257,8 @@ Avoid duplicating gate logic between `gates.py` and `protocols/gate_cz.py`.
 User-level analysis APIs only.
 
 Do not expose backend-internal metrics or implementation details as user-facing analysis functions.
+In particular, the CZ fidelity objectives used internally by optimizers must
+remain private and must not be re-exported from `analysis` or `gates`.
 
 ---
 
@@ -282,11 +308,9 @@ Specialized APIs should live in submodules.
 
 ```python
 from ryd_gate.gates import (
+    CZProtocol,
     TOProtocol,
     ARProtocol,
-    DoubleARPProtocol,
-    cz_gate_report,
-    CZGateReport,
 )
 ```
 
@@ -343,9 +367,14 @@ Look for:
 
 - duplicate protocol definitions
 - wrapper functions
-- report helpers that simply forward calls
+- `cz_gate_report`, `CZGateReport`, their schema, and similar report helpers
 - old aliases
 - unclear distinction between user API and implementation detail
+
+Delete the CZ report surface even if README, examples, docs, or API-contract
+tests currently exercise it. Migrate executable examples to batch simulation
+of the required basis states followed by explicit formulas; update or remove
+tests that exist only to pin the deleted wrapper or its serialization schema.
 
 ---
 
@@ -712,8 +741,16 @@ Show the intended user imports:
 
 ```python
 from ryd_gate import Register, RydbergSystem, TFIMQuenchProtocol, simulate
-from ryd_gate.gates import TOProtocol, cz_gate_report
+from ryd_gate.gates import CZProtocol, TOProtocol, ARProtocol
 ```
+
+For CZ metrics, show the basis-state batch simulation and the mathematical
+formula directly in the relevant script or notebook. Do not propose a
+replacement `CZGateReport`-style abstraction.
+
+Do not include `average_gate_infidelity` or
+`average_gate_infidelity_297` in a public `__all__`; retain only private
+optimizer objectives with the same numerical behavior.
 
 Then provide proposed `__all__` blocks.
 
@@ -730,6 +767,10 @@ Each patch must include:
 - public API impact
 - tests / docs to update
 - verification command
+
+One patch must remove `cz_gate_report`, `CZGateReport`, their public exports and
+schema, then migrate the existing walkthrough/example/docs to an explicit CZ
+calculation without changing the benchmark values.
 
 ---
 

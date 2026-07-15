@@ -1,5 +1,33 @@
 """Tests for ryd_gate package initialization."""
 
+TOP_LEVEL_API = [
+    "Register",
+    "RydbergSystem",
+    "InteractionSpec",
+    "level_structure",
+    "NoiseModel",
+    "EvolutionResult",
+    "EnsembleResult",
+    "simulate",
+    "simulate_ensemble",
+    "SweepProtocol",
+    "TFIMQuenchProtocol",
+    "TFIMAnnealProtocol",
+]
+
+PROTOCOLS_API = [
+    "CZProtocol",
+    "TOProtocol",
+    "ARProtocol",
+    "Direct297PiProtocol",
+    "Direct297CZProtocol",
+    "Direct297TOProtocol",
+    "SweepProtocol",
+    "TFIMQuenchProtocol",
+    "TFIMAnnealProtocol",
+    "DigitalAnalogProtocol",
+]
+
 
 class TestPackageImports:
     """Tests for package-level imports."""
@@ -11,13 +39,11 @@ class TestPackageImports:
         assert isinstance(ryd_gate.__version__, str)
 
     def test_product_layer_exports(self):
-        """Lattice geometry stays top-level; validation lives in core.serialization."""
-        from ryd_gate import Register, RegisterLayout
-        from ryd_gate.core.serialization import ValidationIssue, raise_for_errors
+        """Geometry, interaction, and level-structure entry points are top-level."""
+        from ryd_gate import InteractionSpec, Register, level_structure
 
         assert all(
-            item is not None
-            for item in (Register, RegisterLayout, ValidationIssue, raise_for_errors)
+            item is not None for item in (Register, InteractionSpec, level_structure)
         )
 
     def test_removed_top_level_exports(self):
@@ -32,7 +58,7 @@ class TestPackageImports:
             from ryd_gate import blackman_pulse_sqrt  # noqa: F401
 
     def test_demoted_top_level_exports(self):
-        """Symbols moved to submodules are no longer top-level."""
+        """Symbols moved to submodules or deleted are no longer top-level."""
         import pytest
 
         import ryd_gate
@@ -54,6 +80,10 @@ class TestPackageImports:
             "BasisSpec",
             "ObservableRegistry",
             "Observable",
+            "DEFAULT_C6",  # lives in ryd_gate.core.level_structures
+            "phase_from_chirp",  # lives in ryd_gate.protocols.gate_cz
+            "RegisterLayout",  # deleted with the layout/serialization layer
+            "LevelStructureSpec",  # deleted: no public level-structure DSL
             "TransitionSpec",
             "ValidationIssue",
             "raise_for_errors",
@@ -62,36 +92,17 @@ class TestPackageImports:
             "TFIMRydbergControls",
             "tfim_to_rydberg_controls",
             "interaction_longitudinal_shifts",
+            "configure_monte_carlo_runner",  # deleted with the Monte-Carlo runner layer
         ):
             assert name not in ryd_gate.__all__
             with pytest.raises(AttributeError):
                 getattr(ryd_gate, name)
 
     def test_all_exports_match(self):
-        """__all__ should list exactly the minimal top-level surface."""
+        """__all__ is exactly the minimal top-level surface, in API order."""
         import ryd_gate
 
-        expected = {
-            # Systems & geometry
-            "RydbergSystem",
-            "Register",
-            "RegisterLayout",
-            "InteractionSpec",
-            "LevelStructureSpec",
-            "level_structure",
-            "DEFAULT_C6",
-            # Noise layer
-            "NoiseModel",
-            "configure_monte_carlo_runner",
-            # Lattice-dynamics protocols
-            "SweepProtocol",
-            "TFIMQuenchProtocol",
-            "TFIMAnnealProtocol",
-            # Simulation
-            "simulate",
-            "EvolutionResult",
-        }
-        assert set(ryd_gate.__all__) == expected
+        assert ryd_gate.__all__ == TOP_LEVEL_API
 
     def test_all_exports_defined(self):
         """All items in __all__ should be defined."""
@@ -100,11 +111,50 @@ class TestPackageImports:
         for name in ryd_gate.__all__:
             assert hasattr(ryd_gate, name)
 
+    def test_protocols_namespace_is_user_selectable_protocols(self):
+        """ryd_gate.protocols exports exactly the user-selectable protocols."""
+        import pytest
+
+        import ryd_gate.protocols as protocols
+
+        assert protocols.__all__ == PROTOCOLS_API
+        for name in PROTOCOLS_API:
+            assert hasattr(protocols, name)
+        # The Protocol ABC and pulse helpers live only in their modules.
+        for name in (
+            "Protocol",
+            "phase_from_chirp",
+            "TFIMRydbergControls",
+            "tfim_to_rydberg_controls",
+            "interaction_longitudinal_shifts",
+        ):
+            assert name not in protocols.__all__
+            with pytest.raises(AttributeError):
+                getattr(protocols, name)
+
+        from ryd_gate.protocols.base import Protocol
+        from ryd_gate.protocols.gate_cz import phase_from_chirp
+        from ryd_gate.protocols.lattice_dynamics import (
+            TFIMRydbergControls,
+            interaction_longitudinal_shifts,
+            tfim_to_rydberg_controls,
+        )
+
+        assert all(
+            item is not None
+            for item in (
+                Protocol,
+                phase_from_chirp,
+                TFIMRydbergControls,
+                tfim_to_rydberg_controls,
+                interaction_longitudinal_shifts,
+            )
+        )
+
     def test_architecture_types_importable_from_submodules(self):
         """Core/IR types are importable from their owning submodules."""
         from ryd_gate import EvolutionResult, RydbergSystem
-        from ryd_gate.core import BasisSpec, ObservableRegistry
-        from ryd_gate.core.model import SystemModel
+        from ryd_gate.core import BasisSpec, ObservableExpr, ObservableFactory
         from ryd_gate.ir import HamiltonianIR, HamiltonianTerm, compile_hamiltonian_ir
 
         assert all(
@@ -113,8 +163,8 @@ class TestPackageImports:
                 EvolutionResult,
                 RydbergSystem,
                 BasisSpec,
-                ObservableRegistry,
-                SystemModel,
+                ObservableExpr,
+                ObservableFactory,
                 HamiltonianIR,
                 HamiltonianTerm,
                 compile_hamiltonian_ir,
@@ -123,7 +173,7 @@ class TestPackageImports:
 
     def test_new_package_namespaces(self):
         """Core, IR, backend, and simulate namespaces should be importable."""
-        from ryd_gate.backends.exact import DenseODEBackend, SparseExpmBackend, simulate
+        from ryd_gate.backends.exact import ExactCompiler, ExactODEBackend, simulate
         from ryd_gate.core import BasisSpec, RydbergSystem
         from ryd_gate.ir import HamiltonianIR, HamiltonianTerm, compile_hamiltonian_ir
 
@@ -131,12 +181,12 @@ class TestPackageImports:
             item is not None
             for item in (
                 BasisSpec,
-                DenseODEBackend,
+                ExactCompiler,
+                ExactODEBackend,
                 HamiltonianIR,
                 HamiltonianTerm,
                 compile_hamiltonian_ir,
                 RydbergSystem,
-                SparseExpmBackend,
                 simulate,
             )
         )

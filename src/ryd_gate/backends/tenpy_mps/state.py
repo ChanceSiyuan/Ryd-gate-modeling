@@ -58,7 +58,9 @@ def product_state_mps(
 
     site = build_tenpy_site(spec.level_spec)
     sites = [site] * spec.N
-    return MPS.from_product_state(sites, labels_1d, bc="finite")
+    # unit_cell_width: explicit len(sites) (the finite-chain value) — tenpy warns
+    # about the implicit default and will make the argument mandatory.
+    return MPS.from_product_state(sites, labels_1d, bc="finite", unit_cell_width=spec.N)
 
 
 def _state_labels_2d(spec: TNLatticeSpec, config: np.ndarray | Sequence[str] | str) -> list[str]:
@@ -112,7 +114,9 @@ def product_superposition_mps(
             [local_amps.get(level, 0.0) for level in spec.level_spec.levels],
             dtype=complex,
         ) / norm
-    return MPS.from_product_state(sites, [local_state] * spec.N, bc="finite", dtype=complex)
+    return MPS.from_product_state(
+        sites, [local_state] * spec.N, bc="finite", dtype=complex, unit_cell_width=spec.N
+    )
 
 
 def mps_fidelity(psi_target: object, psi: object) -> float:

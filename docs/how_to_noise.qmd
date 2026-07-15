@@ -1,69 +1,77 @@
-# How-To: NoiseModel
+# How-To: NoiseModel & ensembles
 
-`NoiseModel` is declarative data: it names the requested noise, validates it,
-and serializes it. The work happens in the existing engines — quasi-static
-sampling in the exact `MonteCarloRunner`, decay in the physical local blocks.
+`NoiseModel` declares the executable quasi-static noise channels;
+`simulate_ensemble` samples realizations and returns the **raw shot-major
+ensemble** — statistics (mean/std/fidelity) are computed in your script from
+the per-shot results.
 
 ## Declare
 
 ```python
+import numpy as np
 from ryd_gate import NoiseModel
 
 noise = NoiseModel(
-    runs=200,
-    detuning_sigma_rad_per_us=2 * 3.14159e-3 * 130,   # 130 kHz quasi-static detuning
-    amp_sigma=0.01,                                    # 1% fractional Rabi noise
-    rydberg_decay=True,
+    detuning_sigma_rad_s=2 * np.pi * 130e3,   # 130 kHz quasi-static detuning
+    amplitude_sigma=0.01,                     # 1% fractional Rabi noise
+    # local_rin_sigma=0.02,                   # per-site addressing intensity noise
+    # position_sigma_um=0.07,                 # atom-position sigma (um)
 )
-noise.noise_types          # ('detuning', 'amplitude', 'rydberg_decay')
-print(noise.summary())
-noise.to_dict()            # "ryd-gate/noise/v1"; accepts runs / n_trajectories on input
 ```
 
-Field names align with Pulser where semantics match (`state_prep_error`,
-`p_false_pos`, `p_false_neg`, `amp_sigma`, `runs`), plus the microscopic
-extensions Pulser lacks (`rydberg_decay`, `intermediate_decay`,
-`position_sigma_um`, `local_rin_sigma`). Fields without runtime machinery
-(`state_prep_error`, readout, `temperature_uK`, `laser_waist_um`) are
-accepted as data but raise `noise.runtime_not_stage4` when applied to a
-runtime path.
+All four fields are standard deviations of the quasi-static, shot-to-shot
+channels. Decay is *not* noise configuration — it belongs to the level
+physical model (`level_structure(..., enable_rydberg_decay=True)`).
 
-## Apply: Monte Carlo (quasi-static noise)
+## Run an ensemble
 
 ```python
-from ryd_gate import Register, RydbergSystem, configure_monte_carlo_runner
-from ryd_gate.backends.exact import MonteCarloRunner
-from ryd_gate.gates import TOProtocol
+from ryd_gate import Register, RydbergSystem, level_structure, simulate_ensemble
+from ryd_gate.protocols import TOProtocol
 
-system = (RydbergSystem
-          .set_atom_level("rb87_7_mp", detuning_sign=1)
-          .set_atom_geom(Register.chain(2, spacing_um=3.0)))
-runner = MonteCarloRunner(system.with_protocol(TOProtocol()), X_TO_DARK)
-configure_monte_carlo_runner(runner, noise)            # exact unit conversions
-mc = runner.run_gate_fidelity(n_shots=noise.runs, seed=123)
-print(mc.mean_infidelity, mc.std_infidelity)
+system = RydbergSystem(
+    level_structure=level_structure("rb87_7_mp", detuning_sign=1),
+    register=Register.chain(2, spacing_um=3.0),
+    protocol=TOProtocol(phase_amplitude=..., frequency_ratio=...,
+                        phase_offset=..., detuning_ratio=...,
+                        duration_ratio=...))
+
+ens = simulate_ensemble(
+    system,
+    [["0", "0"], ["0", "1"], ["1", "1"]],   # a batch: one result set per shot
+    noise=noise,
+    shots=200,          # mandatory
+    seed=123,           # mandatory: same seed -> same realizations
+)
+
+ens.results[k][i]       # shot k, initial state i (an EvolutionResult)
+ens.realizations[k]     # the actually applied values, with units:
+                        #   detuning_rad_s, amplitude_scale,
+                        #   local_scales, position_offsets_um, pair_distances_um
 ```
 
-Unit mapping is exact: `detuning_sigma_rad_per_us` → Hz for
-`setup_detuning_noise`, `position_sigma_um` (scalar or 3-tuple, µm) → meters
-for `setup_position_noise`. Position noise uses the two-atom VdW perturbation
-path and refuses other atom counts (`noise.position_two_atom_only`).
+Every initial state within one shot shares that shot's realization, so
+per-shot gate metrics (e.g. the Nielsen CZ infidelity from the three raw
+overlaps) are consistent; see `examples/demo_noise_model.py` for the
+mean/std infidelity computed inline.
 
-## Apply: decay (construction time)
+Notes:
+
+- Noise execution is exact-only; TN backends raise a capability error.
+- `local_rin_sigma` requires a protocol with local-addressing capability
+  (e.g. a `SweepProtocol` with `address_fn`) and errors otherwise.
+- Position noise samples each atom's 3D offset and recomputes every
+  Rydberg-interacting pair's VdW shift from the *actual register
+  coordinates* (nominal distances come from the register, not a constant).
+
+## Decay (construction time)
 
 Non-Hermitian decay must exist when the local blocks are built — pass the
-flags into `RydbergSystem.set_atom_level`:
+flags into `level_structure(...)`:
 
 ```python
-from ryd_gate import level_structure
-
-spec = level_structure("rb87_7_mp")
-system = (RydbergSystem
-          .set_atom_level(spec, **spec.physical_kwargs(), **noise.physical_kwargs())
-          .set_atom_geom(Register.chain(2, spacing_um=3.0)))
+system = RydbergSystem(
+    level_structure=level_structure("rb87_7_mp", enable_rydberg_decay=True,
+                                    enable_intermediate_decay=True),
+    register=Register.chain(2, spacing_um=3.0))
 ```
-
-`validate_for(backend=..., level_structure=..., n_atoms=...)` reports
-capability errors per backend (decay needs `analog_3`, `rb87_7_mp`, or
-`rb87_7_pm`; no TN
-noise support — see the [Capability Matrix](capability_matrix.qmd)).

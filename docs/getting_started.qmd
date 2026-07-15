@@ -10,7 +10,6 @@ state-vector backend or the tensor-network backends (MPS / PEPS).
 ```bash
 pip install -e .                 # base (exact backend)
 pip install -e ".[tn]"           # + TeNPy MPS backend
-pip install -e ".[schema]"       # + JSON Schema validation
 pip install -e ".[dev,docs]"     # development / documentation tooling
 ```
 
@@ -18,33 +17,70 @@ pip install -e ".[dev,docs]"     # development / documentation tooling
 
 ```python
 import numpy as np
-from ryd_gate import Register, RydbergSystem, TFIMQuenchProtocol, simulate
+from ryd_gate import Register, RydbergSystem, TFIMQuenchProtocol, level_structure, simulate
 
 protocol = TFIMQuenchProtocol(hx=2 * np.pi * 1e6, t_gate=0.5e-6)
-system = (RydbergSystem.set_atom_level("1r")
-          .set_atom_geom(Register.square(2, spacing_um=9.0)).set_protocol(protocol))
-result = simulate(system, psi0="all_1", observables=["sum_nr"])
-print(result.expectation("sum_nr"))   # Rydberg population (read off the result)
+system = RydbergSystem(level_structure=level_structure("1r"),
+                       register=Register.square(2, spacing_um=9.0),
+                       protocol=protocol)
+result = simulate(system, observables={"n_r": system.observables.level_sum("r")})
+print(result.expectation("n_r")[0].real)   # endpoint Rydberg population
 ```
 
-Swap `backend="exact_dense"` for `"mps"` or `"peps"` to run the same
-system on a tensor-network engine — see the
-[Capability Matrix](capability_matrix.qmd) for what runs where. The research
+Observables are named `ObservableExpr` expressions built from the read-only
+`system.observables` factory (`n`, `level_sum`, `E`, `product_projector`, ...)
+and requested as a dict at simulate time. Each entry comes back as a raw
+complex `<psi|O|psi>` array with one value per entry of `result.times` —
+`[t_gate]` (shape `(1,)`) when no `t_eval` is given, or exactly the requested
+`t_eval` grid (which then requires observables — there is nothing else to
+record).
+
+Pass `backend="mps"` or `backend="peps"` to run the same system on a
+tensor-network engine (the default is the exact `exact_ode` state-vector
+solver) — see the [Capability Matrix](capability_matrix.qmd) for what runs
+where. The research
 notebooks under `scripts/notebooks/` cover TFIM critical fields, quench
 benchmarks, and 2D lattice dynamics end to end.
 
-## First gate report (CZ line)
+## First CZ gate (gate line)
+
+The library evolves states; gate metrics are computed in your script from the
+final states. Evolve the CZ basis states, phase-correct the overlaps with the
+ideal single-qubit Rz phases, and score them with the Nielsen formula:
 
 ```python
-from ryd_gate import Register, RydbergSystem
-from ryd_gate.gates import TOProtocol, cz_gate_report
+import numpy as np
+from ryd_gate import Register, RydbergSystem, level_structure, simulate
+from ryd_gate.protocols import TOProtocol
 
-system = (RydbergSystem
-          .set_atom_level("rb87_7_mp", detuning_sign=1)
-          .set_atom_geom(Register.chain(2, spacing_um=3.0)))
-report = cz_gate_report(system, TOProtocol(), X_TO_DARK, include_error_budget=False)
-print(report.fidelity)             # ~0.9999992 for the benchmark parameters
+X_TO_DARK = [-0.6894097925886826, 1.040962607910546, 0.3277877211544321,
+             1.5639989822346387, 0.6689846026179691, 1.3407418093368753]
+
+system = RydbergSystem(
+    level_structure=level_structure("rb87_7_mp", detuning_sign=1),
+    register=Register.chain(2, spacing_um=3.0))
+pulse = TOProtocol(phase_amplitude=X_TO_DARK[0], frequency_ratio=X_TO_DARK[1],
+                   phase_offset=X_TO_DARK[2], detuning_ratio=X_TO_DARK[3],
+                   duration_ratio=X_TO_DARK[5])   # fully specified at construction
+theta = X_TO_DARK[4]                       # ideal single-qubit Rz phase
+
+results = simulate(system.with_protocol(pulse),
+                   [["0", "0"], ["0", "1"], ["1", "1"]])
+s0, s1 = np.eye(7, dtype=complex)[0], np.eye(7, dtype=complex)[1]
+a00 = np.vdot(np.kron(s0, s0), results[0].final_state)
+a01 = np.exp(-1j * theta) * np.vdot(np.kron(s0, s1), results[1].final_state)
+a11 = np.exp(-2j * theta - 1j * np.pi) * np.vdot(np.kron(s1, s1), results[2].final_state)
+fidelity = (1 / 20) * (abs(a00 + 2 * a01 + a11) ** 2
+                       + abs(a00) ** 2 + 2 * abs(a01) ** 2 + abs(a11) ** 2)
+print(fidelity)                    # ~0.99994 on current atomic data
 ```
+
+The three 7-level evolutions run on the adaptive `exact_ode` solver, which
+resolves the GHz optical phases with error control — this block takes about
+3 minutes single-threaded.
+
+See [CZ gates](how_to_gates.qmd) for the full walkthrough (protocols, phase
+diagnostics, error budgets).
 
 Continue with [Fundamentals](fundamentals.qmd) for units and conventions, the
 how-to guides for each feature, and the [Capability Matrix](capability_matrix.qmd)

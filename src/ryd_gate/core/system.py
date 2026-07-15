@@ -1,22 +1,19 @@
-"""Universal Rydberg system model and its lattice construction.
+"""Universal Rydberg system model.
 
-A :class:`RydbergSystem` is built from three things: a lattice geometry,
-a local energy-level structure (one of the built-in models in
-:data:`_ATOM_LEVELS` — ``01`` / ``1r`` / ``01r`` / ``analog_3`` / ``rb87_7_mp``
-/ ``rb87_7_pm`` — or a hand-built :class:`LevelStructureSpec`), and a protocol.
-The class owns symbolic Hamiltonian blocks, observables, geometry metadata,
-and the bound protocol. Backend-specific compilers materialize those symbolic
+A :class:`RydbergSystem` is constructed explicitly from four things::
+
+    RydbergSystem(
+        level_structure=level_structure("rb87_7_mp", ...),  # resolved preset
+        register=Register.chain(2, spacing_um=3.0),          # geometry
+        interaction=InteractionSpec(...),                    # optional override
+        protocol=protocol,                                   # optional binding
+    )
+
+Everything else is derived and exposed as explicit read-only fields:
+``basis``, ``observables``, ``interaction_pairs``, ``t_gate`` (the bound
+protocol's duration resolved against this system), and the physical data on
+``level_structure``.  Backend-specific compilers materialize the symbolic
 blocks into matrices, MPOs, or other solver inputs only when needed.
-
-Level-structure/interaction specs live in :mod:`ryd_gate.core.level_structures`
-and the Rb87 physical parameter sets and local matrix blocks in
-:mod:`ryd_gate.core.physical_models`. A system is built with the fluent
-``RydbergSystem.set_atom_level(...).set_atom_geom(...).set_protocol(...)``
-chain: every step returns a fully materialized, usable system.
-:meth:`RydbergSystem.set_atom_level` resolves the level spec against
-:data:`_ATOM_LEVELS` (kind, allowed atom-level kwargs), validates the
-construction parameters, and registers the symbolic blocks and observables —
-mounting the physical Rb87 blocks for ``analog_3`` / ``rb87_7_mp`` / ``rb87_7_pm``.
 """
 
 from __future__ import annotations
@@ -29,26 +26,15 @@ import numpy as np
 from ryd_gate.core.level_structures import (
     DEFAULT_C6,
     InteractionSpec,
-    LevelStructureSpec,
+    LevelStructure,
 )
-from ryd_gate.core.level_structures import level_structure as level_structure_preset
-from ryd_gate.core.model import (
-    BasisSpec,
-    ObservableRegistry,
-    SystemModel,
-)
+from ryd_gate.core.model import BasisSpec
+from ryd_gate.core.observables import ObservableFactory
 from ryd_gate.core.operators import (
     BasisOperatorFactory,
     StaticHamiltonianTerm,
-    is_operator_spec,
-    measure_state_vector_operator,
 )
 from ryd_gate.core.physical_models import (
-    _apply_analog_3_lattice_blocks,
-    _apply_rb87_7_lattice_blocks,
-    _apply_rb87_297_lattice_blocks,
-    _rb87_297_pair_c6_fn,
-    _rb87_default_c6,
     vdw_couplings,
     vdw_couplings_from_c6_function,
 )
@@ -58,99 +44,119 @@ if TYPE_CHECKING:
     from ryd_gate.protocols.base import Protocol
 
 
-# ── Built-in atom-level models ───────────────────────────────────────────────
-# The built-in single-atom level structures and their construction contracts.
-# ``kind`` selects the build path: "symbolic" registers only the preset's
-# symbolic blocks, while "analog_3"/"rb87_7" additionally mount the physical Rb87
-# local Hamiltonian blocks (the seven-level manifold is encoded in the tag:
-# rb87_7_mp / rb87_7_pm).  ``level_kwargs`` is the exact set of atom-level physics
-# arguments the model accepts (it mirrors the ``_apply_*`` signatures in
-# physical_models.py); anything else raises.  Physical mounting is keyed off the
-# preset *name*, so a hand-built LevelStructureSpec (absent from this table) is
-# always symbolic.
-_ANALOG3_KWARGS = frozenset({
-    "detuning_sign", "Delta_Hz", "rabi_420_Hz", "rabi_1013_Hz",
-    "enable_rydberg_decay", "enable_intermediate_decay",
-})
-_RB87_7_KWARGS = frozenset({
-    "detuning_sign", "Delta_Hz", "ryd_level", "C6_rad_s_um6", "t_rise",
-    "enable_rydberg_decay", "enable_intermediate_decay", "magnetic_field_G",
-})
-_RB87_297_KWARGS = frozenset({
-    "enable_rydberg_decay", "magnetic_field_G", "ryd_level",
-})
+class RydbergSystem:
+    """Universal Rydberg-lattice system: level structure + register + protocol.
 
-_ATOM_LEVELS: dict[str, dict[str, Any]] = {
-    "01": {
-        "kind": "symbolic", "level_kwargs": frozenset(),
-        "description": "qubit |0>,|1>, no Rydberg (stabilizer-capable)",
-    },
-    "1r": {
-        "kind": "symbolic", "level_kwargs": frozenset(),
-        "description": "two-level |1>,|r> Rydberg drive",
-    },
-    "01r": {
-        "kind": "symbolic", "level_kwargs": frozenset(),
-        "description": "three-level |0>,|1>,|r> effective CZ subspace",
-    },
-    "analog_3": {
-        "kind": "analog_3", "level_kwargs": _ANALOG3_KWARGS,
-        "description": "physical Rb87 g/e/r ladder with static 1013 nm e-r coupling",
-    },
-    # Seven-level Rb87 gate model split by manifold/polarization convention:
-    # _mp = sigma-(420)/sigma+(1013) (was param_set="our"); _pm = sigma+/sigma-
-    # (was param_set="lukin").  Static numbers are explicit kwargs, no param_set.
-    "rb87_7_mp": {
-        "kind": "rb87_7", "level_kwargs": _RB87_7_KWARGS,
-        "description": "physical Rb87 seven-level model, sigma-/sigma+ manifold",
-    },
-    "rb87_7_pm": {
-        "kind": "rb87_7", "level_kwargs": _RB87_7_KWARGS,
-        "description": "physical Rb87 seven-level model, sigma+/sigma- manifold",
-    },
-    "rb87_297_clock_4": {
-        "kind": "rb87_297", "level_kwargs": _RB87_297_KWARGS,
-        "description": "physical Rb87 297 nm single-photon clock -> nP3/2 four-level model",
-    },
-}
-
-
-class RydbergSystem(SystemModel):
-    """Universal Rydberg-lattice system: geometry + level structure + protocol.
-
-    Built via :meth:`set_atom_level` (then ``.set_atom_geom(...)`` and
-    optionally ``.set_protocol(...)``); every step returns a fully materialized,
-    usable system. Once a protocol is attached (via
-    :meth:`set_protocol` or :meth:`with_protocol`), the system can be passed to
-    :func:`ryd_gate.ir.compile_hamiltonian_ir`. Algorithm packages then lower
-    that unified Hamiltonian IR into exact matrices, MPS/MPO data, TTN inputs,
-    or external solver payloads.
+    Constructed explicitly; every field is read-only after construction.  A
+    system with a protocol bound can be passed to
+    :func:`ryd_gate.ir.compile_hamiltonian_ir`; algorithm packages then lower
+    that unified Hamiltonian IR into exact matrices, MPS/MPO data, or external
+    solver payloads.  ``with_protocol`` returns a new system with another
+    fully specified protocol bound.
     """
 
     def __init__(
         self,
         *,
-        basis: BasisSpec,
-        operators: BasisOperatorFactory,
-        hamiltonian_channels: dict[str, Any],
-        static_hamiltonian_terms: list[StaticHamiltonianTerm],
-        observables: ObservableRegistry,
+        level_structure: LevelStructure,
+        register: Register,
+        interaction: InteractionSpec | None = None,
         protocol: "Protocol | None" = None,
-        metadata: dict[str, Any] | None = None,
-        geometry: Register | None = None,
-        is_sparse: bool = True,
-        amplitude_scale: float = 1.0,
     ) -> None:
-        self._basis = basis
+        if not isinstance(level_structure, LevelStructure):
+            raise TypeError(
+                "level_structure must be a resolved preset from "
+                "ryd_gate.level_structure(name, **physical_kwargs); got "
+                f"{type(level_structure).__name__}."
+            )
+        if not isinstance(register, Register):
+            raise TypeError(f"register must be a Register; got {type(register).__name__}.")
+        if interaction is not None and not isinstance(interaction, InteractionSpec):
+            raise TypeError(
+                f"interaction must be an InteractionSpec or None; got {type(interaction).__name__}."
+            )
+
+        ls = level_structure
+        n = register.N
+        d = ls.local_dim
+        self._level_structure = ls
+        self._register = register
+        self._protocol = protocol
+        self._amplitude_scale = 1.0
+        self._is_sparse = True
+
+        self._basis = BasisSpec(
+            site_labels=tuple(str(i) for i in range(n)),
+            local_levels=ls.levels,
+            local_dim=d,
+            total_dim=d**n,
+        )
+        operators = BasisOperatorFactory(self._basis)
         self._operators = operators
-        self._hamiltonian_channels = hamiltonian_channels
-        self._static_hamiltonian_terms = static_hamiltonian_terms
-        self._observables = observables
-        self.protocol = protocol
-        self.metadata = metadata or {}
-        self.geometry = geometry
-        self.is_sparse = is_sparse
-        self.amplitude_scale = amplitude_scale
+
+        # Observables: an immutable expression factory bound to this basis
+        # (system.observables.n("r", 0), .level_sum("r"), .identity(), ...).
+        self._observables = ObservableFactory(self._basis)
+
+        # Hamiltonian channels: driveable primitive E[ket,bra] operators (summed
+        # over sites; per-site variants E[...]_<i> are resolved by the IR).
+        channels: dict[str, Any] = {}
+        for transition in ls.transitions:
+            channels[transition.channel] = operators.sum(transition.channel)
+        for channel in ls.detuning_levels:
+            channels[channel] = operators.sum(channel)
+        self._hamiltonian_channels = channels
+
+        # Interaction pairs: explicit InteractionSpec wins; else the preset's
+        # anisotropic pair-C6 function (297) or isotropic default C6.
+        self._interaction_pairs = _resolve_interaction_pairs(ls, register, interaction)
+
+        # Static terms: preset single-atom energies + static couplings + the
+        # Rydberg pair interaction.
+        static_terms: list[StaticHamiltonianTerm] = []
+        if ls.rydberg_levels:
+            static_terms.append(
+                StaticHamiltonianTerm(
+                    "H_pair",
+                    operators.pair_projector(self._interaction_pairs, ls.rydberg_levels),
+                    1.0,
+                )
+            )
+        if ls.local_static is not None:
+            for i, level in enumerate(ls.levels):
+                coeff = complex(ls.local_static[i, i])
+                if coeff != 0:
+                    name = f"E[{level},{level}]"
+                    static_terms.append(
+                        StaticHamiltonianTerm(name, operators.sum(name), coeff)
+                    )
+        for channel, coeff in ls.static_couplings:
+            static_terms.append(
+                StaticHamiltonianTerm(
+                    channel, operators.sum(channel), coeff, add_hermitian_conjugate=True
+                )
+            )
+        self._static_hamiltonian_terms = static_terms
+
+    # -- Explicit read-only fields -------------------------------------------
+
+    @property
+    def level_structure(self) -> LevelStructure:
+        """The resolved level-structure preset (physical data lives here)."""
+        return self._level_structure
+
+    @property
+    def register(self) -> Register:
+        return self._register
+
+    @property
+    def interaction_pairs(self) -> tuple:
+        """Resolved ``(i, j, V_ij)`` Rydberg pair interactions (rad/s)."""
+        return self._interaction_pairs
+
+    @property
+    def protocol(self) -> "Protocol | None":
+        return self._protocol
 
     @property
     def basis(self) -> BasisSpec:
@@ -173,291 +179,116 @@ class RydbergSystem(SystemModel):
         return self._static_hamiltonian_terms
 
     @property
-    def observables(self) -> ObservableRegistry:
+    def observables(self) -> ObservableFactory:
+        """Read-only :class:`ObservableExpr` factory bound to this system's basis."""
         return self._observables
 
     @property
-    def model_tag(self) -> str:
-        """Level-structure tag identifying this system's atom model.
-
-        The built-in/preset name (``rb87_7_mp``, ``analog_3``, ``1r`` ...) or a
-        custom :class:`LevelStructureSpec`'s ``name`` — read from metadata, not a
-        separate ``param_set`` selector.
-        """
-        return self.metadata.get("level_structure", "")
-
-    @property
     def N(self) -> int:
-        return self.basis.n_sites
+        return self._basis.n_sites
 
     @property
     def dim(self) -> int:
-        return self.basis.total_dim
+        return self._basis.total_dim
 
-    def meta(self, name: str, default=None):
-        return self.metadata.get(name, default)
+    @property
+    def is_sparse(self) -> bool:
+        return self._is_sparse
+
+    @property
+    def amplitude_scale(self) -> float:
+        """Internal noise-realization amplitude scale (1.0 outside ensembles)."""
+        return self._amplitude_scale
+
+    # Kept as an attribute-style alias some plotting/analysis code reads.
+    @property
+    def geometry(self) -> Register:
+        return self._register
 
     # -- Protocol binding --------------------------------------------------
 
     def with_protocol(self, protocol: "Protocol") -> "RydbergSystem":
-        """Return a shallow copy with ``protocol`` (re)bound."""
+        """Return a shallow copy with another fully specified protocol bound."""
         new = copy.copy(self)
-        new.protocol = protocol
+        new._protocol = protocol
         return new
 
-    def with_amplitude_scale(self, amplitude_scale: float) -> "RydbergSystem":
-        """Return a shallow copy with ``amplitude_scale`` replaced (noise sweeps)."""
+    def _with_amplitude_scale(self, amplitude_scale: float) -> "RydbergSystem":
+        """Return a shallow copy with ``amplitude_scale`` replaced.
+
+        Private: noise-realization amplitude scaling is a temporary quantity
+        inside ensemble execution, never public system state.
+        """
         new = copy.copy(self)
-        new.amplitude_scale = amplitude_scale
+        new._amplitude_scale = float(amplitude_scale)
         return new
 
     def _require_protocol(self) -> "Protocol":
-        if self.protocol is None:
+        if self._protocol is None:
             raise ValueError(
                 "RydbergSystem has no protocol bound. Construct with "
                 "`protocol=...` or call `.with_protocol(...)` before compiling."
             )
-        return self.protocol
+        return self._protocol
 
     # -- Solver-facing API -------------------------------------------------
 
-    def unpack_params(self, x) -> dict:
-        """Translate protocol parameter vector ``x`` into a params dict."""
-        return self._require_protocol().unpack_params(x, self)
+    @property
+    def t_gate(self) -> float:
+        """The bound protocol's gate duration resolved against this system (s).
 
-    def hamiltonian(self, t: float, params: dict):
-        """Materialized Hamiltonian access has moved to algorithm packages."""
-        del t, params
-        raise RuntimeError(
-            "RydbergSystem no longer materializes algorithm-specific matrices. "
-            "Use ryd_gate.ir.compile_hamiltonian_ir(system, params) for the unified "
-            "Hamiltonian IR, then pass that IR to an algorithm compiler."
-        )
+        The protocol decides the duration; normalized quantities (e.g. a CZ
+        ``duration_ratio``) resolve against this system's physical scales.
+        Read-only — ``simulate()`` cannot override it.
+        """
+        return self._require_protocol().resolve_t_gate(self)
 
     def product_state(self, config: str | list[str] | tuple[str, ...]) -> np.ndarray:
-        """Return a computational product state in this model's basis."""
+        """Return a computational product state in this system's basis.
+
+        The canonical seam for constructing bra/kets by the system's
+        basis/site ordering (site 0 is the most significant digit): scripts
+        use it to read CZ return amplitudes, logical leakage, and Bell/SSS
+        overlaps off ``final_state``.
+        """
         labels = list(config) if not isinstance(config, str) else list(config)
-        if len(labels) != self.basis.n_sites:
-            raise ValueError(f"config must have length {self.basis.n_sites}, got {len(labels)}.")
+        if len(labels) != self._basis.n_sites:
+            raise ValueError(
+                f"config must have length {self._basis.n_sites}, got {len(labels)}."
+            )
         idx = 0
-        d = self.basis.local_dim
+        d = self._basis.local_dim
         for site_i, label in enumerate(labels):
-            idx += self.basis.level_index(label) * d ** (self.basis.n_sites - 1 - site_i)
-        psi = np.zeros(self.basis.total_dim, dtype=complex)
+            idx += self._basis.level_index(label) * d ** (self._basis.n_sites - 1 - site_i)
+        psi = np.zeros(self._basis.total_dim, dtype=complex)
         psi[idx] = 1.0
         return psi
 
     def ground_state(self) -> np.ndarray:
-        return self.product_state([self.basis.local_levels[0]] * self.basis.n_sites)
-
-    def expectation(self, observable: str, psi: np.ndarray) -> float:
-        obs = self.observables.get(observable)
-        if is_operator_spec(obs.operator):
-            return measure_state_vector_operator(obs.operator, self.basis, psi)
-        return self.observables.measure(observable, psi)
-
-    @classmethod
-    def set_atom_level(
-        cls,
-        level_structure: str | LevelStructureSpec = "1r",
-        *,
-        Omega: float = 1.0,
-        **level_kwargs,
-    ) -> "RydbergSystem":
-        """
-        Declare the single-atom level structure, returning a usable system.
-        """
-        return cls._materialize(
-            level_structure=level_structure,
-            omega=Omega,
-            level_kwargs=dict(level_kwargs),
-            geometry=Register.chain(1),
-            interaction=None,
-            protocol=None,
+        return self.product_state(
+            [self._basis.local_levels[0]] * self._basis.n_sites
         )
-
-    def set_atom_geom(
-        self, geometry: Register, interaction: InteractionSpec | None = None
-    ) -> "RydbergSystem":
-        """Place the atoms, adding the Rydberg van der Waals interaction.
-
-        Returns a new, fully materialized system rebuilt from this system's
-        atom-level config (level structure, physical flags) with only the
-        geometry/interaction replaced and any bound protocol preserved. The
-        receiver is left unchanged.
-        """
-        return type(self)._materialize(
-            level_structure=self._level_structure,
-            omega=self._omega,
-            level_kwargs=self._level_kwargs,
-            geometry=geometry,
-            interaction=interaction,
-            protocol=self.protocol,
-        )
-
-    def set_protocol(self, protocol: "Protocol") -> "RydbergSystem":
-        """Bind the drive protocol, returning a usable system.
-
-        Protocol binding never affects the blocks/metadata (the physical
-        transition blocks are unit-Rabi; the protocol supplies the time-dependent
-        ``A e^{i phi}`` coefficients at compile time), so this just delegates to
-        :meth:`with_protocol`.
-        """
-        return self.with_protocol(protocol)
-
-    @classmethod
-    def _materialize(
-        cls,
-        *,
-        level_structure: str | LevelStructureSpec,
-        omega: float,
-        level_kwargs: dict,
-        geometry: Register,
-        interaction: InteractionSpec | None,
-        protocol: "Protocol | None",
-    ) -> "RydbergSystem":
-        """Construct a complete system from an explicit construction config.
-
-        Resolves the level spec against :data:`_ATOM_LEVELS`, validates the
-        atom-level kwargs, registers the symbolic blocks and observables, mounts
-        the physical Rb87 blocks for ``analog_3`` / ``rb87_7_mp`` / ``rb87_7_pm``,
-        and stashes the construction config on the returned system so
-        :meth:`set_atom_geom` can rebuild from it.
-        """
-        spec = (
-            level_structure
-            if isinstance(level_structure, LevelStructureSpec)
-            else level_structure_preset(level_structure)
-        )
-        entry = _ATOM_LEVELS.get(spec.name)
-        kind = entry["kind"] if entry is not None else "symbolic"
-        allowed_kwargs = entry["level_kwargs"] if entry is not None else frozenset()
-
-        unknown = set(level_kwargs) - allowed_kwargs
-        if unknown:
-            allowed = ", ".join(sorted(allowed_kwargs)) or "none"
-            raise TypeError(
-                f"{spec.name} does not accept atom-level parameter(s): "
-                f"{', '.join(sorted(unknown))}. Allowed parameters: {allowed}."
-            )
-
-        # rb87 manifold ("mp"/"pm") from the tag; static numbers are level_kwargs.
-        manifold = spec.name.removeprefix("rb87_7_") if kind == "rb87_7" else None
-
-        # 297 model default: pair-dependent (theta, phi) nP3/2 C6 from ARC; an
-        # explicit InteractionSpec(C6=...) overrides with the isotropic scalar.
-        pairs_297 = None
-        if interaction is None:
-            if kind == "rb87_7":
-                c6 = level_kwargs.get("C6_rad_s_um6")
-                interaction = InteractionSpec(
-                    C6=c6 if c6 is not None else _rb87_default_c6(manifold)
-                )
-            elif kind == "rb87_297":
-                pairs_297 = vdw_couplings_from_c6_function(
-                    geometry.coords,
-                    _rb87_297_pair_c6_fn(int(level_kwargs.get("ryd_level", 53))),
-                )
-            else:
-                interaction = InteractionSpec(C6=DEFAULT_C6)
-
-        d = spec.local_dim
-        N = geometry.N
-        dim = d**N
-        basis = BasisSpec(
-            site_labels=tuple(str(i) for i in range(N)),
-            local_levels=spec.levels,
-            local_dim=d,
-            total_dim=dim,
-        )
-
-        operators = BasisOperatorFactory(basis)
-        observables = ObservableRegistry()
-
-        # Observables: friendly user-facing names, all built from the factory.
-        for level in spec.levels:
-            ee = f"E[{level},{level}]"
-            for i in range(N):
-                observables.register(
-                    f"n_{level}_{i}",
-                    operators.local(ee, i),
-                    description=f"|{level}> population on site {i}",
-                    per_site=True,
-                )
-            observables.register(
-                f"sum_n_{level}", operators.sum(ee), description=f"total |{level}> population"
-            )
-        if "r" in spec.levels:
-            observables.register("sum_nr", operators.sum("E[r,r]"), description="total Rydberg population")
-        if geometry.sublattice is not None and np.any(geometry.sublattice) and "r" in spec.levels:
-            observables.register(
-                "staggered_rydberg",
-                operators.weighted_sum("E[r,r]", tuple(float(x) for x in geometry.sublattice)),
-                description="staggered Rydberg occupation",
-            )
-
-        # Hamiltonian channels: driveable primitive E[ket,bra] operators (summed
-        # over sites; per-site variants E[...]_<i> are resolved by the IR).
-        hamiltonian_channels: dict[str, Any] = {}
-        for transition in spec.transitions:
-            hamiltonian_channels[transition.channel] = operators.sum(transition.channel)
-        for channel in spec.detuning_levels:
-            hamiltonian_channels[channel] = operators.sum(channel)
-
-        # Static terms: the Rydberg pair interaction (+ physical-model diagonal
-        # energies / static couplings appended by the _apply_* helpers below).
-        pairs = pairs_297 if pairs_297 is not None else _interaction_pairs(geometry, interaction)
-        static_hamiltonian_terms: list[StaticHamiltonianTerm] = []
-        if spec.rydberg_levels:
-            static_hamiltonian_terms.append(
-                StaticHamiltonianTerm(
-                    "H_pair", operators.pair_projector(pairs, spec.rydberg_levels), 1.0
-                )
-            )
-
-        metadata = {
-            "level_structure": spec.name,
-            "level_spec": spec,
-            "interaction_pairs": pairs,
-            "Omega": omega,
-            "local_dim": d,
-            "n_sites": N,
-        }
-        model = RydbergSystem(
-            basis=basis,
-            operators=operators,
-            hamiltonian_channels=hamiltonian_channels,
-            static_hamiltonian_terms=static_hamiltonian_terms,
-            observables=observables,
-            protocol=protocol,
-            metadata=metadata,
-            geometry=geometry,
-            is_sparse=True,
-        )
-        if kind == "analog_3":
-            _apply_analog_3_lattice_blocks(model, **level_kwargs)
-        elif kind == "rb87_7":
-            _apply_rb87_7_lattice_blocks(model, manifold, **level_kwargs)
-        elif kind == "rb87_297":
-            _apply_rb87_297_lattice_blocks(model, **level_kwargs)
-
-        # Construction config for set_atom_geom() rebuilds.
-        model._level_structure = level_structure
-        model._omega = omega
-        model._level_kwargs = level_kwargs
-        return model
 
 
 # ── interaction-pair resolution ──────────────────────────────────────────────
 
 
-def _interaction_pairs(geometry: Register, interaction: InteractionSpec) -> tuple:
-    if interaction.mode == "all":
-        return vdw_couplings(geometry.coords, interaction.C6, interaction.max_range_um)
+def _resolve_interaction_pairs(
+    ls: LevelStructure, register: Register, interaction: InteractionSpec | None
+) -> tuple:
+    if interaction is None:
+        if ls.pair_c6_fn is not None:
+            return vdw_couplings_from_c6_function(register.coords, ls.pair_c6_fn)
+        interaction = InteractionSpec(
+            C6=ls.default_c6 if ls.default_c6 is not None else DEFAULT_C6
+        )
 
-    coords = np.asarray(geometry.coords, dtype=float)
-    spacing = geometry.spacing_um or min(
-        (d for _, _, d in geometry.distance_pairs()), default=0.0
+    if interaction.mode == "all":
+        return vdw_couplings(register.coords, interaction.C6, interaction.max_range_um)
+
+    coords = np.asarray(register.coords, dtype=float)
+    spacing = register.spacing_um or min(
+        (dist for _, _, dist in register.distance_pairs()), default=0.0
     )
     max_dist = spacing * (1.01 if interaction.mode == "nn" else np.sqrt(2) * 1.01)
     max_range = interaction.max_range_um if interaction.max_range_um is not None else max_dist

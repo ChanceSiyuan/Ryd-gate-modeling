@@ -31,18 +31,23 @@ strength. So Omega_eff depends on ``a`` and ``Delta_e`` only, shared across latt
 
 NOTE on the model: eps_SE/eps_sc/eps_loss are post-hoc perturbative estimates on a
 lossless unitary run (no Lindblad), valid because the 1r trajectory conserves norm
-(n1_i = 1 - n_r_i). eps_sc is essentially quasi-static (~INT env^2 dt) and converged
-at modest n_steps; eps_coh is the residual non-adiabatic excitation and is
-discretization-limited (needs large n_steps) -- in the strong-drive regime here it
-is sub-dominant to eps_sc, so it is reported but flagged as the least trustworthy.
+(n1_i = 1 - n_r_i). eps_sc is essentially quasi-static (~INT env^2 dt); eps_coh is
+the residual non-adiabatic excitation. Both are resolved by the adaptive solver's
+error control -- in the strong-drive regime here eps_coh is sub-dominant to eps_sc.
 
 NOTE on d_amp: the detuning-sweep half-amplitude is FIXED (``--d-amp-mhz``, default
 20 MHz) -- the experiment can sweep only ~+-20 MHz. It is deliberately not scaled
 with Omega_eff.
 
-NOTE on the backend: we force the sparse exact solver. The auto-selector routes
-small dims to a dense ``expm`` that is pathologically slow here (||dt*H|| is large
-because Omega_eff ~ 100 MHz), e.g. 2x4 is ~50x slower on the dense path.
+NOTE on the backend: the exact solver is the adaptive DOP853 ODE integrator (the
+old fixed-80-step piecewise-expm convention is gone). We force sparse Hamiltonian
+storage (``backend_options={"hamiltonian_format": "sparse"}``) so the larger
+lattices never densify their 2^N-dim Hamiltonians. Cost warning: resolving the
+strong drive (Omega_eff ~ GHz at small a/De) with error control is FAR slower
+than the old expm stepping -- measured ~125 s per 2x2 point and ~200 s per 2x3
+point at the grid centre (a=7 um, De=2 GHz), vs ~0.1 s before. Full-resolution
+default sweeps are no longer feasible; use --res/--lattices/--spacings to cut
+the grid down to what you can afford.
 
 Usage:
     # full default sweep (6 lattices x 6 spacings x 100 x 100); cheap lattice first
@@ -56,7 +61,7 @@ Usage:
 
 Headless (multi-day server run):
     setsid nohup python scripts/error_budget_sweep.py --mode sweep --resume \
-        > scripts/ebudget_sweep.log 2>&1 &
+        > results/error_budget/lattice_sweep/ebudget_sweep.log 2>&1 &
 """
 
 from __future__ import annotations
@@ -70,9 +75,8 @@ from pathlib import Path
 import numpy as np
 
 import ryd_gate as rg
-from ryd_gate import InteractionSpec
+from ryd_gate import InteractionSpec, level_structure
 from ryd_gate.backends.exact.simulate import simulate as exact_simulate
-from ryd_gate.backends.exact.sparse_expm import SparseExpmBackend
 from ryd_gate.lattice import Register
 from ryd_gate.physics import our_laser_rabis
 
@@ -96,7 +100,7 @@ trapz = getattr(np, "trapezoid", None) or np.trapz
 CHANNELS = ("eps_coh", "eps_SE", "eps_sc", "eps_loss", "eps_total", "Oeff_MHz")
 PLOT_CHANNELS = ("eps_coh", "eps_SE", "eps_sc", "eps_total")
 PLOT_LABELS = {
-    "eps_coh": "$\\epsilon_{\\rm coh}$ (non-adiab.)\n(n_steps-limited)",
+    "eps_coh": "$\\epsilon_{\\rm coh}$ (non-adiab.)",
     "eps_SE": r"$\epsilon_{\rm SE}$ (Ryd. decay)",
     "eps_sc": r"$\epsilon_{\rm sc}$ (intermediate scatter)",
     "eps_total": r"$\epsilon_{\rm total}$",
@@ -132,9 +136,10 @@ def omega_eff(a_um: float, delta_e: float) -> float:
     return o420 * o1013 / (2.0 * delta_e)
 
 
-# Relative per-eval cost model, used only for a *stable* ETA. The sparse-expm cost
-# tracks ||dt*H|| ~ Omega_eff, so cost ~ lat_base[lattice] * sqrt(Omega_eff(a,De)).
-# _LAT_BASE: measured s/eval at the grid centre (a=7 um, De=2 GHz; n_steps=80, n_eval=21).
+# Relative per-eval cost model, used only for a *stable* ETA. The solver cost
+# tracks the drive scale ~ Omega_eff, so cost ~ lat_base[lattice] * sqrt(Omega_eff(a,De)).
+# _LAT_BASE: s/eval at the grid centre (a=7 um, De=2 GHz), measured under the old
+# expm backend; the absolute scale is self-calibrated to live wall-time below.
 _LAT_BASE = {(2, 2): 0.10, (2, 3): 0.16, (2, 4): 0.32,
              (3, 3): 0.51, (2, 5): 0.86, (3, 4): 3.41}
 
@@ -182,28 +187,31 @@ def make_schedule(omega_eff_val, t_sweep, d_amp):
 def build_base_system(lx: int, ly: int, a_um: float):
     """A protocol-less 1r/nn RydbergSystem; rebind schedules with with_protocol()."""
     geom = Register.rectangle(lx, ly, spacing_um=a_um)
-    return (rg.RydbergSystem.set_atom_level("1r")
-            .set_atom_geom(geom, interaction=InteractionSpec(C6=C6, mode="nn")))
+    return rg.RydbergSystem(level_structure=level_structure("1r"), register=geom,
+                            interaction=InteractionSpec(C6=C6, mode="nn"))
 
 
-def evaluate(base_system, a_um, delta_e, t_sweep, *, d_amp, n_steps, n_eval):
+def evaluate(base_system, a_um, delta_e, t_sweep, *, d_amp, n_eval):
     """forward + budget at one (a, Delta_e, t_sweep) point, reusing base_system."""
     o420, o1013 = laser_rabis(a_um)
     oeff = omega_eff(a_um, delta_e)
     omega_half_fn, delta_fn, env_fn = make_schedule(oeff, t_sweep, d_amp)
 
     proto = rg.SweepProtocol(
-        t_gate=t_sweep, omega_half_fn=omega_half_fn, delta_fn=delta_fn, n_steps=n_steps
+        t_gate=t_sweep, omega_half_fn=omega_half_fn, delta_fn=delta_fn
     )
     system = base_system.with_protocol(proto)
     N = system.N
     t_eval = np.linspace(0.0, t_sweep, n_eval)
+    # Adaptive DOP853 ODE solver (the old fixed-80-step expm convention is gone);
+    # sparse Hamiltonian storage is forced so larger lattices never densify.
     res = exact_simulate(
-        system, [], "all_ground",
-        backend=SparseExpmBackend(n_steps=n_steps), t_eval=t_eval,
+        system, "ground", t_eval=t_eval,
+        observables=system.observables.site_populations("r"),
+        backend_options={"hamiltonian_format": "sparse"},
     )
-    n_r = np.asarray(
-        [[system.expectation(f"n_r_{i}", psi) for i in range(N)] for psi in res.states]
+    n_r = np.stack(
+        [res.expectation(f"n_r_{i}").real for i in range(N)], axis=1
     )                                # [n_eval, N]
     n_1 = 1.0 - n_r                  # lossless 2-level
     env = np.asarray(env_fn(t_eval), dtype=float)
@@ -307,7 +315,7 @@ def run_sweep(args):
     meta = {
         "mode": "sweep",
         "P420_W": P420_W, "P1013_W": P1013_W, "N_BEAM_ATOMS": N_BEAM_ATOMS,
-        "d_amp_mhz": args.d_amp_mhz, "n_steps": args.n_steps, "n_eval": args.n_eval,
+        "d_amp_mhz": args.d_amp_mhz, "n_eval": args.n_eval,
         "de_ghz": [args.de_min, args.de_max], "t_sweep_us": [args.t_min_us, args.t_max_us],
         "res": args.res, "total": total,
     }
@@ -341,7 +349,7 @@ def run_sweep(args):
                     try:
                         b = evaluate(
                             base, a_um, 2 * np.pi * float(de[di]) * 1e9, float(ts[ti]) * 1e-6,
-                            d_amp=d_amp, n_steps=args.n_steps, n_eval=args.n_eval,
+                            d_amp=d_amp, n_eval=args.n_eval,
                         )
                         for k in CHANNELS:
                             grids[k][li, ai, di, ti] = b[k]
@@ -481,17 +489,17 @@ def build_parser():
     # fixed physics / propagation
     p.add_argument("--d-amp-mhz", type=float, default=20.0,
                    help="detuning-sweep half-amplitude (MHz), FIXED hardware cap.")
-    p.add_argument("--n-steps", type=int, default=80,
-                   help="sparse piecewise steps (eps_sc/eps_SE converged; eps_coh is "
-                        "discretization-limited -- raise for a trustworthy eps_coh).")
     p.add_argument("--n-eval", type=int, default=21, help="trajectory samples for the trapz integrals.")
 
     # housekeeping
-    p.add_argument("--out", type=str, default="data/ebudget_map.npz",
+    p.add_argument("--out", type=str,
+                   default="results/error_budget/lattice_sweep/ebudget_map.npz",
                    help="checkpoint .npz path (also <out>.status.json for live progress).")
     p.add_argument("--ckpt-every", type=int, default=500, help="checkpoint cadence (points).")
     p.add_argument("--resume", action="store_true", help="resume, skipping finished points.")
-    p.add_argument("--fig-dir", type=str, default="figs", help="[plot] output directory.")
+    p.add_argument("--fig-dir", type=str,
+                   default="results/error_budget/lattice_sweep/plots",
+                   help="[plot] output directory.")
     p.add_argument("--dpi", type=int, default=130, help="[plot] figure DPI.")
     return p
 

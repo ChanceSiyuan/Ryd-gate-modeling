@@ -1,85 +1,46 @@
-"""Tests for LevelStructureSpec as the Stage 1 atom-model API."""
+"""Tests for level_structure() presets as the atom-model API."""
 
 import pytest
 
-from ryd_gate import RydbergSystem
-from ryd_gate.backends.exact.compiler import ExactSparseCompiler
-from ryd_gate.core.level_structures import (
-    InteractionSpec,
-    LevelStructureSpec,
-    TransitionSpec,
-    level_structure,
-)
-from ryd_gate.lattice import Register
-
-
-def _symbolic_ger_spec() -> LevelStructureSpec:
-    """Hand-built symbolic three-level ladder (the custom-model escape hatch)."""
-    return LevelStructureSpec(
-        name="ger_symbolic",
-        levels=("g", "e", "r"),
-        rydberg_levels=("r",),
-        transitions=(
-            TransitionSpec("420", "g", "e", "E[e,g]"),
-            TransitionSpec("1013", "e", "r", "E[r,e]"),
-        ),
-        detuning_levels={"E[e,e]": "e", "E[r,r]": "r"},
-        initial_level="g",
-    )
+from ryd_gate import Register, RydbergSystem, level_structure
+from ryd_gate.backends.exact.compiler import ExactCompiler
+from ryd_gate.core.level_structures import InteractionSpec
 
 
 class _AnalogProtocol:
     """Minimal analog-style protocol: drives only the two-photon channels."""
 
-    n_params = 0
-
-    def validate_params(self, x):
-        if x:
-            raise ValueError("no params")
-
-    def unpack_params(self, x, system):
-        self.validate_params(x)
-        return {"t_gate": 0.1, "pin_deltas": {}, "scatter_rates": {}, "static_overlays": []}
+    def _resolve(self, system):
+        return {"t_gate": 0.1}
 
     def drive_channels(self, system):
         return frozenset({"E[e,g]"})
 
-    def get_drive_coefficients(self, t, params):
+    def get_drive_coefficients(self, t, ctx):
         return {"E[e,g]": 1.0}
 
 
 class TestPresets:
-    def test_01_preset(self):
-        spec = level_structure("01")
-        assert spec.levels == ("0", "1")
-        assert spec.rydberg_levels == ()
-        assert spec.initial_level == "0"
-        assert spec.interaction_kind == "none"
+    def test_01_preset_removed(self):
+        with pytest.raises(ValueError, match="removed"):
+            level_structure("01")
 
     def test_initial_level_or_default(self):
         assert level_structure("1r").initial_level_or_default() == "1"
         assert level_structure("01r").initial_level_or_default() == "1"
         assert level_structure("analog_3").initial_level_or_default() == "g"
         assert level_structure("rb87_7_mp").initial_level_or_default() == "0"
-        # default rule: levels[0] when initial_level unset
-        custom = LevelStructureSpec(name="x", levels=("a", "b"), rydberg_levels=())
-        assert custom.initial_level_or_default() == "a"
-
-    def test_physical_kwargs(self):
-        # No preset needs factory kwargs anymore: the manifold is the tag name,
-        # and there is no param_set.
-        for name in ("01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm", "rb87_297_clock_4"):
-            assert level_structure(name).physical_kwargs() == {}
 
     def test_supports_backend_matrix(self):
-        exact_ok = ("01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm", "rb87_297_clock_4")
+        exact_ok = ("1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm", "rb87_297_clock_4")
         analog_ok = ("1r", "01r", "analog_3")  # YASTN PEPS + TeNPy MPS lower analog_3
         for name in exact_ok:
             spec = level_structure(name)
-            assert spec.supports_backend("exact")
+            assert spec.supports_backend("exact_ode")
             assert spec.supports_backend("mps") == (name in analog_ok)
             assert spec.supports_backend("peps") == (name in analog_ok)
-            assert spec.supports_backend("stabilizer") == (name == "01")
+            assert not spec.supports_backend("exact")  # removed backend name
+            assert not spec.supports_backend("stabilizer")  # capability removed
             assert not spec.supports_backend("quantum_teleporter")
 
     def test_analog_3_keeps_channels(self):
@@ -92,88 +53,29 @@ class TestPresets:
             level_structure("1er")
 
 
-class TestValidate:
-    def test_duplicate_levels_flagged(self):
-        spec = LevelStructureSpec(name="x", levels=("a", "a"), rydberg_levels=())
-        codes = {issue.code for issue in spec.validate()}
-        assert "level_structure.duplicate_levels" in codes
-
-    def test_unknown_initial_level_flagged(self):
-        spec = LevelStructureSpec(name="x", levels=("a", "b"), rydberg_levels=(), initial_level="z")
-        codes = {issue.code for issue in spec.validate()}
-        assert "level_structure.initial_level" in codes
-
-    def test_rydberg_level_not_in_levels_flagged(self):
-        spec = LevelStructureSpec(name="x", levels=("a", "b"), rydberg_levels=("r",))
-        codes = {issue.code for issue in spec.validate()}
-        assert "level_structure.rydberg_levels" in codes
-
-    def test_valid_preset_has_no_issues(self):
-        for name in ("01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm", "rb87_297_clock_4"):
-            assert level_structure(name).validate() == []
-
-
 class TestAnalog3Semantics:
-    def test_custom_symbolic_spec_never_infers_analog_3(self):
-        """D11/D13: names carry semantics; a custom spec stays symbolic."""
-        physical = (
-            RydbergSystem.set_atom_level(level_structure("analog_3"))
-            .set_atom_geom(Register.chain(2), interaction=InteractionSpec(C6=0.0))
+    def test_physical_blocks_mounted(self):
+        analog = RydbergSystem(
+            level_structure=level_structure("analog_3"),
+            register=Register.chain(2),
+            interaction=InteractionSpec(C6=0.0),
         )
-        symbolic = (
-            RydbergSystem.set_atom_level(_symbolic_ger_spec())
-            .set_atom_geom(Register.chain(2), interaction=InteractionSpec(C6=0.0))
-        )
-        assert physical.basis.local_levels == symbolic.basis.local_levels == ("g", "e", "r")
-        assert physical.metadata["physical_model"] == "analog_3"
-        assert "physical_model" not in symbolic.metadata
-        assert any(t.name.startswith("E[") for t in physical.static_hamiltonian_terms)
-        assert not any(t.name.startswith("E[") for t in symbolic.static_hamiltonian_terms)
-
-    def test_semantic_split_physical_vs_symbolic(self):
-        analog = (
-            RydbergSystem.set_atom_level(level_structure("analog_3"))
-            .set_atom_geom(Register.chain(1), interaction=InteractionSpec(C6=0.0))
-            .set_protocol(_AnalogProtocol())
-        )
-        symbolic = (
-            RydbergSystem.set_atom_level(_symbolic_ger_spec())
-            .set_atom_geom(Register.chain(1), interaction=InteractionSpec(C6=0.0))
-        )
-
-        # physical blocks mounted only on analog_3
+        assert analog.basis.local_levels == ("g", "e", "r")
+        assert analog.level_structure.physical_model == "analog_3"
         assert any(t.name.startswith("E[") for t in analog.static_hamiltonian_terms)
-        assert any(t.name == "E[r,e]" and t.add_hermitian_conjugate for t in analog.static_hamiltonian_terms)
-        assert "physical_model" not in symbolic.metadata
-        assert not any(t.name.startswith("E[") for t in symbolic.static_hamiltonian_terms)
-        assert not any(t.name == "E[r,e]" for t in symbolic.static_hamiltonian_terms)
 
-        # the e<->r coupling compiles as a *static* term for analog_3
-        params = analog.unpack_params([])
-        ir = ExactSparseCompiler().compile(analog, params)
-        assert "E[r,e]" in {term.name for term in ir.static_terms}
-
-
-class TestSerialization:
-    def test_preset_roundtrip(self):
-        spec = level_structure("analog_3")
-        data = spec.to_dict()
-        assert data["schema"] == "ryd-gate/level-structure/v1"
-        assert LevelStructureSpec.from_dict(data) == spec
-
-    def test_custom_roundtrip(self):
-        spec = LevelStructureSpec(
-            name="custom_gr",
-            levels=("g", "r"),
-            rydberg_levels=("r",),
-            initial_level="g",
-            interaction_kind="ising_c6",
-            params={"note": "test"},
+    def test_static_er_coupling_compiles_as_static_term(self):
+        analog = RydbergSystem(
+            level_structure=level_structure("analog_3"),
+            register=Register.chain(1),
+            interaction=InteractionSpec(C6=0.0),
+            protocol=_AnalogProtocol(),
         )
-        assert LevelStructureSpec.from_dict(spec.to_dict()) == spec
 
-    def test_wrong_schema_raises(self):
-        data = level_structure("1r").to_dict()
-        data["schema"] = "ryd-gate/register/v1"
-        with pytest.raises(ValueError, match="schema"):
-            LevelStructureSpec.from_dict(data)
+        # the 1013 e<->r leg is a static (h.c.-completed) coupling on analog_3
+        assert any(
+            t.name == "E[r,e]" and t.add_hermitian_conjugate
+            for t in analog.static_hamiltonian_terms
+        )
+        ir = ExactCompiler().compile(analog)
+        assert "E[r,e]" in {term.name for term in ir.static_terms}

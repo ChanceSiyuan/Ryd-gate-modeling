@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from ryd_gate.core.level_structures import LevelStructureSpec, TransitionSpec
+from ryd_gate.core.level_structures import LevelStructure, Transition
 from ryd_gate.core.level_structures import level_structure as core_level_structure
 
 
-def resolve_level_structure(level_structure: str | LevelStructureSpec) -> LevelStructureSpec:
+def resolve_level_structure(level_structure: str | LevelStructure) -> LevelStructure:
     """Resolve and validate a level-structure for current TN lowerings."""
-    if isinstance(level_structure, LevelStructureSpec):
+    if isinstance(level_structure, LevelStructure):
         spec = level_structure
     else:
         try:
@@ -22,7 +22,7 @@ def resolve_level_structure(level_structure: str | LevelStructureSpec) -> LevelS
     return spec
 
 
-def validate_tn_level_structure(spec: LevelStructureSpec) -> None:
+def validate_tn_level_structure(spec: LevelStructure) -> None:
     """Validate that a central level spec can currently be lowered to TN IR."""
     if spec.name == "1r" and spec.levels == ("1", "r") and spec.rydberg_levels == ("r",):
         return
@@ -40,12 +40,12 @@ def validate_tn_level_structure(spec: LevelStructureSpec) -> None:
     )
 
 
-def local_levels(level_structure: str | LevelStructureSpec) -> tuple[str, ...]:
+def local_levels(level_structure: str | LevelStructure) -> tuple[str, ...]:
     """Return local level labels from the shared central level-structure registry."""
     return resolve_level_structure(level_structure).levels
 
 
-def require_transition(spec: LevelStructureSpec, lower: str, upper: str) -> TransitionSpec:
+def require_transition(spec: LevelStructure, lower: str, upper: str) -> Transition:
     """Return a transition spec or raise with a TN-specific message."""
     for transition in spec.transitions:
         if transition.lower == lower and transition.upper == upper:

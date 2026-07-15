@@ -21,19 +21,17 @@ NOTEBOOK_DIR = Path(__file__).resolve().parents[2] / "scripts" / "notebooks"
 TIMEOUT_S = 1800
 
 EXECUTE = [
-    "cz_gate_validation_and_errors.ipynb",
-    "02_ac_stark_local_addressing.ipynb",
+    "02_ac_stark_addressing.ipynb",
+    "03_lattice_dynamics_annealing.ipynb",
 ]
 
 SKIP = {
-    "01r_saffman_double_arp_exact.ipynb": "long-running exact ARP scans (research benchmark)",
-    "01r_lattice_dynamics.ipynb": "long-running MPS/TDVP sweeps (research benchmark)",
-    "03_lattice_dynamics_and_annealing.ipynb": "long-running MPS/TDVP sweeps (research benchmark)",
-    "plus_state_preparation.ipynb": "long-running MPS state-prep sweeps (research benchmark)",
-    "run_quench_benchmark.ipynb": "long-running quench benchmark",
-    "01r_plus_quench_benchmark.ipynb": "long-running quench benchmark",
-    "01r_tfim_critical_field.ipynb": "long-running DMRG critical-field scan",
-    "01r_yastn_peps_convergence.ipynb": "needs the yastn / tn-2d extra",
+    "01_cz_gate.ipynb": "long-running 7-level exact_ode CZ scans (research benchmark)",
+    "04_quench_and_state_prep.ipynb": "long-running quench / state-prep benchmarks (exact vs MPS/PEPS)",
+    "05_tn_and_error_budget.ipynb": "long-running PEPS convergence / DMRG g_c / error-budget scans",
+    "error_buget.ipynb": "long-running parallel exact_ode CZ error-budget maps",
+    "find_phase.ipynb": "long-running exact_ode adiabatic-CZ phase study",
+    "single_photon.ipynb": "long-running 297 nm vs two-photon CZ comparison",
 }
 
 

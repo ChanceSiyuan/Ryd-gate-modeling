@@ -1,323 +1,363 @@
-"""Declarative noise configuration for the exact Monte Carlo machinery.
+"""Quasi-static noise description and the ensemble execution entry point.
 
-``NoiseModel`` is the serializable, validated data layer that names what
-noise is requested. It does no sampling itself: quasi-static noise is applied
-by :class:`~ryd_gate.backends.exact.monte_carlo_runner.MonteCarloRunner`
-through :func:`configure_monte_carlo_runner`, and non-Hermitian decay enters
-at system construction time through :meth:`NoiseModel.physical_kwargs`.
+:class:`NoiseModel` declares the *executable* quasi-static noise channels:
+shot-to-shot static detuning offsets, global amplitude (Rabi) scale factors,
+local-addressing intensity noise, and atom-position fluctuations.  Decay is
+not noise configuration — it belongs to the level physical model
+(``level_structure(..., enable_rydberg_decay=True)``).
 
-Fields without runtime machinery in Stage 4 (``state_prep_error``,
-``p_false_pos``, ``p_false_neg``, ``temperature_uK``, ``laser_waist_um``) are
-accepted as serializable data but refused with typed validation errors when
-applied to a runtime path.
+:func:`simulate_ensemble` executes a protocol-bound system under sampled
+realizations of a :class:`NoiseModel` and returns the raw shot-major
+:class:`EnsembleResult`.  No statistics are computed here — mean/std/fidelity
+aggregation belongs to the calling script.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Mapping
 
 import numpy as np
 
-from ryd_gate.core.serialization import (
-    ValidationIssue,
-    check_schema,
-    json_ready,
-    raise_for_errors,
-    schema_tag,
-)
+from ryd_gate.ir import EvolutionResult, HamiltonianTerm
 
-if TYPE_CHECKING:
-    from ryd_gate.backends.exact.monte_carlo_runner import MonteCarloRunner
+__all__ = ["NoiseModel", "EnsembleResult", "simulate_ensemble"]
 
-__all__ = ["NoiseModel", "configure_monte_carlo_runner"]
-
-# Level structures whose local blocks carry the non-Hermitian decay terms.
-_DECAY_CAPABLE = frozenset({"analog_3", "rb87_7_mp", "rb87_7_pm"})
-
-# Fields accepted as data but without a Stage 4 runtime path.
-_RUNTIME_NOT_STAGE4 = ("state_prep", "readout", "temperature", "laser_waist")
+_EXACT_BACKENDS = frozenset({"exact_ode"})
 
 
 @dataclass(frozen=True)
 class NoiseModel:
-    """Declarative noise request (data only; engines keep doing the work)."""
+    """Declarative quasi-static noise channels (all standard deviations).
 
-    runs: int = 1
-    detuning_sigma_rad_per_us: float = 0.0
-    amp_sigma: float = 0.0
+    Parameters
+    ----------
+    detuning_sigma_rad_s : float
+        Static Rydberg-detuning offset per shot, sampled from ``N(0, sigma)``
+        in rad/s and applied on the total target-``|r>`` occupation.
+    amplitude_sigma : float
+        Fractional global laser-amplitude (Rabi) noise: each shot scales every
+        driven channel by ``1 + N(0, sigma)`` (static off-diagonal couplings —
+        e.g. analog_3's static 1013 leg — receive the matching additive
+        intensity term).
+    local_rin_sigma : float
+        Fractional local-addressing intensity noise: each shot scales each
+        site's addressing shift by ``1 + N(0, sigma)``.  Requires a protocol
+        with local-addressing capability (raises otherwise).
+    position_sigma_um : float or (fx, fy, fz)
+        Per-axis atom-position standard deviation in um.  Pair interaction
+        shifts are computed from the actual register coordinates and each
+        pair's nominal distance.
+    """
+
+    detuning_sigma_rad_s: float = 0.0
+    amplitude_sigma: float = 0.0
     local_rin_sigma: float = 0.0
     position_sigma_um: float | tuple[float, float, float] = 0.0
-    rydberg_decay: bool = False
-    intermediate_decay: bool = False
-    state_prep_error: float = 0.0
-    p_false_pos: float = 0.0
-    p_false_neg: float = 0.0
-    temperature_uK: float | None = None
-    laser_waist_um: float | None = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if isinstance(self.position_sigma_um, (list, tuple)):
-            object.__setattr__(self, "position_sigma_um", tuple(self.position_sigma_um))
-
-    @property
-    def n_trajectories(self) -> int:
-        """Read-only alias for ``runs`` (Pulser terminology)."""
-        return self.runs
-
-    @property
-    def noise_types(self) -> tuple[str, ...]:
-        """Active noise type names, in a fixed stable order."""
-        active = []
-        if self.state_prep_error:
-            active.append("state_prep")
-        if self.p_false_pos or self.p_false_neg:
-            active.append("readout")
-        if self.detuning_sigma_rad_per_us:
-            active.append("detuning")
-        if self.amp_sigma:
-            active.append("amplitude")
-        if self.local_rin_sigma:
-            active.append("local_rin")
-        if self._position_active():
-            active.append("position")
-        if self.rydberg_decay:
-            active.append("rydberg_decay")
-        if self.intermediate_decay:
-            active.append("intermediate_decay")
-        if self.temperature_uK:
-            active.append("temperature")
-        if self.laser_waist_um:
-            active.append("laser_waist")
-        return tuple(active)
-
-    def _position_active(self) -> bool:
-        if isinstance(self.position_sigma_um, tuple):
-            return any(bool(v) for v in self.position_sigma_um)
-        return bool(self.position_sigma_um)
-
-    def summary(self) -> str:
-        """Deterministic plain-text description of the active noise types."""
-        details = {
-            "state_prep": f"state_prep: error={self.state_prep_error}",
-            "readout": f"readout: p_false_pos={self.p_false_pos}, p_false_neg={self.p_false_neg}",
-            "detuning": f"detuning: sigma={self.detuning_sigma_rad_per_us} rad/us",
-            "amplitude": f"amplitude: sigma={self.amp_sigma} (fractional)",
-            "local_rin": f"local_rin: sigma={self.local_rin_sigma} (fractional)",
-            "position": f"position: sigma={self.position_sigma_um} um",
-            "rydberg_decay": "rydberg_decay: enabled",
-            "intermediate_decay": "intermediate_decay: enabled",
-            "temperature": f"temperature: {self.temperature_uK} uK",
-            "laser_waist": f"laser_waist: {self.laser_waist_um} um",
-        }
-        lines = [f"NoiseModel(runs={self.runs})"]
-        for name in self.noise_types:
-            lines.append("  " + details[name])
-        if len(lines) == 1:
-            lines.append("  no active noise")
-        return "\n".join(lines)
-
-    # ── Validation ───────────────────────────────────────────────────────
-
-    def validate(self) -> list[ValidationIssue]:
-        """Pure data validation; never raises."""
-        issues: list[ValidationIssue] = []
-        if not isinstance(self.runs, int) or isinstance(self.runs, bool) or self.runs < 1:
-            issues.append(ValidationIssue(
-                "error", "noise.runs",
-                f"runs must be a positive integer, got {self.runs!r}.",
-                ("noise", "runs"),
-            ))
-        for name in ("state_prep_error", "p_false_pos", "p_false_neg"):
-            value = getattr(self, name)
-            if not _is_number(value) or not np.isfinite(value) or not 0.0 <= value <= 1.0:
-                issues.append(ValidationIssue(
-                    "error", "noise.probability_range",
-                    f"{name} must be a probability in [0, 1], got {value!r}.",
-                    ("noise", name),
-                ))
-        for name in ("detuning_sigma_rad_per_us", "amp_sigma", "local_rin_sigma"):
-            value = getattr(self, name)
-            if not _is_number(value) or not np.isfinite(value) or value < 0:
-                issues.append(ValidationIssue(
-                    "error", "noise.nonnegative",
-                    f"{name} must be finite and nonnegative, got {value!r}.",
-                    ("noise", name),
-                ))
-        issues += self._validate_position_sigma()
-        for name in ("temperature_uK", "laser_waist_um"):
-            value = getattr(self, name)
-            if value is None:
-                continue
-            if not _is_number(value) or not np.isfinite(value) or value < 0:
-                issues.append(ValidationIssue(
-                    "error", "noise.nonnegative",
-                    f"{name} must be finite and nonnegative when set, got {value!r}.",
-                    ("noise", name),
-                ))
-        try:
-            json_ready(dict(self.metadata), "noise.metadata")
-        except ValueError as exc:
-            issues.append(ValidationIssue(
-                "error", "noise.metadata_json", str(exc), ("noise", "metadata"),
-            ))
-        return issues
-
-    def _validate_position_sigma(self) -> list[ValidationIssue]:
-        value = self.position_sigma_um
-        entries: tuple[float, ...]
-        if isinstance(value, tuple):
-            if len(value) != 3:
-                return [ValidationIssue(
-                    "error", "noise.position_sigma_shape",
-                    f"position_sigma_um must be a scalar or a length-3 tuple, got length {len(value)}.",
-                    ("noise", "position_sigma_um"),
-                )]
-            entries = value
-        elif _is_number(value):
-            entries = (value,)
+        sigma = self.position_sigma_um
+        if isinstance(sigma, (list, tuple, np.ndarray)):
+            sigma3 = tuple(float(s) for s in sigma)
+            if len(sigma3) != 3:
+                raise ValueError("position_sigma_um must be a scalar or (fx, fy, fz).")
+            object.__setattr__(self, "position_sigma_um", sigma3)
         else:
-            return [ValidationIssue(
-                "error", "noise.position_sigma_shape",
-                f"position_sigma_um must be a scalar or a length-3 tuple, got {value!r}.",
-                ("noise", "position_sigma_um"),
-            )]
-        for entry in entries:
-            if not _is_number(entry) or not np.isfinite(entry) or entry < 0:
-                return [ValidationIssue(
-                    "error", "noise.nonnegative",
-                    f"position_sigma_um entries must be finite and nonnegative, got {entry!r}.",
-                    ("noise", "position_sigma_um"),
-                )]
-        return []
+            object.__setattr__(self, "position_sigma_um", float(sigma))
+        for name in ("detuning_sigma_rad_s", "amplitude_sigma", "local_rin_sigma"):
+            value = float(getattr(self, name))
+            if value < 0.0:
+                raise ValueError(f"{name} must be non-negative; got {value}.")
+            object.__setattr__(self, name, value)
+        pos = self.position_sigma_um
+        if any(s < 0.0 for s in (pos if isinstance(pos, tuple) else (pos,))):
+            raise ValueError("position_sigma_um must be non-negative.")
 
-    def validate_for(
-        self,
-        *,
-        backend: str,
-        level_structure=None,
-        n_atoms: int | None = None,
-    ) -> list[ValidationIssue]:
-        """Runtime capability checks for applying this model on *backend*."""
-        issues: list[ValidationIssue] = []
-        active = self.noise_types
-        if active and backend != "exact":
-            issues.append(ValidationIssue(
-                "error", "noise.backend_unsupported",
-                f"noise types {active} have no runtime support on backend {backend!r}.",
-                ("noise",),
-            ))
-        if (self.rydberg_decay or self.intermediate_decay) and level_structure is not None:
-            name = level_structure if isinstance(level_structure, str) else level_structure.name
-            if name not in _DECAY_CAPABLE:
-                issues.append(ValidationIssue(
-                    "error", "noise.decay_level_structure_unsupported",
-                    f"decay needs physical local blocks ({sorted(_DECAY_CAPABLE)}); "
-                    f"level structure is {name!r}.",
-                    ("noise", "rydberg_decay"),
-                ))
-        if self._position_active() and n_atoms is not None and n_atoms != 2:
-            issues.append(ValidationIssue(
-                "error", "noise.position_two_atom_only",
-                f"position noise uses the two-atom VdW perturbation path; system has {n_atoms} atoms.",
-                ("noise", "position_sigma_um"),
-            ))
-        runtime_requested = [name for name in active if name in _RUNTIME_NOT_STAGE4]
-        if runtime_requested:
-            issues.append(ValidationIssue(
-                "error", "noise.runtime_not_stage4",
-                f"noise types {tuple(runtime_requested)} are serializable data only in Stage 4 "
-                "and cannot be applied to a runtime path.",
-                ("noise",),
-            ))
-        return issues
+    @property
+    def position_sigma_xyz_um(self) -> tuple[float, float, float]:
+        pos = self.position_sigma_um
+        return pos if isinstance(pos, tuple) else (pos, pos, pos)
 
-    # ── Runtime hand-off ─────────────────────────────────────────────────
-
-    def physical_kwargs(self) -> dict[str, bool]:
-        """Decay flags for ``RydbergSystem.set_atom_level`` (construction time)."""
-        return {
-            "enable_rydberg_decay": self.rydberg_decay,
-            "enable_intermediate_decay": self.intermediate_decay,
-        }
-
-    # ── Serialization ────────────────────────────────────────────────────
-
-    def to_dict(self) -> dict:
-        return {
-            "schema": schema_tag("noise"),
-            "runs": self.runs,
-            "detuning_sigma_rad_per_us": self.detuning_sigma_rad_per_us,
-            "amp_sigma": self.amp_sigma,
-            "local_rin_sigma": self.local_rin_sigma,
-            "position_sigma_um": (
-                list(self.position_sigma_um)
-                if isinstance(self.position_sigma_um, tuple)
-                else self.position_sigma_um
-            ),
-            "rydberg_decay": self.rydberg_decay,
-            "intermediate_decay": self.intermediate_decay,
-            "state_prep_error": self.state_prep_error,
-            "p_false_pos": self.p_false_pos,
-            "p_false_neg": self.p_false_neg,
-            "temperature_uK": self.temperature_uK,
-            "laser_waist_um": self.laser_waist_um,
-            "metadata": json_ready(dict(self.metadata), "noise.metadata"),
-        }
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "NoiseModel":
-        check_schema(data, "noise")
-        runs = data.get("runs", data.get("n_trajectories", 1))
-        position = data.get("position_sigma_um", 0.0)
-        return cls(
-            runs=runs,
-            detuning_sigma_rad_per_us=data.get("detuning_sigma_rad_per_us", 0.0),
-            amp_sigma=data.get("amp_sigma", 0.0),
-            local_rin_sigma=data.get("local_rin_sigma", 0.0),
-            position_sigma_um=position,
-            rydberg_decay=data.get("rydberg_decay", False),
-            intermediate_decay=data.get("intermediate_decay", False),
-            state_prep_error=data.get("state_prep_error", 0.0),
-            p_false_pos=data.get("p_false_pos", 0.0),
-            p_false_neg=data.get("p_false_neg", 0.0),
-            temperature_uK=data.get("temperature_uK"),
-            laser_waist_um=data.get("laser_waist_um"),
-            metadata=dict(data.get("metadata", {})),
+    @property
+    def any_active(self) -> bool:
+        return (
+            self.detuning_sigma_rad_s > 0.0
+            or self.amplitude_sigma > 0.0
+            or self.local_rin_sigma > 0.0
+            or any(s > 0.0 for s in self.position_sigma_xyz_um)
         )
 
 
-def configure_monte_carlo_runner(runner: "MonteCarloRunner", noise: NoiseModel) -> "MonteCarloRunner":
-    """Apply *noise* to an existing exact ``MonteCarloRunner`` and return it.
+@dataclass(frozen=True)
+class EnsembleResult:
+    """Raw shot-major ensemble output.
 
-    Maps fields onto the runner's own ``setup_*`` methods with exact unit
-    conversions (rad/us → Hz for detuning, um → m for position sigmas);
-    zero-valued fields call nothing. Decay flags are construction-time
-    physics (``NoiseModel.physical_kwargs()`` into
-    ``RydbergSystem.set_atom_level``) and are not applied here.
+    ``results[shot][initial_state]`` are the per-shot evolution results (all
+    initial states of a batch share the shot's realization);
+    ``realizations[shot]`` records the actually applied, unit-bearing values
+    (detuning offset in rad/s, amplitude scale, per-site local scales,
+    position offsets in um and the resulting pair distances) — no matrices,
+    no callables.  No statistics live here.
     """
-    raise_for_errors(noise.validate())
-    system = runner.system
-    level_spec = system.meta("level_spec", None) if hasattr(system, "meta") else None
-    n_atoms = system.meta("n_sites", None) if hasattr(system, "meta") else None
-    raise_for_errors(noise.validate_for(
-        backend="exact", level_structure=level_spec, n_atoms=n_atoms,
-    ))
 
-    if noise.detuning_sigma_rad_per_us:
-        runner.setup_detuning_noise(noise.detuning_sigma_rad_per_us * 1e6 / (2 * np.pi))
-    if noise.amp_sigma:
-        runner.setup_amplitude_noise(noise.amp_sigma)
-    if noise.local_rin_sigma:
-        runner.setup_local_rin_noise(noise.local_rin_sigma)
-    if noise._position_active():
-        sigma = noise.position_sigma_um
-        sigma3 = sigma if isinstance(sigma, tuple) else (sigma, sigma, sigma)
-        sx, sy, sz = (float(s) * 1e-6 for s in sigma3)
-        runner.setup_position_noise((sx, sy, sz))
-    return runner
+    results: list[list[EvolutionResult]]
+    realizations: list[dict]
+    seed: int
+    metadata: dict = field(default_factory=dict)
 
 
-def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool)
+def simulate_ensemble(
+    system,
+    initial_state=None,
+    *,
+    noise: NoiseModel,
+    shots: int,
+    seed: int,
+    backend: str = "exact_ode",
+    t_eval=None,
+    observables: dict | None = None,
+    backend_options: dict | None = None,
+) -> EnsembleResult:
+    """Evolve *system* under ``shots`` sampled realizations of *noise*.
+
+    ``shots`` and ``seed`` are mandatory integers (reproducibility is
+    explicit: the same seed reproduces the same realizations).
+    ``initial_state`` accepts the same label-based inputs as
+    :func:`ryd_gate.simulate`; for a batch, every initial state within one
+    shot shares that shot's realization.  ``observables`` is a
+    ``dict[str, ObservableExpr]`` (built from ``system.observables``) recorded
+    per shot exactly as in :func:`ryd_gate.simulate`.  Noise execution
+    currently supports only the exact backends — tensor-network backends raise
+    a capability error up front.
+    """
+    from ryd_gate.backends.exact.compiler import ExactCompiler
+    from ryd_gate.backends.exact.ode import ExactODEBackend
+    from ryd_gate.backends.exact.simulate import (
+        _exact_initial_state,
+        validated_exact_options,
+    )
+    from ryd_gate.core.states import normalize_initial_state
+
+    if not isinstance(shots, (int, np.integer)) or isinstance(shots, bool) or shots < 1:
+        raise ValueError(f"shots must be a positive integer; got {shots!r}.")
+    if not isinstance(seed, (int, np.integer)) or isinstance(seed, bool):
+        raise TypeError(f"seed must be an integer; got {seed!r}.")
+    if not isinstance(noise, NoiseModel):
+        raise TypeError(f"noise must be a NoiseModel; got {type(noise).__name__}.")
+    key = str(backend).lower()
+    if key not in _EXACT_BACKENDS:
+        raise ValueError(
+            f"simulate_ensemble supports only the exact backends {sorted(_EXACT_BACKENDS)}; "
+            f"got backend={backend!r} (tensor-network noise execution is not available)."
+        )
+    protocol = system._require_protocol()
+    if noise.local_rin_sigma > 0.0 and not _has_local_addressing(protocol):
+        raise ValueError(
+            "local_rin_sigma requires a protocol with local-addressing "
+            f"capability; {type(protocol).__name__} has none."
+        )
+
+    kind, state = normalize_initial_state(initial_state, system.basis.n_sites)
+    state_list = state if kind == "batch" else [state]
+
+    rng = np.random.default_rng(int(seed))
+    compiler = ExactCompiler()
+    opts = validated_exact_options(backend_options)
+
+    results: list[list[EvolutionResult]] = []
+    realizations: list[dict] = []
+    for _ in range(int(shots)):
+        shot_system, realization = _sample_local_rin(rng, system, protocol, noise)
+        extra_terms, term_records = _sample_terms(rng, compiler, shot_system, noise)
+        realization.update(term_records)
+        if "amplitude_scale" in realization:
+            shot_system = shot_system._with_amplitude_scale(realization["amplitude_scale"])
+
+        ir = compiler.compile(shot_system)
+        ir.static_terms.extend(HamiltonianTerm(name, op, 1.0) for name, op in extra_terms)
+        solver = ExactODEBackend(**opts)
+        t_gate = float(ir.metadata["t_gate"])
+
+        shot_results = [
+            solver.evolve(ir, _exact_initial_state(shot_system, s), t_gate, t_eval, observables)
+            for s in state_list
+        ]
+        results.append(shot_results)
+        realizations.append(realization)
+
+    return EnsembleResult(
+        results=results,
+        realizations=realizations,
+        seed=int(seed),
+        metadata={
+            "backend": key,
+            "shots": int(shots),
+            "n_initial_states": len(state_list),
+            "noise": {
+                "detuning_sigma_rad_s": noise.detuning_sigma_rad_s,
+                "amplitude_sigma": noise.amplitude_sigma,
+                "local_rin_sigma": noise.local_rin_sigma,
+                "position_sigma_um": noise.position_sigma_xyz_um,
+            },
+        },
+    )
+
+
+def _has_local_addressing(protocol) -> bool:
+    if getattr(protocol, "address_fn", None) is not None:
+        return True
+    return isinstance(getattr(protocol, "addressing", None), dict)
+
+
+def _sample_local_rin(rng, system, protocol, noise: NoiseModel) -> tuple:
+    """Sample the protocol-level part of a realization (local RIN)."""
+    realization: dict = {}
+    if noise.local_rin_sigma <= 0.0:
+        return system, realization
+
+    import copy
+
+    if getattr(protocol, "address_fn", None) is not None:
+        n_sites = system.basis.n_sites
+        scales = 1.0 + rng.normal(0.0, noise.local_rin_sigma, size=n_sites)
+        base_fn = protocol.address_fn
+        shot_protocol = copy.copy(protocol)
+        shot_protocol.address_fn = (
+            lambda t, i, _base=base_fn, _s=scales: _s[i] * _base(t, i)
+        )
+        realization["local_scales"] = {i: float(s) for i, s in enumerate(scales)}
+        return system.with_protocol(shot_protocol), realization
+
+    # Duck-typed `.addressing` dict (site -> static addressing shift).
+    shot_protocol = copy.copy(protocol)
+    scales = {
+        idx: 1.0 + float(rng.normal(0.0, noise.local_rin_sigma))
+        for idx in protocol.addressing
+    }
+    shot_protocol.addressing = {
+        idx: delta * scales[idx] for idx, delta in protocol.addressing.items()
+    }
+    if hasattr(shot_protocol, "_stark_phase_table"):
+        shot_protocol._stark_phase_table = None
+    realization["local_scales"] = scales
+    return system.with_protocol(shot_protocol), realization
+
+
+def _sample_terms(rng, compiler, system, noise: NoiseModel) -> tuple:
+    """Sample the Hamiltonian-level part of a realization.
+
+    Returns ``(extra_terms, records)``: additive static Hamiltonian terms and
+    the unit-bearing sampled values.  The caller applies ``amplitude_scale``
+    onto the system before compiling.
+    """
+    terms: list[tuple[str, object]] = []
+    records: dict = {}
+
+    if noise.detuning_sigma_rad_s > 0.0:
+        delta_err = float(rng.normal(0.0, noise.detuning_sigma_rad_s))
+        n_ryd = _ir_operator(
+            compiler.materialize_operator(system, system.operators.sum("E[r,r]")), system
+        )
+        terms.append(("detuning_noise", delta_err * n_ryd))
+        records["detuning_rad_s"] = delta_err
+
+    sigma_xyz = noise.position_sigma_xyz_um
+    if any(s > 0.0 for s in sigma_xyz):
+        pair_terms, pair_records = _position_noise_terms(rng, system, sigma_xyz)
+        terms.extend(pair_terms)
+        records.update(pair_records)
+
+    if noise.amplitude_sigma > 0.0:
+        amp_err = float(rng.normal(0.0, noise.amplitude_sigma))
+        records["amplitude_scale"] = 1.0 + amp_err
+        # ``amplitude_scale`` already scales every *driven* channel's coefficient
+        # (the 420 drive and, on rb87 seven-level, the now-driven 1013 — both
+        # carry their Rabi in the protocol coefficient).  A *static* off-diagonal
+        # coupling (analog_3's static 1013, E[r,e]) needs an explicit additive
+        # intensity-noise term.
+        driven = system.protocol.drive_channels(system)
+        for term in system.static_hamiltonian_terms:
+            if not term.add_hermitian_conjugate or term.name in driven:
+                continue
+            op = _ir_operator(compiler.materialize_operator(system, term.operator), system)
+            coupling = term.coefficient * op + np.conj(term.coefficient) * op.conj().T
+            terms.append(("amplitude_noise_static_coupling", amp_err * coupling))
+
+    return terms, records
+
+
+def _ir_operator(op, system):
+    """Match a noise operator to the compiled IR's storage (sparse vs dense)."""
+    if getattr(system, "is_sparse", True):
+        return op
+    return op.toarray() if hasattr(op, "toarray") else np.asarray(op)
+
+
+def _position_noise_terms(rng, system, sigma_xyz):
+    """Pairwise VdW fluctuation terms from actual register coordinates.
+
+    Each atom gets an independent 3D Gaussian position offset; each
+    Rydberg-interacting pair's nominal distance comes from the register
+    coordinates (no hard-coded spacing), and the shot's interaction shift is
+    ``ΔV = C6/d_new^6 - C6/d_nom^6`` with ``C6 = V_pair * d_nom^6``.
+    """
+    from ryd_gate.core.operators import build_vdw_unit_operator
+
+    geometry = getattr(system, "geometry", None)
+    coords = None if geometry is None else np.asarray(geometry.coords, dtype=float)
+    if coords is None:
+        raise ValueError("position noise requires a system with register geometry.")
+    n_atoms = coords.shape[0]
+    if n_atoms != 2:
+        raise NotImplementedError(
+            f"position noise currently supports two-atom registers (got {n_atoms} atoms)."
+        )
+    coords3 = np.zeros((n_atoms, 3))
+    coords3[:, : coords.shape[1]] = coords  # register coords are in um
+
+    pairs = [
+        (int(i), int(j), float(v))
+        for i, j, v in system.interaction_pairs
+    ]
+    if not pairs:
+        raise ValueError(
+            "position noise needs interaction pairs: the system resolved none "
+            "(no Rydberg-interacting pair in range)."
+        )
+
+    offsets = rng.normal(0.0, np.asarray(sigma_xyz, dtype=float), size=(n_atoms, 3))
+    terms = []
+
+    records = {
+        "position_offsets_um": {
+            i: tuple(float(v) for v in offsets[i]) for i in range(n_atoms)
+        },
+        "pair_distances_um": {},
+    }
+    ryd_indices = system.level_structure.rydberg_indices
+    if ryd_indices is None:
+        labels = [str(level) for level in system.basis.local_levels]
+        ryd_indices = tuple(
+            i for i, label in enumerate(labels) if label in ("r", "r_garb")
+        )
+        if not ryd_indices:
+            raise ValueError(
+                "position noise needs Rydberg levels: the system declares no "
+                "rydberg_indices metadata and no 'r' level."
+            )
+    ryd_indices = tuple(int(i) for i in ryd_indices)
+    for i, j, v_pair in pairs:
+        d_nom = float(np.linalg.norm(coords3[i] - coords3[j]))
+        if d_nom <= 0.0:
+            raise ValueError(f"pair ({i},{j}) has zero nominal distance in the register.")
+        d_new = float(np.linalg.norm((coords3[i] + offsets[i]) - (coords3[j] + offsets[j])))
+        d_new = max(d_new, 0.1)
+        c6 = v_pair * d_nom**6
+        delta_v = c6 / d_new**6 - v_pair
+        vdw_op = build_vdw_unit_operator(ryd_indices, system.basis.local_dim)
+        if getattr(system, "is_sparse", True):
+            from scipy.sparse import csr_matrix
+
+            vdw_op = csr_matrix(vdw_op)
+        terms.append(("position_noise", delta_v * vdw_op))
+        records["pair_distances_um"][(i, j)] = d_new
+    return terms, records

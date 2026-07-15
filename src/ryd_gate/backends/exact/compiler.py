@@ -21,44 +21,15 @@ class SolverBackend(ABC):
         ir: HamiltonianIR,
         psi0: Any,
         t_gate: float,
-        t_eval: np.ndarray | bool | None = None,
+        t_eval: np.ndarray | None = None,
+        observables: dict | None = None,
     ) -> EvolutionResult:
-        """Evolve initial state under a compiled IR."""
+        """Evolve initial state under a compiled IR, recording expectations."""
         ...
 
 
-def record_steps(
-    n_steps: int,
-    t_eval: np.ndarray | bool | None,
-    t_gate: float,
-    dt: float,
-) -> set[int] | None:
-    """Map requested ``t_eval`` times to discrete piecewise-expm step indices.
-
-    Shared by the dense and sparse expm backends. ``None`` records nothing, a
-    bool records every step (``True``) or none (``False``), and an array of
-    times rounds each to its nearest step in ``[0, n_steps]``.
-    """
-    if t_eval is None:
-        return None
-    if isinstance(t_eval, (bool, np.bool_)):
-        return set(range(1, n_steps + 1)) if bool(t_eval) else set()
-
-    times = np.asarray(t_eval, dtype=float)
-    if times.ndim != 1:
-        raise ValueError("t_eval must be a one-dimensional array of times.")
-    tol = max(1e-12, abs(t_gate) * 1e-12)
-    if np.any(times < -tol) or np.any(times > t_gate + tol):
-        raise ValueError("t_eval entries must lie within [0, t_gate].")
-    steps = set()
-    for t_req in times:
-        step = int(round(float(t_req) / dt)) if dt != 0 else 0
-        steps.add(max(0, min(step, n_steps)))
-    return steps
-
-
 @dataclass
-class ExactSparseCompiler:
+class ExactCompiler:
     """Lower unified Hamiltonian IR into exact matrix-backed terms.
 
     Parameters
@@ -70,12 +41,12 @@ class ExactSparseCompiler:
 
     max_dim: int | None = 2_000_000
 
-    def compile(self, system_or_ir, params: dict | None = None) -> HamiltonianIR:
+    def compile(self, system_or_ir) -> HamiltonianIR:
         """Lower unified Hamiltonian IR into matrix-backed HamiltonianIR."""
         source_ir = (
             system_or_ir
             if isinstance(system_or_ir, HamiltonianIR)
-            else compile_hamiltonian_ir(system_or_ir, _require_params(params))
+            else compile_hamiltonian_ir(system_or_ir)
         )
         if source_ir.basis is None:
             raise ValueError("Exact lowering requires HamiltonianIR.basis.")
@@ -140,17 +111,13 @@ class ExactSparseCompiler:
         )
 
 
-def _require_params(params: dict | None) -> dict:
-    if params is None:
-        raise TypeError("compile() requires params when given a system instead of HamiltonianIR.")
-    return params
-
-
-def compile_expm_ir(
+def _compile_exact_ir(
     system_or_ir,
-    params: dict | None = None,
     *,
     max_dim: int | None = 2_000_000,
 ) -> HamiltonianIR:
-    """Lower unified Hamiltonian IR into exact matrix form for exact backends."""
-    return ExactSparseCompiler(max_dim=max_dim).compile(system_or_ir, params)
+    """Lower unified Hamiltonian IR into exact matrix form (private compiler seam).
+
+    Research scripts with specialized solvers import this directly.
+    """
+    return ExactCompiler(max_dim=max_dim).compile(system_or_ir)

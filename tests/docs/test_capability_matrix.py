@@ -41,19 +41,52 @@ class TestMatrixCoverage:
         for backend in generator.BACKENDS:
             assert backend in matrix_text
 
+    def test_removed_capabilities_are_not_documented(self, generator, matrix_text):
+        """The '01' preset and the removed backend names are gone."""
+        assert "01" not in generator.PRESETS
+        assert "stabilizer" not in generator.BACKENDS
+        assert "`01`" not in matrix_text
+        assert "stabilizer" not in matrix_text
+        assert "exact_dense" not in matrix_text
+        assert "exact_sparse" not in matrix_text
+
+    def test_backend_columns_are_simulate_names(self, generator):
+        """Columns carry the exact simulate(..., backend=...) strings."""
+        assert generator.BACKENDS == ("exact_ode", "mps", "peps")
+
+    def test_presets_come_from_the_registry(self, generator):
+        from ryd_gate.core.level_structures import _STRUCTURAL_PRESETS
+
+        assert generator.PRESETS == tuple(_STRUCTURAL_PRESETS)
+
 
 class TestMatrixDerivation:
-    def test_noise_rows_come_from_validate_for(self, generator, monkeypatch):
-        """Forcing validate_for to reject everything must flip the noise rows."""
-        from ryd_gate import NoiseModel
-        from ryd_gate.core.serialization import ValidationIssue
-
-        def reject(self, *, backend, level_structure=None, n_atoms=None):
-            return [ValidationIssue("error", "noise.backend_unsupported", "forced", ())]
-
-        monkeypatch.setattr(NoiseModel, "validate_for", reject)
+    def test_noise_rows_are_exact_only(self, generator):
+        """Noise execution is exact-only: the TN columns must be empty."""
         lines = generator._noise_table()
         body = [line for line in lines[2:]]
         assert body, "noise table must have rows"
         for row in body:
-            assert generator.YES not in row
+            cells = [c.strip() for c in row.strip("|").split("|")]
+            assert cells[1] == generator.YES          # exact_ode column
+            assert all(c == generator.NO for c in cells[2:])  # mps/peps
+
+    def test_observable_floors_come_from_code(self, generator):
+        """The observable section derives from the engines' term-site caps."""
+        from ryd_gate.backends.tn_common._expressions import (
+            MPS_MAX_TERM_SITES,
+            PEPS_MAX_TERM_SITES,
+        )
+
+        floors = generator._term_site_floors()
+        assert floors == {
+            "exact_ode": None,
+            "mps": MPS_MAX_TERM_SITES,
+            "peps": PEPS_MAX_TERM_SITES,
+        }
+
+        rows = {line.strip("|").split("|")[0].strip(): line
+                for line in generator._observable_table()[2:]}
+        assert "any finite product" in rows["exact_ode"]
+        assert "any finite product" in rows["mps"]         # cap is None
+        assert f"at most {PEPS_MAX_TERM_SITES} distinct sites" in rows["peps"]

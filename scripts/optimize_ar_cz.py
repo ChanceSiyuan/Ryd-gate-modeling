@@ -1,10 +1,10 @@
 """Re-optimize AR CZ pulse parameters on the current kernel.
 
-Optimization workflow script (repo convention: search loops stay in
-``scripts/``, only reusable functions live in ``src/``). Each start is run
-through the shared ``ryd_gate.gates.optimize_cz_parameters`` (theta-projection
-warm start + Nelder-Mead polish); this script only owns the multi-start loop and
-checkpointing.
+Optimization workflow script (repo convention: search loops and objectives
+live in ``scripts/``, only system/protocol/evolution live in ``src/``). Each
+start runs a theta-projection warm start + Nelder-Mead polish on the 3-state
+Nielsen infidelity, both written out below; this script owns the objective,
+the multi-start loop, and checkpointing.
 
 The AR landscape has a non-entangling local minimum on ``mp`` (~0.45, wrong
 conditional phase; see ``scripts/diagnose_ar_target.py``), so escaping it needs
@@ -23,9 +23,13 @@ Usage:
     OMP_NUM_THREADS=1 uv run python scripts/optimize_ar_cz.py mp --restarts 16 [--seed 0]
 
 The global best across all starts is checkpointed to
-``data/ar_opt_<manifold>.json`` after every improvement, so partial results
+``results/cz_gate/ar_optimization/ar_opt_<manifold>.json`` after every improvement, so partial results
 survive interruption. ``--resume`` adds the previous checkpoint best as an
 extra start.
+
+Runtime: each Nielsen evaluation (three 7-level two-atom states on the
+adaptive exact_ode solver) takes ~3 min single-threaded, so a Nelder-Mead
+polish is a long (multi-day) job per start.
 """
 
 import json
@@ -34,10 +38,69 @@ import time
 from pathlib import Path
 
 import numpy as np
+from scipy import optimize
 
-from ryd_gate import Register, RydbergSystem
-from ryd_gate.gates import optimize_cz_parameters
+from ryd_gate import Register, RydbergSystem, level_structure
+from ryd_gate.backends.exact import simulate
 from ryd_gate.protocols.gate_cz import ARProtocol
+
+# 7-level single-atom basis vectors: index 0 = |0>, index 1 = |1>.
+_S0 = np.array([1, 0, 0, 0, 0, 0, 0], dtype=complex)
+_S1 = np.array([0, 1, 0, 0, 0, 0, 0], dtype=complex)
+_BASIS = {"00": np.kron(_S0, _S0), "01": np.kron(_S0, _S1), "11": np.kron(_S1, _S1)}
+
+
+def average_gate_infidelity(system, omega_kw, x):
+    """3-state Nielsen CZ infidelity, formulas written out.
+
+    Build the concrete AR pulse from the non-theta entries of x (theta = x[7]
+    is a local scoring parameter, not pulse shape), evolve |00>, |01>, |11>,
+    apply the ideal single-qubit Rz corrections, and score with the Nielsen
+    average-gate-fidelity formula (d = 4, with |10> folded into |01> by
+    exchange symmetry).
+    """
+    pulse = ARProtocol(
+        frequency_ratio=x[0], phase_amplitude_1=x[1], phase_offset_1=x[2],
+        phase_amplitude_2=x[3], phase_offset_2=x[4], detuning_ratio=x[5],
+        duration_ratio=x[6], **omega_kw,
+    )
+    theta = float(x[7])  # single-qubit Rz correction (AR x-vector, index 7)
+    bound = system.with_protocol(pulse)
+    corrections = {"00": 1.0, "01": np.exp(-1j * theta),
+                   "11": np.exp(-2j * theta - 1j * np.pi)}
+    a = {k: corrections[k] * complex(np.vdot(ini, simulate(bound, ini).final_state))
+         for k, ini in _BASIS.items()}
+    avg_f = (1 / 20) * (abs(a["00"] + 2 * a["01"] + a["11"]) ** 2
+                        + abs(a["00"]) ** 2 + 2 * abs(a["01"]) ** 2 + abs(a["11"]) ** 2)
+    return float(1 - avg_f)
+
+
+def optimize_start(system, omega_kw, x0, maxiter):
+    """Theta-projection warm start + Nelder-Mead polish.
+
+    Theta (the single-qubit Z correction) is hyper-sensitive to the gate time
+    under the explicit |0> model — |0> sits at the 6.835 GHz clock splitting,
+    so the optimum winds rapidly with T and a wrong theta dominates the
+    objective (~1e-2), masking the ~1e-6 leakage/conditional-phase gradients.
+    A cheap bounded 1-D re-fit of theta snaps onto the optimal-theta ridge
+    (typically 1e-2 -> 1e-6), then Nelder-Mead polishes all parameters.
+
+    Returns ``(x, infidelity, theta_infidelity)``.
+    """
+    f = lambda xv: average_gate_infidelity(system, omega_kw, list(xv))
+    x = [float(v) for v in x0]
+    ti = 7  # theta position in the AR x-vector
+    res_t = optimize.minimize_scalar(
+        lambda t: f([*x[:ti], float(t), *x[ti + 1:]]),
+        bounds=(x[ti] - np.pi, x[ti] + np.pi), method="bounded",
+        options={"xatol": 1e-10},
+    )
+    x = [*x[:ti], float(res_t.x), *x[ti + 1:]]
+    res = optimize.minimize(
+        f, x, method="Nelder-Mead",
+        options={"xatol": 1e-8, "fatol": 1e-13, "maxiter": maxiter},
+    )
+    return res.x.tolist(), float(res.fun), float(res_t.fun)
 
 # Legacy seed: [omega/Omega_eff, A1, phi1, A2, phi2, delta/Omega_eff, T/T_scale, theta]
 X_AR_LEGACY = [0.85973359, 0.39146974, 0.99181418, 0.1924498, -1.17123748, -0.00826712, 1.67429728, 0.28527346]
@@ -46,14 +109,19 @@ X_AR_LEGACY = [0.85973359, 0.39146974, 0.99181418, 0.1924498, -1.17123748, -0.00
 OMEGA_PM = dict(omega_420_max=2 * np.pi * 237e6, omega_1013_max=2 * np.pi * 303e6)
 
 
-def _sample_bounds(protocol):
+# AR x-vector bounds: [omega/Omega_eff, A1, phi1, A2, phi2, delta/Omega_eff, T/T_scale, theta].
+AR_BOUNDS = ((-10, 10), (-np.pi, np.pi), (-np.pi, np.pi), (-np.pi, np.pi),
+             (-np.pi, np.pi), (-2, 2), (-np.inf, np.inf), (-np.pi, np.pi))
+
+
+def _sample_bounds():
     """Finite sampling ranges for random restarts.
 
-    The protocol bounds leave T/T_scale (index 6) unbounded and omega/Omega_eff
+    AR_BOUNDS leaves T/T_scale (index 6) unbounded and omega/Omega_eff
     (index 0) at (-10, 10); narrow both to physical positive ranges so random
     seeds land in plausible gate configurations.
     """
-    bounds = [list(b) for b in protocol.get_optimization_bounds()]
+    bounds = [list(b) for b in AR_BOUNDS]
     bounds[0] = [0.2, 3.0]   # omega/Omega_eff
     bounds[6] = [0.3, 3.0]   # T/T_scale (unbounded -> sane finite gate time)
     return bounds
@@ -79,21 +147,22 @@ def main() -> None:
     if manifold not in {"mp", "pm"}:
         raise SystemExit(f"manifold must be 'mp' or 'pm', got {manifold!r}")
 
-    system = (
-        RydbergSystem.set_atom_level(f"rb87_7_{manifold}")
-        .set_atom_geom(Register.chain(2, spacing_um=3.0))
+    system = RydbergSystem(
+        level_structure=level_structure(f"rb87_7_{manifold}"),
+        register=Register.chain(2, spacing_um=3.0),
     )
     # pm is not the protocol default, so its canonical Rabis are explicit.
-    protocol = ARProtocol(**(OMEGA_PM if manifold == "pm" else {}))
+    omega_kw = OMEGA_PM if manifold == "pm" else {}
     suffix = f"_{tag}" if tag else ""
-    out_path = Path("data") / f"ar_opt_{manifold}{suffix}.json"
-    out_path.parent.mkdir(exist_ok=True)
+    results_dir = Path("results") / "cz_gate" / "ar_optimization"
+    out_path = results_dir / f"ar_opt_{manifold}{suffix}.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # ---- assemble the start list ----
     seeds: list[tuple[str, list[float]]] = []
     if not no_curated:
         seeds.append(("legacy", list(X_AR_LEGACY)))
-        pm_path = Path("data") / "ar_opt_pm.json"
+        pm_path = results_dir / "ar_opt_pm.json"
         if pm_path.exists():
             pm_best = json.loads(pm_path.read_text()).get("best_x")
             if pm_best and manifold != "pm":
@@ -103,7 +172,7 @@ def main() -> None:
             if prev:
                 seeds.insert(0, ("resume", [float(v) for v in prev]))
     rng = np.random.default_rng(rng_seed)
-    sb = _sample_bounds(protocol)
+    sb = _sample_bounds()
     for i in range(restarts):
         seeds.append((f"rand{i}", [float(rng.uniform(lo, hi)) for lo, hi in sb]))
     if not seeds:
@@ -123,18 +192,20 @@ def main() -> None:
     # ---- multi-start; each start uses the theta-projection optimizer ----
     for label, x0 in seeds:
         try:
-            result = optimize_cz_parameters(system, protocol, x0, maxiter=maxiter)
+            best_x, infidelity, theta_infidelity = optimize_start(
+                system, omega_kw, x0, maxiter=maxiter
+            )
         except Exception as exc:  # a bad random seed can throw inside the solver
             print(f"[{manifold}] start {label}: failed ({exc})", flush=True)
             continue
-        if result.infidelity < state["best_infidelity"]:
-            state["best_infidelity"] = result.infidelity
-            state["best_x"] = result.x
+        if infidelity < state["best_infidelity"]:
+            state["best_infidelity"] = infidelity
+            state["best_x"] = best_x
             state["best_seed"] = label
             state["elapsed_s"] = round(time.time() - t_start, 1)
             out_path.write_text(json.dumps(state, indent=1))
-        print(f"[{manifold}] start {label}: theta {result.theta_infidelity:.6e} -> "
-              f"polish {result.infidelity:.6e} (global best {state['best_infidelity']:.6e})",
+        print(f"[{manifold}] start {label}: theta {theta_infidelity:.6e} -> "
+              f"polish {infidelity:.6e} (global best {state['best_infidelity']:.6e})",
               flush=True)
 
     state["done"] = True

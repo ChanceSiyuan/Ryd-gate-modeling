@@ -24,19 +24,15 @@ import time as _time
 
 import matplotlib.pyplot as plt
 import numpy as np
-
-from ryd_gate import RydbergSystem, SweepProtocol
-from ryd_gate.analysis.coarsening import (
+from _coarsening import (
     build_neighbor_lists,
     coarsegrained_boundary_mask,
     correct_single_spin_flips,
     identify_domains,
     local_staggered_magnetization,
 )
-from ryd_gate.analysis.observables import (
-    measure_from_states,
-    precompute_bit_masks,
-)
+
+from ryd_gate import RydbergSystem, SweepProtocol, level_structure
 from ryd_gate.backends.exact import simulate
 from ryd_gate.core.level_structures import InteractionSpec
 from ryd_gate.core.states import (
@@ -55,7 +51,7 @@ T_SWEEP = 55.0  # adiabatic sweep duration
 OMEGA_RAMP_FRAC = 0.1  # fraction of sweep for Omega ramp-up
 
 
-def _make_sweep_protocol(delta_start, delta_end, t_gate, *, addressing=None, n_steps=200):
+def _make_sweep_protocol(delta_start, delta_end, t_gate, *, addressing=None):
     addressing = addressing or {}
 
     def omega_half_t(t):
@@ -77,7 +73,6 @@ def _make_sweep_protocol(delta_start, delta_end, t_gate, *, addressing=None, n_s
         omega_half_fn=omega_half_t,
         delta_fn=delta_t,
         address_fn=(lambda t, i: addressing.get(i, 0.0)) if addressing else None,
-        n_steps=n_steps,
     )
 
 
@@ -87,15 +82,20 @@ def _make_sweep_protocol(delta_start, delta_end, t_gate, *, addressing=None, n_s
 
 
 def _setup_experiment(Lx, Ly):
-    """Build lattice system and bit masks (shared by both experiments)."""
+    """Build the lattice system (shared by both experiments)."""
     geom = Register.rectangle(Lx, Ly, spacing_um=1.0)
-    system = (
-        RydbergSystem.set_atom_level("1r", Omega=1.0)
-        .set_atom_geom(geom, interaction=InteractionSpec(C6=V_NN, mode="nn"))
+    system = RydbergSystem(
+        level_structure=level_structure("1r"),
+        register=geom,
+        interaction=InteractionSpec(C6=V_NN, mode="nn"),
     )
-    bit_masks = precompute_bit_masks(system.N)
     print(f"  Built {Lx}x{Ly} lattice system ({system.N} atoms, dim = {2**system.N})")
-    return system, bit_masks
+    return system
+
+
+def _site_occupations(result, N):
+    """(n_times, N) per-site ``<n_r_i>`` from the requested expectations."""
+    return np.column_stack([result.expectation(f"n_r_{i}").real for i in range(N)])
 
 
 # ---------------------------------------------------------------------------
@@ -109,10 +109,11 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
     print("Experiment 1: Domain Shrinking (curvature-driven coarsening)")
     print("=" * 60)
 
-    system, bit_masks = setup or _setup_experiment(Lx, Ly)
+    system = setup or _setup_experiment(Lx, Ly)
     N = system.N
     coords = system.geometry.coords
     sublattice = system.geometry.sublattice
+    site_obs = system.observables.site_populations("r")  # {"n_r_i": n(r, i)}
 
     Delta_f = 2.5
     cx, cy = (Lx - 1) / 2.0, (Ly - 1) / 2.0
@@ -129,19 +130,16 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
         Delta_f,
         T_SWEEP,
         addressing=addressing,
-        n_steps=min(n_steps, 40),
     )
 
     t0 = _time.time()
-    sweep_result = simulate(
-        system.with_protocol(sweep_proto),
-        [],
-        psi0,
-    )
-    psi_after_sweep = sweep_result.psi_final
+    sweep_result = simulate(system.with_protocol(sweep_proto), psi0, observables=site_obs)
+    psi_after_sweep = sweep_result.final_state
     print(f"    Sweep done in {_time.time() - t0:.1f}s")
 
-    ms_sw, n_sw, _ = measure_from_states(psi_after_sweep, bit_masks, sublattice)
+    occ_sw = _site_occupations(sweep_result, N)[0]  # endpoint profile (times == [t_gate])
+    ms_sw = (occ_sw * 2 - 1) @ sublattice / N
+    n_sw = occ_sw.mean()
     print(f"    m_s after sweep: {ms_sw:.4f}")
     print(f"    <n> after sweep: {n_sw:.4f}")
 
@@ -149,20 +147,23 @@ def run_domain_shrinking(Lx, Ly, n_steps, figdir, setup=None):
     print("  Phase 2: Free evolution (pinning off)...")
     t_hold = 6.0
 
-    hold_proto = _make_sweep_protocol(Delta_f, Delta_f, t_hold, n_steps=n_steps)
+    hold_proto = _make_sweep_protocol(Delta_f, Delta_f, t_hold)
     t0 = _time.time()
+    # Chaining from a previous run's dense final_state is the private research
+    # seam of backends.exact.simulate (dense-vector psi0), not public API.
     hold_result = simulate(
         system.with_protocol(hold_proto),
-        [],
         psi_after_sweep,
         t_eval=np.linspace(0, t_hold, n_steps),
+        observables=site_obs,
     )
     hold_times = hold_result.times
-    hold_states = hold_result.states
     print(f"    Hold evolution done in {_time.time() - t0:.1f}s")
 
     print("  Computing observables...")
-    ms, n_mean, occ_all = measure_from_states(hold_states, bit_masks, sublattice)
+    occ_all = _site_occupations(hold_result, N)
+    ms = (occ_all * 2 - 1) @ sublattice / N
+    n_mean = occ_all.mean(axis=1)
 
     # Domain area via vectorized dot product
     domain_weight = np.zeros(N)
@@ -344,9 +345,10 @@ def run_higgs_mode(Lx, Ly, n_steps, figdir, setup=None):
     print("Experiment 2: Higgs Mode Oscillations")
     print("=" * 60)
 
-    system, bit_masks = setup or _setup_experiment(Lx, Ly)
+    system = setup or _setup_experiment(Lx, Ly)
     N = system.N
     sublattice = system.geometry.sublattice
+    site_obs = system.observables.site_populations("r")  # {"n_r_i": n(r, i)}
 
     Delta_values = [0.0, 1.1, 2.5]
     colors = plt.cm.viridis(np.linspace(0.1, 0.9, len(Delta_values)))
@@ -363,30 +365,29 @@ def run_higgs_mode(Lx, Ly, n_steps, figdir, setup=None):
             Delta_f,
             T_SWEEP,
             addressing=addressing,
-            n_steps=min(n_steps // 2, 40),
         )
         t0 = _time.time()
-        sweep_result = simulate(
-            system.with_protocol(sweep_proto),
-            [],
-            psi0,
-        )
-        psi = sweep_result.psi_final
-        ms_sw, _, _ = measure_from_states(psi, bit_masks, sublattice)
+        sweep_result = simulate(system.with_protocol(sweep_proto), psi0, observables=site_obs)
+        psi = sweep_result.final_state
+        occ_sw = _site_occupations(sweep_result, N)[0]
+        ms_sw = (occ_sw * 2 - 1) @ sublattice / N
         print(f"    Sweep: {_time.time() - t0:.1f}s, m_s = {ms_sw:.4f}")
 
-        # Hold phase (pinning off)
-        hold_proto = _make_sweep_protocol(Delta_f, Delta_f, 10.0, n_steps=n_steps)
+        # Hold phase (pinning off); dense-psi0 chaining is the private research
+        # seam of backends.exact.simulate.
+        hold_proto = _make_sweep_protocol(Delta_f, Delta_f, 10.0)
         t0 = _time.time()
         hold_result = simulate(
             system.with_protocol(hold_proto),
-            [],
             psi,
             t_eval=np.linspace(0, 10.0, n_steps),
+            observables=site_obs,
         )
         print(f"    Hold: {_time.time() - t0:.1f}s")
 
-        ms, n_mean, _ = measure_from_states(hold_result.states, bit_masks, sublattice)
+        occ = _site_occupations(hold_result, N)
+        ms = (occ * 2 - 1) @ sublattice / N
+        n_mean = occ.mean(axis=1)
         all_results[Delta_f] = {"times": hold_result.times, "ms": ms, "n_mean": n_mean}
 
     # --- Plotting ---
@@ -444,7 +445,8 @@ def main():
     )
     parser.add_argument("--Lx", type=int, default=4, help="Lattice width (default: 4)")
     parser.add_argument("--Ly", type=int, default=4, help="Lattice height (default: 4)")
-    parser.add_argument("--n-steps", type=int, default=200, help="Time steps for hold phase (default: 200)")
+    parser.add_argument("--n-steps", type=int, default=200,
+                        help="Hold-phase t_eval samples (default: 200); the exact solver itself is adaptive")
     parser.add_argument("--figdir", type=str, default="docs/figures", help="Output directory for figures")
     args = parser.parse_args()
 

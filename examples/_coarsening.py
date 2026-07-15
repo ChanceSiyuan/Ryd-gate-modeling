@@ -1,7 +1,10 @@
-"""Post-processing for coarsening analysis (Manovitz et al.).
+"""Coarsening post-processing shared by the two local-addressing demos.
 
-Implements single-spin-flip correction and coarse-grained local staggered
-magnetization from the Methods section of the paper.
+Pure array post-processing (Manovitz et al., Methods): single-spin-flip
+correction, coarse-grained local staggered magnetization, boundary masks,
+and domain labeling.  Inlined verbatim from the removed
+``ryd_gate.analysis.coarsening`` module — these helpers consume plain
+occupation arrays, not evolution results.
 """
 
 from __future__ import annotations
@@ -71,20 +74,6 @@ def local_staggered_magnetization(
 
     where :math:`C_i = \sum_j n_j` sums over NN neighbors and
     :math:`N_i` is the coordination number of site *i*.
-
-    Parameters
-    ----------
-    occ : ndarray, shape (N,)
-        Per-site occupation (float or binary).
-    sublattice : ndarray, shape (N,)
-        Checkerboard signs (+1/-1).
-    nn_lists : list of list of int
-        Nearest-neighbor index lists from :func:`build_neighbor_lists`.
-
-    Returns
-    -------
-    m : ndarray, shape (N,)
-        Continuous local staggered magnetization in [-1, 1].
     """
     N = len(occ)
     m = np.zeros(N, dtype=float)
@@ -108,20 +97,6 @@ def correct_single_spin_flips(
     A spin flip is identified when an atom's staggered order is opposite
     to that of ALL its nearest AND next-nearest neighbors. Such atoms are
     flipped to match the surrounding bulk order.
-
-    Parameters
-    ----------
-    occ : ndarray, shape (N,) or (n_snapshots, N)
-        Per-site occupation (0 or 1).
-    sublattice : ndarray, shape (N,)
-        Checkerboard signs (+1/-1).
-    nn_lists, nnn_lists : list of list of int
-        From :func:`build_neighbor_lists`.
-
-    Returns
-    -------
-    occ_corrected : ndarray, same shape as occ
-        Corrected occupation array.
     """
     single = occ.ndim == 1
     if single:
@@ -162,20 +137,6 @@ def coarsegrained_boundary_mask(
     W = [[0,1,0],[1,0,1],[0,1,0]], producing C(x,y) in [0,4].
 
     Boundary atoms: n=1 and C!=0, or n=0 and C!=4.
-
-    Parameters
-    ----------
-    occ : ndarray, shape (N,) or (n_snapshots, N)
-        Per-site occupation (0 or 1).
-    Lx, Ly : int
-        Lattice dimensions.
-
-    Returns
-    -------
-    C : ndarray, same shape as occ
-        Convolution values per site (flattened from 2D).
-    is_boundary : ndarray of bool, same shape as occ
-        True for boundary atoms.
     """
     single = occ.ndim == 1
     if single:
@@ -212,15 +173,6 @@ def identify_domains(
     Connected components of the same ordering (via nearest neighbors)
     form domains.
 
-    Parameters
-    ----------
-    occ_corrected : ndarray, shape (N,)
-        Spin-flip-corrected occupation (single snapshot).
-    sublattice : ndarray, shape (N,)
-        Checkerboard signs (+1/-1).
-    nn_lists : list of list of int
-        Nearest-neighbor lists.
-
     Returns
     -------
     labels : ndarray, shape (N,), dtype int
@@ -248,31 +200,3 @@ def identify_domains(
         label_id += 1
 
     return labels
-
-
-def domain_area_distribution(
-    labels: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Compute area-weighted domain size distribution.
-
-    Parameters
-    ----------
-    labels : ndarray, shape (N,)
-        Domain labels from :func:`identify_domains`.
-
-    Returns
-    -------
-    areas : ndarray
-        Unique domain areas (sorted).
-    weights : ndarray
-        Area-weighted frequencies, normalized to sum to 1.
-    """
-    unique_labels, counts = np.unique(labels, return_counts=True)
-    # For each unique area, count how many domains have that area,
-    # then weight by area
-    area_vals, area_counts = np.unique(counts, return_counts=True)
-    weighted = area_vals * area_counts
-    total = weighted.sum()
-    if total > 0:
-        weighted = weighted / total
-    return area_vals, weighted.astype(float)

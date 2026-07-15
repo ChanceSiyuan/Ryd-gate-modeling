@@ -1,8 +1,9 @@
 """Generate docs/capability_matrix.qmd from code (never hand-edited).
 
 Every table row is derived from the runtime objects themselves —
-``LevelStructureSpec.supports_backend`` and ``NoiseModel.validate_for`` —
-so the matrix cannot rot relative to the code.
+the level-structure preset registry, ``LevelStructure.supports_backend``,
+the exact-only ensemble preflight, and the TN engines' observable
+capability floors — so the matrix cannot rot relative to the code.
 
 Usage:
     uv run python docs/_scripts/build_capability_matrix.py        # rewrite
@@ -14,8 +15,15 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-PRESETS = ("01", "1r", "01r", "analog_3", "rb87_7_mp", "rb87_7_pm")
-BACKENDS = ("exact", "mps", "peps", "stabilizer")
+
+def _presets() -> tuple[str, ...]:
+    from ryd_gate.core.level_structures import _STRUCTURAL_PRESETS
+
+    return tuple(_STRUCTURAL_PRESETS)
+
+
+PRESETS = _presets()
+BACKENDS = ("exact_ode", "mps", "peps")  # the simulate(..., backend=...) names
 OUT_PATH = Path(__file__).resolve().parents[1] / "capability_matrix.qmd"
 
 YES, NO = "yes", "—"
@@ -36,27 +44,61 @@ def _level_structure_table() -> list[str]:
 
 
 def _noise_table() -> list[str]:
-    from ryd_gate import NoiseModel
+    from ryd_gate.noise import _EXACT_BACKENDS
 
-    probes = {
-        "detuning / amplitude / local RIN / position (Monte Carlo)": NoiseModel(
-            detuning_sigma_rad_per_us=0.01
-        ),
-        "rydberg / intermediate decay (construction-time)": NoiseModel(rydberg_decay=True),
-        "state-prep / readout / temperature / waist (data only)": NoiseModel(
-            state_prep_error=0.01
-        ),
+    # simulate_ensemble executes quasi-static noise on the exact backends only
+    # (its preflight raises a capability error for tensor-network backends);
+    # decay is level-model physics (level_structure(...) flags), available
+    # wherever the decay-capable presets run.
+    def _exact_only(backend: str) -> bool:
+        return backend in _EXACT_BACKENDS
+
+    rows = {
+        "quasi-static noise: detuning / amplitude / local RIN / position "
+        "(simulate_ensemble)": _exact_only,
+        "rydberg / intermediate decay (construction-time level model)": _exact_only,
     }
     lines = [
         "| noise group | " + " | ".join(BACKENDS) + " |",
         "|---" * (len(BACKENDS) + 1) + "|",
     ]
-    for label, model in probes.items():
-        cells = []
-        for backend in BACKENDS:
-            issues = model.validate_for(backend=backend, level_structure="rb87_7_mp", n_atoms=2)
-            cells.append(YES if not issues else NO)
+    for label, supported in rows.items():
+        cells = [YES if supported(backend) else NO for backend in BACKENDS]
         lines.append(f"| {label} | " + " | ".join(cells) + " |")
+    return lines
+
+
+def _term_site_floors() -> dict[str, int | None]:
+    """Per-backend cap on distinct sites per product term (None = any finite)."""
+    from ryd_gate.backends.tn_common._expressions import (
+        MPS_MAX_TERM_SITES,
+        PEPS_MAX_TERM_SITES,
+    )
+
+    # exact_ode's expression preflight is shape-only (no term-site cap):
+    # every finite structured ObservableExpr is evaluable on the dense vector.
+    return {
+        "exact_ode": None,
+        "mps": MPS_MAX_TERM_SITES,
+        "peps": PEPS_MAX_TERM_SITES,
+    }
+
+
+def _observable_table() -> list[str]:
+    floors = _term_site_floors()
+
+    def cell(cap: int | None) -> str:
+        if cap is None:
+            return "all finite structured expressions (local terms, sums, any finite product)"
+        suffix = " (local / sums / two-point)" if cap == 2 else ""
+        return f"local terms, sums, and products over at most {cap} distinct sites{suffix}"
+
+    lines = [
+        "| backend | `ObservableExpr` capability floor |",
+        "|---|---|",
+    ]
+    for backend in BACKENDS:
+        lines.append(f"| {backend} | {cell(floors[backend])} |")
     return lines
 
 
@@ -70,6 +112,7 @@ def build_matrix() -> str:
         ]),
         ("## Level structure × backend", _level_structure_table()),
         ("## NoiseModel runtime support by backend", _noise_table()),
+        ("## Observable expressions by backend", _observable_table()),
     ]
     parts: list[str] = []
     for title, lines in sections:

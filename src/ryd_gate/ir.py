@@ -2,8 +2,10 @@
 
 Algorithm-agnostic Hamiltonian intermediate representation
 (:class:`HamiltonianTerm` / :class:`HamiltonianIR` /
-:func:`compile_hamiltonian_ir`) plus the :class:`EvolutionResult`
-container returned by all simulation algorithm packages.
+:func:`compile_hamiltonian_ir`), the canonical :class:`EvolutionResult`
+container returned by all simulation engines, and the shared strict
+``t_eval`` / observables preflight (:func:`validate_evolution_request`)
+enforced by every backend.
 """
 
 from __future__ import annotations
@@ -17,71 +19,89 @@ import numpy as np
 
 @dataclass
 class EvolutionResult:
-    """Unified result object returned by simulation algorithm packages.
+    """Canonical result of one evolution.
 
-    ``psi_final`` is the final state — a dense state vector for the exact
-    backend, or a backend-native state handle for tensor-network backends.
-    ``times`` / ``states`` hold the trajectory when ``t_eval`` was requested.
-
-    Convenience accessors (:attr:`final_state`, :meth:`expectation`,
-    :meth:`probabilities`, :meth:`sample`) are wired up by
-    :func:`ryd_gate.simulate`, which attaches the measuring ``system`` and any
-    values requested via ``simulate(..., observables=[...])`` so results can be
-    read without re-threading the state back through the system.
+    Fields
+    ------
+    final_state
+        The state at the true evolution endpoint ``t_gate`` — a dense vector
+        for the exact backend, a backend-native handle (MPS/PEPS) for
+        tensor-network backends.  ``t_eval`` never changes it.
+    times
+        Exactly the requested measurement times: the ``t_eval`` array as
+        passed in, or ``[t_gate]`` (shape ``(1,)``) when ``t_eval=None``.
+    expectations
+        ``{label: complex ndarray}`` — one raw ``<psi|O|psi>`` value per entry
+        of ``times`` (time-major, ``shape == times.shape``).  Raw means no
+        norm division: with decay the identity expectation is the survival
+        norm, preserving the ``Gamma * integral(n_R) dt`` bookkeeping.  Empty
+        dict when no observables were requested.
+    metadata
+        Engine diagnostics (solver, tolerances, formats, ...).
+    basis
+        Immutable basis info (site count, level labels) used by
+        :meth:`sample` to decode outcome labels.
     """
 
-    psi_final: Any
-    times: np.ndarray | None = None
-    states: Any | None = None
-    metadata: dict = field(default_factory=dict)
-    expectations: dict | None = None
-    system: Any = field(default=None, repr=False, compare=False)
+    final_state: Any
+    times: np.ndarray
+    expectations: dict[str, np.ndarray]
+    metadata: dict
+    basis: Any
 
-    @property
-    def final_state(self) -> Any:
-        """Alias for :attr:`psi_final` (peer-library naming)."""
-        return self.psi_final
+    def expectation(self, name: str) -> np.ndarray:
+        """The stored expectation array for ``name`` (shape ``(n_times,)``).
 
-    def expectation(self, name: str) -> Any:
-        """Expectation value of a named observable in the final state.
-
-        Returns the precomputed value when ``simulate(..., observables=[...])``
-        requested it; otherwise measures it on the dense final state through the
-        bound system. Raises ``RuntimeError`` if no measurement context is
-        attached (e.g. a bare result built outside :func:`ryd_gate.simulate`).
+        Only values requested via ``simulate(..., observables={name: expr})``
+        exist; anything else raises ``KeyError``.  There is no on-demand
+        measurement fallback.
         """
-        if self.expectations is not None and name in self.expectations:
+        try:
             return self.expectations[name]
-        if self.system is None:
-            raise RuntimeError(
-                "no measurement context on this result; request it via "
-                "simulate(..., observables=[name]), or measure on the system "
-                "directly: system.expectation(name, result.final_state)."
-            )
-        return self.system.expectation(name, self._dense_final())
+        except KeyError:
+            raise KeyError(
+                f"no expectation {name!r} on this result; it must be requested "
+                "at simulate time via observables={"
+                f"{name!r}: <ObservableExpr>}}. Stored: {sorted(self.expectations)}."
+            ) from None
 
-    def probabilities(self) -> np.ndarray:
-        """Computational-basis probabilities ``|psi|**2`` of the final state."""
-        psi = np.asarray(self._dense_final())
-        return np.abs(psi) ** 2
+    def sample(self, shots: int, seed: int) -> Counter:
+        """Sample computational-basis outcomes from the dense final state.
 
-    def sample(self, n_shots: int, seed: int | None = None) -> Counter:
-        """Multinomially sample measurement outcomes from the final state.
+        Semantics: **conditional on survival**.  Outcome weights are
+        ``|psi_i|**2 / <psi|psi>`` — with decay (non-unitary evolution) the
+        lost norm is renormalized away, i.e. outcomes are conditioned on the
+        atoms having survived; there is no loss label.  The surviving norm
+        itself is available as an ``identity()`` observable expectation.
 
-        Returns a :class:`collections.Counter` keyed by per-site level-label
-        strings in basis site order (e.g. ``"rr"``, ``"1r"`` for a 2-level
-        chain; ``"|"``-joined when level labels are multi-character). Requires a
-        dense final state and the bound system's basis.
+        Fully lazy: weights are computed from ``final_state`` on every call
+        (no cached probability vector).  ``seed`` is a required integer — the
+        same seed always reproduces the same draws.  Outcomes are keyed by
+        per-site level-label strings in basis site order (``"1r"``;
+        ``"|"``-joined when labels are multi-character).
+
+        Only dense (exact-backend) final states can be sampled; tensor-network
+        state handles raise ``TypeError`` (no dense conversion is attempted).
         """
-        basis = getattr(self.system, "basis", None)
-        if basis is None:
-            raise RuntimeError("sample() needs the bound system's basis; use ryd_gate.simulate(...).")
-        probs = self.probabilities()
-        total = probs.sum()
-        if not np.isclose(total, 1.0):
-            probs = probs / total
-        rng = np.random.default_rng(seed)
-        draws = rng.choice(probs.size, size=int(n_shots), p=probs)
+        psi = self.final_state
+        if not isinstance(psi, np.ndarray):
+            raise TypeError(
+                "sample() requires a dense final state; this result holds a "
+                f"{type(psi).__name__} tensor-network handle, which is never "
+                "densified. Request observables at simulate time instead."
+            )
+        if not isinstance(shots, (int, np.integer)) or isinstance(shots, bool) or shots < 1:
+            raise ValueError(f"shots must be a positive integer; got {shots!r}.")
+        if not isinstance(seed, (int, np.integer)) or isinstance(seed, bool):
+            raise TypeError(f"seed must be an integer; got {seed!r}.")
+        weights = np.abs(np.asarray(psi)) ** 2
+        total = weights.sum()
+        if not total > 0.0:
+            raise ValueError("cannot sample from a zero-norm final state.")
+        probs = weights / total
+        rng = np.random.default_rng(int(seed))
+        draws = rng.choice(probs.size, size=int(shots), p=probs)
+        basis = self.basis
         d, n_sites, levels = basis.local_dim, basis.n_sites, basis.local_levels
         joiner = "" if all(len(str(s)) == 1 for s in levels) else "|"
         counts: Counter = Counter()
@@ -90,15 +110,91 @@ class EvolutionResult:
             counts[joiner.join(site_levels)] += 1
         return counts
 
-    def _dense_final(self) -> np.ndarray:
-        psi = self.psi_final
-        if not isinstance(psi, np.ndarray):
-            raise TypeError(
-                "a dense final state vector is not available (the backend returned "
-                f"a {type(psi).__name__} state handle); request named observables via "
-                "simulate(..., observables=[...]) instead."
-            )
-        return psi
+
+def validate_evolution_request(
+    t_gate: float,
+    t_eval,
+    observables,
+    *,
+    t_start: float = 0.0,
+) -> tuple[np.ndarray | None, dict]:
+    """Shared strict preflight for measurement requests (all backends).
+
+    Rules (design: ``t_eval`` decides measurement times only, never the
+    evolution endpoint):
+
+    - ``t_eval=None`` -> measure only at ``t_gate`` (result ``times == [t_gate]``).
+    - explicit ``t_eval``: 1-D, non-empty, finite, strictly increasing, within
+      ``[t_start, t_gate]``; returned to the caller exactly (no auto-appended
+      endpoint in public times).  Boolean ``t_eval`` is a ``TypeError``.
+    - explicit ``t_eval`` with no observables is a ``ValueError`` (nothing to
+      record).
+    - ``observables`` must be ``None`` or a ``dict[str, ObservableExpr]``
+      (string-name lists were removed).
+
+    Returns ``(validated t_eval copy or None, observables dict or {})``.
+    ``t_start`` is the private continuation-seam lower bound (0.0 publicly).
+    """
+    from ryd_gate.core.observables import ObservableExpr
+
+    t_gate = float(t_gate)
+    if not t_gate > 0.0:
+        raise ValueError(f"t_gate must be positive; got {t_gate!r}.")
+
+    if observables is None:
+        obs: dict = {}
+    elif isinstance(observables, dict):
+        for label, expr in observables.items():
+            if not isinstance(label, str):
+                raise TypeError(
+                    f"observable labels must be strings; got {type(label).__name__}."
+                )
+            if not isinstance(expr, ObservableExpr):
+                raise TypeError(
+                    f"observables[{label!r}] must be an ObservableExpr built from "
+                    f"system.observables; got {type(expr).__name__} (string-name "
+                    "observables were removed)."
+                )
+        obs = dict(observables)
+    else:
+        raise TypeError(
+            "observables must be a dict[str, ObservableExpr] or None; got "
+            f"{type(observables).__name__} (string-name lists were removed)."
+        )
+
+    if t_eval is None:
+        return None, obs
+    if isinstance(t_eval, (bool, np.bool_)):
+        raise TypeError(
+            "t_eval must be an array of times or None (boolean t_eval has been removed)."
+        )
+    times = np.array(t_eval, dtype=float, copy=True)
+    if times.ndim != 1:
+        raise ValueError("t_eval must be a one-dimensional array of times.")
+    if times.size == 0:
+        raise ValueError(
+            "explicit t_eval must be non-empty; use t_eval=None for an "
+            "endpoint-only run."
+        )
+    if not np.all(np.isfinite(times)):
+        raise ValueError("t_eval must contain only finite times.")
+    if np.any(np.diff(times) <= 0.0):
+        raise ValueError("t_eval must be strictly increasing (no duplicates).")
+    if times[0] < t_start:
+        raise ValueError(
+            f"t_eval must lie within [{t_start}, t_gate]; got t_eval[0]={times[0]}."
+        )
+    if times[-1] > t_gate and not np.isclose(times[-1], t_gate, rtol=1e-12, atol=0.0):
+        raise ValueError(
+            f"t_eval must lie within [{t_start}, t_gate={t_gate}]; got "
+            f"t_eval[-1]={times[-1]}."
+        )
+    if not obs:
+        raise ValueError(
+            "explicit t_eval requires observables (nothing to record otherwise); "
+            "pass observables={label: expr} or drop t_eval."
+        )
+    return times, obs
 
 
 @dataclass
@@ -135,22 +231,24 @@ class HamiltonianIR:
     params: dict | None = None
 
 
-def compile_hamiltonian_ir(system, params: dict) -> HamiltonianIR:
+def compile_hamiltonian_ir(system) -> HamiltonianIR:
     """Compile a protocol-bound system into the unified Hamiltonian IR.
 
-    Static terms come from ``system.static_hamiltonian_terms`` (a static term is
-    dropped when a protocol drives a channel of the same name).  Drive terms come
-    from ``system.hamiltonian_channels`` keyed by primitive ``E[ket,bra]`` names
-    (per-site ``E[...]_<i>`` resolved via the operator factory); the compiler
-    auto-adds ``conj(coeff)·E[bra,ket]`` for every non-diagonal channel.
+    The bound protocol is fully specified; its normalized quantities are
+    resolved against the system here (``protocol._resolve(system)``), once per
+    compile.  Static terms come from ``system.static_hamiltonian_terms`` (a
+    static term is dropped when a protocol drives a channel of the same name).
+    Drive terms come from ``system.hamiltonian_channels`` keyed by primitive
+    ``E[ket,bra]`` names (per-site ``E[...]_<i>`` resolved via the operator
+    factory); the compiler auto-adds ``conj(coeff)·E[bra,ket]`` for every
+    non-diagonal channel.
     """
-    from ryd_gate.core.level_structures import LevelStructureSpec, split_site_channel
+    from ryd_gate.core.level_structures import split_site_channel
     from ryd_gate.core.operators import BasisOperatorFactory
 
     protocol = system._require_protocol()
-    level_spec = system.meta("level_spec", None)
-    if not isinstance(level_spec, LevelStructureSpec):
-        level_spec = None
+    params = protocol._resolve(system)
+    level_spec = system.level_structure
 
     drive_channel_set = protocol.drive_channels(system)
 
@@ -197,7 +295,7 @@ def compile_hamiltonian_ir(system, params: dict) -> HamiltonianIR:
             )
         )
     if unmapped_channels:
-        level_name = getattr(level_spec, "name", system.meta("level_structure", None))
+        level_name = level_spec.name
         raise ValueError(
             "Protocol/system channel mismatch while compiling HamiltonianIR. "
             f"Protocol {type(protocol).__name__} drives channels that are not "
@@ -209,12 +307,11 @@ def compile_hamiltonian_ir(system, params: dict) -> HamiltonianIR:
     metadata = {
         "compiler": "ryd_gate",
         "t_gate": params["t_gate"],
-        "model_tag": system.model_tag,
+        "model_tag": level_spec.name,
         "n_sites": system.basis.n_sites,
         "local_dim": system.basis.local_dim,
-        "level_structure": getattr(level_spec, "name", system.meta("level_structure", None)),
-        "interaction_pairs": tuple(system.meta("interaction_pairs", ())),
-        "Omega": system.meta("Omega", None),
+        "level_structure": level_spec.name,
+        "interaction_pairs": tuple(system.interaction_pairs),
     }
     return HamiltonianIR(
         static_terms=static_terms,

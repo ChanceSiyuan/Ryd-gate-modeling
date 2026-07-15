@@ -3,23 +3,22 @@
 import numpy as np
 import pytest
 
-from ryd_gate import DEFAULT_C6, RydbergSystem, SweepProtocol
+from ryd_gate import RydbergSystem, SweepProtocol
 from ryd_gate.backends.tn_common.compiler import TNCompiler, tn_lattice_spec_from_system
 from ryd_gate.backends.tn_common.lattice_spec import (
     create_tn_lattice_spec,
     snake_order_mapping,
 )
-from ryd_gate.core.level_structures import InteractionSpec, level_structure
+from ryd_gate.core.level_structures import DEFAULT_C6, InteractionSpec, level_structure
 from ryd_gate.ir import compile_hamiltonian_ir
 from ryd_gate.lattice import Register
 
 
-def _sweep(t_gate=1.0, omega=1.0, delta=0.0, n_steps=200):
+def _sweep(t_gate=1.0, omega=1.0, delta=0.0):
     return SweepProtocol(
         t_gate=t_gate,
         omega_half_fn=lambda t: 0.5 * omega,
         delta_fn=lambda t: delta,
-        n_steps=n_steps,
     )
 
 
@@ -63,7 +62,8 @@ class TestCreateTNLatticeSpec:
         assert spec.V_nn == 24.0
         assert spec.bc == "open"
         assert spec.level_structure == "1r"
-        assert spec.level_spec == level_structure("1r")
+        assert spec.level_spec.name == "1r"
+        assert spec.level_spec.levels == level_structure("1r").levels
         assert spec.interaction_mode == "nnn"
         assert len(spec.snake_to_2d) == 9
         assert len(spec.inv_snake) == 9
@@ -71,12 +71,13 @@ class TestCreateTNLatticeSpec:
     def test_three_level_spec(self):
         spec = create_tn_lattice_spec(Lx=2, Ly=2, level_structure="01r")
         assert spec.level_structure == "01r"
-        assert spec.level_spec == level_structure("01r")
+        assert spec.level_spec.name == "01r"
+        assert spec.level_spec.levels == level_structure("01r").levels
 
     def test_accepts_shared_level_structure_spec(self):
         shared_spec = level_structure("01r")
         spec = create_tn_lattice_spec(Lx=2, Ly=2, level_structure=shared_spec)
-        assert spec.level_spec == shared_spec
+        assert spec.level_spec is shared_spec
 
     def test_invalid_level_structure_raises(self):
         with pytest.raises(ValueError, match="level_structure"):
@@ -131,18 +132,19 @@ class TestCreateTNLatticeSpec:
 
 def test_tn_compiler_uses_system_level_spec_and_interactions():
     proto = _sweep(omega=2.0)
-    system = RydbergSystem.set_atom_level("1r", Omega=2.0).set_atom_geom(
-        Register.rectangle(2, 2, spacing_um=10.0),
+    system = RydbergSystem(
+        level_structure=level_structure("1r"),
+        register=Register.rectangle(2, 2, spacing_um=10.0),
         interaction=InteractionSpec(C6=DEFAULT_C6, mode="nn"),
-    ).set_protocol(proto)
+        protocol=proto,
+    )
 
-    params = system.unpack_params([])
-    ir = TNCompiler().compile(system, params)
+    ir = TNCompiler().compile(system)
 
-    assert ir.spec.level_spec == system.meta("level_spec")
-    assert ir.spec.vdw_pairs == system.meta("interaction_pairs")
+    assert ir.spec.level_spec is system.level_structure
+    assert ir.spec.vdw_pairs == system.interaction_pairs
     assert ir.spec.interaction_mode == "system"
-    assert ir.spec.Omega == 2.0
+    assert ir.spec.Omega == 1.0  # placeholder; the drive amplitude comes from the protocol
     assert ir.hamiltonian is not None
 
 
@@ -151,43 +153,41 @@ def test_incompatible_protocol_level_structure_is_rejected():
     # declare is rejected: 1r has only {E[r,1], E[r,r]} (no |0> level), so a
     # protocol emitting E[r,0] is incompatible.
     class _BadProto:
-        n_params = 0
-
-        def validate_params(self, x):
-            pass
-
-        def unpack_params(self, x, system):
+        def _resolve(self, system):
             return {"t_gate": 0.1, "pin_deltas": {}, "scatter_rates": {}, "static_overlays": []}
 
         def drive_channels(self, system):
             return frozenset({"E[r,0]"})
 
-        def get_drive_coefficients(self, t, params):
+        def get_drive_coefficients(self, t, ctx):
             return {"E[r,0]": 1.0}
 
-    system = RydbergSystem.set_atom_level("1r").set_atom_geom(
-        Register.chain(2, spacing_um=4.0), interaction=InteractionSpec(C6=0.0)
-    ).set_protocol(_BadProto())
-    params = system.unpack_params([])
+    system = RydbergSystem(
+        level_structure=level_structure("1r"),
+        register=Register.chain(2, spacing_um=4.0),
+        interaction=InteractionSpec(C6=0.0),
+        protocol=_BadProto(),
+    )
 
     with pytest.raises(ValueError, match="channel mismatch"):
-        compile_hamiltonian_ir(system, params)
+        compile_hamiltonian_ir(system)
 
 
 def test_unified_hamiltonian_ir_lowers_to_exact_and_tn():
     proto = _sweep(omega=2.0)
-    system = RydbergSystem.set_atom_level("1r", Omega=2.0).set_atom_geom(
-        Register.rectangle(2, 2, spacing_um=10.0),
+    system = RydbergSystem(
+        level_structure=level_structure("1r"),
+        register=Register.rectangle(2, 2, spacing_um=10.0),
         interaction=InteractionSpec(C6=DEFAULT_C6, mode="nn"),
-    ).set_protocol(proto)
-    params = system.unpack_params([])
+        protocol=proto,
+    )
 
-    hamiltonian = compile_hamiltonian_ir(system, params)
+    hamiltonian = compile_hamiltonian_ir(system)
     tn_ir = TNCompiler().compile(hamiltonian)
 
-    from ryd_gate.backends.exact.compiler import ExactSparseCompiler
+    from ryd_gate.backends.exact.compiler import ExactCompiler
 
-    exact_ir = ExactSparseCompiler(max_dim=1000).compile(hamiltonian)
+    exact_ir = ExactCompiler(max_dim=1000).compile(hamiltonian)
 
     assert tn_ir.hamiltonian is hamiltonian
     assert tn_ir.spec.vdw_pairs == hamiltonian.metadata["interaction_pairs"]
@@ -198,8 +198,11 @@ def test_unified_hamiltonian_ir_lowers_to_exact_and_tn():
 
 def test_tn_lattice_spec_from_system_rejects_non_rectangular_geometry():
 
-    system = RydbergSystem.set_atom_level("1r").set_atom_geom(
-        Register.triangular(2, 2), interaction=InteractionSpec(mode="nn")
-    ).set_protocol(_sweep())
+    system = RydbergSystem(
+        level_structure=level_structure("1r"),
+        register=Register.triangular(2, 2),
+        interaction=InteractionSpec(mode="nn"),
+        protocol=_sweep(),
+    )
     with pytest.raises(ValueError, match="rectangular"):
         tn_lattice_spec_from_system(system)

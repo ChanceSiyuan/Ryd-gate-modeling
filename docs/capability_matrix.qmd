@@ -5,18 +5,24 @@ Regenerate with `uv run python docs/_scripts/build_capability_matrix.py`.
 
 
 ## Level structure × backend
-| level structure | exact | mps | peps | stabilizer |
-|---|---|---|---|---|
-| `01` | yes | — | — | yes |
-| `1r` | yes | yes | yes | — |
-| `01r` | yes | yes | yes | — |
-| `analog_3` | yes | yes | yes | — |
-| `rb87_7_mp` | yes | — | — | — |
-| `rb87_7_pm` | yes | — | — | — |
+| level structure | exact_ode | mps | peps |
+|---|---|---|---|
+| `1r` | yes | yes | yes |
+| `01r` | yes | yes | yes |
+| `analog_3` | yes | yes | yes |
+| `rb87_7_mp` | yes | — | — |
+| `rb87_7_pm` | yes | — | — |
+| `rb87_297_clock_4` | yes | — | — |
 
 ## NoiseModel runtime support by backend
-| noise group | exact | mps | peps | stabilizer |
-|---|---|---|---|---|
-| detuning / amplitude / local RIN / position (Monte Carlo) | yes | — | — | — |
-| rydberg / intermediate decay (construction-time) | yes | — | — | — |
-| state-prep / readout / temperature / waist (data only) | — | — | — | — |
+| noise group | exact_ode | mps | peps |
+|---|---|---|---|
+| quasi-static noise: detuning / amplitude / local RIN / position (simulate_ensemble) | yes | — | — |
+| rydberg / intermediate decay (construction-time level model) | yes | — | — |
+
+## Observable expressions by backend
+| backend | `ObservableExpr` capability floor |
+|---|---|
+| exact_ode | all finite structured expressions (local terms, sums, any finite product) |
+| mps | all finite structured expressions (local terms, sums, any finite product) |
+| peps | local terms, sums, and products over at most 2 distinct sites (local / sums / two-point) |

@@ -6,61 +6,24 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ryd_gate.backends.tn_common._expressions import (
+    MPS_MAX_TERM_SITES,
+    preflight_tn_expressions,
+    tn_basis,
+)
 from ryd_gate.backends.tn_common.lattice_spec import TNLatticeSpec
 from ryd_gate.backends.tn_common.protocol_context import (
     analog3_dt_guard,
     merge_pin_deltas,
     pin_deltas_from_params,
+    plan_tn_segments,
+    require_tn_dt,
 )
 from ryd_gate.core.level_structures import (
     three_level_profiles_from_coeffs,
     two_level_drive_and_detuning_from_coeffs,
 )
-from ryd_gate.ir import EvolutionResult
-
-
-def measure_mps_observable(psi_mps: object, spec: TNLatticeSpec, name: str):
-    """Measure a TeNPy MPS observable in register/2D site order."""
-    from .observables import (
-        measure_centerline_connected_zz,
-        measure_level_occupations,
-        measure_mean_rydberg,
-        measure_sigma_z,
-        measure_site_occupations,
-        measure_staggered_magnetization,
-    )
-
-    if name == "m_s":
-        return measure_staggered_magnetization(psi_mps, spec)
-    if name == "n_mean":
-        return measure_mean_rydberg(psi_mps, spec)
-    if name in {"n_i", "n_r"}:
-        return measure_site_occupations(psi_mps, spec)
-    if name in {"sigma_z", "z_i"}:
-        return measure_sigma_z(psi_mps, spec)
-    if name == "czz_centerline":
-        return measure_centerline_connected_zz(psi_mps, spec)
-    if name in {"n_0", "n_1", "n_g", "n_e"}:
-        return measure_level_occupations(psi_mps, spec, name[-1])
-    if name == "sum_nr":
-        return float(sum(
-            float(np.sum(measure_level_occupations(psi_mps, spec, level)))
-            for level in spec.level_spec.rydberg_levels
-        ))
-    if name.startswith("sum_n_"):
-        level = name[len("sum_n_"):]
-        return float(np.sum(measure_level_occupations(psi_mps, spec, level)))
-    if name.startswith("n_"):
-        try:
-            level, site = name[2:].rsplit("_", 1)
-        except ValueError:
-            raise ValueError(f"mps.observable_unsupported: {name}") from None
-        if site.isdecimal():
-            index = int(site)
-            if not 0 <= index < spec.N:
-                raise ValueError(f"mps.observable_unsupported: {name}")
-            return float(measure_level_occupations(psi_mps, spec, level)[index])
-    raise ValueError(f"mps.observable_unsupported: {name}")
+from ryd_gate.ir import EvolutionResult, validate_evolution_request
 
 
 def _require_tenpy():
@@ -96,13 +59,11 @@ class TenpyDMRGBackend:
         svd_min: float = 1e-10,
         n_sweeps: int = 20,
         mixer: bool = True,
-        keep_state: bool = True,
     ) -> None:
         self.chi_max = chi_max
         self.svd_min = svd_min
         self.n_sweeps = n_sweeps
         self.mixer = mixer
-        self.keep_state = keep_state
 
     def find_ground_state(
         self,
@@ -126,8 +87,11 @@ class TenpyDMRGBackend:
         Returns
         -------
         EvolutionResult
-            ``psi_final`` is the TeNPy MPS ground state.
-            ``metadata`` contains ``energy``, ``chi``, ``n_sweeps``.
+            ``final_state`` is the TeNPy MPS ground state.  A ground-state
+            search has no evolution clock, so the result carries the minimal
+            time axis ``times == [0.0]`` and ``expectations == {}``; measure
+            the returned MPS directly.  ``metadata`` contains ``energy``,
+            ``chi``, ``n_sweeps``.
         """
         _require_tenpy()
         from tenpy.algorithms.dmrg import TwoSiteDMRGEngine
@@ -162,11 +126,12 @@ class TenpyDMRGBackend:
             "n_sweeps": eng.sweeps,
             "method": "dmrg",
         }
-        if self.keep_state:
-            metadata["native_state"] = psi
         return EvolutionResult(
-            psi_final=psi,
+            final_state=psi,
+            times=np.array([0.0]),
+            expectations={},
             metadata=metadata,
+            basis=tn_basis(spec),
         )
 
 
@@ -178,7 +143,10 @@ class TenpyTDVPBackend:
     chi_max : int
         Maximum bond dimension (paper uses 1200 for production).
     dt : float
-        Time step in natural units (paper uses 0.2 Omega^-1).
+        Time step (mandatory: ``backend_options={"dt": ...}``).  Between
+        consecutive sampling anchors ``[a, b]`` (the requested ``t_eval``
+        times plus ``t_gate``) the evolution takes ``ceil((b - a) / dt)``
+        equal steps, hitting every anchor exactly.
     svd_min : float
         Truncation cutoff.
     """
@@ -186,21 +154,19 @@ class TenpyTDVPBackend:
     def __init__(
         self,
         chi_max: int = 256,
-        dt: float = 0.2,
+        dt: float | None = None,
         svd_min: float = 1e-10,
-        keep_state: bool = True,
     ) -> None:
         self.chi_max = chi_max
         self.dt = dt
         self.svd_min = svd_min
-        self.keep_state = keep_state
 
     def evolve_ir(
         self,
         ir,
         initial_state: str | np.ndarray | object = "all_ground",
         t_eval: np.ndarray | None = None,
-        observables: list[str] | None = None,
+        observables=None,
     ) -> EvolutionResult:
         """Evolve a compiled TN IR with TeNPy two-site TDVP.
 
@@ -210,162 +176,144 @@ class TenpyTDVPBackend:
         Parameters
         ----------
         ir : TNEvolutionIR
-            Carries the lattice spec, bound protocol, and unpacked params. The
-            protocol supports ``SweepProtocol`` plus ``DigitalAnalogProtocol`` on
-            either the effective ``1r`` TN subspace or explicit ``01r`` levels.
+            Carries the lattice spec, bound protocol, and the resolved context
+            dict. The protocol supports ``SweepProtocol`` plus
+            ``DigitalAnalogProtocol`` on either the effective ``1r`` TN
+            subspace or explicit ``01r`` levels.
         initial_state : str, ndarray, or tenpy MPS
             Initial state; a string/array is built into a product-state MPS via
-            :func:`product_state_mps`, while an existing MPS is used as-is.
+            :func:`product_state_mps`, while an existing MPS is used as-is
+            (the MPS continuation seam).
         t_eval : ndarray or None
-            Times at which to record observables. If None, only the final state is
-            returned.
-        observables : list of str or None
-            Observable names to stream: ``"m_s"``, ``"n_mean"``, ``"n_i"``/``"n_r"``
-            (per-site Rydberg occupations), ``"sigma_z"``/``"z_i"`` (per-site TFIM
-            magnetization), ``"czz_centerline"``, ``"n_0"``, and ``"n_1"``. If None,
-            stores ``"m_s"`` and ``"n_mean"`` when ``t_eval`` is given.
+            Measurement times only — never the evolution endpoint.  ``None``
+            measures at ``t_gate`` (result ``times == [t_gate]``); an explicit
+            array is validated strictly and returned exactly as
+            ``result.times``.
+        observables : dict[str, ObservableExpr] or None
+            Named observable expressions; each becomes a complex array in
+            ``result.expectations`` (raw ``<psi|O|psi>``, one value per entry
+            of ``result.times``).
 
         Returns
         -------
         EvolutionResult
-            ``psi_final`` is the final MPS. ``metadata["obs"]`` contains time-series
-            of requested observables.
+            ``final_state`` is the MPS at the true ``t_gate`` endpoint.
         """
+        spec = ir.spec
+        protocol = ir.protocol
+        params = ir.params
+        t_gate = float(params["t_gate"])
+
+        # Full preflight (times, expressions, step control) before any evolution.
+        times, exprs = validate_evolution_request(t_gate, t_eval, observables)
+        preflight_tn_expressions(exprs, spec, backend="mps", max_term_sites=MPS_MAX_TERM_SITES)
+        dt = require_tn_dt(self.dt)
+        analog3_dt_guard(spec, dt)
+
+        from .observables import lower_expressions
         from .state import product_state_mps
 
         _require_tenpy()
         from tenpy.algorithms.tdvp import TwoSiteTDVPEngine
 
-        from .model import build_tenpy_model
+        out_times = times if times is not None else np.array([t_gate])
+        record_at_start, segments = plan_tn_segments(t_gate, out_times, dt)
 
-        spec = ir.spec
-        protocol = ir.protocol
-        params = ir.params
-        metadata = ir.metadata
         psi0 = (
             initial_state
             if hasattr(initial_state, "expectation_value")
             else product_state_mps(spec, initial_state)
         )
-
-        if observables is None and t_eval is not None:
-            observables = ["m_s", "n_mean"]
-
-        analog3_dt_guard(spec, self.dt)
-        t_gate = params["t_gate"]
-        n_steps = int(np.ceil(t_gate / self.dt))
-        dt_actual = t_gate / n_steps
-
-        # Determine which t_eval indices to record
-        if t_eval is not None:
-            record_at = set()
-            for t_req in t_eval:
-                step = int(round(t_req / dt_actual))
-                step = max(0, min(step, n_steps))
-                record_at.add(step)
-        else:
-            record_at = set()
-
-        # Observable storage
-        obs_data: dict[str, list] = {}
-        if observables:
-            for name in observables:
-                obs_data[name] = []
-        recorded_times: list[float] = []
-
         psi = psi0.copy()
 
-        def record_observables(t_value: float) -> None:
-            recorded_times.append(t_value)
-            for name in observables or []:
-                try:
-                    value = measure_mps_observable(psi, spec, name)
-                except ValueError:
-                    continue
-                if isinstance(value, np.ndarray):
-                    value = value.copy()
-                obs_data[name].append(value)
+        plan = lower_expressions(exprs, spec) if exprs else None
+        records: dict[str, list[complex]] = {label: [] for label in exprs}
 
-        if 0 in record_at and observables:
-            record_observables(0.0)
+        def record() -> None:
+            if plan is None:
+                return
+            for label, value in plan.measure(psi).items():
+                records[label].append(value)
 
-        for k in range(n_steps):
-            t_mid = (k + 0.5) * dt_actual
-            coeffs = protocol.get_drive_coefficients(t_mid, params)
-            if spec.level_structure == "analog_3":
-                # Under the TN context the protocol emits the unitless g-e envelope
-                # on E[e,g]; the model re-applies the full Rabi via local_blocks.
-                model = build_tenpy_model(
-                    spec, Delta=0.0,
-                    drive_420_coeff=complex(coeffs.get("E[e,g]", 0.0)),
-                )
-            elif spec.level_structure == "01r":
-                profiles = three_level_profiles_from_coeffs(coeffs, spec)
-                pin = pin_deltas_from_params(params, spec.N)
-                if pin is not None:
-                    profiles["delta_R"] = profiles["delta_R"] + pin
-                model = build_tenpy_model(spec, Delta=0.0, **profiles)
-            else:
-                Omega_t, Delta_t, channel_pin_deltas = (
-                    two_level_drive_and_detuning_from_coeffs(coeffs, spec)
-                )
+        tdvp_params = {
+            "trunc_params": {
+                "chi_max": self.chi_max,
+                "svd_min": self.svd_min,
+            },
+        }
 
-                pin_deltas = merge_pin_deltas(
-                    pin_deltas_from_params(params, spec.N),
-                    channel_pin_deltas,
-                    n_sites=spec.N,
-                )
+        if record_at_start:
+            record()
+        n_steps = 0
+        for segment in segments:
+            for k in range(segment.n_sub):
+                t_mid = segment.t0 + (k + 0.5) * segment.dt_sub
+                model = _build_step_model(spec, protocol, params, t_mid)
+                eng = TwoSiteTDVPEngine(psi, model, tdvp_params)
+                eng.evolve(1, segment.dt_sub)
+                n_steps += 1
+            if segment.record:
+                record()
 
-                model = build_tenpy_model(spec, Delta_t, Omega=Omega_t,
-                                          pin_deltas=pin_deltas)
-
-            tdvp_params = {
-                "trunc_params": {
-                    "chi_max": self.chi_max,
-                    "svd_min": self.svd_min,
-                },
-            }
-
-            eng = TwoSiteTDVPEngine(psi, model, tdvp_params)
-            eng.evolve(1, dt_actual)
-
-            # Record observables if this step is requested
-            step_num = k + 1
-            if step_num in record_at and observables:
-                record_observables(step_num * dt_actual)
-
-        # Convert to arrays
-        for name in obs_data:
-            obs_data[name] = np.array(obs_data[name])
-
+        expectations = {
+            label: np.asarray(values, dtype=complex) for label, values in records.items()
+        }
         metadata_out = {
-            **(metadata or {}),
+            **(ir.metadata or {}),
             "method": "mps_tdvp",
             "backend": "mps",
             "engine_package": "tenpy",
             "chi_max": self.chi_max,
-            "dt": dt_actual,
+            "dt": dt,
             "n_steps": n_steps,
-            "obs": obs_data,
         }
-        if self.keep_state:
-            metadata_out["native_state"] = psi
-        result = EvolutionResult(
-            psi_final=psi,
+        return EvolutionResult(
+            final_state=psi,
+            times=out_times,
+            expectations=expectations,
             metadata=metadata_out,
+            basis=tn_basis(spec),
         )
-        if recorded_times:
-            result.times = np.array(recorded_times)
 
-        return result
+
+def _build_step_model(spec: TNLatticeSpec, protocol, params: dict, t_mid: float):
+    """The piecewise-constant TeNPy model for one TDVP step (coefficients at ``t_mid``)."""
+    from .model import build_tenpy_model
+
+    coeffs = protocol.get_drive_coefficients(t_mid, params)
+    if spec.level_structure == "analog_3":
+        # Under the TN context the protocol emits the unitless g-e envelope
+        # on E[e,g]; the model re-applies the full Rabi via local_blocks.
+        return build_tenpy_model(
+            spec, Delta=0.0,
+            drive_420_coeff=complex(coeffs.get("E[e,g]", 0.0)),
+        )
+    if spec.level_structure == "01r":
+        profiles = three_level_profiles_from_coeffs(coeffs, spec)
+        pin = pin_deltas_from_params(params, spec.N)
+        if pin is not None:
+            # A pin adds to the Rydberg detuning, i.e. subtracts energy.
+            profiles["energy_r"] = profiles["energy_r"] - pin
+        return build_tenpy_model(spec, Delta=0.0, **profiles)
+
+    Omega_t, Delta_t, channel_pin_deltas = (
+        two_level_drive_and_detuning_from_coeffs(coeffs, spec)
+    )
+    pin_deltas = merge_pin_deltas(
+        pin_deltas_from_params(params, spec.N),
+        channel_pin_deltas,
+        n_sites=spec.N,
+    )
+    return build_tenpy_model(spec, Delta_t, Omega=Omega_t, pin_deltas=pin_deltas)
 
 
 @dataclass(frozen=True)
 class TenpyOptions:
     """Options for ``backend="mps"`` TDVP/DMRG evolution.
 
-    ``None`` means "use the backend default". ``dt`` and ``chi_max`` apply to
-    TDVP; ``n_sweeps`` and ``mixer`` apply to DMRG ground-state search.
+    ``None`` means "use the backend default". ``dt`` (mandatory step control
+    for TDVP evolution) and ``chi_max`` apply to TDVP; ``n_sweeps`` and
+    ``mixer`` apply to DMRG ground-state search.
     """
 
     chi_max: int | None = None

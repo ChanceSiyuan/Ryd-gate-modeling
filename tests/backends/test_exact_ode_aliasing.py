@@ -1,33 +1,36 @@
 """exact_ode backend: alias-free intermediate-state population.
 
-The piecewise-constant ``expm`` backends freeze the drive over ``dt = t_gate/n_steps``
-and undersample the fast ~GHz ``|0>->e`` / ``|1>->e`` optical coherence. When that
-coherence is commensurate with the step rate --- ``(Delta_e + eps0) * t_gate / n_steps``
-near an integer --- the aliased phase adds coherently and spuriously pumps the
-spectator ``|0>`` into the ``6P`` manifold (peak ``n_e`` jumps ~40x, can exceed 1).
-The adaptive ``exact_ode`` (scipy DOP853) integrator resolves that phase internally, so
-it is immune. These tests pin the bug in the expm backend and the immunity in the ODE
-backend on a short single-atom pulse (kept small so the ODE run is a few seconds).
+The adaptive ``exact_ode`` (scipy DOP853) integrator resolves the fast ~GHz
+``|0>->e`` / ``|1>->e`` optical coherence internally with error control, so the
+spectator ``|0>`` only picks up the true off-resonant 6P admixture (peak
+``n_e`` ~ 1e-3 at this operating point).  The deleted piecewise-``expm``
+solvers froze the drive over fixed steps and, when the optical phase was
+commensurate with the step rate, aliased it into spurious resonant pumping of
+``|0>`` into the 6P manifold (peak ``n_e`` jumped ~40x, could exceed 1).  This
+test pins the clean band the ODE backend guarantees, on a short single-atom
+pulse (kept small so the run is a few seconds).
 """
 
 import numpy as np
 
 import ryd_gate as rg
-from ryd_gate.gates import CZProtocol, phase_from_chirp
 from ryd_gate.lattice import Register
 from ryd_gate.physics import our_laser_rabis
+from ryd_gate.protocols import CZProtocol
+from ryd_gate.protocols.gate_cz import cz_effective_rabi, phase_from_chirp
 
-# Delta_e + eps0 = 13.165 + 6.835 = 20.0 GHz exactly, so the |0>->e optical cycle
-# count over the gate is (20 GHz)(0.05 us) = 1000. n_steps that divide 1000 are
-# commensurate (aliasing spikes); others are clean.
+# Delta_e + eps0 = 13.165 + 6.835 = 20.0 GHz exactly, so the |0>->e optical
+# cycle count over the gate is (20 GHz)(0.05 us) = 1000 — the operating point
+# where the old fixed-step solvers aliased worst.
 _DELTA_E_HZ = 13.165e9
 _T_GATE = 0.05e-6
 _D_SWEEP_HZ = 20e6
 _OPTICS_LOSS = 0.9
 _RYD_LEVEL = 70
 _BEAM_AREA_UM2 = 7 * 20 * 3.0
-# single-atom projector onto e1,e2,e3 in the [0,1,e1,e2,e3,r,r_garb] basis
-_OCC_E = np.diag([0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0]).astype(complex)
+# Fine fixed sampling for the chirp-integral 420 phase (interpolation accuracy
+# only; the ODE solver itself is adaptive).
+_N_CHIRP_SAMPLES = 4 * 1373 + 1
 
 
 def _smooth_env(t, t_gate, ramp=0.15):
@@ -40,7 +43,7 @@ def _smooth_env(t, t_gate, ramp=0.15):
     return 1.0
 
 
-def _cz_system(n_steps):
+def _cz_system():
     """Single-atom rb87_7 CZ pulse (quintic envelope + Stark-compensated chirp)."""
     T = _T_GATE
     Delta_e = 2 * np.pi * _DELTA_E_HZ
@@ -58,61 +61,39 @@ def _cz_system(n_steps):
         a = np.sqrt(env(t))
         return base_chirp(t) + dr * a * a - d1 * a * a
 
-    phi = phase_from_chirp(chirp, t_gate=T, n_samples=4 * n_steps + 1)
+    phi = phase_from_chirp(chirp, t_gate=T, n_samples=_N_CHIRP_SAMPLES)
+    system = rg.RydbergSystem(
+        level_structure=rg.level_structure(
+            "rb87_7_mp", detuning_sign=1, Delta_Hz=_DELTA_E_HZ, magnetic_field_G=20.0
+        ),
+        register=Register.chain(1, spacing_um=3.0),
+    )
+    _, time_scale = cz_effective_rabi(system, omega_420, omega_1013)
     proto = CZProtocol(
-        t_gate=T,
+        duration_ratio=T / time_scale,
         A_420=lambda s: np.sqrt(env(float(np.clip(s, 0.0, 1.0)) * T)),
         phi_420=lambda s: phi(float(np.clip(s, 0.0, 1.0)) * T),
         A_1013=lambda s: np.sqrt(env(float(np.clip(s, 0.0, 1.0)) * T)),
         phi_1013=lambda s: 0.0,
-        omega_420_max=omega_420, omega_1013_max=omega_1013, n_steps=n_steps,
+        omega_420_max=omega_420, omega_1013_max=omega_1013,
     )
-    return (
-        rg.RydbergSystem
-        .set_atom_level("rb87_7_mp", detuning_sign=1, Delta_Hz=_DELTA_E_HZ, magnetic_field_G=20.0)
-        .set_atom_geom(Register.chain(1, spacing_um=3.0))
-        .with_protocol(proto)
-    )
+    return system.with_protocol(proto)
 
 
-def _peak_ne_zero(backend, n_steps):
+def _peak_ne_zero():
     """Peak intermediate-state population for the spectator |0> input."""
-    system = _cz_system(n_steps)
+    system = _cz_system()
+    obs = system.observables
+    n_e = obs.level_sum("e1") + obs.level_sum("e2") + obs.level_sum("e3")
     t_eval = np.linspace(0.0, _T_GATE, 201)
-    opts = {"n_steps": n_steps} if backend != "exact_ode" else None
-    res = rg.simulate(system, psi0=[["0"]], backend=backend, t_eval=t_eval, backend_options=opts)
+    res = rg.simulate(system, [["0"]], t_eval=t_eval, observables={"n_e": n_e})
     r = res[0] if isinstance(res, list) else res
-    ne = np.array([np.real(np.vdot(p, _OCC_E @ p)) for p in r.states])
+    ne = np.real(r.expectation("n_e"))
     return float(ne.max())
 
 
-def test_expm_aliasing_spike_at_commensurate_n_steps():
-    """The bug: commensurate n_steps (100, m=10) spikes; non-commensurate (137) is clean."""
-    ne_commensurate = _peak_ne_zero("exact_dense", 100)
-    ne_clean = _peak_ne_zero("exact_dense", 137)
-    assert ne_commensurate > 0.1      # spurious resonant pumping of |0> into 6P
-    assert ne_clean < 0.01
-    assert ne_commensurate > 20 * ne_clean
-
-
 def test_exact_ode_is_alias_free():
-    """The fix: exact_ode stays small at an n_steps where expm spikes, and matches
-    the non-commensurate expm reference (the true off-resonant admixture)."""
-    ne_ode = _peak_ne_zero("exact_ode", 100)          # would spike on expm
-    ne_expm_clean = _peak_ne_zero("exact_dense", 137)  # true value
+    """The spectator |0> stays in the true off-resonant admixture band (< 1e-2)
+    at the operating point where the deleted expm solvers spiked above 0.1."""
+    ne_ode = _peak_ne_zero()
     assert ne_ode < 0.01
-    assert abs(ne_ode - ne_expm_clean) < 3e-3
-
-
-def test_exact_ode_matches_converged_expm_final_state():
-    """Correctness: as the expm step count grows the piecewise-constant solver converges
-    to the ODE result. At a well-resolved, non-commensurate n_steps the driven |1> final
-    state agrees to ~1e-7 (fidelity 0.99896 at n_steps=137 -> 0.99999994 at 1373)."""
-    system = _cz_system(1373)
-    r_ode = rg.simulate(system, psi0=[["1"]], backend="exact_ode")
-    r_expm = rg.simulate(system, psi0=[["1"]], backend="exact_dense",
-                         backend_options={"n_steps": 1373})
-    a = (r_ode[0] if isinstance(r_ode, list) else r_ode).psi_final
-    b = (r_expm[0] if isinstance(r_expm, list) else r_expm).psi_final
-    fidelity = abs(np.vdot(a, b)) ** 2 / (np.vdot(a, a).real * np.vdot(b, b).real)
-    assert fidelity > 0.9999

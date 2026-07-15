@@ -19,19 +19,25 @@ import time as _time
 
 import matplotlib.pyplot as plt
 import numpy as np
-
-from ryd_gate.analysis.coarsening import (
+from _coarsening import (
     build_neighbor_lists,
     coarsegrained_boundary_mask,
     correct_single_spin_flips,
     identify_domains,
 )
+
 from ryd_gate.backends.tenpy_mps.observables import (
     measure_mean_rydberg,
     measure_site_occupations,
     measure_staggered_magnetization,
 )
-from ryd_gate.backends.tn_common import create_tn_lattice_spec, simulate_tn
+from ryd_gate.backends.tn_common import create_tn_lattice_spec
+
+# simulate_tn is a private module function (no public package export); this
+# demo drives the TN engine directly from a lattice spec, a research seam.
+from ryd_gate.backends.tn_common.simulate import simulate_tn
+from ryd_gate.core.model import BasisSpec
+from ryd_gate.core.observables import ObservableFactory
 from ryd_gate.core.states import domain_config
 from ryd_gate.protocols.sweep import SweepProtocol
 
@@ -70,6 +76,28 @@ def _make_sweep_protocol(delta_start, delta_end, t_gate, *, addressing=None):
     )
 
 
+def _hold_observables(spec):
+    """``m_s`` and ``n_mean`` as ObservableExpr, matching the old definitions.
+
+    ``m_s = (1/N) sum_i s_i (2 n_i - 1)``; ``n_mean = (1/N) sum_i n_i``
+    (site indices/weights in 2D site order, per ``spec.sublattice``).
+    """
+    levels = spec.level_spec.levels
+    basis = BasisSpec(
+        site_labels=tuple(str(i) for i in range(spec.N)),
+        local_levels=levels,
+        local_dim=len(levels),
+        total_dim=len(levels) ** spec.N,
+    )
+    obs = ObservableFactory(basis)
+    signs = np.asarray(spec.sublattice, dtype=float)
+    m_s = (2.0 / spec.N) * obs.weighted_level_sum("r", signs) + (
+        -float(signs.sum()) / spec.N
+    ) * obs.identity()
+    n_mean = (1.0 / spec.N) * obs.level_sum("r")
+    return {"m_s": m_s, "n_mean": n_mean}
+
+
 # ---------------------------------------------------------------------------
 # Experiment 1: Domain shrinking (TN)
 # ---------------------------------------------------------------------------
@@ -97,12 +125,11 @@ def run_domain_shrinking_tn(spec, args):
     sweep_result = simulate_tn(
         spec,
         sweep_proto,
-        [],
         initial_state="all_ground",
         method="tdvp",
         backend_options={"chi_max": args.chi_max, "dt": args.dt},
     )
-    psi_after_sweep = sweep_result.psi_final
+    psi_after_sweep = sweep_result.final_state  # backend-native MPS handle
     print(f"    Sweep done in {_time.time() - t0:.1f}s")
 
     ms_sw = measure_staggered_magnetization(psi_after_sweep, spec)
@@ -118,26 +145,26 @@ def run_domain_shrinking_tn(spec, args):
     t_eval = np.linspace(0, t_hold, n_eval)
 
     t0 = _time.time()
+    # The MPS handle from the sweep passes straight through as the next
+    # initial_state (TN continuation seam).
     hold_result = simulate_tn(
         spec,
         hold_proto,
-        [],
         initial_state=psi_after_sweep,
         method="tdvp",
         t_eval=t_eval,
-        observables=["m_s", "n_mean"],
+        observables=_hold_observables(spec),
         backend_options={"chi_max": args.chi_max, "dt": args.dt},
     )
     print(f"    Hold evolution done in {_time.time() - t0:.1f}s")
 
-    obs = hold_result.metadata.get("obs", {})
     hold_times = hold_result.times
-    ms = obs.get("m_s", np.array([]))
-    n_mean = obs.get("n_mean", np.array([]))
+    ms = hold_result.expectation("m_s").real
+    n_mean = hold_result.expectation("n_mean").real
 
     # --- Post-processing on final state ---
     print("  Post-processing (coarsening analysis on final state)...")
-    occ_final = measure_site_occupations(hold_result.psi_final, spec)
+    occ_final = measure_site_occupations(hold_result.final_state, spec)
     occ_bin = (occ_final > 0.5).astype(float)
     nn_lists, nnn_lists = build_neighbor_lists(spec.coords)
     occ_corr = correct_single_spin_flips(occ_bin, spec.sublattice, nn_lists, nnn_lists)
@@ -164,16 +191,14 @@ def run_domain_shrinking_tn(spec, args):
     axes[0, 1].set_title(f"Boundaries ({n_domains} domains)")
 
     # Bottom-left: staggered magnetization over time
-    if len(ms) > 0 and hold_times is not None:
-        axes[1, 0].plot(hold_times, ms, "b-", lw=1.5)
+    axes[1, 0].plot(hold_times, ms, "b-", lw=1.5)
     axes[1, 0].set_xlabel("Hold time ($1/\\Omega$)")
     axes[1, 0].set_ylabel("$m_s$")
     axes[1, 0].set_title("Staggered magnetization")
     axes[1, 0].axhline(0, color="gray", ls="--", lw=0.5)
 
     # Bottom-right: mean Rydberg fraction over time
-    if len(n_mean) > 0 and hold_times is not None:
-        axes[1, 1].plot(hold_times, n_mean, "g-", lw=1.5)
+    axes[1, 1].plot(hold_times, n_mean, "g-", lw=1.5)
     axes[1, 1].set_xlabel("Hold time ($1/\\Omega$)")
     axes[1, 1].set_ylabel("$\\langle n \\rangle$")
     axes[1, 1].set_title("Mean Rydberg fraction")
@@ -212,12 +237,11 @@ def run_higgs_mode_tn(spec, args):
         sweep_result = simulate_tn(
             spec,
             sweep_proto,
-            [],
             initial_state="all_ground",
             method="tdvp",
             backend_options={"chi_max": args.chi_max, "dt": args.dt},
         )
-        psi = sweep_result.psi_final
+        psi = sweep_result.final_state  # backend-native MPS handle
         ms_sw = measure_staggered_magnetization(psi, spec)
         print(f"    Sweep: {_time.time() - t0:.1f}s, m_s = {ms_sw:.4f}")
 
@@ -227,23 +251,22 @@ def run_higgs_mode_tn(spec, args):
         t_eval = np.linspace(0, t_hold, n_eval)
 
         t0 = _time.time()
+        # MPS-handle passthrough: the sweep's final_state seeds the hold run.
         hold_result = simulate_tn(
             spec,
             hold_proto,
-            [],
             initial_state=psi,
             method="tdvp",
             t_eval=t_eval,
-            observables=["m_s", "n_mean"],
+            observables=_hold_observables(spec),
             backend_options={"chi_max": args.chi_max, "dt": args.dt},
         )
         print(f"    Hold: {_time.time() - t0:.1f}s")
 
-        obs = hold_result.metadata.get("obs", {})
         all_results[Delta_f] = {
             "times": hold_result.times,
-            "ms": obs.get("m_s", np.array([])),
-            "n_mean": obs.get("n_mean", np.array([])),
+            "ms": hold_result.expectation("m_s").real,
+            "n_mean": hold_result.expectation("n_mean").real,
         }
 
     # --- Plotting ---
@@ -253,8 +276,7 @@ def run_higgs_mode_tn(spec, args):
     ax = axes[0]
     for Delta_f, color in zip(Delta_values, colors):
         r = all_results[Delta_f]
-        if len(r["ms"]) > 0 and r["times"] is not None:
-            ax.plot(r["times"], r["ms"], color=color, lw=1.2, label=f"$\\Delta/\\Omega$ = {Delta_f:.1f}")
+        ax.plot(r["times"], r["ms"], color=color, lw=1.2, label=f"$\\Delta/\\Omega$ = {Delta_f:.1f}")
     ax.set_xlabel("Hold time ($1/\\Omega$)")
     ax.set_ylabel("Staggered magnetization $m_s$")
     ax.set_title("Order parameter oscillations")
@@ -264,7 +286,7 @@ def run_higgs_mode_tn(spec, args):
     ax = axes[1]
     for Delta_f, color in zip(Delta_values, colors):
         r = all_results[Delta_f]
-        if len(r["ms"]) < 4 or r["times"] is None:
+        if len(r["ms"]) < 4:
             continue
         ms_centered = r["ms"] - np.mean(r["ms"])
         dt = r["times"][1] - r["times"][0]

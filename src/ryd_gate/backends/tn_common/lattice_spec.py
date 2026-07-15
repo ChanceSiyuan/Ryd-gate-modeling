@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ryd_gate.core.level_structures import LevelStructureSpec
+from ryd_gate.core.level_structures import LevelStructure
 
 from .sites import resolve_level_structure
 
@@ -102,7 +102,7 @@ class TNLatticeSpec:
         ``inv_snake[i_2d] = i_1d``.
     bc : str
         Boundary conditions: ``"open"`` or ``"periodic"``.
-    level_spec : LevelStructureSpec
+    level_spec : LevelStructure
         Shared central local level structure used by the exact sparse path
         and lowered here to TeNPy site/MPO data.
     interaction_mode : str
@@ -122,7 +122,7 @@ class TNLatticeSpec:
     vdw_pairs: tuple
     V_nn: float
     Omega: float
-    level_spec: LevelStructureSpec
+    level_spec: LevelStructure
     snake_to_2d: np.ndarray
     inv_snake: np.ndarray
     bc: str = "open"
@@ -143,7 +143,7 @@ def create_tn_lattice_spec(
     V_nn: float = 24.0,
     Omega: float = 1.0,
     bc: str = "open",
-    level_structure: str | LevelStructureSpec = "1r",
+    level_structure: str | LevelStructure = "1r",
     interaction_mode: str = "nnn",
     ordering: str = "snake",
     bc_y: str = "open",

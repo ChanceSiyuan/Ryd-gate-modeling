@@ -1,7 +1,6 @@
 """TeNPy MPS DMRG/TDVP backend and MPS helpers."""
 
 from ryd_gate.backends.tn_common.compiler import (
-    TNCompiler,
     TNEvolutionIR,
     tn_lattice_spec_from_hamiltonian_ir,
     tn_lattice_spec_from_system,
@@ -28,7 +27,6 @@ __all__ = [
     "TenpyDMRGBackend",
     "TenpyTDVPBackend",
     "TenpyOptions",
-    "TNCompiler",
     "TNEvolutionIR",
     "build_tenpy_model",
     "domain_state_mps",

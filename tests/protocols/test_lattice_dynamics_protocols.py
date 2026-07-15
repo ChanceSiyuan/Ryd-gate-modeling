@@ -5,17 +5,19 @@ from ryd_gate import (
     RydbergSystem,
     TFIMAnnealProtocol,
     TFIMQuenchProtocol,
+    level_structure,
 )
-from ryd_gate.backends.exact.compiler import compile_expm_ir
+from ryd_gate.backends.exact.compiler import _compile_exact_ir
 from ryd_gate.ir import compile_hamiltonian_ir
 from ryd_gate.lattice import Register
-from ryd_gate.protocols import tfim_to_rydberg_controls
 from ryd_gate.protocols.base import Protocol
+from ryd_gate.protocols.lattice_dynamics import tfim_to_rydberg_controls
 
 
 def _nn_square_system(L=2):
-    return RydbergSystem.set_atom_level("1r", Omega=1.0).set_atom_geom(
-        Register.rectangle(L, L, spacing_um=1.0),
+    return RydbergSystem(
+        level_structure=level_structure("1r"),
+        register=Register.rectangle(L, L, spacing_um=1.0),
         interaction=InteractionSpec(C6=4.0, mode="nn"),
     )
 
@@ -44,7 +46,7 @@ def test_tfim_to_rydberg_controls_compensates_open_boundary_shifts():
 def test_tfim_quench_protocol_emits_existing_lattice_channels():
     system = _nn_square_system(2).with_protocol(TFIMQuenchProtocol(hx=0.75, hz=0.0, t_gate=1.25))
 
-    params = system.unpack_params([])
+    params = system.protocol._resolve(system)
     coeffs = system.protocol.get_drive_coefficients(0.5, params)
 
     assert params["t_gate"] == 1.25
@@ -63,7 +65,7 @@ def test_tfim_anneal_protocol_piecewise_schedule():
         t_fall=1.5,
     )
 
-    params = proto.unpack_params([], system)
+    params = proto._resolve(system)
 
     assert np.isclose(proto.hx_at(0.0), 0.0)
     assert np.isclose(proto.hx_at(1.5), 3.0)
@@ -76,32 +78,26 @@ def test_tfim_anneal_protocol_piecewise_schedule():
 def test_exact_compiler_accepts_site_dependent_detuning_channels():
     class SiteDetuningProtocol(Protocol):
         @property
-        def n_params(self):
-            return 0
-
-        @property
         def required_channels(self):
             return frozenset({"E[r,r]_0", "E[r,r]_1"})
 
         def drive_channels(self, system):
             return self.required_channels
 
-        def validate_params(self, x):
-            if x:
-                raise ValueError
-
-        def unpack_params(self, x, system):
+        def _resolve(self, system):
             return {"t_gate": 1.0}
 
-        def get_drive_coefficients(self, t, params):
+        def get_drive_coefficients(self, t, ctx):
             return {"E[r,r]_0": -1.0, "E[r,r]_1": -2.0}
 
-    system = RydbergSystem.set_atom_level("1r").set_atom_geom(
-        Register.rectangle(1, 2, spacing_um=1.0),
+    system = RydbergSystem(
+        level_structure=level_structure("1r"),
+        register=Register.rectangle(1, 2, spacing_um=1.0),
         interaction=InteractionSpec(C6=0.0, mode="nn"),
-    ).set_protocol(SiteDetuningProtocol())
+        protocol=SiteDetuningProtocol(),
+    )
 
-    ham = compile_hamiltonian_ir(system, system.unpack_params([]))
-    ir = compile_expm_ir(ham)
+    ham = compile_hamiltonian_ir(system)
+    ir = _compile_exact_ir(ham)
 
     assert {term.name for term in ir.drive_terms} == {"E[r,r]_0", "E[r,r]_1"}

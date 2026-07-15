@@ -8,18 +8,25 @@ from typing import Any
 
 import numpy as np
 
-from ryd_gate.analysis.observables import line_pairs_from_reference
+from ryd_gate.backends.tn_common._expressions import (
+    PEPS_MAX_TERM_SITES,
+    preflight_tn_expressions,
+    tn_basis,
+)
 from ryd_gate.backends.tn_common.initial_state import level_labels
 from ryd_gate.backends.tn_common.protocol_context import (
+    TNSegment,
     analog3_dt_guard,
     merge_pin_deltas,
     pin_deltas_from_params,
+    plan_tn_segments,
+    require_tn_dt,
 )
 from ryd_gate.core.level_structures import (
     three_level_profiles_from_coeffs,
     two_level_drive_and_detuning_from_coeffs,
 )
-from ryd_gate.ir import EvolutionResult
+from ryd_gate.ir import EvolutionResult, validate_evolution_request
 
 
 class YASTNPEPSError(RuntimeError):
@@ -36,7 +43,7 @@ class YASTNPEPSBackend:
     """
 
     chi_max: int = 64
-    dt: float = 0.05
+    dt: float | None = None
     svd_min: float = 1e-10
     use_cuda: bool = False
     yastn_backend: str | None = None
@@ -61,15 +68,31 @@ class YASTNPEPSBackend:
         ir,
         initial_state: str | np.ndarray | object = "all_ground",
         t_eval: np.ndarray | None = None,
-        observables: list[str] | None = None,
+        observables=None,
     ) -> EvolutionResult:
+        """Evolve a compiled TN IR with YASTN finite-PEPS Trotter steps.
+
+        ``t_eval`` selects measurement times only (never the evolution
+        endpoint) and is returned exactly as ``result.times``; ``observables``
+        is a ``dict[str, ObservableExpr]``.  PEPS expectations are evaluated at
+        the BP/CTM environment fixed point, i.e. environment-normalized; PEPS
+        evolution is Hermitian-only, so the survival norm is identically 1 and
+        normalized values coincide with the raw ``<psi|O|psi>`` contract.
+        """
+        spec = ir.spec
+        t_gate = float(ir.params["t_gate"])
+        times, exprs = validate_evolution_request(t_gate, t_eval, observables)
+        preflight_tn_expressions(exprs, spec, backend="peps", max_term_sites=PEPS_MAX_TERM_SITES)
+        dt = require_tn_dt(self.dt)
+        analog3_dt_guard(spec, dt)
+        out_times = times if times is not None else np.array([t_gate])
+        record_at_start, segments = plan_tn_segments(t_gate, out_times, dt)
+
         yastn, fpeps, gates, cfg = self._load_yastn()
         payload = build_yastn_peps_payload(
             ir,
             initial_state=initial_state,
-            t_eval=t_eval,
-            observables=observables,
-            dt=self.dt,
+            segments=segments,
             chi_max=self.chi_max,
             svd_min=self.svd_min,
             use_cuda=self.use_cuda,
@@ -81,27 +104,26 @@ class YASTNPEPSBackend:
             boundary="obc",
         )
         psi = _yastn_product_peps(fpeps, geom, ops, payload)
-        if observables is None and t_eval is not None:
-            observables = ["n_mean", "n_r"]
-        obs_data = {name: [] for name in observables or []}
-        recorded_times: list[float] = []
-        record_steps = set(int(step) for step in payload["record_steps"])
+
+        lowered, has_pair_terms = _lower_peps_expressions(exprs, ops, int(spec.Ly))
+        records: dict[str, list[complex]] = {label: [] for label in exprs}
+        measurement_env_info: list[dict] = []
         truncation_error = []
         infoss = []
 
-        def record(t_value: float) -> None:
-            if not observables:
+        def record() -> None:
+            if not exprs:
                 return
-            recorded_times.append(float(t_value))
-            measured = _measure_yastn(
-                fpeps, psi, ops, payload, observables, self.measurement_environment,
+            measured, env_info = _measure_lowered_peps(
+                fpeps, psi, lowered, self.measurement_environment,
                 ctm_chi=self._ctm_chi(), ctm_iters=int(self.ctm_iters), ctm_tol=float(self.ctm_tol),
             )
-            for name, value in measured.items():
-                obs_data[name].append(value)
+            measurement_env_info.append(env_info)
+            for label, value in measured.items():
+                records[label].append(value)
 
-        if 0 in record_steps:
-            record(0.0)
+        if record_at_start:
+            record()
 
         opts_svd = {"D_total": int(self.chi_max), "tol": float(self.svd_min)}
         env = _make_update_env(fpeps, psi, self.update_environment, opts_svd=opts_svd)
@@ -110,7 +132,7 @@ class YASTNPEPSBackend:
             env.update_(dict(opts_svd))
             opts_post_truncation = {"opts_svd": dict(opts_svd)}
         for step_data in payload["schedule"]:
-            step_gates = _yastn_gates(gates, ops, payload, step_data, float(payload["runtime"]["dt"]))
+            step_gates = _yastn_gates(gates, ops, payload, step_data, float(step_data["dt"]))
             infos = fpeps.evolution_step_(
                 env,
                 step_gates,
@@ -123,12 +145,12 @@ class YASTNPEPSBackend:
             infoss.append(infos)
             truncation_error.append(max((float(getattr(info, "truncation_error", 0.0)) for info in infos), default=0.0))
             psi = env.psi
-            step = int(step_data["step"])
-            if step in record_steps:
-                record(step * float(payload["runtime"]["dt"]))
+            if step_data["record"]:
+                record()
 
-        for name in obs_data:
-            obs_data[name] = np.asarray(obs_data[name])
+        expectations = {
+            label: np.asarray(values, dtype=complex) for label, values in records.items()
+        }
 
         accumulated_truncation_error = None
         if infoss and hasattr(fpeps, "accumulated_truncation_error"):
@@ -137,34 +159,42 @@ class YASTNPEPSBackend:
             except Exception:
                 accumulated_truncation_error = None
 
-        result = EvolutionResult(
-            psi_final=psi,
-            metadata={
-                **(ir.metadata or {}),
-                "backend": "peps",
-                "method": "peps_yastn",
-                "engine_package": "yastn",
-                "algorithm": f"fpeps_{self.update_environment}",
-                "level_structure": payload["lattice"]["level_structure"],
-                "local_dim": int(payload["lattice"]["local_dim"]),
-                "measurement_environment": self.measurement_environment,
-                "accelerator": "cuda" if self._uses_cuda else "cpu",
-                "gpu": bool(self._uses_cuda),
-                "yastn_backend": self._selected_backend,
-                "device": self._selected_device,
-                "chi_max": int(self.chi_max),
-                "dt": float(payload["runtime"]["dt"]),
-                "n_steps": int(payload["runtime"]["n_steps"]),
-                "svd_min": float(self.svd_min),
-                "truncation_error": np.asarray(truncation_error, dtype=float),
-                "accumulated_truncation_error": accumulated_truncation_error,
-                "max_truncation_error": max(truncation_error, default=0.0),
-                "obs": obs_data,
-            },
+        metadata = {
+            **(ir.metadata or {}),
+            "backend": "peps",
+            "method": "peps_yastn",
+            "engine_package": "yastn",
+            "algorithm": f"fpeps_{self.update_environment}",
+            "level_structure": payload["lattice"]["level_structure"],
+            "local_dim": int(payload["lattice"]["local_dim"]),
+            "measurement_environment": self.measurement_environment,
+            "ctm_chi": self._ctm_chi(),
+            "ctm_iters": int(self.ctm_iters),
+            "ctm_tol": float(self.ctm_tol),
+            "measurement_env_info": measurement_env_info,
+            "accelerator": "cuda" if self._uses_cuda else "cpu",
+            "gpu": bool(self._uses_cuda),
+            "yastn_backend": self._selected_backend,
+            "device": self._selected_device,
+            "chi_max": int(self.chi_max),
+            "dt": dt,
+            "n_steps": len(payload["schedule"]),
+            "svd_min": float(self.svd_min),
+            "truncation_error": np.asarray(truncation_error, dtype=float),
+            "accumulated_truncation_error": accumulated_truncation_error,
+            "max_truncation_error": max(truncation_error, default=0.0),
+        }
+        if has_pair_terms and self.measurement_environment.lower() in {"bp", "envbp"}:
+            # BP has no two-point measurement; the documented fallback builds one
+            # converged CTM environment per sampling anchor for the pair terms.
+            metadata["pair_measurement_environment"] = "ctm"
+        return EvolutionResult(
+            final_state=psi,
+            times=out_times,
+            expectations=expectations,
+            metadata=metadata,
+            basis=tn_basis(spec),
         )
-        if recorded_times:
-            result.times = np.asarray(recorded_times, dtype=float)
-        return result
 
     def find_ground_state(
         self,
@@ -178,7 +208,7 @@ class YASTNPEPSBackend:
         energy_tol: float = 1e-5,
         ctm_chi: int = 16,
         ctm_iters: int = 3,
-        observables: list[str] | None = None,
+        observables=None,
         initial_state: str | np.ndarray | object = "af1",
     ) -> EvolutionResult:
         """Imaginary-time ground state of a *static* Rydberg/TFIM Hamiltonian.
@@ -203,21 +233,29 @@ class YASTNPEPSBackend:
         ``metadata["energy"]`` is the O(N) ground-state energy (1-site fields plus
         nearest-neighbour ``<n_r n_r>``) -- the cheap, robust cross-check quantity.
         Use a checkerboard seed (``"af1"``) to select the antiferromagnetic sector.
+
+        ``observables`` is an optional ``dict[str, ObservableExpr]`` measured
+        once on the converged state; a ground-state search has no evolution
+        clock, so the result carries the minimal time axis ``times == [0.0]``
+        and each expectation is a shape-``(1,)`` complex array.
         """
-        if ir.spec.level_structure == "analog_3":
+        spec = ir.spec
+        if spec.level_structure == "analog_3":
             raise YASTNPEPSError(
                 "find_ground_state is not defined for analog_3 "
                 "(time-dependent physical ladder protocol)."
             )
+        exprs = dict(observables or {})
+        preflight_tn_expressions(exprs, spec, backend="peps", max_term_sites=PEPS_MAX_TERM_SITES)
         yastn, fpeps, gates, cfg = self._load_yastn()
-        if observables is None:
-            observables = ["m_s", "n_mean"]
+        # The protocol must be constant in time; the Hamiltonian is read from a
+        # single full-duration schedule step (coefficients at t_gate / 2).
+        t_gate = float(ir.params["t_gate"])
         payload = build_yastn_peps_payload(
-            ir, initial_state=initial_state, t_eval=None, observables=observables,
-            dt=self.dt, chi_max=self.chi_max, svd_min=self.svd_min, use_cuda=self.use_cuda,
+            ir, initial_state=initial_state,
+            segments=[TNSegment(0.0, t_gate, 1, t_gate, False)],
+            chi_max=self.chi_max, svd_min=self.svd_min, use_cuda=self.use_cuda,
         )
-        if not payload["schedule"]:
-            raise YASTNPEPSError("find_ground_state requires a non-empty protocol schedule.")
         step0 = payload["schedule"][0]
 
         ops = _YASTNPEPSOps(yastn, cfg, payload["lattice"]["levels"])
@@ -260,14 +298,24 @@ class YASTNPEPSBackend:
                     break
                 prev_E = energy
 
-        measured = _measure_yastn(
-            fpeps, psi, ops, payload, observables, self.measurement_environment,
-            ctm_chi=self._ctm_chi(), ctm_iters=int(self.ctm_iters), ctm_tol=float(self.ctm_tol),
-        )
+        expectations: dict[str, np.ndarray] = {}
+        measurement_env_info: list[dict] = []
+        if exprs:
+            lowered, _ = _lower_peps_expressions(exprs, ops, int(spec.Ly))
+            measured, env_info = _measure_lowered_peps(
+                fpeps, psi, lowered, self.measurement_environment,
+                ctm_chi=self._ctm_chi(), ctm_iters=int(self.ctm_iters), ctm_tol=float(self.ctm_tol),
+            )
+            measurement_env_info.append(env_info)
+            expectations = {
+                label: np.asarray([value], dtype=complex) for label, value in measured.items()
+            }
         if not np.isfinite(energy):
             energy, _ = _peps_energy_ctm(fpeps, psi, ops, payload, step0, ctm_chi, ctm_iters)
         return EvolutionResult(
-            psi_final=psi,
+            final_state=psi,
+            times=np.array([0.0]),
+            expectations=expectations,
             metadata={
                 **(ir.metadata or {}),
                 "backend": "peps",
@@ -276,14 +324,19 @@ class YASTNPEPSBackend:
                 "algorithm": f"fpeps_imag_warmup-{warmup_env}_refine-{self.update_environment}",
                 "level_structure": payload["lattice"]["level_structure"],
                 "local_dim": int(payload["lattice"]["local_dim"]),
+                "measurement_environment": self.measurement_environment,
+                "ctm_chi": self._ctm_chi(),
+                "ctm_iters": int(self.ctm_iters),
+                "ctm_tol": float(self.ctm_tol),
+                "measurement_env_info": measurement_env_info,
                 "chi_max": int(self.chi_max),
                 "dtau_schedule": [list(s) for s in dtau_schedule],
                 "n_steps": int(n_steps),
                 "stopped_early": stopped_early,
                 "energy": float(energy),
                 "max_truncation_error": max(truncation_error, default=0.0),
-                "obs": measured,
             },
+            basis=tn_basis(spec),
         )
 
     def _load_yastn(self):
@@ -327,9 +380,7 @@ def build_yastn_peps_payload(
     ir,
     *,
     initial_state: str | np.ndarray | object,
-    t_eval: np.ndarray | None,
-    observables: list[str] | None,
-    dt: float,
+    segments: "list[TNSegment]",
     chi_max: int,
     svd_min: float,
     use_cuda: bool,
@@ -339,21 +390,22 @@ def build_yastn_peps_payload(
     Unlike the Julia ITensors bridges, this lowering keeps the local physical
     dimension from the central level spec, so ``01r`` becomes a genuine qutrit
     PEPS rather than an effective two-level model.
+
+    ``segments`` is the anchor-exact stepping plan
+    (:func:`~ryd_gate.backends.tn_common.protocol_context.plan_tn_segments`):
+    each schedule entry carries its own ``dt`` and ``record`` flag, and each
+    step's drive coefficients are evaluated at that step's own midpoint.
     """
     spec = ir.spec
     if spec.level_structure not in {"1r", "01r", "analog_3"}:
         raise ValueError(
             "TN PEPS payload supports level_structure '1r', '01r', and 'analog_3' only."
         )
-    analog3_dt_guard(spec, dt)
-
     t_gate = float(ir.params["t_gate"])
     if t_gate <= 0:
         raise ValueError("YASTN PEPS requires a positive t_gate.")
-    n_steps = max(1, int(np.ceil(t_gate / float(dt))))
-    dt_actual = t_gate / n_steps
 
-    schedule = _drive_schedule(ir, dt_actual=dt_actual, n_steps=n_steps)
+    schedule = _drive_schedule(ir, segments)
     initial_labels_1d, initial_superposition = _initial_state_payload_entries(spec, initial_state)
     return {
         "method": "peps_yastn",
@@ -380,13 +432,9 @@ def build_yastn_peps_payload(
         },
         "initial_labels_1d": initial_labels_1d,
         "initial_superposition": initial_superposition,
-        "record_steps": _record_steps(t_eval, dt_actual, n_steps),
-        "observables": list(observables or []),
         "schedule": schedule,
         "runtime": {
-            "dt": dt_actual,
-            "requested_dt": float(dt),
-            "n_steps": n_steps,
+            "n_steps": len(schedule),
             "chi_max": int(chi_max),
             "svd_min": float(svd_min),
             "use_cuda": bool(use_cuda),
@@ -394,55 +442,67 @@ def build_yastn_peps_payload(
     }
 
 
-def _drive_schedule(ir, *, dt_actual: float, n_steps: int) -> list[dict[str, Any]]:
+def _drive_schedule(ir, segments: "list[TNSegment]") -> list[dict[str, Any]]:
     spec = ir.spec
     static_pin = pin_deltas_from_params(ir.params, spec.N)
-    schedule = []
-    for step in range(n_steps):
-        t_mid = (step + 0.5) * dt_actual
-        coeffs = ir.protocol.get_drive_coefficients(t_mid, ir.params)
-        if spec.level_structure == "analog_3":
-            # Physical g/e/r ladder: the local 3x3 blocks live on spec.local_blocks;
-            # the protocol modulates the g-e drive by a (complex) scalar. Drive is
-            # spatially uniform, so no per-site profile/reorder is needed.  Under the
-            # TN context the protocol emits the unitless g-e envelope on E[e,g]; the
-            # payload re-applies the full Rabi via local_blocks.drive_420.
+    schedule: list[dict[str, Any]] = []
+    for segment in segments:
+        for k in range(segment.n_sub):
+            t_mid = segment.t0 + (k + 0.5) * segment.dt_sub
+            record = segment.record and k == segment.n_sub - 1
             schedule.append(
-                {
-                    "step": step + 1,
-                    "t_mid": float(t_mid),
-                    "drive_coeffs": {"drive_420": complex(coeffs.get("E[e,g]", 0.0))},
-                }
+                _drive_schedule_entry(
+                    ir, spec, static_pin,
+                    step=len(schedule) + 1, t_mid=float(t_mid),
+                    dt=float(segment.dt_sub), record=record,
+                )
             )
-            continue
-        if spec.level_structure == "01r":
-            profiles = three_level_profiles_from_coeffs(coeffs, spec)
-            if static_pin is not None:
-                profiles["delta_R"] = profiles["delta_R"] + static_pin
-        else:
-            omega_t, delta_t, channel_pin = two_level_drive_and_detuning_from_coeffs(coeffs, spec)
-            pin = merge_pin_deltas(static_pin, channel_pin, n_sites=spec.N)
-            profiles = {
-                "omega_R": _profile(omega_t, spec.N),
-                "omega_hf": np.zeros(spec.N, dtype=float),
-                "delta_R": np.full(spec.N, float(delta_t), dtype=float),
-                "delta_hf": np.zeros(spec.N, dtype=float),
-            }
-            if pin is not None:
-                profiles["delta_R"] = profiles["delta_R"] + pin
-
-        order = np.asarray(spec.snake_to_2d, dtype=int)
-        schedule.append(
-            {
-                "step": step + 1,
-                "t_mid": float(t_mid),
-                "omega_R_1d": np.asarray(profiles["omega_R"], dtype=float)[order],
-                "omega_hf_1d": np.asarray(profiles["omega_hf"], dtype=float)[order],
-                "delta_R_1d": np.asarray(profiles["delta_R"], dtype=float)[order],
-                "delta_hf_1d": np.asarray(profiles["delta_hf"], dtype=float)[order],
-            }
-        )
     return schedule
+
+
+def _drive_schedule_entry(
+    ir, spec, static_pin, *, step: int, t_mid: float, dt: float, record: bool
+) -> dict[str, Any]:
+    coeffs = ir.protocol.get_drive_coefficients(t_mid, ir.params)
+    entry: dict[str, Any] = {"step": step, "t_mid": t_mid, "dt": dt, "record": record}
+    if spec.level_structure == "analog_3":
+        # Physical g/e/r ladder: the local 3x3 blocks live on spec.local_blocks;
+        # the protocol modulates the g-e drive by a (complex) scalar. Drive is
+        # spatially uniform, so no per-site profile/reorder is needed.  Under the
+        # TN context the protocol emits the unitless g-e envelope on E[e,g]; the
+        # payload re-applies the full Rabi via local_blocks.drive_420.
+        entry["drive_coeffs"] = {"drive_420": complex(coeffs.get("E[e,g]", 0.0))}
+        return entry
+    if spec.level_structure == "01r":
+        profiles = three_level_profiles_from_coeffs(coeffs, spec)
+        if static_pin is not None:
+            # A pin adds to the Rydberg detuning, i.e. subtracts energy.
+            profiles["energy_r"] = profiles["energy_r"] - static_pin
+    else:
+        omega_t, delta_t, channel_pin = two_level_drive_and_detuning_from_coeffs(coeffs, spec)
+        pin = merge_pin_deltas(static_pin, channel_pin, n_sites=spec.N)
+        delta_profile = np.full(spec.N, float(delta_t), dtype=float)
+        if pin is not None:
+            delta_profile = delta_profile + pin
+        profiles = {
+            "coupling_r1": 0.5 * _profile(omega_t, spec.N).astype(complex),
+            "coupling_10": np.zeros(spec.N, dtype=complex),
+            "coupling_r0": np.zeros(spec.N, dtype=complex),
+            "energy_1": np.zeros(spec.N, dtype=float),
+            "energy_r": -delta_profile,
+        }
+
+    order = np.asarray(spec.snake_to_2d, dtype=int)
+    entry.update(
+        {
+            "coupling_r1_1d": np.asarray(profiles["coupling_r1"], dtype=complex)[order],
+            "coupling_10_1d": np.asarray(profiles["coupling_10"], dtype=complex)[order],
+            "coupling_r0_1d": np.asarray(profiles["coupling_r0"], dtype=complex)[order],
+            "energy_1_1d": np.asarray(profiles["energy_1"], dtype=float)[order],
+            "energy_r_1d": np.asarray(profiles["energy_r"], dtype=float)[order],
+        }
+    )
+    return entry
 
 
 def _profile(value: float | np.ndarray, n_sites: int) -> np.ndarray:
@@ -452,16 +512,6 @@ def _profile(value: float | np.ndarray, n_sites: int) -> np.ndarray:
     if arr.shape != (n_sites,):
         raise ValueError(f"Profile must be scalar or length-{n_sites}; got {arr.shape}.")
     return arr.astype(float, copy=False)
-
-
-def _record_steps(t_eval: np.ndarray | None, dt_actual: float, n_steps: int) -> list[int]:
-    if t_eval is None:
-        return []
-    steps = set()
-    for t_req in np.asarray(t_eval, dtype=float):
-        step = int(round(float(t_req) / dt_actual))
-        steps.add(max(0, min(step, n_steps)))
-    return sorted(steps)
 
 
 def _initial_labels_1d(spec, initial_state: str | np.ndarray | object) -> list[str]:
@@ -526,26 +576,16 @@ class _YASTNPEPSOps:
             mat[idx, idx] = 1.0
         return self.matrix(mat)
 
-    def x_between(self, lower: str, upper: str):
+    def sp_between(self, lower: str, upper: str):
+        """The raising operator ``|upper><lower|`` (zero when a level is absent)."""
         mat = np.zeros((self.dim, self.dim), dtype=complex)
         if lower in self.levels and upper in self.levels:
-            lo = self.index(lower)
-            up = self.index(upper)
-            mat[lo, up] = 1.0
-            mat[up, lo] = 1.0
+            mat[self.index(upper), self.index(lower)] = 1.0
         return self.matrix(mat)
 
     @property
     def I(self):  # noqa: E743 - conventional identity-operator symbol.
         return self.matrix(np.eye(self.dim, dtype=complex))
-
-    @property
-    def X_01(self):
-        return self.x_between("0", "1")
-
-    @property
-    def X_1r(self):
-        return self.x_between("1", "r")
 
     @property
     def n_0(self):
@@ -636,17 +676,18 @@ def _local_gate_list(gates, ops: _YASTNPEPSOps, payload: dict, step_data: dict, 
         ]
 
     inv_snake = np.asarray(lattice["inv_snake"], dtype=int)
-    omega_R = np.asarray(step_data["omega_R_1d"], dtype=float)
-    omega_hf = np.asarray(step_data["omega_hf_1d"], dtype=float)
-    delta_R = np.asarray(step_data["delta_R_1d"], dtype=float)
-    delta_hf = np.asarray(step_data["delta_hf_1d"], dtype=float)
+    c_r1 = np.asarray(step_data["coupling_r1_1d"], dtype=complex)
+    c_10 = np.asarray(step_data["coupling_10_1d"], dtype=complex)
+    c_r0 = np.asarray(step_data["coupling_r0_1d"], dtype=complex)
+    e_1 = np.asarray(step_data["energy_1_1d"], dtype=float)
+    e_r = np.asarray(step_data["energy_r_1d"], dtype=float)
     I = ops.I
     cache: dict = {}
     out = []
     for site_2d in range(int(lattice["N"])):
         pos = int(inv_snake[site_2d])
         coord = (site_2d // Ly, site_2d % Ly)
-        key = (omega_R[pos], omega_hf[pos], delta_R[pos], delta_hf[pos])
+        key = (c_r1[pos], c_10[pos], c_r0[pos], e_1[pos], e_r[pos])
         proto = cache.get(key)
         if proto is None:
             H = _local_hamiltonian(ops, *key)
@@ -697,16 +738,17 @@ def _yastn_imag_gates(gates, ops: _YASTNPEPSOps, payload: dict, step_data: dict,
         raise YASTNPEPSError("Imaginary-time PEPS is not defined for analog_3 local blocks.")
     Ly = int(lattice["Ly"])
     inv_snake = np.asarray(lattice["inv_snake"], dtype=int)
-    omega_R = np.asarray(step_data["omega_R_1d"], dtype=float)
-    omega_hf = np.asarray(step_data["omega_hf_1d"], dtype=float)
-    delta_R = np.asarray(step_data["delta_R_1d"], dtype=float)
-    delta_hf = np.asarray(step_data["delta_hf_1d"], dtype=float)
+    c_r1 = np.asarray(step_data["coupling_r1_1d"], dtype=complex)
+    c_10 = np.asarray(step_data["coupling_10_1d"], dtype=complex)
+    c_r0 = np.asarray(step_data["coupling_r0_1d"], dtype=complex)
+    e_1 = np.asarray(step_data["energy_1_1d"], dtype=float)
+    e_r = np.asarray(step_data["energy_r_1d"], dtype=float)
     out = []
 
     for site_2d in range(int(lattice["N"])):
         pos = int(inv_snake[site_2d])
         coord = (site_2d // Ly, site_2d % Ly)
-        H = _local_hamiltonian(ops, omega_R[pos], omega_hf[pos], delta_R[pos], delta_hf[pos])
+        H = _local_hamiltonian(ops, c_r1[pos], c_10[pos], c_r0[pos], e_1[pos], e_r[pos])
         out.append(gates.gate_local_exp(0.5 * dtau, ops.I, H, site=coord))
 
     Hnn = gates.fkron(ops.n_r, ops.n_r)
@@ -722,7 +764,7 @@ def _yastn_imag_gates(gates, ops: _YASTNPEPSOps, payload: dict, step_data: dict,
     for site_2d in range(int(lattice["N"])):
         pos = int(inv_snake[site_2d])
         coord = (site_2d // Ly, site_2d % Ly)
-        H = _local_hamiltonian(ops, omega_R[pos], omega_hf[pos], delta_R[pos], delta_hf[pos])
+        H = _local_hamiltonian(ops, c_r1[pos], c_10[pos], c_r0[pos], e_1[pos], e_r[pos])
         out.append(gates.gate_local_exp(0.5 * dtau, ops.I, H, site=coord))
     return out
 
@@ -730,38 +772,45 @@ def _yastn_imag_gates(gates, ops: _YASTNPEPSOps, payload: dict, step_data: dict,
 def _peps_energy_ctm(fpeps, psi, ops, payload, step0, ctm_chi, ctm_iters):
     """Total ground-state energy <H> from a light CTM environment.
 
-    O(N): one CTM convergence, four 1-site measurements (X_1r, X_01, n_r, n_1)
-    combined with the per-site fields, plus nearest-neighbour ``<n_r n_r>`` over the
-    ~2N interaction bonds. Far cheaper than the O(N^2) staggered structure factor and
-    a robust, symmetry-agnostic cross-check quantity. Returns ``(energy, env)``.
+    O(N): one CTM convergence, a handful of 1-site measurements (one raising
+    operator per active coupling channel, n_r, n_1) combined with the per-site
+    fields, plus nearest-neighbour ``<n_r n_r>`` over the ~2N interaction bonds.
+    Far cheaper than the O(N^2) staggered structure factor and a robust,
+    symmetry-agnostic cross-check quantity. Returns ``(energy, env)``.
     """
     lat = payload["lattice"]
     Ly = int(lat["Ly"])
     N = int(lat["N"])
     inv = np.asarray(lat["inv_snake"], dtype=int)
-    oR = np.asarray(step0["omega_R_1d"], dtype=float)
-    oh = np.asarray(step0["omega_hf_1d"], dtype=float)
-    dR = np.asarray(step0["delta_R_1d"], dtype=float)
-    dh = np.asarray(step0["delta_hf_1d"], dtype=float)
+    c_r1 = np.asarray(step0["coupling_r1_1d"], dtype=complex)
+    c_10 = np.asarray(step0["coupling_10_1d"], dtype=complex)
+    c_r0 = np.asarray(step0["coupling_r0_1d"], dtype=complex)
+    e_1 = np.asarray(step0["energy_1_1d"], dtype=float)
+    e_r = np.asarray(step0["energy_r_1d"], dtype=float)
 
     env = fpeps.EnvCTM(psi)
     for _ in range(int(ctm_iters)):
         env.update_({"D_total": int(ctm_chi), "tol": 1e-8})
 
-    xr = env.measure_1site(ops.X_1r)
-    nr = env.measure_1site(ops.n_r)
-    x01 = env.measure_1site(ops.X_01) if np.any(oh) else None
-    n1 = env.measure_1site(ops.n_1) if np.any(dh) else None
+    # <c |u><l| + h.c.> = 2 Re(c <|u><l|>) per active coupling channel.
+    coupling_meas = [
+        (c, env.measure_1site(ops.sp_between(lower, upper)))
+        for lower, upper, c in (("1", "r", c_r1), ("0", "1", c_10), ("0", "r", c_r0))
+        if np.any(c != 0)
+    ]
+    nr = env.measure_1site(ops.n_r) if np.any(e_r) else None
+    n1 = env.measure_1site(ops.n_1) if np.any(e_1) else None
 
     E = 0.0
     for s2 in range(N):
         pos = int(inv[s2])
         coord = (s2 // Ly, s2 % Ly)
-        E += 0.5 * oR[pos] * float(np.real(xr[coord])) - dR[pos] * float(np.real(nr[coord]))
-        if x01 is not None:
-            E += 0.5 * oh[pos] * float(np.real(x01[coord]))
+        for c, meas in coupling_meas:
+            E += 2.0 * float(np.real(c[pos] * meas[coord]))
+        if nr is not None:
+            E += e_r[pos] * float(np.real(nr[coord]))
         if n1 is not None:
-            E += -dh[pos] * float(np.real(n1[coord]))
+            E += e_1[pos] * float(np.real(n1[coord]))
 
     for i_pos, j_pos, strength in lat["vdw_pairs_1d"]:
         i2 = int(lat["snake_to_2d"][int(i_pos) - 1])
@@ -776,17 +825,33 @@ def _peps_energy_ctm(fpeps, psi, ops, payload, step0, ctm_chi, ctm_iters):
 
 def _local_hamiltonian(
     ops: _YASTNPEPSOps,
-    omega_R: float,
-    omega_hf: float,
-    delta_R: float,
-    delta_hf: float,
+    coupling_r1: complex,
+    coupling_10: complex,
+    coupling_r0: complex,
+    energy_1: float,
+    energy_r: float,
 ):
-    return (
-        0.5 * float(omega_R) * ops.X_1r
-        + 0.5 * float(omega_hf) * ops.X_01
-        - float(delta_R) * ops.n_r
-        - float(delta_hf) * ops.n_1
-    )
+    """Local 1r/01r H in matrix-element convention:
+    ``c |u><l| + conj(c) |l><u|`` per coupling plus ``e_1 n_1 + e_r n_r``."""
+    mat = np.zeros((ops.dim, ops.dim), dtype=complex)
+    for lower, upper, c in (
+        ("1", "r", coupling_r1), ("0", "1", coupling_10), ("0", "r", coupling_r0),
+    ):
+        c = complex(c)
+        if lower not in ops.levels or upper not in ops.levels:
+            if c != 0:
+                raise YASTNPEPSError(
+                    f"Nonzero |{lower}>-|{upper}> coupling on levels {ops.levels}."
+                )
+            continue
+        lo, up = ops.index(lower), ops.index(upper)
+        mat[up, lo] += c
+        mat[lo, up] += np.conj(c)
+    for level, energy in (("1", energy_1), ("r", energy_r)):
+        if level in ops.levels:
+            idx = ops.index(level)
+            mat[idx, idx] += float(energy)
+    return ops.matrix(mat)
 
 
 def _matrix_hamiltonian(static, drive_mat, coeff) -> np.ndarray:
@@ -797,69 +862,113 @@ def _matrix_hamiltonian(static, drive_mat, coeff) -> np.ndarray:
     return static + coeff * drive_mat + np.conj(coeff) * drive_mat.conj().T
 
 
-def _measure_yastn(
-    fpeps, psi, ops: _YASTNPEPSOps, payload: dict, observables: list[str], env_name: str,
+def _lower_peps_expressions(exprs: dict, ops: _YASTNPEPSOps, Ly: int):
+    """Lower validated observable expressions onto the PEPS geometry.
+
+    Register site ``i`` lives at PEPS coordinate ``(i // Ly, i % Ly)`` (the
+    row-major 2D layout; no snake permutation on the PEPS path).  Distinct
+    local matrices are wrapped into yastn tensors once and shared, so each
+    sampling anchor needs one ``measure_1site`` sweep per distinct matrix.
+    Returns ``(lowered, has_pair_terms)``.
+    """
+    tensor_cache: dict[bytes, Any] = {}
+
+    def wrap(matrix) -> tuple[bytes, Any]:
+        arr = np.asarray(matrix, dtype=complex)
+        key = arr.tobytes()
+        tensor = tensor_cache.get(key)
+        if tensor is None:
+            tensor = ops.matrix(arr)
+            tensor_cache[key] = tensor
+        return key, tensor
+
+    lowered: dict[str, tuple] = {}
+    has_pair_terms = False
+    for label, expr in exprs.items():
+        identity_coeff = 0.0 + 0.0j
+        singles: list[tuple] = []
+        pairs: list[tuple] = []
+        for term in expr._terms:
+            if not term.factors:
+                identity_coeff += complex(term.coefficient)
+            elif len(term.factors) == 1:
+                site, matrix = term.factors[0]
+                key, tensor = wrap(matrix)
+                singles.append(
+                    (complex(term.coefficient), key, tensor, (site // Ly, site % Ly))
+                )
+            else:
+                # preflight_tn_expressions(max_term_sites=PEPS_MAX_TERM_SITES) guarantees <= 2.
+                (site_i, mat_i), (site_j, mat_j) = term.factors
+                _, tensor_i = wrap(mat_i)
+                _, tensor_j = wrap(mat_j)
+                pairs.append(
+                    (
+                        complex(term.coefficient),
+                        tensor_i, (site_i // Ly, site_i % Ly),
+                        tensor_j, (site_j // Ly, site_j % Ly),
+                    )
+                )
+                has_pair_terms = True
+        lowered[label] = (identity_coeff, singles, pairs)
+    return lowered, has_pair_terms
+
+
+def _measure_lowered_peps(
+    fpeps, psi, lowered: dict, env_name: str,
     *, ctm_chi: int, ctm_iters: int, ctm_tol: float,
-):
-    lattice = payload["lattice"]
-    Lx = int(lattice["Lx"])
-    Ly = int(lattice["Ly"])
-    n_sites = int(lattice["N"])
-    out: dict[str, Any] = {}
-    env = _measurement_env(fpeps, psi, env_name, ctm_chi=ctm_chi, ctm_iters=ctm_iters, ctm_tol=ctm_tol)
-    z_profile: np.ndarray | None = None
-    level_profiles: dict[str, np.ndarray] = {}
+) -> tuple[dict[str, complex], dict]:
+    """Evaluate lowered expressions against ONE converged environment.
 
-    def level_occ(level: str) -> np.ndarray:
-        if level not in level_profiles:
-            values = np.empty(n_sites, dtype=float)
-            measured = env.measure_1site(ops.projector(level))
-            for site in range(n_sites):
-                coord = (site // Ly, site % Ly)
-                values[site] = float(np.real(measured[coord]))
-            level_profiles[level] = values
-        return level_profiles[level]
+    One environment convergence per sampling anchor; single-site profiles are
+    measured once per distinct local matrix and shared across labels.  When
+    the anchor environment is BP (no two-point support), pair terms use the
+    documented fallback: one additional *converged* CTM environment for this
+    anchor, recorded in the returned env info.  Values stay complex (raw
+    ``<psi|O|psi>`` contract; PEPS evolution is Hermitian, norm 1).
+    """
+    env, env_info = _measurement_env(
+        fpeps, psi, env_name, ctm_chi=ctm_chi, ctm_iters=ctm_iters, ctm_tol=ctm_tol
+    )
+    profiles: dict[bytes, dict] = {}
+    pair_env = None
 
-    def sigma_z() -> np.ndarray:
-        nonlocal z_profile
-        if z_profile is None:
-            values = np.empty(n_sites, dtype=float)
-            measured = env.measure_1site(ops.Z)
-            for site in range(n_sites):
-                coord = (site // Ly, site % Ly)
-                values[site] = float(np.real(measured[coord]))
-            z_profile = values
-        return z_profile
+    def profile(key: bytes, tensor) -> dict:
+        if key not in profiles:
+            profiles[key] = env.measure_1site(tensor)
+        return profiles[key]
 
-    for name in observables:
-        if name in {"sigma_z", "z_i"}:
-            out[name] = sigma_z().copy()
-        elif name == "n_mean":
-            out[name] = float(np.mean(level_occ("r")))
-        elif name in {"n_i", "n_r"}:
-            out[name] = level_occ("r").copy()
-        elif name in {"n_0", "n_1", "n_g", "n_e"}:
-            out[name] = level_occ(name[-1]).copy()
-        elif name == "m_s":
-            sublattice = np.asarray(lattice["sublattice"], dtype=float)
-            out[name] = float(np.sum(sublattice * sigma_z()) / n_sites)
-        elif name in {"czz", "czz_centerline"}:
-            z = sigma_z()
-            # BP has no 2-site measurement; fall back to a *converged* CTM for the pair.
-            pair_env = env if hasattr(env, "measure_nsite") else _measurement_env(
-                fpeps, psi, "ctm", ctm_chi=ctm_chi, ctm_iters=ctm_iters, ctm_tol=ctm_tol,
+    def get_pair_env():
+        nonlocal pair_env, env_info
+        if pair_env is None:
+            if hasattr(env, "measure_nsite"):
+                pair_env = env
+            else:
+                pair_env, pair_info = _measurement_env(
+                    fpeps, psi, "ctm", ctm_chi=ctm_chi, ctm_iters=ctm_iters, ctm_tol=ctm_tol
+                )
+                env_info = {**env_info, "pair_fallback": pair_info}
+        return pair_env
+
+    out: dict[str, complex] = {}
+    for label, (identity_coeff, singles, pairs) in lowered.items():
+        value = identity_coeff
+        for coeff, key, tensor, coord in singles:
+            value += coeff * complex(profile(key, tensor)[coord])
+        for coeff, tensor_i, coord_i, tensor_j, coord_j in pairs:
+            value += coeff * complex(
+                get_pair_env().measure_nsite(tensor_i, tensor_j, sites=(coord_i, coord_j))
             )
-            values = []
-            for i, j in line_pairs_from_reference(Lx, Ly, axis="horizontal"):
-                ci = (int(i) // Ly, int(i) % Ly)
-                cj = (int(j) // Ly, int(j) % Ly)
-                zz = pair_env.measure_nsite(ops.Z, ops.Z, sites=(ci, cj))
-                values.append(float(np.real(zz)) - z[int(i)] * z[int(j)])
-            out[name] = np.asarray(values, dtype=float)
-    return out
+        out[label] = value
+    return out, env_info
 
 
 def _measurement_env(fpeps, psi, name: str, *, ctm_chi: int, ctm_iters: int, ctm_tol: float):
+    """Build one converged measurement environment; returns ``(env, info)``.
+
+    ``info`` records the method and its convergence settings/diagnostics for
+    ``metadata["measurement_env_info"]``.
+    """
     key = name.lower()
     if key in {"ctm", "envctm"}:
         # A freshly constructed EnvCTM is a random, chi=1 *seed*; the CTM
@@ -871,14 +980,37 @@ def _measurement_env(fpeps, psi, name: str, *, ctm_chi: int, ctm_iters: int, ctm
         if int(ctm_iters) <= 0:
             raise YASTNPEPSError(f"CTM measurement requires ctm_iters > 0; got {ctm_iters!r}.")
         env = fpeps.EnvCTM(psi, init="eye")
-        env.iterate_(
+        ctm_out = env.iterate_(
             {"D_total": int(ctm_chi), "tol": 1e-10},
             max_sweeps=int(ctm_iters),
             corner_tol=float(ctm_tol),
         )
-        return env
+        info = {
+            "environment": "ctm",
+            "chi": int(ctm_chi),
+            "max_sweeps": int(ctm_iters),
+            "corner_tol": float(ctm_tol),
+            "sweeps": getattr(ctm_out, "sweeps", None),
+            "max_dsv": getattr(ctm_out, "max_dsv", None),
+            "converged": getattr(ctm_out, "converged", None),
+        }
+        return env, info
     if key in {"bp", "envbp"}:
+        # A single BP update_() is one sweep, NOT the BP fixed point; on an
+        # entangled state one sweep can be off by ~x2 (converged BP carries
+        # only the loop error).  Iterate to convergence, reusing the
+        # measurement-environment budget/tolerance knobs (ctm_iters/ctm_tol).
+        if int(ctm_iters) <= 0:
+            raise YASTNPEPSError(f"BP measurement requires ctm_iters > 0; got {ctm_iters!r}.")
         env = fpeps.EnvBP(psi)
-        env.update_()
-        return env
+        bp_out = env.iterate_(max_sweeps=int(ctm_iters), diff_tol=float(ctm_tol))
+        info = {
+            "environment": "bp",
+            "max_sweeps": int(ctm_iters),
+            "diff_tol": float(ctm_tol),
+            "sweeps": getattr(bp_out, "sweeps", None),
+            "max_diff": getattr(bp_out, "max_diff", None),
+            "converged": getattr(bp_out, "converged", None),
+        }
+        return env, info
     raise ValueError("measurement_environment must be 'ctm' or 'bp'.")

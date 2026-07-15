@@ -11,7 +11,7 @@ seconds.
 
 Preset *names* encode Hamiltonian construction — including the manifold /
 polarization convention. There is no `param_set`; static numbers are explicit
-`set_atom_level` kwargs:
+`level_structure(name, ...)` kwargs:
 
 - `1r` / `01r` — symbolic two-/three-level lattices, channels driven by
   protocols;
@@ -22,9 +22,11 @@ polarization convention. There is no `param_set`; static numbers are explicit
   `_pm` = σ⁺/σ⁻, was `"lukin"`). Static values (`Delta_Hz`, `ryd_level`,
   `C6_rad_s_um6`, `t_rise`, decay flags) are explicit kwargs.
 
-Fully custom symbolic models are hand-built `LevelStructureSpec` instances
-passed straight to `RydbergSystem.set_atom_level` — they never mount physical
-operators (Decision Log D11/D13).
+There is no public DSL for custom level structures:
+`level_structure(name, **physical_kwargs)` resolves built-in presets only,
+returning an immutable resolved `LevelStructure`. New physics is implemented
+and tested as a preset in `src` (`core/level_structures.py` +
+`core/physical_models.py`).
 
 ## One kernel, one control surface
 
@@ -51,14 +53,12 @@ keys `f"{base}_{site}"`, resolved by the kernel channel-lowering rules
 ## Geometry conventions
 
 Chain sublattice signs are `(-1)**i`, rectangle `(-1)**(row+col)`,
-triangular all-zero; `Register.from_coordinates` infers spacing from the
-smallest positive sorted-x difference.
+triangular all-zero; every `Register` derives `N` from the coordinate count
+and `spacing_um` from the smallest nonzero Euclidean pair distance.
 
-## Serialization
+## Reproducibility
 
-Reproducibility objects (`Register`, `RegisterLayout`,
-`LevelStructureSpec`, `NoiseModel`, `CZGateReport`) write a plain dict
-tagged `"schema": "ryd-gate/<kind>/v1"` and reconstruct via `from_dict`.
-The `v1` payloads are frozen as JSON Schema files in `ryd_gate/schemas/`;
-install the `schema` extra for optional validation via
-`validate_json_schema`.
+There is no serialization layer: systems are constructed programmatically
+from presets and registers — `RydbergSystem(level_structure=level_structure(
+name, **kwargs), register=...)` — so a script's construction calls *are* the
+reproducible record.

@@ -3,10 +3,9 @@ surface of ``RydbergSystem`` (no public ``blocks``)."""
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
-from ryd_gate import RydbergSystem
+from ryd_gate import RydbergSystem, level_structure
 from ryd_gate.core.model import BasisSpec
 from ryd_gate.core.operators import (
     BasisOperatorFactory,
@@ -59,32 +58,52 @@ def test_is_hermitian():
     assert BasisOperatorFactory.is_hermitian("E[r_garb,r_garb]") is True
 
 
+def _chain2(name, spacing_um=4.0):
+    return RydbergSystem(
+        level_structure=level_structure(name),
+        register=Register.chain(2, spacing_um=spacing_um),
+    )
+
+
 def test_system_has_no_public_blocks():
-    s = RydbergSystem.set_atom_level("1r").set_atom_geom(Register.chain(2, spacing_um=4.0))
+    s = _chain2("1r")
     assert not hasattr(s, "blocks")
     assert isinstance(s.operators, BasisOperatorFactory)
 
 
 def test_symbolic_hamiltonian_channels_are_E_names():
-    o1r = RydbergSystem.set_atom_level("01r").set_atom_geom(Register.chain(2, spacing_um=4.0))
+    o1r = _chain2("01r")
     assert set(o1r.hamiltonian_channels) == {"E[r,1]", "E[1,0]", "E[r,0]", "E[r,r]", "E[1,1]"}
-    one_r = RydbergSystem.set_atom_level("1r").set_atom_geom(Register.chain(2, spacing_um=4.0))
+    one_r = _chain2("1r")
     assert set(one_r.hamiltonian_channels) == {"E[r,1]", "E[r,r]"}
     # every channel key is an E[...] name (no physical aliases)
     for chan in set(o1r.hamiltonian_channels) | set(one_r.hamiltonian_channels):
         assert chan.startswith("E[") and chan.endswith("]")
 
 
-def test_observables_built_from_factory():
-    s = RydbergSystem.set_atom_level("1r").set_atom_geom(Register.chain(2, spacing_um=4.0))
-    assert s.observables.get("sum_nr").operator == SumProjectorSpec("r")
-    assert s.observables.get("n_r_0").operator == LocalProjectorSpec("r", 0)
-    assert s.observables.get("n_r_0").per_site is True
+def test_observables_factory_lowers_to_local_projectors():
+    """system.observables builds expressions whose lowered form is per-site
+    |level><level| matrices on the declared basis."""
+    import numpy as np
+
+    s = _chain2("1r")
+    n_r_0 = s.observables.n("r", 0)
+    (term,) = n_r_0._terms
+    assert term.coefficient == 1.0
+    ((site, matrix),) = term.factors
+    assert site == 0
+    r_idx = s.basis.level_index("r")
+    expected = np.zeros((2, 2), dtype=complex)
+    expected[r_idx, r_idx] = 1.0
+    np.testing.assert_array_equal(matrix, expected)
+    # level_sum('r') = one such term per site
+    total = s.observables.level_sum("r")
+    assert [t.factors[0][0] for t in total._terms] == [0, 1]
 
 
 @pytest.mark.parametrize("tag", ["rb87_7_mp", "rb87_7_pm"])
 def test_rb87_primitive_channels(tag):
-    s = RydbergSystem.set_atom_level(tag)
+    s = RydbergSystem(level_structure=level_structure(tag), register=Register.chain(1))
     expected = {
         "E[e1,1]", "E[e2,1]", "E[e3,1]", "E[e1,0]", "E[e2,0]", "E[e3,0]",
         "E[r,e1]", "E[r,e2]", "E[r,e3]", "E[r_garb,e1]", "E[r_garb,e2]", "E[r_garb,e3]",
@@ -97,7 +116,7 @@ def test_rb87_primitive_channels(tag):
 
 def test_no_laser_system_still_has_channels():
     # A no-protocol rb87 system still exposes its allowed primitive channels.
-    s = RydbergSystem.set_atom_level("rb87_7_mp").set_atom_geom(Register.chain(2, spacing_um=3.0))
+    s = _chain2("rb87_7_mp", spacing_um=3.0)
     assert s.protocol is None
     assert "E[e1,1]" in s.hamiltonian_channels
     assert "E[r,e1]" in s.hamiltonian_channels

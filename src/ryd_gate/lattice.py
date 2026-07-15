@@ -8,209 +8,103 @@ holding the van der Waals coupling computation).
 Contents
 --------
 - :class:`Register`        — the atom register consumed by
-  ``RydbergSystem.set_atom_geom``; constructed via ``Register.chain`` /
-  ``Register.square`` / ``Register.rectangle`` / ``Register.triangular`` /
-  ``Register.from_coordinates``.
-- :class:`RegisterLayout`  — optional trap-pattern provenance metadata.
+  :class:`~ryd_gate.core.system.RydbergSystem`; constructed via
+  ``Register.chain`` / ``Register.square`` / ``Register.rectangle`` /
+  ``Register.triangular`` / ``Register.from_coordinates``.
 - :func:`is_in_domain`, :func:`nn_nnn_relative_pairs`,
   :func:`cylinder_nn_nnn_pairs` — internal lattice helpers used by the
-  TN/analysis layers.
-- :func:`plot_spatial_rydberg`, :func:`plot_population_evolution` —
-  visualizations of physics quantities on lattice coordinates (matplotlib
-  imported lazily inside the functions).
+  TN layers.
+- :func:`plot_spatial_rydberg` — visualization of physics quantities on
+  lattice coordinates (matplotlib imported lazily inside the function).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Literal, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, Sequence
 
 import numpy as np
-
-from ryd_gate.core.serialization import (
-    ValidationIssue,
-    check_schema,
-    json_ready,
-    schema_tag,
-)
-
-_LAYOUT_KINDS = ("chain", "square", "rectangle", "triangular", "custom")
-
-
-@dataclass(frozen=True)
-class RegisterLayout:
-    """Trap-pattern metadata: which tweezer pattern a register came from.
-
-    Pure provenance in Stage 1 — no atom ids, no level structure, no device.
-    Classmethod register constructors never synthesize layouts; a layout is
-    attached only explicitly (see ``Register``).
-    """
-
-    name: str
-    trap_coords_um: tuple[tuple[float, ...], ...]
-    kind: Literal["chain", "square", "rectangle", "triangular", "custom"]
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.name, str) or not self.name:
-            raise ValueError("RegisterLayout.name must be a non-empty string.")
-        if self.kind not in _LAYOUT_KINDS:
-            raise ValueError(
-                f"RegisterLayout.kind must be one of {_LAYOUT_KINDS}, got {self.kind!r}."
-            )
-        coords = tuple(tuple(float(x) for x in c) for c in self.trap_coords_um)
-        if not coords:
-            raise ValueError("RegisterLayout.trap_coords_um must not be empty.")
-        dims = {len(c) for c in coords}
-        if len(dims) != 1 or next(iter(dims)) not in (2, 3):
-            raise ValueError(
-                "RegisterLayout.trap_coords_um entries must all be 2D or all be 3D."
-            )
-        if not all(np.isfinite(x) for c in coords for x in c):
-            raise ValueError("RegisterLayout.trap_coords_um must be finite.")
-        object.__setattr__(self, "trap_coords_um", coords)
-
-    def define_register(
-        self,
-        trap_ids: Sequence[int],
-        qubit_ids: Sequence[str] | None = None,
-        *,
-        center: bool = False,
-    ) -> "Register":
-        """Fill a subset of traps with atoms and return the resulting register.
-
-        Interop provenance entry point (Decision Log D10): Pulser layouts
-        carry a trap → qubit mapping, and this is where it lands. ``center``
-        defaults to ``False`` so layout coordinates are preserved exactly.
-        The returned register has ``layout=self`` attached and records the
-        trap indices in its metadata.
-        """
-        traps = [int(t) for t in trap_ids]
-        if not traps:
-            raise ValueError("trap_ids must not be empty.")
-        if len(set(traps)) != len(traps):
-            raise ValueError(f"trap_ids must be unique, got {traps}.")
-        n_traps = len(self.trap_coords_um)
-        for trap in traps:
-            if trap < 0 or trap >= n_traps:
-                raise ValueError(
-                    f"trap id {trap} out of range for layout with {n_traps} traps."
-                )
-        if qubit_ids is not None and len(qubit_ids) != len(traps):
-            raise ValueError(
-                f"qubit_ids length {len(qubit_ids)} != trap_ids length {len(traps)}."
-            )
-        coords = [self.trap_coords_um[trap] for trap in traps]
-        base = Register.from_coordinates(coords, ids=qubit_ids, center=center)
-        return Register(
-            N=base.N,
-            coords=base.coords,
-            sublattice=base.sublattice,
-            spacing_um=base.spacing_um,
-            ids=base.ids,
-            layout=self,
-            metadata={"trap_ids": traps},
-        )
-
-    def to_dict(self) -> dict:
-        return {
-            "schema": schema_tag("register-layout"),
-            "name": self.name,
-            "trap_coords_um": [list(c) for c in self.trap_coords_um],
-            "kind": self.kind,
-            "metadata": json_ready(dict(self.metadata), "layout.metadata"),
-        }
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "RegisterLayout":
-        check_schema(data, "register-layout")
-        return cls(
-            name=data["name"],
-            trap_coords_um=tuple(tuple(float(x) for x in c) for c in data["trap_coords_um"]),
-            kind=data["kind"],
-            metadata=dict(data.get("metadata", {})),
-        )
 
 
 @dataclass(frozen=True, eq=False)
 class Register:
-    """N-atom register: ids, positions, sublattice signs, characteristic spacing.
+    """N-atom register: positions, ids, and optional sublattice signs.
 
     Pure geometry: no operators, no interactions, no level structure. The
     stable order of ``ids`` defines the site order used by basis states,
-    bitstrings, and observables.
+    bitstrings, and observables.  Everything else is derived: ``N`` from the
+    coordinate count and ``spacing_um`` from the smallest nonzero Euclidean
+    pair distance.
 
     Attributes
     ----------
-    N : int
-        Number of atoms.
     coords : ndarray, shape (N, 2) or (N, 3)
         Atom positions in microns.
-    sublattice : ndarray, shape (N,)
-        Checkerboard signs ±1 where applicable (square / chain); 0 for
-        geometries without a natural bipartition (triangular, custom).
-    spacing_um : float
-        Nearest-neighbor spacing in microns.
     ids : tuple[str, ...]
         Unique atom ids in stable order; generated as ``q0..q{N-1}`` when
         omitted.
-    layout : RegisterLayout | None
-        Optional trap-pattern provenance; ``None`` unless attached explicitly.
+    sublattice : ndarray, shape (N,)
+        Checkerboard signs ±1 where applicable (square / chain); 0 for
+        geometries without a natural bipartition (triangular, custom).
     """
 
-    N: int
     coords: np.ndarray
-    sublattice: np.ndarray
-    spacing_um: float
     ids: tuple[str, ...] | None = None
-    layout: RegisterLayout | None = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    sublattice: np.ndarray | None = None
 
     def __post_init__(self) -> None:
-        if (
-            not isinstance(self.N, (int, np.integer))
-            or isinstance(self.N, bool)
-            or self.N <= 0
-        ):
-            raise ValueError(f"N must be a positive integer, got {self.N!r}.")
-        object.__setattr__(self, "N", int(self.N))
-
         coords = np.array(self.coords, dtype=float)
-        if coords.ndim != 2 or coords.shape[0] != self.N or coords.shape[1] not in (2, 3):
+        if coords.ndim != 2 or coords.shape[0] < 1 or coords.shape[1] not in (2, 3):
             raise ValueError(
-                f"coords must have shape ({self.N}, 2) or ({self.N}, 3), got {coords.shape}."
+                f"coords must have shape (N, 2) or (N, 3) with N >= 1, got {coords.shape}."
             )
         if not np.all(np.isfinite(coords)):
             raise ValueError("coords must be finite.")
         object.__setattr__(self, "coords", coords)
+        n = coords.shape[0]
 
-        sublattice = np.array(self.sublattice)
-        if sublattice.shape != (self.N,):
-            raise ValueError(
-                f"sublattice must have shape ({self.N},), got {sublattice.shape}."
-            )
+        sublattice = self.sublattice
+        if sublattice is None:
+            sublattice = np.zeros(n, dtype=int)
+        else:
+            sublattice = np.array(sublattice)
+            if sublattice.shape != (n,):
+                raise ValueError(
+                    f"sublattice must have shape ({n},), got {sublattice.shape}."
+                )
         object.__setattr__(self, "sublattice", sublattice)
-
-        try:
-            spacing = float(self.spacing_um)
-        except (TypeError, ValueError):
-            raise ValueError(f"spacing_um must be a float, got {self.spacing_um!r}.") from None
-        if not np.isfinite(spacing) or spacing < 0:
-            raise ValueError(f"spacing_um must be finite and nonnegative, got {spacing}.")
-        object.__setattr__(self, "spacing_um", spacing)
 
         ids = self.ids
         if ids is None:
-            ids = tuple(f"q{i}" for i in range(self.N))
+            ids = tuple(f"q{i}" for i in range(n))
         else:
             ids = tuple(str(atom_id) for atom_id in ids)
-            if len(ids) != self.N:
-                raise ValueError(f"ids must have length {self.N}, got {len(ids)}.")
+            if len(ids) != n:
+                raise ValueError(f"ids must have length {n}, got {len(ids)}.")
             if any(not atom_id for atom_id in ids):
                 raise ValueError("ids must be non-empty strings.")
             if len(set(ids)) != len(ids):
                 raise ValueError("ids must be unique.")
         object.__setattr__(self, "ids", ids)
+
+    # ── Derived geometry ────────────────────────────────────────────────
+
+    @property
+    def N(self) -> int:
+        """Number of atoms (derived from the coordinate count)."""
+        return int(self.coords.shape[0])
+
+    @property
+    def spacing_um(self) -> float:
+        """Characteristic spacing: the smallest nonzero Euclidean pair distance.
+
+        ``0.0`` for a single atom.
+        """
+        if self.N < 2:
+            return 0.0
+        dists = self.distances_um()
+        positive = dists[dists > 1e-12]
+        return float(positive.min()) if positive.size else 0.0
 
     # ── Constructors ────────────────────────────────────────────────────
 
@@ -226,20 +120,14 @@ class Register:
         ])
         sublattice = np.array([(-1) ** i for i in range(n_atoms)])
         return cls(
-            N=n_atoms,
             coords=coords,
-            sublattice=sublattice,
-            spacing_um=float(spacing_um),
             ids=tuple(f"{prefix}{i}" for i in range(n_atoms)),
+            sublattice=sublattice,
         )
 
     @classmethod
     def rectangle(cls, rows: int, cols: int, spacing_um: float = 4.0, prefix: str = "q") -> "Register":
-        """rows x cols grid, row-major (``i = row * cols + col``), checkerboard signs.
-
-        Reproduces the coordinates and atom order of the removed
-        ``make_square_lattice(Lx=rows, Ly=cols, spacing_um)``.
-        """
+        """rows x cols grid, row-major (``i = row * cols + col``), checkerboard signs."""
         _check_positive_int(rows, "rows")
         _check_positive_int(cols, "cols")
         _check_positive_spacing(spacing_um)
@@ -251,11 +139,9 @@ class Register:
         sublattice = np.array([(-1) ** (r + c) for r in range(rows) for c in range(cols)])
         n = rows * cols
         return cls(
-            N=n,
             coords=coords,
-            sublattice=sublattice,
-            spacing_um=float(spacing_um),
             ids=tuple(f"{prefix}{i}" for i in range(n)),
+            sublattice=sublattice,
         )
 
     @classmethod
@@ -269,9 +155,7 @@ class Register:
     ) -> "Register":
         """Row-staggered triangular lattice (odd rows offset by ``spacing/2`` in x).
 
-        Reproduces the removed ``make_triangular_lattice(Lx=atoms_per_row,
-        Ly=rows, spacing_um)``: row pitch ``sqrt(3)/2 * spacing_um``, zero
-        sublattice signs.
+        Row pitch ``sqrt(3)/2 * spacing_um``, zero sublattice signs.
         """
         _check_positive_int(rows, "rows")
         _check_positive_int(atoms_per_row, "atoms_per_row")
@@ -287,10 +171,7 @@ class Register:
                 ])
         n = rows * atoms_per_row
         return cls(
-            N=n,
             coords=np.asarray(coords, dtype=float),
-            sublattice=np.zeros(n, dtype=int),
-            spacing_um=float(spacing_um),
             ids=tuple(f"{prefix}{i}" for i in range(n)),
         )
 
@@ -303,12 +184,10 @@ class Register:
         center: bool = True,
         sublattice=None,
     ) -> "Register":
-        """Register from arbitrary positions; spacing inferred from sorted x.
+        """Register from arbitrary positions (e.g. any trap subset).
 
-        Spacing is the smallest positive difference between sorted
-        x-coordinates (the removed ``make_geometry_from_coords`` rule), 0.0
-        for a single atom. Unlike that factory, coordinates are centered by
-        default (``center=True``).
+        Coordinates are centered by default; spacing and ``N`` are derived
+        from the coordinates like every register.
         """
         arr = np.array(coords, dtype=float)
         if arr.size == 0:
@@ -323,34 +202,7 @@ class Register:
             ids = tuple(f"{prefix}{i}" for i in range(n))
         else:
             ids = tuple(ids)
-        if sublattice is None:
-            sublattice = np.zeros(n, dtype=int)
-        if n > 1:
-            xs = np.sort(arr[:, 0])
-            dx = np.diff(xs)
-            dx_pos = dx[dx > 1e-12]
-            spacing = float(dx_pos.min()) if dx_pos.size else 0.0
-        else:
-            spacing = 0.0
-        return cls(N=n, coords=arr, sublattice=sublattice, spacing_um=spacing, ids=ids)
-
-    # ── Properties ──────────────────────────────────────────────────────
-
-    @property
-    def n_atoms(self) -> int:
-        return self.N
-
-    @property
-    def dimensions(self) -> int:
-        return int(self.coords.shape[1])
-
-    @property
-    def coords_array(self) -> np.ndarray:
-        return self.coords.copy()
-
-    @property
-    def coords_um(self) -> tuple[tuple[float, ...], ...]:
-        return tuple(tuple(float(x) for x in row) for row in self.coords)
+        return cls(coords=arr, ids=ids, sublattice=sublattice)
 
     # ── Indexing ────────────────────────────────────────────────────────
 
@@ -404,8 +256,8 @@ class Register:
         show: bool = True,
     ):
         """Plot the register (2D only); returns the matplotlib Figure."""
-        if self.dimensions != 2:
-            raise NotImplementedError("Register.draw supports 2D registers only in Stage 1.")
+        if self.coords.shape[1] != 2:
+            raise NotImplementedError("Register.draw supports 2D registers only.")
         if blockade_radius_um is not None:
             blockade_radius_um = float(blockade_radius_um)
             if not np.isfinite(blockade_radius_um) or blockade_radius_um <= 0:
@@ -435,40 +287,6 @@ class Register:
         if show:
             plt.show()
         return fig
-
-    # ── Validation / serialization ──────────────────────────────────────
-
-    def validate(self, device: Any) -> list[ValidationIssue]:
-        """Delegate to ``device.validate_register(self)`` (rules live on the device)."""
-        return device.validate_register(self)
-
-    def to_dict(self) -> dict:
-        assert self.ids is not None  # normalized in __post_init__
-        return {
-            "schema": schema_tag("register"),
-            "ids": list(self.ids),
-            "coords_um": [list(map(float, row)) for row in self.coords],
-            "sublattice": self.sublattice.tolist(),
-            "spacing_um": float(self.spacing_um),
-            "layout": self.layout.to_dict() if self.layout is not None else None,
-            "metadata": json_ready(dict(self.metadata), "register.metadata"),
-        }
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "Register":
-        check_schema(data, "register")
-        ids = tuple(data["ids"])
-        layout_data = data.get("layout")
-        layout = RegisterLayout.from_dict(layout_data) if layout_data is not None else None
-        return cls(
-            N=len(ids),
-            coords=data["coords_um"],
-            sublattice=data["sublattice"],
-            spacing_um=data["spacing_um"],
-            ids=ids,
-            layout=layout,
-            metadata=dict(data.get("metadata", {})),
-        )
 
 
 def _check_positive_int(value, name: str) -> None:
@@ -602,45 +420,4 @@ def plot_spatial_rydberg(
     ax.set_ylabel(r'$y$ ($\mu$m)')
     if title:
         ax.set_title(title)
-    return fig
-
-
-def plot_population_evolution(
-    times: np.ndarray,
-    rydberg_occ: np.ndarray,
-    sublattice: np.ndarray,
-    ax=None,
-):
-    """Per-atom P_r(t) curves colored by sublattice.
-
-    Parameters
-    ----------
-    times : ndarray, shape (n_times,)
-    rydberg_occ : ndarray, shape (n_times, N)
-    sublattice : ndarray, shape (N,)
-    """
-    import matplotlib.pyplot as plt
-    from matplotlib.lines import Line2D
-
-    fig: Any
-    if ax is None:
-        fig, ax = plt.subplots(1, 1, figsize=(10, 5))
-    else:
-        fig = ax.figure
-
-    N = rydberg_occ.shape[1]
-    t_us = times * 1e6
-
-    for i in range(N):
-        color = '#d62728' if sublattice[i] > 0 else '#1f77b4'
-        ax.plot(t_us, rydberg_occ[:, i], color=color, alpha=0.6, lw=1)
-
-    legend_elements = [
-        Line2D([0], [0], color='#d62728', label='Sublattice +1'),
-        Line2D([0], [0], color='#1f77b4', label='Sublattice -1'),
-    ]
-    ax.legend(handles=legend_elements)
-    ax.set_xlabel(r'Time ($\mu$s)')
-    ax.set_ylabel(r'$P_r$')
-    ax.set_ylim(-0.05, 1.05)
     return fig

@@ -1,6 +1,9 @@
 """TeNPy local site builders and the Rydberg lattice model builder.
 
-H = (Omega/2) sum_i X_i - sum_i (Delta + delta_i) n_i + sum_{i<j} V_ij n_i n_j
+1r: H = (Omega/2) sum_i X_i - sum_i (Delta + delta_i) n_i + sum_{i<j} V_ij n_i n_j.
+01r uses the direct matrix-element convention: each (complex) coupling ``c`` on a
+transition adds ``c |upper><lower| + conj(c) |lower><upper|`` and the real
+diagonal energies add ``energy_1 n_1 + energy_r n_r``.
 """
 
 from __future__ import annotations
@@ -9,8 +12,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ryd_gate.backends.tn_common.sites import require_transition, resolve_level_structure
-from ryd_gate.core.level_structures import LevelStructureSpec
+from ryd_gate.backends.tn_common.sites import resolve_level_structure
+from ryd_gate.core.level_structures import LevelStructure
 
 if TYPE_CHECKING:
     from ryd_gate.backends.tn_common.lattice_spec import TNLatticeSpec
@@ -33,10 +36,11 @@ def build_tenpy_model(
     Delta: float,
     Omega: float | np.ndarray | None = None,
     pin_deltas: np.ndarray | None = None,
-    omega_R: float | np.ndarray | None = None,
-    omega_hf: float | np.ndarray | None = None,
-    delta_R: float | np.ndarray | None = None,
-    delta_hf: float | np.ndarray | None = None,
+    coupling_10: complex | np.ndarray | None = None,
+    coupling_r0: complex | np.ndarray | None = None,
+    coupling_r1: complex | np.ndarray | None = None,
+    energy_1: float | np.ndarray | None = None,
+    energy_r: float | np.ndarray | None = None,
     drive_420_coeff: complex | None = None,
 ) -> object:
     """Build a TeNPy CouplingMPOModel for the 2-level Rydberg lattice.
@@ -58,11 +62,14 @@ def build_tenpy_model(
         per-site profile in 2D site order.
     pin_deltas : ndarray, shape (N,) or None
         Per-site local detunings (in 2D site order).
-    omega_R, omega_hf, delta_R, delta_hf : float, ndarray, or None
-        Explicit three-level 01r profiles in 2D site order. When
-        ``spec.level_structure == "01r"``, these implement
-        ``(Omega_R/2) X_R + (Omega_hf/2) X_hf - delta_R n_r
-        - delta_hf n_1``.
+    coupling_10, coupling_r0, coupling_r1 : complex, ndarray, or None
+        Explicit three-level 01r coupling matrix elements in 2D site order
+        (possibly complex). When ``spec.level_structure == "01r"``, each
+        coupling ``c`` on transition ``|lower> <-> |upper>`` implements
+        ``c |upper><lower| + conj(c) |lower><upper|``.
+    energy_1, energy_r : float, ndarray, or None
+        Real 01r diagonal energies in 2D site order, implementing
+        ``energy_1 n_1 + energy_r n_r`` (the ``|0>`` energy is gauge zero).
 
     Returns
     -------
@@ -73,12 +80,12 @@ def build_tenpy_model(
     from tenpy.models.lattice import Chain
     from tenpy.models.model import CouplingMPOModel
 
-    def profile(value, default=0.0) -> np.ndarray:
+    def profile(value, default=0.0, dtype=float) -> np.ndarray:
         if value is None:
             value = default
-        arr = np.asarray(value, dtype=float)
+        arr = np.asarray(value, dtype=dtype)
         if arr.ndim == 0:
-            arr = np.full(spec.N, float(arr))
+            arr = np.full(spec.N, arr[()])
         if arr.shape != (spec.N,):
             raise ValueError(
                 f"Profile must be a scalar or length-{spec.N}; got shape {arr.shape}."
@@ -93,10 +100,13 @@ def build_tenpy_model(
     pin_deltas = profile(pin_deltas)
 
     if spec.level_structure == "01r":
-        omega_R_profile = profile(omega_R, default=Omega)
-        omega_hf_profile = profile(omega_hf)
-        delta_R_profile = profile(delta_R, default=Delta + pin_deltas)
-        delta_hf_profile = profile(delta_hf)
+        coupling_profiles = {
+            ("1", "r"): profile(coupling_r1, default=0.5 * omega_profile, dtype=complex),
+            ("0", "1"): profile(coupling_10, dtype=complex),
+            ("0", "r"): profile(coupling_r0, dtype=complex),
+        }
+        energy_1_profile = profile(energy_1)
+        energy_r_profile = profile(energy_r, default=-(Delta + pin_deltas))
     elif spec.level_structure == "analog_3":
         lb = spec.local_blocks
         if lb is None:
@@ -106,11 +116,18 @@ def build_tenpy_model(
         raise ValueError("TN lattice level_structure must be '1r', '01r', or 'analog_3'.")
 
     site = build_tenpy_site(spec.level_spec)
-    x_r_op = None
-    x_hf_op = None
+    couplings_01r: list[tuple[np.ndarray, str, str]] = []
     if spec.level_structure == "01r":
-        x_r_op = transition_x_op_name(spec.level_spec, "1", "r")
-        x_hf_op = transition_x_op_name(spec.level_spec, "0", "1")
+        for (lower, upper), c_profile in coupling_profiles.items():
+            transition = _find_transition(spec.level_spec, lower, upper)
+            if transition is None:
+                if np.any(np.abs(c_profile) > 0):
+                    raise ValueError(
+                        f"Level structure {spec.level_spec.name!r} declares no "
+                        f"|{lower}> <-> |{upper}> transition for a nonzero coupling."
+                    )
+                continue
+            couplings_01r.append((c_profile, f"Sp_{transition.name}", f"Sm_{transition.name}"))
 
     bc_MPS = "finite" if spec.bc == "open" else "infinite"
     bc = "open" if spec.bc == "open" else "periodic"
@@ -152,10 +169,12 @@ def build_tenpy_model(
         def _init_three_level_terms(self):
             for i_2d in range(spec.N):
                 i_1d = int(spec.inv_snake[i_2d])
-                self.add_onsite_term(0.5 * float(omega_R_profile[i_2d]), i_1d, x_r_op)
-                self.add_onsite_term(0.5 * float(omega_hf_profile[i_2d]), i_1d, x_hf_op)
-                self.add_onsite_term(-float(delta_R_profile[i_2d]), i_1d, "n_r")
-                self.add_onsite_term(-float(delta_hf_profile[i_2d]), i_1d, "n_1")
+                for c_profile, sp_op, sm_op in couplings_01r:
+                    c = complex(c_profile[i_2d])
+                    self.add_onsite_term(c, i_1d, sp_op)
+                    self.add_onsite_term(np.conj(c), i_1d, sm_op)
+                self.add_onsite_term(float(energy_1_profile[i_2d]), i_1d, "n_1")
+                self.add_onsite_term(float(energy_r_profile[i_2d]), i_1d, "n_r")
 
             for i_2d, j_2d, v_rel in spec.vdw_pairs:
                 V_ij = spec.V_nn * v_rel
@@ -187,8 +206,8 @@ def build_tenpy_model(
     return RydbergLatticeModel({})
 
 
-def build_tenpy_site(level_structure: str | LevelStructureSpec) -> object:
-    """Build the TeNPy local site for a shared :class:`LevelStructureSpec`."""
+def build_tenpy_site(level_structure: str | LevelStructure) -> object:
+    """Build the TeNPy local site for a shared :class:`LevelStructure`."""
     _require_tenpy()
     spec = resolve_level_structure(level_structure)
     if spec.name == "1r":
@@ -198,13 +217,15 @@ def build_tenpy_site(level_structure: str | LevelStructureSpec) -> object:
     return _build_explicit_site(spec)
 
 
-def transition_x_op_name(spec: LevelStructureSpec, lower: str, upper: str) -> str:
-    """Return the Hermitian transition operator name for a central transition."""
-    transition = require_transition(spec, lower, upper)
-    return f"X_{transition.name}"
+def _find_transition(spec: LevelStructure, lower: str, upper: str):
+    """Return the declared ``|lower> <-> |upper>`` transition spec, or ``None``."""
+    for transition in spec.transitions:
+        if transition.lower == lower and transition.upper == upper:
+            return transition
+    return None
 
 
-def _build_explicit_site(spec: LevelStructureSpec) -> object:
+def _build_explicit_site(spec: LevelStructure) -> object:
     from tenpy.linalg import np_conserved as npc
     from tenpy.networks.site import Site
 

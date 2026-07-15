@@ -10,7 +10,7 @@ from ryd_gate.backends.tn_common.protocol_context import TNProtocolContext
 from ryd_gate.protocols.sweep import SweepProtocol
 
 
-def test_sweep_protocol_takes_no_x_parameters():
+def test_sweep_protocol_resolves_against_tn_context():
     proto = SweepProtocol(
         t_gate=2.0,
         omega_half_fn=lambda t: 0.5 * t,
@@ -18,13 +18,11 @@ def test_sweep_protocol_takes_no_x_parameters():
     )
     spec = create_tn_lattice_spec(1, 1)
 
-    params = proto.unpack_params([], TNProtocolContext(spec))
+    params = proto._resolve(TNProtocolContext(spec))
 
     assert params["t_gate"] == 2.0
     assert np.isclose(params["Omega"], 2.0)
     assert np.isclose(params["Delta"], 3.0)
-    with pytest.raises(ValueError, match="no x parameters"):
-        proto.unpack_params([0.0], TNProtocolContext(spec))
 
 
 def test_lattice_coefficients_use_user_functions():
@@ -99,7 +97,7 @@ def test_phase_420_uses_integral_of_detuning_function():
         delta_fn=lambda t: 2.0 * t,
     )
 
-    phase = proto.phase_420(0.5, {})
+    phase = proto.phase_420(0.5)
 
     np.testing.assert_allclose(phase, np.exp(-1j * 0.25), atol=1e-6)
 
@@ -108,7 +106,7 @@ def test_plot_smoke_uses_address_profile():
     import matplotlib
 
     matplotlib.use("Agg")
-    from ryd_gate import InteractionSpec, RydbergSystem
+    from ryd_gate import InteractionSpec, RydbergSystem, level_structure
     from ryd_gate.lattice import Register
 
     proto = SweepProtocol(
@@ -116,14 +114,16 @@ def test_plot_smoke_uses_address_profile():
         omega_half_fn=lambda t: 1.0,
         delta_fn=lambda t: 2.0,
         address_fn=lambda t, i: float(i),
-        n_steps=4,
     )
-    system = RydbergSystem.set_atom_level("1r").set_atom_geom(
-        Register.rectangle(1, 2), interaction=InteractionSpec(C6=0.0)
-    ).set_protocol(proto)
+    system = RydbergSystem(
+        level_structure=level_structure("1r"),
+        register=Register.rectangle(1, 2),
+        interaction=InteractionSpec(C6=0.0),
+        protocol=proto,
+    )
 
-    fig_p, ax_p = proto.plot(system=system, show=False)
+    fig_p, ax_p = proto.plot(system)
     fig_s, ax_s = proto.plot_address_map(system=system, show=False)
 
-    assert len(fig_p.axes) == 1            # single overlaid pulse axis
+    assert len(fig_p.axes) == 2            # one stacked subplot per pulse trace
     assert len(fig_s.axes) == 2            # heatmap + colorbar

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh -o ConnectTimeout=10 -o BatchMode=yes chance@100.106.69.117 'cd /home/chance/Ryd-gate-modeling && echo CONNECTED && .venv/bin/python -c \"import pytest, arc; print\\(\\\\\"pytest+arc OK\\\\\"\\)\"')",
+      "Bash(ssh *)"
+    ]
+  }
+}

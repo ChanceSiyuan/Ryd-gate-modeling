@@ -1,26 +1,36 @@
 """Function-defined digital-analog protocol for the 0-1-r Rydberg lattice.
 
-Continuous schedules for four channels:
+Five mutually independent control functions define the full local 3x3
+Hermitian ``{|0>, |1>, |r>}`` Hamiltonian (with the ``|0>`` energy as gauge
+zero), in **direct Hamiltonian matrix-element** convention — the same angular
+frequency units as the internal Hamiltonian:
 
-- ``E[r,1]``  — hyperfine→Rydberg Rabi amplitude on ``|1>``↔``|r>`` (per atom, Omega_R)
-- ``E[1,0]``  — hyperfine Rabi amplitude on ``|0>``↔``|1>`` (Omega_hf)
-- ``E[r,r]``  — Rydberg detuning (Delta_R, sign convention: H contains -Delta_R n^r)
-- ``E[1,1]``  — hyperfine detuning (Delta_hf)
+- ``coupling_10(t) = H[1, 0](t)`` on ``E[1,0]``  (``|1><0|``)
+- ``coupling_r0(t) = H[r, 0](t)`` on ``E[r,0]``  (``|r><0|``)
+- ``coupling_r1(t) = H[r, 1](t)`` on ``E[r,1]``  (``|r><1|``)
+- ``energy_1(t)   = H[1, 1](t)`` on ``E[1,1]``  (``|1><1|`` projector)
+- ``energy_r(t)   = H[r, r](t)`` on ``E[r,r]``  (``|r><r|`` projector)
 
-The schedule lives on the protocol, so the parameter vector ``x`` passed to
-``simulate()`` is empty.  Each function accepts physical time ``t`` in seconds
-and returns either a scalar uniform value or a length-``N`` site profile.
+The three off-diagonal couplings may be complex; the compiler adds **only**
+the Hermitian conjugate (no extra 1/2 — a resonant Rabi drive of full Rabi
+frequency ``Omega`` is ``coupling_r1 = Omega/2 * exp(-i*phi)``).  The two
+diagonal energies must be real.  A function that is not provided means that
+channel does not exist.  Each function accepts physical time ``t`` in seconds
+and returns either a uniform scalar or a length-``N`` site profile.
 
 Typical use::
 
     protocol = DigitalAnalogProtocol(
         t_gate=1e-6,
-        omega_R_fn=lambda t: 2*pi*1e6,
-        delta_R_fn=lambda t: 0.0,
+        coupling_r1=lambda t: 0.5 * 2*pi*1e6,   # Omega/2 matrix element
+        energy_r=lambda t: 0.0,
     )
-    system = (RydbergSystem.set_atom_level("01r")
-              .set_atom_geom(Register.chain(2)).set_protocol(protocol))
-    result = simulate(system, [], psi0)
+    system = RydbergSystem(
+        level_structure=level_structure("01r"),
+        register=Register.chain(2),
+        protocol=protocol,
+    )
+    result = simulate(system, psi0)
 """
 
 from __future__ import annotations
@@ -31,7 +41,7 @@ import numpy as np
 
 from ryd_gate.protocols.base import Protocol
 
-SiteProfile = float | Sequence[float]
+SiteProfile = complex | float | Sequence[complex] | Sequence[float]
 SiteProfileFunction = Callable[[float], SiteProfile]
 
 
@@ -44,114 +54,123 @@ def is_scalar_profile(value: SiteProfile) -> bool:
 
 
 def as_site_profile(value: SiteProfile, n_sites: int) -> np.ndarray:
-    """Broadcast a scalar or length-``n_sites`` profile to shape ``(n_sites,)``."""
-    arr = np.asarray(value, dtype=float)
+    """Broadcast a scalar or length-``n_sites`` profile to shape ``(n_sites,)``.
+
+    Complex-valued (coupling) profiles are preserved as complex.
+    """
+    arr = np.asarray(value)
+    if not np.issubdtype(arr.dtype, np.number):
+        raise TypeError(f"Site profile must be numeric; got dtype {arr.dtype}.")
+    arr = arr.astype(complex)
     if arr.ndim == 0:
-        return np.full(n_sites, float(arr))
+        return np.full(n_sites, complex(arr))
     if arr.shape != (n_sites,):
         raise ValueError(f"Site profile must be a scalar or length-{n_sites} sequence; got shape {arr.shape}.")
     return arr
 
 
-# (function-field name, global channel, per-site prefix, is_drive, is_detuning).
-# The first element is the internal schedule-function key; the 2nd/3rd are the
-# primitive E[ket,bra] channel names the IR consumes.
+# (field name, channel, allows complex values).  The field name is the
+# constructor keyword; the channel is the primitive E[ket,bra] name the IR
+# consumes; couplings may be complex, energies must be real.
 _CHANNEL_SPECS = (
-    ("omega_R", "E[r,1]", "E[r,1]", True, False),
-    ("omega_hf", "E[1,0]", "E[1,0]", True, False),
-    ("delta_R", "E[r,r]", "E[r,r]", False, True),
-    ("delta_hf", "E[1,1]", "E[1,1]", False, True),
+    ("coupling_10", "E[1,0]", True),
+    ("coupling_r0", "E[r,0]", True),
+    ("coupling_r1", "E[r,1]", True),
+    ("energy_1", "E[1,1]", False),
+    ("energy_r", "E[r,r]", False),
 )
 
 
 class DigitalAnalogProtocol(Protocol):
-    """Function-defined 0-1-r drive schedule.
+    """Function-defined 0-1-r drive schedule in matrix-element convention.
 
-    Backends still integrate the Hamiltonian using piecewise-constant time
-    slices, but sampling continuous schedules is handled inside the protocol.
+    The control functions are sampled at whatever times the backend's
+    integrator requests (the exact backend is adaptive), so they must be
+    well-defined at every ``t`` in ``[0, t_gate]``, not just on a step grid.
 
     Parameters
     ----------
     t_gate : float
         Total evolution time.
-    omega_R_fn, omega_hf_fn, delta_R_fn, delta_hf_fn : callable, optional
-        Functions ``t -> value`` returning a scalar or length-``N`` site
-        profile.  Missing functions default to zero.  Drive functions return
-        full Rabi frequencies, not half-Rabi coefficients.
-    n_steps : int
-        Number of slices that the sparse backend should use to integrate
-        the schedule.
+    coupling_10, coupling_r0, coupling_r1 : callable, optional
+        Functions ``t -> value`` returning the (possibly complex) Hamiltonian
+        matrix element ``H[upper, lower](t)`` as a scalar or length-``N`` site
+        profile.  The compiler adds only the Hermitian conjugate.
+    energy_1, energy_r : callable, optional
+        Functions ``t -> value`` returning the real diagonal energies
+        ``H[1,1]`` / ``H[r,r]`` (the ``|0>`` energy is the gauge zero).
     """
 
     def __init__(
         self,
         *,
         t_gate: float,
-        omega_R_fn: SiteProfileFunction | None = None,
-        omega_hf_fn: SiteProfileFunction | None = None,
-        delta_R_fn: SiteProfileFunction | None = None,
-        delta_hf_fn: SiteProfileFunction | None = None,
-        n_steps: int = 200,
+        coupling_10: SiteProfileFunction | None = None,
+        coupling_r0: SiteProfileFunction | None = None,
+        coupling_r1: SiteProfileFunction | None = None,
+        energy_1: SiteProfileFunction | None = None,
+        energy_r: SiteProfileFunction | None = None,
     ) -> None:
         if t_gate <= 0:
             raise ValueError("t_gate must be positive.")
-        if n_steps < 1:
-            raise ValueError("n_steps must be positive.")
         self._function_fields = {
-            "omega_R": omega_R_fn,
-            "omega_hf": omega_hf_fn,
-            "delta_R": delta_R_fn,
-            "delta_hf": delta_hf_fn,
+            "coupling_10": coupling_10,
+            "coupling_r0": coupling_r0,
+            "coupling_r1": coupling_r1,
+            "energy_1": energy_1,
+            "energy_r": energy_r,
         }
         for name, fn in self._function_fields.items():
             if fn is not None and not callable(fn):
-                raise TypeError(f"{name}_fn must be callable when provided.")
+                raise TypeError(f"{name} must be callable when provided.")
+        if all(fn is None for fn in self._function_fields.values()):
+            raise ValueError("DigitalAnalogProtocol needs at least one control function.")
         self._t_gate = float(t_gate)
-        self.n_steps = int(n_steps)
+
+    @property
+    def t_gate(self) -> float:
+        return self._t_gate
 
     # -- Protocol interface ------------------------------------------------
 
-    @property
-    def n_params(self) -> int:
-        # Schedule lives on the protocol; x is empty
-        return 0
-
-    def validate_params(self, x) -> None:
-        if len(x) != 0:
-            raise ValueError(
-                f"DigitalAnalogProtocol takes no x parameters (schedule is on the protocol); got {len(x)}."
-            )
-
-    def unpack_params(self, x, system) -> dict:
+    def _resolve(self, system) -> dict:
         basis = getattr(system, "basis", None)
         n_sites = getattr(basis, "n_sites", None)
         if n_sites is None:
             n_sites = getattr(system, "N", None)
-        if n_sites is None and hasattr(system, "meta"):
-            n_sites = system.meta("n_sites", None)
         if n_sites is None:
             raise TypeError(
-                "DigitalAnalogProtocol.unpack_params() needs a system-like "
-                "object with basis.n_sites, N, or meta('n_sites')."
+                "DigitalAnalogProtocol needs a system-like object with "
+                "basis.n_sites or N."
             )
-        return {
-            "t_gate": self._t_gate,
-            "n_sites": int(n_sites),
-        }
+        n_sites = int(n_sites)
+        self._validate_energies_real(n_sites)
+        return {"t_gate": self._t_gate, "n_sites": n_sites}
 
     @property
     def required_channels(self) -> frozenset[str]:
-        return frozenset({"E[r,1]", "E[1,0]", "E[r,r]", "E[1,1]"})
+        return frozenset(
+            channel
+            for field, channel, _ in _CHANNEL_SPECS
+            if self._function_fields[field] is not None
+        )
 
     def drive_channels(self, system) -> frozenset[str]:
-        """All drive/detuning channels used by this schedule on this lattice."""
+        """All channels used by this schedule on this lattice.
+
+        Scalar control functions declare the global channel name; per-site
+        profiles declare ``E[...]_{i}`` for each site.  Absent functions
+        declare nothing (the channel does not exist).
+        """
         n_sites = system.basis.n_sites
         channels: set[str] = set()
-        for field, global_ch, site_prefix, _, _ in _CHANNEL_SPECS:
+        for field, channel, _ in _CHANNEL_SPECS:
+            if self._function_fields[field] is None:
+                continue
             if self._function_field_is_scalar(field, n_sites):
-                channels.add(global_ch)
+                channels.add(channel)
             else:
-                channels.update(f"{site_prefix}_{i}" for i in range(n_sites))
+                channels.update(f"{channel}_{i}" for i in range(n_sites))
         return frozenset(channels)
 
     def _clamp_time(self, t: float) -> float:
@@ -172,63 +191,53 @@ class DigitalAnalogProtocol(Protocol):
     def _function_probe_times(self) -> tuple[float, ...]:
         return (0.0, 0.25 * self._t_gate, 0.5 * self._t_gate, 0.75 * self._t_gate, self._t_gate)
 
-    def _coeffs_for_function_field(
-        self,
-        t: float,
-        field: str,
-        global_ch: str,
-        site_prefix: str,
-        half_factor: bool,
-        negate: bool,
-        n_sites: int,
-    ) -> dict[str, complex]:
-        value = self._function_value(field, t)
-        profile = as_site_profile(value, n_sites)
-        sign = -1.0 if negate else 1.0
-        scale = 0.5 if half_factor else 1.0
+    def _validate_energies_real(self, n_sites: int) -> None:
+        for field, _, allows_complex in _CHANNEL_SPECS:
+            if allows_complex or self._function_fields[field] is None:
+                continue
+            for t in self._function_probe_times():
+                profile = as_site_profile(self._function_value(field, t), n_sites)
+                if np.any(np.abs(profile.imag) > 0.0):
+                    raise ValueError(
+                        f"{field} must be real (diagonal energies); got a complex "
+                        f"value at t={t!r}."
+                    )
 
-        if is_scalar_profile(value):
-            return {global_ch: complex(sign * scale * profile[0])}
-
-        return {f"{site_prefix}_{i}": complex(sign * scale * profile[i]) for i in range(n_sites)}
-
-    def get_drive_coefficients(self, t: float, params: dict) -> dict[str, complex]:
+    def get_drive_coefficients(self, t: float, ctx: dict) -> dict[str, complex]:
         """Return channel coefficients at time *t*.
 
-        Sign / factor conventions matching the compiler:
-
-        - ``E[r,1]`` / ``E[r,1]_i``  -> Omega_R / 2  (+ Hermitian conjugate)
-        - ``E[1,0]`` / ``E[1,0]_i``  -> Omega_hf / 2 (+ Hermitian conjugate)
-        - ``E[r,r]`` / ``E[r,r]_i``  -> -Delta_R on Rydberg projector
-        - ``E[1,1]`` / ``E[1,1]_i``  -> -Delta_hf on |1> projector
+        Direct matrix-element convention: each coupling coefficient is the
+        Hamiltonian entry ``H[upper, lower](t)`` itself (the compiler adds only
+        the Hermitian conjugate), and each energy coefficient multiplies the
+        level projector directly.
         """
-        n_sites = int(params.get("n_sites", 1))
+        n_sites = int(ctx.get("n_sites", 1))
         coeffs: dict[str, complex] = {}
-        for spec in _CHANNEL_SPECS:
-            coeffs.update(self._coeffs_for_function_field(t, *spec, n_sites))
+        for field, channel, _ in _CHANNEL_SPECS:
+            if self._function_fields[field] is None:
+                continue
+            value = self._function_value(field, t)
+            profile = as_site_profile(value, n_sites)
+            if is_scalar_profile(value):
+                coeffs[channel] = complex(profile[0])
+            else:
+                coeffs.update({f"{channel}_{i}": complex(profile[i]) for i in range(n_sites)})
         return coeffs
 
-    def pulse_traces(self, t: float, params: dict) -> dict[str, float]:
-        """Physical full-amplitude pulse traces (Omega_R, Delta_R, ...) at time *t*.
-
-        Returns the schedule's *full* Rabi frequencies and detunings (not the
-        Hamiltonian-coefficient halves), site-averaged when site-dependent. Omits
-        channels whose schedule function is absent or identically zero.
-        """
-        n_sites = int(params.get("n_sites", 1))
+    def _pulse_traces_ctx(self, t: float, ctx: dict) -> dict[str, float]:
+        """Site-averaged |matrix element| traces of the active control functions."""
+        n_sites = int(ctx.get("n_sites", 1))
         labels = {
-            "omega_R": r"$\Omega_R$", "omega_hf": r"$\Omega_{hf}$",
-            "delta_R": r"$\Delta_R$", "delta_hf": r"$\Delta_{hf}$",
+            "coupling_10": r"$|H_{10}|$", "coupling_r0": r"$|H_{r0}|$",
+            "coupling_r1": r"$|H_{r1}|$",
+            "energy_1": r"$E_1$", "energy_r": r"$E_r$",
         }
 
         def mean_at(field: str, t_query: float) -> float:
-            return float(np.mean(as_site_profile(self._function_value(field, t_query), n_sites)))
+            profile = as_site_profile(self._function_value(field, t_query), n_sites)
+            if field.startswith("coupling"):
+                return float(np.mean(np.abs(profile)))
+            return float(np.mean(profile.real))
 
-        active = [
-            field for field in labels
-            if self._function_fields[field] is not None
-            and any(abs(mean_at(field, tp)) > 0.0 for tp in self._function_probe_times())
-        ]
-        if not active:
-            active = [f for f in labels if self._function_fields[f] is not None] or list(labels)
+        active = [f for f in labels if self._function_fields[f] is not None]
         return {labels[field]: mean_at(field, t) for field in active}

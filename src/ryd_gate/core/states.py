@@ -155,3 +155,66 @@ def plus_local_amplitudes(levels):
     v[labels.index("0")] = 1.0 / np.sqrt(2.0)
     v[labels.index("1")] = 1.0 / np.sqrt(2.0)
     return v
+
+
+def preset_initial_label(levels) -> str:
+    """The preset per-site initial level for ``initial_state=None``.
+
+    The hyperfine qubit level ``"1"`` when the structure has one (every
+    laser-driven preset starts from ``|1>``), else the first level label.
+    """
+    labels = tuple(str(level) for level in levels)
+    return "1" if "1" in labels else labels[0]
+
+
+def normalize_initial_state(initial_state, n_sites: int):
+    """Normalize the public ``initial_state`` input (single internal path).
+
+    Returns ``(kind, value)`` with ``kind`` one of:
+
+    - ``"single"`` — ``value`` is a per-site level-label list, or the literal
+      string ``"plus"`` / ``"ground"`` (per-site preset initial level);
+    - ``"batch"`` — ``value`` is a list of per-site level-label lists.
+
+    Accepted inputs: ``None`` (preset initial level on every site), the string
+    ``"plus"``, a flat level-label sequence (one product state), or a nested
+    sequence of level-label sequences (a batch).  Anything else — including
+    dense vectors and backend-native states — is rejected: research scripts
+    needing dense superpositions use the explicit exact-backend seam.
+    """
+    if initial_state is None:
+        return "single", "ground"
+    if isinstance(initial_state, str):
+        if initial_state == "plus":
+            return "single", "plus"
+        raise ValueError(
+            f"unknown initial_state string {initial_state!r}; allowed: None, 'plus', "
+            "a flat level-label sequence, or a nested sequence of them."
+        )
+    if isinstance(initial_state, (list, tuple)):
+        if len(initial_state) == 0:
+            raise ValueError("initial_state must not be an empty sequence.")
+        if all(isinstance(entry, (list, tuple)) for entry in initial_state):
+            for entry in initial_state:
+                _require_label_list(entry, n_sites)
+            return "batch", [list(entry) for entry in initial_state]
+        _require_label_list(initial_state, n_sites)
+        return "single", list(initial_state)
+    raise TypeError(
+        "initial_state must be None, 'plus', a level-label sequence, or a nested "
+        f"sequence of level-label sequences; got {type(initial_state).__name__}."
+    )
+
+
+def _require_label_list(entry, n_sites: int) -> None:
+    if len(entry) != n_sites:
+        raise ValueError(
+            f"initial_state has {len(entry)} per-site labels but the system has "
+            f"{n_sites} sites."
+        )
+    for label in entry:
+        if not isinstance(label, str):
+            raise TypeError(
+                "initial_state entries must be level-label strings; got "
+                f"{type(label).__name__}."
+            )

@@ -3,7 +3,9 @@
 with the alias-free exact_ode solver, in parallel.
 
 Decoupled from ``scripts/notebooks/error_buget.ipynb`` on purpose: this never touches the
-notebook. It writes ``results/error_budget_fig{B,C,A_De<NN>}_ode_g<N>.npz`` caches, which the
+notebook. It writes
+``results/error_budget/cz_gate_maps/error_budget_fig{B,C,A_De<NN>}_ode_g<N>.npz``
+caches, which the
 notebook then loads by setting ``ODE_GRID_N = <N>``. The per-point worker is a verbatim copy
 of the notebook's ``eval_cz_point`` so the g20 data is consistent with the g8 data.
 
@@ -45,7 +47,7 @@ def results_dir():
         if os.path.isdir(os.path.join(root, "results")) or os.path.exists(os.path.join(root, "pyproject.toml")):
             break
         root = os.path.dirname(root)
-    d = os.path.join(root, "results")
+    d = os.path.join(root, "results", "error_budget", "cz_gate_maps")
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -56,8 +58,9 @@ def eval_cz_point(cfg):
     import numpy as np
     import ryd_gate as rg
     from ryd_gate.lattice import Register
-    from ryd_gate.gates import CZProtocol, phase_from_chirp
-    from ryd_gate.core.operators import build_occ_operator
+    from ryd_gate.protocols import CZProtocol
+    from ryd_gate.protocols.gate_cz import phase_from_chirp
+    from ryd_gate.protocols.gate_cz import cz_effective_rabi, cz_rabi_maxes
     from ryd_gate.physics import our_laser_rabis
     wrap = lambda a: float(np.angle(np.exp(1j * a)))
     def env_fn(t, T, ramp=0.15):
@@ -76,33 +79,39 @@ def eval_cz_point(cfg):
     def chirp(t):
         a = np.sqrt(env(t)); return base_chirp(t) + Dr_nom*a*a - D1_nom*a*a
     phi = phase_from_chirp(chirp, t_gate=T, n_samples=4*cfg["n_steps"]+1)
-    proto = CZProtocol(t_gate=T,
+    sys7 = rg.RydbergSystem(
+        level_structure=rg.level_structure("rb87_7_mp", detuning_sign=1,
+            Delta_Hz=cfg["Delta_e_Hz"], magnetic_field_G=20.0),
+        register=Register.chain(2, spacing_um=cfg["spacing_um"]))
+    o420, o1013 = cz_rabi_maxes(sys7, Omega_420, Omega_1013)
+    _, time_scale = cz_effective_rabi(sys7, o420, o1013)
+    proto = CZProtocol(duration_ratio=T/time_scale,
         A_420=lambda s: np.sqrt(env(float(np.clip(s, 0.0, 1.0))*T)),
         phi_420=lambda s: phi(float(np.clip(s, 0.0, 1.0))*T),
         A_1013=lambda s: np.sqrt(env(float(np.clip(s, 0.0, 1.0))*T)),
-        phi_1013=lambda s: 0.0, omega_420_max=Omega_420, omega_1013_max=Omega_1013,
-        n_steps=cfg["n_steps"])
-    sys7 = (rg.RydbergSystem.set_atom_level("rb87_7_mp", detuning_sign=1,
-                Delta_Hz=cfg["Delta_e_Hz"], magnetic_field_G=20.0)
-            .set_atom_geom(Register.chain(2, spacing_um=cfg["spacing_um"])).with_protocol(proto))
+        phi_1013=lambda s: 0.0, omega_420_max=Omega_420, omega_1013_max=Omega_1013)
+    sys7 = sys7.with_protocol(proto)
     t_eval = np.linspace(0.0, T, cfg["n_eval"])
-    results = rg.simulate(sys7, psi0=[list(s) for s in ["00","01","10","11"]],
-                          t_eval=t_eval, backend=cfg["backend"],
+    obs = sys7.observables
+    observables = {
+        "n_e": obs.level_sum("e1") + obs.level_sum("e2") + obs.level_sum("e3"),
+        "n_r": obs.level_sum("r"), "n_rg": obs.level_sum("r_garb"),
+    }
+    results = rg.simulate(sys7, [list(s) for s in ["00","01","10","11"]],
+                          t_eval=t_eval, observables=observables, backend=cfg["backend"],
                           backend_options={"rtol": cfg.get("rtol", 1e-8), "atol": cfg.get("atol", 1e-12)})
     basis = [sys7.product_state(s) for s in ["00","01","10","11"]]
-    occ_e = sum(build_occ_operator(i, 7) for i in (2, 3, 4))
-    occ_r = build_occ_operator(5, 7); occ_rg = build_occ_operator(6, 7)
-    Gamma_e = float(sys7.meta("mid_state_decay_rate")); Gamma_r = float(sys7.meta("ryd_state_decay_rate"))
-    Gamma_rg = float(sys7.meta("ryd_garb_decay_rate", Gamma_r))
+    Gamma_e = float(sys7.level_structure.mid_state_decay_rate); Gamma_r = float(sys7.level_structure.ryd_state_decay_rate)
+    Gamma_rg = float(sys7.level_structure.ryd_garb_decay_rate)
     phase = {}; ret = {}; leak = {}; p_mid = []; p_ryd = []; p_rg = []
     for j, s in enumerate(["00","01","10","11"]):
-        psi_f = results[j].psi_final; ov = np.vdot(basis[j], psi_f)
+        psi_f = results[j].final_state; ov = np.vdot(basis[j], psi_f)
         phase[s] = float(np.angle(ov)); ret[s] = float(abs(ov)**2)
         leak[s] = float(1.0 - sum(abs(np.vdot(basis[k], psi_f))**2 for k in range(4)))
-        traj = np.asarray(results[j].states); t = np.asarray(results[j].times, float)
-        ne  = np.array([np.real(np.vdot(p, occ_e @ p))  for p in traj])
-        nr  = np.array([np.real(np.vdot(p, occ_r @ p))  for p in traj])
-        nrg = np.array([np.real(np.vdot(p, occ_rg @ p)) for p in traj])
+        t = np.asarray(results[j].times, float)
+        ne  = results[j].expectation("n_e").real
+        nr  = results[j].expectation("n_r").real
+        nrg = results[j].expectation("n_rg").real
         p_mid.append(np.trapezoid(Gamma_e*ne, t)); p_ryd.append(np.trapezoid(Gamma_r*nr, t))
         p_rg.append(np.trapezoid(Gamma_rg*nrg, t))
     p_mid = np.asarray(p_mid); p_ryd = np.asarray(p_ryd); p_rg = np.asarray(p_rg)
