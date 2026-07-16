@@ -24,18 +24,36 @@ from ryd_gate.backends.tn_common.compiler import plan_segments
 
 
 def _load_quimb(device: str):
-    """Import ``quimb.tensor`` lazily; reject GPU (no clean quimb-on-GPU path here)."""
-    if device == "cuda":
-        raise GraphTNError(
-            "backend='graph_peps' does not support device='cuda'; the graph simple-update "
-            "runs on the quimb NumPy backend. Use device='cpu' (or the YASTN backend='peps' "
-            "for CUDA)."
-        )
+    """Import ``quimb.tensor`` lazily; for CUDA validate a working PyTorch GPU."""
     if importlib.util.find_spec("quimb") is None:
         raise GraphTNError("backend='graph_peps' requires quimb (pip install quimb).")
+    if device == "cuda":
+        if importlib.util.find_spec("torch") is None:
+            raise GraphTNError("device='cuda' requires PyTorch with CUDA; none installed.")
+        import torch
+
+        if not torch.cuda.is_available():
+            raise GraphTNError("device='cuda' requested but torch.cuda.is_available() is false.")
     import quimb.tensor as qtn
 
     return qtn
+
+
+def _array(mat, device: str):
+    """A local operator on the target array backend (NumPy for cpu, Torch-CUDA for cuda)."""
+    a = np.asarray(mat, dtype=complex)
+    if device == "cuda":
+        import torch
+
+        return torch.as_tensor(a, dtype=torch.complex128, device="cuda")
+    return a
+
+
+def _to_host_complex(value) -> complex:
+    """Bring a possibly-device scalar (NumPy or Torch) to a host Python ``complex``."""
+    if hasattr(value, "item"):
+        return complex(value.item())
+    return complex(np.asarray(value).reshape(()))
 
 
 def _nn_operator(terms) -> np.ndarray:
@@ -44,7 +62,7 @@ def _nn_operator(terms) -> np.ndarray:
     return np.kron(pr, pr)
 
 
-def _product_psi(qtn, graph, terms, amps):
+def _product_psi(qtn, graph, terms, amps, device: str):
     """Bond-dim-1 graph tensor network overwritten with per-site amplitude vectors."""
     d = terms.local_dim
     psi = qtn.TN_from_edges_rand(list(graph.edges), D=1, phys_dim=d, seed=0, dtype="complex128")
@@ -56,6 +74,8 @@ def _product_psi(qtn, graph, terms, amps):
         sl[ax] = slice(None)
         data[tuple(sl)] = np.asarray(amps[i], dtype=complex)
         t.modify(data=data)
+    if device == "cuda":
+        psi.apply_to_arrays(lambda x: _array(x, "cuda"))
     return psi
 
 
@@ -66,17 +86,17 @@ def _local_ham(terms, t: float) -> np.ndarray:
     return h
 
 
-def _build_ham(qtn, graph, h_local, nn):
+def _build_ham(qtn, graph, h_local, nn, device: str):
     """LocalHamGen for the graph: per-site ``h_local[i]`` merged into ``V_ij * kron(n_R,n_R)``."""
-    h2 = {e: graph.couplings[e] * nn for e in graph.edges}
-    h1 = {i: h_local[i] for i in range(graph.n_sites)}
+    h2 = {e: _array(graph.couplings[e] * nn, device) for e in graph.edges}
+    h1 = {i: _array(h_local[i], device) for i in range(graph.n_sites)}
     return qtn.LocalHamGen(H2=h2, H1=h1)
 
 
 # ── observable measurement ───────────────────────────────────────────────────
 
 
-def _measure(psi, obs_exprs, terms, method: str, max_distance: int) -> dict[str, complex]:
+def _measure(psi, obs_exprs, terms, method: str, max_distance: int, device: str) -> dict[str, complex]:
     """Complex expectation of each observable expression on ``psi``."""
     d = terms.local_dim
     out: dict[str, complex] = {}
@@ -95,7 +115,7 @@ def _measure(psi, obs_exprs, terms, method: str, max_distance: int) -> dict[str,
             op = complex(term.coefficient) * op
             acc[sites] = acc[sites] + op if sites in acc else op
         quimb_terms = {
-            key: (op.reshape((d,) * (2 * len(key))) if len(key) > 1 else op)
+            key: _array(op.reshape((d,) * (2 * len(key))) if len(key) > 1 else op, device)
             for key, op in acc.items()
         }
         out[label] = const + _contract_terms(psi, quimb_terms, method, max_distance)
@@ -117,7 +137,7 @@ def _contract_terms(psi, quimb_terms, method: str, max_distance: int) -> complex
     total = 0.0 + 0.0j
     for val in res.values():
         v = val[0] if isinstance(val, tuple) else val
-        total += complex(np.asarray(v).reshape(()))
+        total += _to_host_complex(v)
     return total
 
 
@@ -127,8 +147,9 @@ def _contract_terms(psi, quimb_terms, method: str, max_distance: int) -> complex
 def evolve_graph_tn(terms, graph, amps, out_times, obs_exprs, options):
     """Time-dependent graph-PEPS real-time evolution; return ``(out_times, expect, reader)``."""
     qtn = _load_quimb(options.device)
+    device = options.device
     nn = _nn_operator(terms)
-    psi = _product_psi(qtn, graph, terms, amps)
+    psi = _product_psi(qtn, graph, terms, amps, device)
     gauges: dict = {}
     psi.gauge_all_simple_(max_iterations=1, gauges=gauges)
 
@@ -140,7 +161,7 @@ def evolve_graph_tn(terms, graph, amps, out_times, obs_exprs, options):
         snap = psi.copy()
         snap.gauge_simple_insert(gauges)
         for label, value in _measure(
-            snap, obs_exprs, terms, options.measurement_method, options.cluster_max_distance
+            snap, obs_exprs, terms, options.measurement_method, options.cluster_max_distance, device
         ).items():
             records[label].append(value)
 
@@ -150,7 +171,7 @@ def evolve_graph_tn(terms, graph, amps, out_times, obs_exprs, options):
     for segment in segments:
         for k in range(segment.n_sub):
             t_mid = segment.t0 + (k + 0.5) * segment.dt_sub
-            ham = _build_ham(qtn, graph, _local_ham(terms, t_mid), nn)
+            ham = _build_ham(qtn, graph, _local_ham(terms, t_mid), nn, device)
             ordering = ham.get_auto_ordering("sort")
             sweep = list(ordering) + list(reversed(ordering))  # symmetric Strang step
             x = -1j * segment.dt_sub / 2.0
@@ -177,11 +198,12 @@ def evolve_graph_tn(terms, graph, amps, out_times, obs_exprs, options):
 def solve_graph_tn_ground(terms, graph, at, amps, obs_exprs, options):
     """Imaginary-time graph-PEPS ground state; return ``(expectations, reader)``."""
     qtn = _load_quimb(options.device)
+    device = options.device
     nn = _nn_operator(terms)
     h_local = _local_ham(terms, float(at))
-    ham = _build_ham(qtn, graph, h_local, nn)
+    ham = _build_ham(qtn, graph, h_local, nn, device)
 
-    psi0 = _product_psi(qtn, graph, terms, amps)
+    psi0 = _product_psi(qtn, graph, terms, amps, device)
     su = qtn.SimpleUpdateGen(
         psi0, ham, D=options.bond_dimension, imag=True,
         compute_energy_final=False, progbar=False, gate_opts={"cutoff": options.svd_cutoff},
@@ -191,11 +213,11 @@ def solve_graph_tn_ground(terms, graph, at, amps, obs_exprs, options):
         su.evolve(int(steps), progbar=False)
     psi = su.get_state()
 
-    energy = _ground_energy(psi, terms, graph, h_local, nn, options)
+    energy = _ground_energy(psi, terms, graph, h_local, nn, options, device)
     expectations: dict[str, float] = {"energy": energy}
     if obs_exprs:
         measured = _measure(
-            psi, obs_exprs, terms, options.measurement_method, options.cluster_max_distance
+            psi, obs_exprs, terms, options.measurement_method, options.cluster_max_distance, device
         )
         for label, value in measured.items():
             expectations[label] = _real_scalar(value, label)
@@ -204,12 +226,14 @@ def solve_graph_tn_ground(terms, graph, at, amps, obs_exprs, options):
     return expectations, reader
 
 
-def _ground_energy(psi, terms, graph, h_local, nn, options) -> float:
+def _ground_energy(psi, terms, graph, h_local, nn, options, device: str) -> float:
     """``<psi|H|psi>`` (rad/s) from the frozen local + pair terms via the chosen method."""
     d = terms.local_dim
-    quimb_terms: dict[tuple[int, ...], np.ndarray] = {(i,): h_local[i] for i in range(graph.n_sites)}
+    quimb_terms: dict[tuple[int, ...], object] = {
+        (i,): _array(h_local[i], device) for i in range(graph.n_sites)
+    }
     for e in graph.edges:
-        quimb_terms[e] = (graph.couplings[e] * nn).reshape(d, d, d, d)
+        quimb_terms[e] = _array((graph.couplings[e] * nn).reshape(d, d, d, d), device)
     value = _contract_terms(psi, quimb_terms, options.measurement_method, options.cluster_max_distance)
     return _real_scalar(value, "energy")
 

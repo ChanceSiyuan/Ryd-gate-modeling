@@ -359,10 +359,11 @@ Capability limits: the imaginary-time simple update converges on loopy graphs
 only in a moderate-blockade regime (`V` up to a few times `Omega`); strong
 blockade on a loop does not converge (real time is far more forgiving, and tree
 geometries are near-exact). `amplitude()` and `sample()` are exact but densify
-the state, so they are limited to small systems. `device="cuda"` is not
-supported and is rejected with a clear error (use `backend="peps"` for CUDA).
-Use `graph_peps` for irregular/loopy geometry and `peps` for large regular
-Cartesian grids.
+the state, so they are limited to small systems. `device="cuda"` runs the graph
+simple-update on the GPU through PyTorch (install the `torch` extra); it needs a
+CUDA-capable PyTorch and raises a clear error if none is available (no silent CPU
+fallback). Use `graph_peps` for irregular/loopy geometry and `peps` for large
+regular Cartesian grids.
 
 ## Ground-state search
 

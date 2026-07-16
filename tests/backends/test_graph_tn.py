@@ -226,9 +226,32 @@ class TestArbitraryGeometryAcceptance:
             gtn = simulate(system, backend="graph_peps", observables=obs, backend_options=_RT_OPTS)
             assert np.all(np.isfinite(gtn.expectation("n_r0")))
 
-    def test_cuda_rejected(self):
+    def test_cuda(self):
+        import importlib.util
+
         from ryd_gate.backends.graph_tn import GraphTNError
 
-        system = _triangular_system(rows=2, per_row=2, spacing=8.0, cutoff=9.0)
-        with pytest.raises(GraphTNError, match="cuda"):
-            simulate(system, backend="graph_peps", backend_options={**_RT_OPTS, "device": "cuda"})
+        system = _triangular_system(rows=2, per_row=2, spacing=8.0, cutoff=9.0)  # N=4, loopy
+        have_cuda = importlib.util.find_spec("torch") is not None
+        if have_cuda:
+            import torch
+
+            have_cuda = torch.cuda.is_available()
+        if not have_cuda:
+            # no PyTorch/CUDA: device='cuda' rejects cleanly (no silent CPU fallback)
+            with pytest.raises(GraphTNError, match="cuda|PyTorch"):
+                simulate(system, backend="graph_peps", backend_options={**_RT_OPTS, "device": "cuda"})
+            return
+        # CUDA available: the torch-backed graph simple-update matches exact.
+        obs = {f"n_r{i}": system.observables.n("r", i) for i in range(system.N)}
+        exact = simulate(system, observables=obs)
+        cuda = simulate(system, backend="graph_peps", observables=obs,
+                        backend_options={**_RT_OPTS, "device": "cuda"})
+        for name in obs:
+            np.testing.assert_allclose(cuda.expectation(name), exact.expectation(name), atol=3e-3, err_msg=name)
+        assert isinstance(cuda.amplitude(["1", "1", "1", "1"]), complex)
+        _terms, e0, _v0 = _dense_ground(system, _T_GATE / 2)
+        gs = system.ground_state(at=_T_GATE / 2, method="graph_peps_imaginary_time",
+                                 initial_state=["1"] * system.N,
+                                 method_options={**_GROUND_OPTS, "device": "cuda"})
+        assert abs(gs.expectation("energy") - e0) <= 5e-3 * abs(e0)
