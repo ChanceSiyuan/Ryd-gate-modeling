@@ -15,25 +15,12 @@ from collections import Counter
 
 import numpy as np
 
+from ryd_gate.backends.graph_tn._device import to_host_array, to_host_complex
 from ryd_gate.backends.graph_tn._options import GraphTNError
 from ryd_gate.backends.tn_common.initial_state import validate_labels
 
 _PHASE_REF_TOL = 1e-9
 _MAX_DENSE_DIM = 1 << 20  # cap the exact statevector used for sampling
-
-
-def _to_host_complex(value) -> complex:
-    """Bring a possibly-device (NumPy or Torch-CUDA) scalar to a host Python ``complex``."""
-    if hasattr(value, "item"):
-        return complex(value.item())
-    return complex(np.asarray(value).reshape(()))
-
-
-def _to_host_array(value) -> np.ndarray:
-    """Bring a possibly-device (NumPy or Torch-CUDA) array to a host NumPy array."""
-    if hasattr(value, "detach"):
-        value = value.detach().cpu().numpy()
-    return np.asarray(value)
 
 
 class _BaseReader:
@@ -58,9 +45,9 @@ class _BaseReader:
         sites = sorted(psi.sites)
         idx = self._index(labels)
         sel = {psi.site_ind_id.format(s): idx[k] for k, s in enumerate(sites)}
-        raw = _to_host_complex(psi.isel(sel).contract(output_inds=()))
+        raw = to_host_complex(psi.isel(sel).contract(output_inds=()))
         if self._norm is None:
-            self._norm = _to_host_complex(psi.H @ psi).real ** 0.5
+            self._norm = to_host_complex(psi.H @ psi).real ** 0.5
         return raw / self._norm
 
     def _statevector(self) -> np.ndarray:
@@ -73,7 +60,7 @@ class _BaseReader:
                     f"sample() densifies the state ({d}**{n} amplitudes), which exceeds the "
                     f"{_MAX_DENSE_DIM} limit; graph-PEPS sampling is only available for small systems."
                 )
-            v = _to_host_array(psi.to_dense([psi.site_ind_id.format(s) for s in sites])).reshape(-1)
+            v = to_host_array(psi.to_dense([psi.site_ind_id.format(s) for s in sites])).reshape(-1)
             nrm = np.linalg.norm(v)
             if not np.isfinite(nrm) or nrm == 0.0:
                 raise GraphTNError(f"final state has a non-finite/zero norm {nrm!r}; cannot sample.")

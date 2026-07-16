@@ -18,6 +18,7 @@ import importlib.util
 
 import numpy as np
 
+from ryd_gate.backends.graph_tn._device import to_array, to_host_complex
 from ryd_gate.backends.graph_tn._options import GraphTNError
 from ryd_gate.backends.graph_tn._readout import _GroundStateReader, _RealTimeReader
 from ryd_gate.backends.tn_common.compiler import plan_segments
@@ -39,23 +40,6 @@ def _load_quimb(device: str):
     return qtn
 
 
-def _array(mat, device: str):
-    """A local operator on the target array backend (NumPy for cpu, Torch-CUDA for cuda)."""
-    a = np.asarray(mat, dtype=complex)
-    if device == "cuda":
-        import torch
-
-        return torch.as_tensor(a, dtype=torch.complex128, device="cuda")
-    return a
-
-
-def _to_host_complex(value) -> complex:
-    """Bring a possibly-device scalar (NumPy or Torch) to a host Python ``complex``."""
-    if hasattr(value, "item"):
-        return complex(value.item())
-    return complex(np.asarray(value).reshape(()))
-
-
 def _nn_operator(terms) -> np.ndarray:
     """Rydberg pair operator ``kron(n_R, n_R)`` as a flat ``(d*d, d*d)`` matrix."""
     pr = np.asarray(terms.rydberg_projector(), dtype=complex)
@@ -75,7 +59,7 @@ def _product_psi(qtn, graph, terms, amps, device: str):
         data[tuple(sl)] = np.asarray(amps[i], dtype=complex)
         t.modify(data=data)
     if device == "cuda":
-        psi.apply_to_arrays(lambda x: _array(x, "cuda"))
+        psi.apply_to_arrays(lambda x: to_array(x, "cuda"))
     return psi
 
 
@@ -88,8 +72,8 @@ def _local_ham(terms, t: float) -> np.ndarray:
 
 def _build_ham(qtn, graph, h_local, nn, device: str):
     """LocalHamGen for the graph: per-site ``h_local[i]`` merged into ``V_ij * kron(n_R,n_R)``."""
-    h2 = {e: _array(graph.couplings[e] * nn, device) for e in graph.edges}
-    h1 = {i: _array(h_local[i], device) for i in range(graph.n_sites)}
+    h2 = {e: to_array(graph.couplings[e] * nn, device) for e in graph.edges}
+    h1 = {i: to_array(h_local[i], device) for i in range(graph.n_sites)}
     return qtn.LocalHamGen(H2=h2, H1=h1)
 
 
@@ -115,7 +99,7 @@ def _measure(psi, obs_exprs, terms, method: str, max_distance: int, device: str)
             op = complex(term.coefficient) * op
             acc[sites] = acc[sites] + op if sites in acc else op
         quimb_terms = {
-            key: _array(op.reshape((d,) * (2 * len(key))) if len(key) > 1 else op, device)
+            key: to_array(op.reshape((d,) * (2 * len(key))) if len(key) > 1 else op, device)
             for key, op in acc.items()
         }
         out[label] = const + _contract_terms(psi, quimb_terms, method, max_distance)
@@ -137,7 +121,7 @@ def _contract_terms(psi, quimb_terms, method: str, max_distance: int) -> complex
     total = 0.0 + 0.0j
     for val in res.values():
         v = val[0] if isinstance(val, tuple) else val
-        total += _to_host_complex(v)
+        total += to_host_complex(v)
     return total
 
 
@@ -230,10 +214,10 @@ def _ground_energy(psi, terms, graph, h_local, nn, options, device: str) -> floa
     """``<psi|H|psi>`` (rad/s) from the frozen local + pair terms via the chosen method."""
     d = terms.local_dim
     quimb_terms: dict[tuple[int, ...], object] = {
-        (i,): _array(h_local[i], device) for i in range(graph.n_sites)
+        (i,): to_array(h_local[i], device) for i in range(graph.n_sites)
     }
     for e in graph.edges:
-        quimb_terms[e] = _array((graph.couplings[e] * nn).reshape(d, d, d, d), device)
+        quimb_terms[e] = to_array((graph.couplings[e] * nn).reshape(d, d, d, d), device)
     value = _contract_terms(psi, quimb_terms, options.measurement_method, options.cluster_max_distance)
     return _real_scalar(value, "energy")
 
