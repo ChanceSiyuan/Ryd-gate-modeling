@@ -42,3 +42,7 @@ uv.lock
 # Julia TNQS sysimage (large, machine/Julia-version specific; build locally)
 src/ryd_gate/backends/itensor/julia/sysimages/
 src/ryd_gate/backends/itensor/julia/sysimage_build/Manifest.toml
+
+# Large generated sweep exports (regenerable from results/max_leakage_ode/chunks/;
+# the merged .npz exceeds GitHub's 100 MB file limit)
+results/max_leakage_ode/exports/*.npz
