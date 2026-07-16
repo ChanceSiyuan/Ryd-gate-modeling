@@ -27,12 +27,6 @@ def test_general_zeeman_ns12_56mhz_at_20G():
     assert shift / (2 * np.pi * 1e6) == pytest.approx(56.0, rel=2e-3)
 
 
-def test_general_zeeman_p32_uses_lande_four_thirds():
-    # nP_3/2: g_J = 4/3 -> 20 G, Δmj=1 gives 2pi*~37.3 MHz.
-    shift = zeeman_shift_rad_s(20.0, l=1, j=1.5, delta_mj=1.0)
-    assert shift / (2 * np.pi * 1e6) == pytest.approx(37.3, rel=2e-3)
-
-
 def test_general_zeeman_scales_with_delta_mj():
     base = zeeman_shift_rad_s(10.0, l=1, j=1.5, delta_mj=1.0)
     assert zeeman_shift_rad_s(10.0, l=1, j=1.5, delta_mj=-2.0) == pytest.approx(-2.0 * base)

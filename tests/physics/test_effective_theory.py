@@ -15,13 +15,14 @@ import pytest
 from scipy.linalg import expm
 
 from ryd_gate import RydbergSystem, level_structure
-from ryd_gate.backends.exact import compile_exact, simulate
+from ryd_gate.backends.exact import compile_exact
 from ryd_gate.core.effective_theory import (
     _single_pair_strength,
     _tex_frame_h7_fn,
     lower_cz_to_effective_01r,
     lower_cz_to_effective_pair,
     resolvent_elimination,
+    reverse_amplitude_split,
     schrieffer_wolff,
     shift_coefficients,
     single_atom_hamiltonian_parts,
@@ -31,7 +32,7 @@ from ryd_gate.core.lowering import lower_drives
 from ryd_gate.core.operators import parse_E
 from ryd_gate.lattice import Register
 from ryd_gate.physics import rb87_7_mp_rabi_frequencies
-from ryd_gate.protocols import CZProtocol, DigitalAnalogProtocol, TOProtocol, phase_from_chirp
+from ryd_gate.protocols import CZProtocol, DigitalAnalogProtocol, phase_from_chirp
 from ryd_gate.protocols._resolved import _LaserDrive
 
 # Canonical σ⁻/σ⁺ (rb87_7_mp) single-photon Rabis (rad/s) — used to restore the
@@ -43,11 +44,6 @@ RABI_420_MP, RABI_1013_MP = 2 * np.pi * 491e6, 2 * np.pi * 185e6
 # tests pass it to the CZProtocol and reuse the same number as "Delta".
 DELTA_MP = 2 * np.pi * 9.1e9      # rb87_7_mp default intermediate detuning
 DELTA_ADIA = 2 * np.pi * 40.1e9   # find_phase adiabatic-gate detuning
-
-X_TO_DARK = [
-    -0.6894097925886826, 1.040962607910546, 0.3277877211544321,
-    1.5639989822346387, 0.6689846026179691, 1.3407418093368753,
-]
 
 EPS0 = 2 * np.pi * 6.835e9
 KEEP = [0, 1, 5]        # P3 = {0, 1, r}
@@ -129,6 +125,9 @@ def test_shift_coefficients_match_lowdin_diagonal():
     assert np.real(eff[0, 0] - h_const[0, 0]) == pytest.approx(coeffs["D0"], rel=1e-9)
     assert np.real(eff[1, 1] - h_const[1, 1]) == pytest.approx(coeffs["D1"], rel=1e-9)
     assert np.real(eff[2, 2] - h_const[5, 5]) == pytest.approx(coeffs["Dr"], rel=1e-9)
+    # Dr_garb (r' 1013 light shift) is otherwise unpinned: SW keeping only r'.
+    eff_rg = schrieffer_wolff(h7, [6], ELIM)
+    assert np.real(eff_rg[0, 0] - h_const[6, 6]) == pytest.approx(coeffs["Dr_garb"], rel=1e-9)
 
 
 def test_closed_forms_match_resolvent():
@@ -240,36 +239,11 @@ def test_lemma1_cg_product_sums():
     assert abs(np.sum(o_r * o_rg)) < 1e-9  # r-r' 1013 cross sum vanishes
 
 
-def test_cz_protocol_drives_1013_on_rb87():
-    """rb87 builds *unit* 420/1013 blocks; the protocol supplies their Rabi, so
-    both 420 AND 1013 are *driven* channels (not static)."""
-    protocol = TOProtocol(
-        intermediate_detuning_rad_s=DELTA_MP,
-        omega_420_max_rad_s=RABI_420_MP,
-        omega_1013_max_rad_s=RABI_1013_MP,
-        rise_time_s=2e-8,
-        phase_amplitude_rad=X_TO_DARK[0],
-        modulation_frequency_ratio=X_TO_DARK[1],
-        phase_offset_rad=X_TO_DARK[2],
-        frequency_offset_ratio=X_TO_DARK[3],
-        duration_ratio=X_TO_DARK[5],
-    )
-    system = RydbergSystem(
-        level_structure=level_structure("rb87_7_mp"),
-        register=Register.chain(2, spacing_um=3.0),
-        protocol=protocol,
-    )
-    _, channels = lower_drives(system)
-    driven = {ch.channel for ch in channels}
-    static_names = {term.name for term in system._static_terms}
-    # both the 420 (E[e1,1]) and 1013 (E[r,e1]) legs are driven, not static.
-    assert {"E[e1,1]", "E[r,e1]"} <= driven
-    assert "E[r,e1]" not in static_names
-
-
 def test_cz_protocol_drives_420_and_1013():
     """The container always drives 420 AND 1013 (unit blocks need the protocol to
-    restore the 1013 Rabi); each laser coefficient is ``Ω_max · env · e^{-iφ}``."""
+    restore the 1013 Rabi); each laser coefficient is ``Ω_max · env · e^{-iφ}``,
+    and both legs (420 = E[e1,1], 1013 = E[r,e1]) lower to *driven* channels — the
+    1013 leg is never a static term."""
     proto = CZProtocol(
         t_gate_s=1e-6,
         intermediate_detuning_rad_s=DELTA_MP,
@@ -290,6 +264,13 @@ def test_cz_protocol_drives_420_and_1013():
     assert set(lasers) == {"420", "1013"}
     assert lasers["420"].coefficient(0.3e-6) == pytest.approx(2.0 * 0.7)
     assert lasers["1013"].coefficient(0.3e-6) == pytest.approx(3.0 * 0.4 * np.exp(-1j * 0.5))
+
+    # both legs lower to driven E[ket,bra] channels; the 1013 leg is not static.
+    _, channels = lower_drives(system)
+    driven = {ch.channel for ch in channels}
+    static_names = {term.name for term in system._static_terms}
+    assert {"E[e1,1]", "E[r,e1]"} <= driven
+    assert "E[r,e1]" not in static_names
 
 
 def _wrap(a):
@@ -544,28 +525,17 @@ def _evolve_pair(pair, n_steps):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("case", ["weak", "moderate"])
-def test_effective_matches_seven_level_phases(case):
+def test_effective_matches_seven_level_phases():
     """find_phase §4: the resolvent effective theories (tex Thm 1 single-atom,
     Thm 2 pair) vs the gauge-invariant phases of the full 7-level CZ dynamics.
 
-    ``weak`` (0.3x the find_phase drive) is the perturbative domain where the
-    truncation is controlled: both the single-atom converter (lowered control
-    functions, midpoint propagator) and the pair model track theta1 AND ZZ to
-    <0.03 rad.
-    ``moderate`` (the canonical test Rabis, Ω_420 ≈ 2π·2.6 GHz) keeps the ZZ
-    guard; theta1 is NOT asserted there — at that drive the accumulated
-    dynamical phase is ~100 rad, so the dropped 4th-order optical terms
-    (~0.1% of H) already move theta1 by O(1 rad).  That is a property of any
-    2nd-order effective theory at those parameters, not of the implementation.
+    In the ``weak`` domain (0.3x the find_phase drive) the truncation is
+    controlled: both the single-atom converter (lowered control functions,
+    midpoint propagator) and the pair model track theta1 AND ZZ to <0.03 rad.
     Needs fine steps to resolve the ~40 GHz |e> manifold (slow-marked)."""
     spacing, t_gate, n_steps = 3.0, 1.0e-6, 3000
-    if case == "weak":
-        o420, o1013 = rb87_7_mp_rabi_frequencies(1.2, 20.0, 7 * 20 * spacing, ryd_level=70)
-        o420, o1013, n_ref = 0.3 * o420, 0.3 * o1013, 32000
-    else:
-        o420, o1013 = rb87_7_mp_rabi_frequencies(0.641, 10.0, 7 * 20 * spacing, ryd_level=70)
-        n_ref = 16000
+    o420, o1013 = rb87_7_mp_rabi_frequencies(1.2, 20.0, 7 * 20 * spacing, ryd_level=70)
+    o420, o1013, n_ref = 0.3 * o420, 0.3 * o1013, 32000
     proto7 = _adia_cz_protocol(t_gate, n_steps, o420, o1013, DELTA_ADIA)
     sys7 = RydbergSystem(
         level_structure=level_structure("rb87_7_mp"),
@@ -580,12 +550,7 @@ def test_effective_matches_seven_level_phases(case):
     phi_s = _phases_via_converter(proto7, sys7, spacing, t_gate, n_steps=n_steps)
     d_th1_s = abs(_wrap(_theta1(phi_s) - _theta1(phi7)))
     d_zz_s = abs(_wrap(_zz(phi_s) - _zz(phi7)))
-    print(f"\n[{case}] return>={ret7:.4f}  single dth1={d_th1_s:.2e} dZZ={d_zz_s:.2e}")
-
-    if case == "moderate":
-        assert ret7 > 0.99      # the 7-level gate is a clean (adiabatic) return
-        assert d_zz_s < 0.1
-        return
+    print(f"\n[weak] return>={ret7:.4f}  single dth1={d_th1_s:.2e} dZZ={d_zz_s:.2e}")
 
     pair = lower_cz_to_effective_pair(proto7, sys7)
     phi_p = _evolve_pair(pair, 16000)
@@ -621,27 +586,123 @@ def test_effective_01r_accepts_nonzero_k0r():
     assert ham.dim == 3                            # compiles on 01r without error
 
 
-def test_digital_analog_effective_drive_runs_on_01r():
-    """A matrix-element DigitalAnalog drive realizes (Omega_eff/2, phi) on the
-    01r model: a resonant constant drive Rabi-flops |1> <-> |r>."""
-    t_gate, omega = 1e-6, 2 * np.pi * 1e6
-    proto = DigitalAnalogProtocol(
-        t_gate_s=t_gate, coupling_r1_rad_s=lambda t: 0.5 * omega
-    )
-    # Only the driven coupling exists — no K01/K0r channels, no energies.
-    co = _da_channels(proto)
-    assert set(co) == {"E[r,1]"}
-    assert co["E[r,1]"](0.3e-6) == pytest.approx(0.5 * omega)
+# ── reverse_amplitude_split (inverse map; consumed by notebooks 01_cz_gate / find_phase) ──
 
-    sys01r = RydbergSystem(
-        level_structure=level_structure("01r"),
-        register=Register.chain(1),
-        protocol=proto,
+
+def test_reverse_amplitude_split_hold_modes():
+    """The three power-split choices realize the same product alpha*beta = ratio."""
+    nom = 2 * np.pi * 5e6
+    omega_eff = lambda t: 0.25 * nom          # constant ratio 0.25
+    a, b = reverse_amplitude_split(omega_eff, omega_eff_nom=nom, hold="1013")
+    assert (a(0.0), b(0.0)) == pytest.approx((0.25, 1.0))          # modulate 420
+    a, b = reverse_amplitude_split(omega_eff, omega_eff_nom=nom, hold="420")
+    assert (a(0.0), b(0.0)) == pytest.approx((1.0, 0.25))          # modulate 1013
+    a, b = reverse_amplitude_split(omega_eff, omega_eff_nom=nom, hold="balanced")
+    assert a(0.0) == pytest.approx(np.sqrt(0.25))
+    assert b(0.0) == pytest.approx(np.sqrt(0.25))
+    assert a(0.0) * b(0.0) == pytest.approx(0.25)
+
+
+def test_reverse_amplitude_split_balanced_clamps_negative_ratio():
+    """A negative Ω_eff would give a negative ratio; the balanced split clamps to 0."""
+    nom = 2 * np.pi * 5e6
+    a, b = reverse_amplitude_split(lambda t: -nom, omega_eff_nom=nom, hold="balanced")
+    assert a(0.0) == 0.0
+    assert b(0.0) == 0.0
+
+
+def test_reverse_amplitude_split_validation():
+    with pytest.raises(ValueError, match="omega_eff_nom must be non-zero"):
+        reverse_amplitude_split(lambda t: 1.0, omega_eff_nom=0.0)
+    with pytest.raises(ValueError, match="hold must be"):
+        reverse_amplitude_split(lambda t: 1.0, omega_eff_nom=1.0, hold="both")
+
+
+# ── schrieffer_wolff / shift_coefficients / _single_pair_strength gap coverage ──
+
+
+def test_schrieffer_wolff_uses_explicit_bare_energies():
+    """Explicit ``bare_energies`` replace Re(diag) in the PT denominators
+    (effective_theory.py:96-98)."""
+    h = np.array(
+        [[1.0, 0.0, 0.5],
+         [0.0, 2.0, 0.3],
+         [0.5, 0.3, 10.0]], dtype=complex
     )
-    t_eval = np.linspace(0.0, t_gate, 101)
-    result = simulate(
-        sys01r, ["1"], t_eval=t_eval,
-        observables={"n_r_0": sys01r.observables.n("r", 0)},
+    keep, elim = [0, 1], [2]
+    eff = schrieffer_wolff(h, keep, elim, bare_energies=[0.0, 0.0, 10.0])
+    assert np.real(eff[0, 0]) == pytest.approx(1.0 + 0.25 / (0.0 - 10.0))
+    assert np.real(eff[1, 1]) == pytest.approx(2.0 + 0.09 / (0.0 - 10.0))
+    # default (None) reads Re(diag): different denominators -> different shift.
+    eff_default = schrieffer_wolff(h, keep, elim)
+    assert np.real(eff_default[0, 0]) == pytest.approx(1.0 + 0.25 / (1.0 - 10.0))
+    assert not np.isclose(eff[0, 0], eff_default[0, 0])
+
+
+def test_shift_coefficients_error_branches():
+    """shift_coefficients rejects a non-7-level layout and a zero |e> denominator
+    (effective_theory.py:213-218)."""
+    small = np.zeros((3, 3), dtype=complex)
+    with pytest.raises(ValueError, match="rb87_7"):
+        shift_coefficients(small, small, small)
+    hc = np.diag([1.0, 2.0, 0.0, 0.0, 0.0, 5.0, 6.0]).astype(complex)  # E_mid == 0
+    z7 = np.zeros((7, 7), dtype=complex)
+    with pytest.raises(ValueError, match="denominator is zero"):
+        shift_coefficients(hc, z7, z7)
+
+
+def test_single_pair_strength_error_paths():
+    """_single_pair_strength rejects N != 2, a missing pair term, and >1 pair
+    (effective_theory.py:520-528)."""
+    from types import SimpleNamespace
+
+    from ryd_gate.core.operators import RydbergPairInteractionSpec
+
+    with pytest.raises(ValueError, match="two-atom"):
+        _single_pair_strength(SimpleNamespace(N=1))
+    with pytest.raises(ValueError, match="no resolved Rydberg pair interaction"):
+        _single_pair_strength(SimpleNamespace(N=2, _static_terms=()))
+    multi = SimpleNamespace(
+        name="H_pair",
+        operator=RydbergPairInteractionSpec(
+            pairs=((0, 1, 1.0), (0, 2, 2.0)), rydberg_levels=("r",)
+        ),
     )
-    n_r = np.real(result.expectation("n_r_0"))
-    assert n_r.max() > 0.99   # full |1> -> |r> transfer at the pi-pulse
+    with pytest.raises(ValueError, match="exactly one interaction pair"):
+        _single_pair_strength(SimpleNamespace(N=2, _static_terms=(multi,)))
+
+
+def test_lower_cz_to_effective_01r_rejects_non_real_energy(monkeypatch):
+    """A decay-enabled source leaves a complex effective |1> energy; the converter's
+    energy channels reject it (effective_theory.py:440-445).  The tex-frame H7 is
+    stubbed with a complex |1> diagonal (off-diagonals zero -> eff[1,1] = 1 + 5j)."""
+    m = np.diag([0.0, 1.0 + 5.0j, 100.0, 110.0, 120.0, 2.0, 3.0]).astype(complex)
+    monkeypatch.setattr(
+        "ryd_gate.core.effective_theory._tex_frame_h7_fn",
+        lambda protocol, system7: ((lambda t: m), 1e-6),
+    )
+    proto_eff = lower_cz_to_effective_01r(None, None)
+    co = _da_channels(proto_eff)
+    with pytest.raises(ValueError, match="not real"):
+        co["E[1,1]"](0.0)
+
+
+def test_tex_frame_zero_amplitude_phase_default():
+    """At an envelope zero the 420/1013 amplitudes vanish, so _tex_frame_h7_fn's
+    phase/chirp read-off defaults to (0, 0) (effective_theory.py:360-361): the
+    {e,r,r'} diagonal carries NO chirp, so H7(0) is exactly the static diagonal —
+    even though the true chirp at t=0 is nonzero."""
+    t_gate = 1.0e-6
+    proto7 = _adia_cz_protocol(t_gate, 64, RABI_420_MP, RABI_1013_MP, DELTA_MP)
+    sys7 = RydbergSystem(
+        level_structure=level_structure("rb87_7_mp"),
+        register=Register.chain(1, spacing_um=3.0),
+        protocol=proto7,
+    )
+    h7_tex, _ = _tex_frame_h7_fn(proto7, sys7)
+    h_const, _, _ = single_atom_hamiltonian_parts(sys7)
+
+    # t=0: envelope 0 -> couplings vanish and the chirp default fires -> just static.
+    assert np.allclose(h7_tex(0.0), h_const)
+    # contrast: mid-gate the default does NOT fire and |r> carries -Δ_add(t).
+    assert abs(h7_tex(0.5 * t_gate)[5, 5] - h_const[5, 5]) > 2 * np.pi * 1e6

@@ -114,6 +114,44 @@ def test_dmrg_requires_1r_and_explicit_initial_state():
                             method_options=_DMRG_OPTS)
 
 
+def test_ground_state_unknown_method_rejected():
+    # E14: only dmrg / peps_imaginary_time / graph_peps_imaginary_time are valid methods.
+    system = _system(n=4)
+    with pytest.raises(ValueError, match="E14"):
+        system.ground_state(at=_AT, method="vmc", initial_state=["1"] * 4,
+                            method_options=_DMRG_OPTS)
+
+
+def test_ground_state_observables_validation():
+    system = _system(n=4)
+    # non-dict observables -> TypeError.
+    with pytest.raises(TypeError, match="dict or None"):
+        system.ground_state(at=_AT, method="dmrg", initial_state=["1"] * 4,
+                            observables=[system.observables.n("r", 0)], method_options=_DMRG_OPTS)
+    # non-Hermitian observable -> ValueError (a bare coherence is not Hermitian).
+    with pytest.raises(ValueError, match="not Hermitian"):
+        system.ground_state(at=_AT, method="dmrg", initial_state=["1"] * 4,
+                            observables={"coh": system.observables.E("1", "r", 0)},
+                            method_options=_DMRG_OPTS)
+
+
+def test_dmrg_phase_reference_zero_amplitude_rejected():
+    # Zero drive -> diagonal H -> the DMRG ground state is the exact product |1,1,1,1>
+    # (+detuning + repulsion penalise |r>). A single-|r> reference then has exactly zero
+    # overlap and cannot fix the global phase (E15).
+    system = RydbergSystem(
+        level_structure=level_structure("1r"),
+        register=Register.chain(4, spacing_um=8.0),
+        protocol=SweepProtocol(t_gate_s=0.3e-6, omega_half_rad_s=lambda t: 0.0,
+                               detuning_rad_s=lambda t: TWO_PI * 1.5e6),
+        interaction_cutoff_um=9.0,
+    )
+    res = system.ground_state(at=_AT, method="dmrg", initial_state=["1", "1", "1", "1"],
+                              method_options=_DMRG_OPTS)
+    with pytest.raises(ValueError, match="phase_reference amplitude is numerically zero"):
+        res.amplitude(["1", "1", "1", "1"], phase_reference=["r", "1", "1", "1"])
+
+
 def test_dmrg_unmet_convergence_raises():
     # bond_dimension=1 cannot represent the entangled ground state, so the
     # discarded-weight criterion is not met within max_sweeps.

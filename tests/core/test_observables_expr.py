@@ -66,20 +66,6 @@ def test_factory_is_bound_and_read_only():
         expr._terms = ()
 
 
-def test_deleted_factories_raise_attributeerror():
-    obs = _system().observables
-    for name in (
-        "level_sum",
-        "weighted_level_sum",
-        "product_projector",
-        "identity",
-        "site_populations",
-    ):
-        assert not hasattr(obs, name)
-        with pytest.raises(AttributeError):
-            getattr(obs, name)
-
-
 def test_unknown_levels_and_sites_rejected():
     obs, _ = _factory(("0", "1", "r"), 2)
     with pytest.raises(ValueError, match="Level 'x'"):

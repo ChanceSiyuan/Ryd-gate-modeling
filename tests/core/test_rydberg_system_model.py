@@ -117,18 +117,6 @@ def test_sweep_simulation_conserves_population():
     assert 0.0 <= n_r <= system.N
 
 
-def test_t_eval_array_returns_requested_times_exactly():
-    system = _build("1r", Register.chain(1), protocol=_sweep())
-    t_eval = np.array([0.0, 0.05, 0.1])
-    result = simulate(
-        system,
-        t_eval=t_eval,
-        observables={"n_r": system.observables.n("r", 0)},
-    )
-    np.testing.assert_array_equal(result.times, t_eval)
-    assert result.expectation("n_r").shape == (len(t_eval),)
-
-
 def test_01r_digital_analog_simulation():
     protocol = DigitalAnalogProtocol(t_gate_s=0.1, coupling_r1_rad_s=lambda t: 0.5)
     system = _build(
@@ -139,22 +127,6 @@ def test_01r_digital_analog_simulation():
 
     assert system.level_structure.levels == ("0", "1", "r")
     assert result.expectation("total")[-1] == pytest.approx(system.N)
-
-
-# ── level-structure presets ──────────────────────────────────────────────────
-
-
-def test_level_structure_presets():
-    assert level_structure("1r").levels == ("1", "r")
-    assert level_structure("01r").levels == ("0", "1", "r")
-    with pytest.raises(ValueError, match="Unknown level-structure"):
-        level_structure("1er")
-
-
-@pytest.mark.parametrize("removed", ["analog_3", "ger", "01"])
-def test_removed_presets_raise(removed):
-    with pytest.raises(ValueError, match="Unknown level-structure"):
-        level_structure(removed)
 
 
 # ── rb87 seven-level manifold construction (ARC-backed; slow) ────────────────

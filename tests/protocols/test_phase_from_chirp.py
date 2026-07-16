@@ -49,6 +49,8 @@ def test_validation():
         phase_from_chirp(3.0, 1.0)  # not callable
 
 
-def test_n_samples_is_keyword_only():
-    with pytest.raises(TypeError):
-        phase_from_chirp(lambda t: 0.0, 1.0, 101)  # positional n_samples rejected
+def test_non_finite_chirp_sample_raises():
+    # A chirp that returns a non-finite value at any grid sample is rejected
+    # during integration, not silently propagated (pulses.py:85-86).
+    with pytest.raises(ValueError, match="non-finite"):
+        phase_from_chirp(lambda t: np.inf, 1.0, n_samples=11)

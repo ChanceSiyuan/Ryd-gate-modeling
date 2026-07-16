@@ -69,12 +69,6 @@ def test_resolved_channel_mapping():
     assert float(drives["E[r,r]"].coefficient(t)) == pytest.approx(-0.5)
 
 
-def test_scalar_control_stays_a_scalar_coefficient():
-    proto = DigitalAnalogProtocol(t_gate_s=0.1e-6, coupling_r1_rad_s=lambda t: 1.0)
-    drive = proto._resolve(_system(proto)).drives[0]
-    assert np.ndim(drive.coefficient(0.0)) == 0
-
-
 def test_energy_channel_rejects_complex_matrix_element():
     proto = DigitalAnalogProtocol(
         t_gate_s=0.1e-6, energy_r_rad_s=lambda t: 1.0 + 1.0j
@@ -112,3 +106,17 @@ def test_site_dependent_coupling_drives_one_site_only():
     )
     assert result.expectation("n_r_0")[0] == pytest.approx(0.5, abs=0.05)
     assert result.expectation("n_r_1")[0] < 0.05
+
+
+def test_plot_draws_imaginary_trace_for_complex_coupling():
+    # A complex coupling exercises the Im-trace branch of Protocol.plot
+    # (base.py:57-58); the axis legend then carries an "Im ..." entry.
+    import matplotlib
+
+    matplotlib.use("Agg")
+    proto = DigitalAnalogProtocol(
+        t_gate_s=0.1e-6, coupling_r0_rad_s=lambda t: 1.0 + 1.0j
+    )
+    fig = proto.plot(None)  # DigitalAnalogProtocol ignores the system on resolve
+    labels = [txt.get_text() for txt in fig.axes[0].get_legend().get_texts()]
+    assert any(label.startswith("Im") for label in labels)

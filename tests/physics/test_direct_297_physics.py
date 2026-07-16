@@ -66,9 +66,36 @@ def test_arc_c6_53p_degenerate_finite_and_warns_on_weak_overlap():
     assert np.isfinite(c6) and c6 != 0.0
 
 
-@pytest.mark.filterwarnings("ignore:arc_pair_c6_rad_s_um6:UserWarning")
-def test_arc_c6_cache_keys_on_rounded_angles():
+def test_arc_c6_cache_keys_on_rounded_angles(monkeypatch):
+    # The 1e-9 angle rounding (physics.py:288-289) is pure Python; stub the cached
+    # ARC solve so we test only that a 1e-12 theta jitter collapses to one cache key
+    # (no third full degenerate 53P C6 solve).
+    import ryd_gate.physics as physics_mod
+
+    calls = []
+
+    def fake_cached(*args):
+        calls.append(args)
+        return (1.23, 1.0)
+
+    monkeypatch.setattr(physics_mod, "_arc_pair_c6_cached", fake_cached)
+
     kw = dict(n1=53, l1=1, j1=1.5, mj1=-1.5, theta=np.pi / 2, phi=0.321)
     a = arc_pair_c6_rad_s_um6(**kw)
     b = arc_pair_c6_rad_s_um6(**{**kw, "theta": np.pi / 2 + 1e-12})
-    assert a == b
+    assert a == b == 1.23
+    assert calls[0] == calls[1]  # identical rounded args reach the cached solver
+
+
+@pytest.mark.filterwarnings("ignore:arc_pair_c6_rad_s_um6:UserWarning")
+def test_arc_c6_explicit_atom2_quantum_numbers():
+    # Explicit atom-2 quantum numbers (mj2 != mj1) exercise the non-default
+    # (heteronuclear-style) path of arc_pair_c6_rad_s_um6 (physics.py:283-284).
+    # (The mixed mj pair sits at the 0.5 overlap boundary, so the eigenchannel
+    # warning is expected and suppressed.)
+    c6 = arc_pair_c6_rad_s_um6(
+        n1=70, l1=0, j1=0.5, mj1=-0.5,
+        n2=70, l2=0, j2=0.5, mj2=0.5,
+        theta=0.0, phi=0.0,
+    )
+    assert np.isfinite(c6)

@@ -170,6 +170,17 @@ def test_with_protocol_returns_new_bound_system():
     assert system.protocol is first  # receiver untouched
 
 
+def test_with_protocol_preserves_interaction_cutoff():
+    system = RydbergSystem(
+        level_structure=level_structure("1r"),
+        register=Register.rectangle(2, 2, spacing_um=6.0),
+        protocol=_sweep(delta=0.0),
+        interaction_cutoff_um=6.0,
+    )
+    rebound = system.with_protocol(_sweep(delta=1.0))
+    assert rebound.interaction_cutoff_um == pytest.approx(6.0)
+
+
 def test_with_protocol_rejects_incompatible():
     system = RydbergSystem(
         level_structure=level_structure("1r"),

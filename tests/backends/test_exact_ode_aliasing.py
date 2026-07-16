@@ -10,10 +10,11 @@ rate, aliased it into spurious resonant pumping of ``|0>`` into the 6P manifold
 
 This pins the clean band the ODE backend guarantees, on a short single-atom CZ
 pulse whose intermediate detuning puts the ``|0>->e`` gap at ~20 GHz — the
-operating point where the old fixed-step solvers aliased worst — and checks that
-the two Hamiltonian-storage paths (dense vs sparse matvec) agree exactly on that
-fast-oscillating solve. Needs ARC and resolves ~1000 optical cycles adaptively,
-so it takes a handful of seconds.
+operating point where the old fixed-step solvers aliased worst. Needs ARC and
+resolves ~1000 optical cycles adaptively on a 201-point trajectory, so it is the
+slowest test in ``tests/backends`` (~40 s) — the GHz aliasing it guards against
+has no cheaper surrogate. (dense == sparse matvec equivalence is pinned cheaply,
+away from ARC, by ``test_hamiltonian_formats_agree``.)
 """
 
 import numpy as np
@@ -54,8 +55,7 @@ def _cz_system():
 def test_exact_ode_is_alias_free():
     """For the spectator ``|0>`` input the peak 6P population stays in the true
     off-resonant admixture band (< 1e-2), where the deleted expm solvers spiked
-    above 0.1; and the dense and sparse matvec paths agree on the whole fast
-    trajectory."""
+    above 0.1."""
     system = _cz_system()
     obs = system.observables
     n_e = obs.n("e1", 0) + obs.n("e2", 0) + obs.n("e3", 0)
@@ -65,12 +65,5 @@ def test_exact_ode_is_alias_free():
         system, ["0"], t_eval=t_eval, observables={"n_e": n_e},
         backend_options={"hamiltonian_format": "dense"},
     )
-    sparse = rg.simulate(
-        system, ["0"], t_eval=t_eval, observables={"n_e": n_e},
-        backend_options={"hamiltonian_format": "sparse"},
-    )
 
-    ne_dense = dense.expectation("n_e")
-    assert ne_dense.max() < 0.01
-    # the fast-oscillating solve is stable across the two storage paths
-    np.testing.assert_allclose(ne_dense, sparse.expectation("n_e"), atol=1e-10)
+    assert dense.expectation("n_e").max() < 0.01

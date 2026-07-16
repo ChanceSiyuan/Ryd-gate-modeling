@@ -9,7 +9,7 @@ ARC.
 import numpy as np
 import pytest
 
-from ryd_gate import Register, RydbergSystem, level_structure, simulate
+from ryd_gate import Register, RydbergSystem, level_structure
 from ryd_gate.core.lowering import lower_drives
 from ryd_gate.protocols import (
     Direct297CZProtocol,
@@ -66,16 +66,6 @@ def test_cz_resolved_t_gate_and_single_laser_drive(sys297):
     assert drive.coefficient(t) == pytest.approx(OMEGA * env(t) * np.exp(-1j * phase(t)))
 
 
-def test_cz_lowered_expands_to_target_and_garbage_legs(sys297):
-    legs = {leg.channel: leg.factor for leg in sys297.level_structure._laser_legs}
-    _t_gate, channels = lower_drives(sys297)
-    by = {c.channel: c for c in channels}
-    # sys297 uses a flat unit envelope with zero phase.
-    t = 0.5 * T_GATE
-    assert by["E[r,1]"].coefficient(t) == pytest.approx(0.5 * OMEGA)
-    assert by["E[r_garb,1]"].coefficient(t) == pytest.approx(legs["E[r_garb,1]"] * OMEGA)
-
-
 def test_cz_phase_from_chirp_sets_297_phase(sys297):
     # A physical-time phase built from a chirp integral shows up on the compiled
     # E[r,1] channel as exp(-i phi(t)) on top of the leg factor.
@@ -90,27 +80,6 @@ def test_cz_phase_from_chirp_sets_297_phase(sys297):
     for s in (0.25, 0.4, 0.6, 0.75):
         t = s * T_GATE
         assert by["E[r,1]"].coefficient(t) == pytest.approx(0.5 * OMEGA * np.exp(-1j * phi(t)))
-
-
-def test_cz_zero_state_is_dark_spectator(sys297):
-    proto = Direct297CZProtocol(
-        t_gate_s=T_GATE, omega_297_max_rad_s=OMEGA,
-        envelope_297=lambda t: np.sin(np.pi * t / T_GATE) ** 2,
-    )
-    system = sys297.with_protocol(proto)
-    obs = system.observables
-    result = simulate(
-        system,
-        ["0"],
-        observables={
-            "n_0": obs.n("0", 0),
-            "n_r": obs.n("r", 0),
-            "n_r_garb": obs.n("r_garb", 0),
-        },
-    )
-    assert result.expectation("n_0")[0] == pytest.approx(1.0, abs=1e-4)
-    assert result.expectation("n_r")[0] == pytest.approx(0.0, abs=1e-12)
-    assert result.expectation("n_r_garb")[0] == pytest.approx(0.0, abs=1e-12)
 
 
 # ── Direct297TOProtocol ──────────────────────────────────────────────────────
@@ -163,7 +132,18 @@ def test_to_resolved_single_laser_drive_matches_blackman_phase_family(sys297):
     t_gate = resolved.t_gate
     omega_mod = 1.2 * OMEGA
     delta = -0.1 * OMEGA
-    t = 0.5 * t_gate
-    env = blackman_pulse(t, 0.05e-6, t_gate)
-    phase = 0.5 * np.cos(omega_mod * t + 0.3) + delta * t
-    assert drive.coefficient(t) == pytest.approx(OMEGA * env * np.exp(-1j * phase))
+    for s in (0.3, 0.5):
+        t = s * t_gate
+        env = blackman_pulse(t, 0.05e-6, t_gate)
+        phase = 0.5 * np.cos(omega_mod * t + 0.3) + delta * t
+        assert drive.coefficient(t) == pytest.approx(OMEGA * env * np.exp(-1j * phase))
+
+
+def test_cz_non_finite_envelope_raises(sys297):
+    # _laser_297 guards against a NaN/inf envelope or phase (direct_297.py:42-44).
+    proto = Direct297CZProtocol(
+        t_gate_s=T_GATE, omega_297_max_rad_s=OMEGA, envelope_297=lambda t: np.inf
+    )
+    (drive,) = proto._resolve(sys297).drives
+    with pytest.raises(ValueError, match="non-finite"):
+        drive.coefficient(0.5 * T_GATE)

@@ -11,17 +11,13 @@ import pytest
 
 import ryd_gate as rg
 from ryd_gate import Register, RydbergSystem, level_structure
-from ryd_gate.core.states import (
-    _plus_local_amplitudes,
-    dense_plus_state,
-    normalize_initial_state,
-)
+from ryd_gate.core.states import _plus_local_amplitudes
 from ryd_gate.protocols import DigitalAnalogProtocol
 
 OMEGA_R = 2 * np.pi * 3.8e6
 
 
-def _system_01r(rows=2, cols=2):
+def _system_01r(rows=2, cols=1):
     return RydbergSystem(
         level_structure=level_structure("01r"),
         register=Register.rectangle(rows, cols, spacing_um=6.8),
@@ -41,20 +37,9 @@ def test_plus_local_amplitudes_requires_0_and_1():
         _plus_local_amplitudes(("1", "r"))
 
 
-def test_normalize_plus_is_single():
-    assert normalize_initial_state("plus", 4) == ("single", "plus")
-
-
-def test_dense_plus_state_normalized():
-    system = _system_01r()
-    psi = dense_plus_state(system._basis)
-    assert psi.shape == (3**system.N,)
-    assert np.isclose(np.linalg.norm(psi), 1.0)
-
-
 def test_plus_initial_state_exact():
     """At t=0 the ``"plus"`` state has n0 = n1 = 1/2 and nr = 0 on every site."""
-    system = _system_01r()
+    system = _system_01r()  # 2x1 register: dim 3**2 = 9
     obs = system.observables
     observables = {
         f"n_{level}_{i}": obs.n(level, i)

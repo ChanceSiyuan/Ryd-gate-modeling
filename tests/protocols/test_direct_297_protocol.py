@@ -13,6 +13,7 @@ import pytest
 
 from ryd_gate import Register, RydbergSystem, level_structure, simulate
 from ryd_gate.core.lowering import lower_drives
+from ryd_gate.core.operators import parse_E
 from ryd_gate.physics import rb87_297_clock_rabi_frequencies
 from ryd_gate.protocols import Direct297PiProtocol, blackman_pulse
 from ryd_gate.protocols._resolved import _LaserDrive
@@ -115,21 +116,33 @@ def test_near_pi_transfer_with_large_field():
 
 
 def test_zero_state_is_dark_spectator():
-    # No 297 leg touches |0>: starting there the RHS never couples out of |0>,
-    # so no Rydberg population ever appears (exactly zero).
+    # |0> is a dark spectator by construction: structurally, no lowered 297 leg
+    # names "0" as ket or bra, so the single-atom drive Hamiltonian's |0> row and
+    # column are exactly zero at every t (starting in |0>, the RHS never couples
+    # out of it and no Rydberg population can ever appear).  This is the "exactly
+    # zero coupling" property the old evolve-in-|0> test pinned, without paying a
+    # DOP853 solve of ~2700 optical cycles of the clock diagonal to evolve nothing.
     system = _system(
         Direct297PiProtocol(omega_297_max_rad_s=OMEGA), magnetic_field_G=100.0
     )
-    obs = system.observables
-    result = simulate(
-        system,
-        ["0"],
-        observables={
-            "n_0": obs.n("0", 0),
-            "n_r": obs.n("r", 0),
-            "n_r_garb": obs.n("r_garb", 0),
-        },
-    )
-    assert result.expectation("n_0")[0] == pytest.approx(1.0, abs=1e-4)
-    assert result.expectation("n_r")[0] == pytest.approx(0.0, abs=1e-12)
-    assert result.expectation("n_r_garb")[0] == pytest.approx(0.0, abs=1e-12)
+    levels = system._basis.local_levels
+    idx = {lvl: i for i, lvl in enumerate(levels)}
+    _t_gate, channels = lower_drives(system)
+
+    # no lowered channel involves |0>
+    for ch in channels:
+        ket, bra = parse_E(ch.channel)
+        assert "0" not in (ket, bra), ch.channel
+
+    # ... hence the |0> row/column of the single-atom drive Hamiltonian is zero
+    i0 = idx["0"]
+    d = len(levels)
+    for t in (0.0, 0.25 * system.t_gate, 0.5 * system.t_gate, system.t_gate):
+        H = np.zeros((d, d), dtype=complex)
+        for ch in channels:
+            ket, bra = parse_E(ch.channel)
+            c = complex(ch.coefficient(float(t)))
+            H[idx[ket], idx[bra]] += c
+            H[idx[bra], idx[ket]] += np.conj(c)
+        assert np.all(H[i0, :] == 0.0)
+        assert np.all(H[:, i0] == 0.0)

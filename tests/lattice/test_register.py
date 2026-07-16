@@ -84,34 +84,7 @@ class TestValidationRules:
             reg.coords.setflags(write=True)
 
 
-class TestRemovedNames:
-    @pytest.mark.parametrize(
-        "name",
-        ["ids", "sublattice", "spacing_um"],
-    )
-    def test_removed_instance_attributes(self, name):
-        reg = Register.chain(2, 4.0)
-        assert not hasattr(reg, name)
+def test_lattice_all_is_register_only():
+    import ryd_gate.lattice as lattice
 
-    @pytest.mark.parametrize(
-        "name",
-        ["from_coordinates", "distances_um", "distance_pairs", "blockade_edges", "draw",
-         "index", "id_at"],
-    )
-    def test_removed_methods(self, name):
-        assert not hasattr(Register, name)
-
-    def test_lattice_all_is_register_only(self):
-        import ryd_gate.lattice as lattice
-
-        assert lattice.__all__ == ["Register"]
-
-    @pytest.mark.parametrize(
-        "name",
-        ["is_in_domain", "nn_nnn_relative_pairs", "cylinder_nn_nnn_pairs",
-         "plot_spatial_rydberg", "RegisterLayout", "LatticeGeometry"],
-    )
-    def test_removed_module_symbols(self, name):
-        import ryd_gate.lattice as lattice
-
-        assert not hasattr(lattice, name)
+    assert lattice.__all__ == ["Register"]

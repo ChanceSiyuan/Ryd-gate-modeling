@@ -1,6 +1,5 @@
 """Tests for the Phase 0 core abstractions: BasisSpec."""
 
-import numpy as np
 import pytest
 
 from ryd_gate.core.model import BasisSpec
@@ -23,12 +22,6 @@ def _make_basis() -> BasisSpec:
 
 
 class TestBasisSpec:
-    def test_creation(self):
-        bs = _make_basis()
-        assert bs.n_sites == 2
-        assert bs.local_dim == 7
-        assert bs.total_dim == 49
-
     def test_level_index(self):
         bs = _make_basis()
         assert bs.level_index("r") == 5
@@ -48,23 +41,6 @@ class TestBasisSpec:
         bs = _make_basis()
         with pytest.raises(ValueError, match="Site 'C'"):
             bs.site_index("C")
-
-    def test_projector_shape_and_trace(self):
-        bs = _make_basis()
-        proj = bs.projector("A", "r")
-        assert proj.shape == (49, 49)
-        # |r><r| on site A tensored with I_7 on site B -> trace = 7
-        assert np.isclose(np.trace(proj), 7.0)
-
-    def test_projector_idempotent(self):
-        bs = _make_basis()
-        proj = bs.projector("B", "e1")
-        assert np.allclose(proj @ proj, proj)
-
-    def test_projector_hermitian(self):
-        bs = _make_basis()
-        proj = bs.projector("A", "1")
-        assert np.allclose(proj, proj.conj().T)
 
     def test_validation_local_dim_mismatch(self):
         with pytest.raises(ValueError, match="local_dim"):

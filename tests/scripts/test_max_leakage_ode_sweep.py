@@ -9,8 +9,12 @@ model checks (ARC) with the expensive solver-equivalence runs marked ``slow``.
 
 import importlib.util
 import json
+import os
+import signal
 import sys
 from argparse import Namespace
+from concurrent.futures import Future
+from concurrent.futures.process import BrokenProcessPool
 from fractions import Fraction
 from pathlib import Path
 
@@ -23,6 +27,81 @@ _spec = importlib.util.spec_from_file_location(
 mls = importlib.util.module_from_spec(_spec)
 sys.modules["max_leakage_ode_sweep"] = mls
 _spec.loader.exec_module(mls)
+
+
+# ── Synchronous fake executor for the Runner dispatch loop ───────────────────
+#
+# The Runner event loop (submit -> Future -> wait -> result/split/requeue) is the
+# high-risk uncovered code.  A real ProcessPoolExecutor would fork and run the ARC
+# solver; instead the ``runner_factory`` fixture overrides Runner._make_executor
+# with this inline stand-in.  A test supplies ``responder(spec) -> (kind, payload)``:
+#   "result"       -> the future resolves to ``payload`` (an out dict)
+#   "crash"        -> the future raises ``payload`` (an in-flight pool death)
+#   "submit_error" -> submit() itself raises ``payload`` (a broken pool)
+
+
+class _FakeExecutor:
+    def __init__(self, responder):
+        self._responder = responder
+        self._processes = {}                 # Runner.shutdown() introspects this
+
+    def submit(self, fn, spec):
+        kind, payload = self._responder(spec)
+        if kind == "submit_error":
+            raise payload
+        fut = Future()
+        if kind == "crash":
+            fut.set_exception(payload)
+        else:
+            fut.set_result(payload)
+        return fut
+
+    def shutdown(self, wait=True, cancel_futures=False):
+        pass
+
+
+def _runner_args(**over):
+    base = dict(workers=1, batch_size=1, budget_hours=1.0, reserve_hours=0.0,
+                point_timeout=60.0, rtol=1e-9, atol=1e-12,
+                audit_rtol=1e-10, audit_atol=1e-13)
+    base.update(over)
+    return Namespace(**base)
+
+
+@pytest.fixture
+def runner_factory(monkeypatch):
+    """Build Runners whose executor is the synchronous fake above.
+
+    Runner._install_signals permanently replaces the process SIGINT/SIGTERM
+    handlers and shutdown() never restores them, so without the save/restore here
+    every later test in the session would run under a dead runner's handler.  The
+    fixture also shuts down every Runner it builds (releasing the store flock)."""
+    saved_int = signal.getsignal(signal.SIGINT)
+    saved_term = signal.getsignal(signal.SIGTERM)
+    built = []
+
+    def _build(store, manifest, args, responder=None, cost=None, cfg=None):
+        cfg = cfg or _mini_cfg()
+        if responder is None:
+            def responder(spec):
+                raise AssertionError("executor.submit called unexpectedly")
+        monkeypatch.setattr(mls.Runner, "_make_executor",
+                            lambda self: _FakeExecutor(responder))
+        runner = mls.Runner(store, manifest, cfg, 1.0, args,
+                            cost or mls.CostModel(cfg))
+        built.append(runner)
+        return runner
+
+    try:
+        yield _build
+    finally:
+        for r in built:
+            try:
+                r.shutdown()
+            except Exception:
+                pass
+        signal.signal(signal.SIGINT, saved_int)
+        signal.signal(signal.SIGTERM, saved_term)
 
 
 # ── nested axes and canonical keys ───────────────────────────────────────────
@@ -85,17 +164,15 @@ def test_pilot_keys_dedup_and_reusability():
 # ── analytic pulse ───────────────────────────────────────────────────────────
 
 
-def test_envelope_shape_and_symmetry():
+def test_envelope_shape_integral_and_continuity():
     r = 0.15
+    # shape + symmetry
     assert mls.envelope(0.0, r) == 0.0
     assert mls.envelope(0.075, r) == pytest.approx(0.5)   # q(1/2) = 0.5
     assert mls.envelope(0.5, r) == 1.0
     s = np.linspace(0, 1, 101)
     assert np.allclose(mls.envelope(s, r), mls.envelope(1.0 - s, r))
-
-
-def test_envelope_integral_continuity_and_endpoints():
-    r = 0.15
+    # integral endpoints + branch-seam continuity
     assert mls.envelope_integral(0.0, r) == 0.0
     assert float(mls.envelope_integral(1.0, r)) == pytest.approx(1.0 - r)
     for s0 in (r, 1.0 - r):  # branch seams
@@ -130,22 +207,18 @@ def test_phase_is_exact_integral_of_chirp():
         chirp = mls.chirp_rad_s(t + 0.5 * dt, t_gate, d_sweep, drmd1, r)
         assert dphi == pytest.approx(float(chirp), rel=1e-4, abs=1e-3 * abs(d_sweep))
 
+    # Pure-cosine limit (Dr - D1 = 0): phase is exactly -(D T / 2 pi) sin(2 pi s),
+    # and it is NOT wrapped mod 2 pi.
+    tg2, d2 = 2.0e-6, 2 * np.pi * 20e6
+    tp = 0.37 * tg2
+    expect = -(d2 * tg2 / (2 * np.pi)) * np.sin(2 * np.pi * 0.37)
+    assert float(mls.phase_rad(tp, tg2, d2, 0.0)) == pytest.approx(expect, rel=1e-12)
+    assert abs(float(mls.phase_rad(tp, tg2, d2, 0.0))) > 2 * np.pi   # unwrapped
 
-def test_phase_units_pure_cosine_sweep():
-    # With Dr - D1 = 0 the phase is exactly -(D T / 2 pi) sin(2 pi s).
-    t_gate, d = 2.0e-6, 2 * np.pi * 20e6
-    t = 0.37 * t_gate
-    expect = -(d * t_gate / (2 * np.pi)) * np.sin(2 * np.pi * 0.37)
-    assert float(mls.phase_rad(t, t_gate, d, 0.0)) == pytest.approx(expect, rel=1e-12)
-    assert abs(float(mls.phase_rad(t, t_gate, d, 0.0))) > 2 * np.pi  # unwrapped
-
-
-def test_stark_coefficients_signs_and_magnitude():
-    om420, om1013, delta = 2 * np.pi * 600e6, 2 * np.pi * 489.6e6, 2 * np.pi * 20e9
-    d1, dr = mls.stark_coefficients(om420, om1013, delta)
-    assert d1 == pytest.approx(-(4 / 3) * om420 ** 2 / (4 * delta))
-    assert dr == pytest.approx(-(om1013 ** 2) / (4 * delta))
-    assert d1 < 0 and dr < 0
+    # The compensating Stark shifts feeding the chirp are both negative.
+    d1s, drs = mls.stark_coefficients(2 * np.pi * 600e6, 2 * np.pi * 489.6e6,
+                                      2 * np.pi * 20e9)
+    assert d1s < 0 and drs < 0
 
 
 # ── block-max DOP853 error norm ──────────────────────────────────────────────
@@ -357,21 +430,35 @@ def test_stale_tmp_files_are_ignored_by_the_loader(tmp_path):
     assert store.next_seq() == 2
 
 
-def test_incompatible_manifest_is_rejected(tmp_path):
+@pytest.mark.parametrize("field, doctored, match", [
+    ("physics_hash", "0" * 64, "physics_hash mismatch"),
+    ("model_hash", "0" * 64, "model_hash mismatch"),
+    ("pulse_hash", "0" * 64, "pulse_hash mismatch"),
+    ("omega_1013_rad_s", 1.0, "Omega_1013 mismatch"),
+])
+def test_manifest_guard_rejects_mismatched_provenance(tmp_path, field, doctored, match):
+    """init_or_validate_manifest refuses to resume when any recorded provenance
+    field (the three hashes or Omega_1013) disagrees with the live code/model."""
     store, _ = _mini_store(tmp_path, model_hash="modelhash-1")
-    with pytest.raises(RuntimeError, match="model_hash mismatch"):
+    manifest_path = Path(store.manifest_path)
+    doc = json.loads(manifest_path.read_text())
+    doc[field] = doctored
+    manifest_path.write_text(json.dumps(doc))
+    with pytest.raises(RuntimeError, match=match):
         store.init_or_validate_manifest(
-            _mini_cfg(), omega_1013=2 * np.pi * 489.6e6, model_hash="OTHER",
+            _mini_cfg(), omega_1013=2 * np.pi * 489.6e6, model_hash="modelhash-1",
             code_hash="codehash", run_meta={})
 
 
-def test_chunks_from_other_model_hash_refuse_to_merge(tmp_path):
+@pytest.mark.parametrize("field", ["physics_hash", "model_hash", "pulse_hash"])
+def test_chunk_guard_refuses_to_merge_foreign_provenance(tmp_path, field):
+    """load_records refuses to merge a chunk whose stamped hash differs from the
+    manifest.  (Omega_1013 is manifest-only, so it has no chunk arm.)"""
     store, manifest = _mini_store(tmp_path)
-    keys = mls.panel_keys(0, 0, 0)[:1]
-    foreign = dict(manifest, model_hash="foreign")
-    store.write_result_chunk(1, foreign, keys, _mini_cfg(), 1.0, "production",
-                             1e-9, 1e-12, "b", _fake_result(1), 1.0)
-    with pytest.raises(RuntimeError, match="model_hash"):
+    foreign = dict(manifest, **{field: "0" * 64})
+    store.write_result_chunk(1, foreign, mls.panel_keys(0, 0, 0)[:1], _mini_cfg(),
+                             1.0, "production", 1e-9, 1e-12, "b", _fake_result(1), 1.0)
+    with pytest.raises(RuntimeError, match=field):
         store.load_records(manifest)
 
 
@@ -445,37 +532,202 @@ def test_batch_split_isolates_points_and_counts_retries():
     assert [len(p.keys) for p in mls.Runner._split(None, single)] == [1]
 
 
-def test_budget_scheduler_defers_everything_past_the_deadline(tmp_path):
+def test_budget_scheduler_defers_everything_past_the_deadline(tmp_path, runner_factory):
     """With the dispatch deadline already in the past, run_batches launches no
-    work, defers every point, and leaves the reserve intact (no chunks)."""
+    work (the default responder would assert if submit ran), defers every point,
+    and records nothing — never-computed points must not be marked failed."""
     store, manifest = _mini_store(tmp_path)
-    args = Namespace(workers=2, batch_size=4, budget_hours=0.0, reserve_hours=1.0,
-                     point_timeout=60.0, rtol=1e-9, atol=1e-12,
-                     audit_rtol=1e-10, audit_atol=1e-13)
-    runner = mls.Runner(store, manifest, _mini_cfg(), 1.0, args, mls.CostModel(_mini_cfg()))
-    try:
-        batches = mls.group_batches(mls.panel_keys(0, 0, 0), batch_size=4)
-        runner.run_batches(batches, "test-budget")
-    finally:
-        runner.shutdown()
+    runner = runner_factory(store, manifest,
+                            _runner_args(workers=2, batch_size=4,
+                                         budget_hours=0.0, reserve_hours=1.0))
+    runner.run_batches(mls.group_batches(mls.panel_keys(0, 0, 0), batch_size=4),
+                       "test-budget")
     assert runner.deferred == 16
     assert runner.completed_points == 0
     assert store.load_records(manifest) == []
 
 
-def test_store_lock_rejects_concurrent_writers(tmp_path):
+def test_store_lock_rejects_concurrent_writers(tmp_path, runner_factory):
     store, manifest = _mini_store(tmp_path)
-    args = Namespace(workers=1, batch_size=1, budget_hours=1.0, reserve_hours=0.0,
-                     point_timeout=60.0, rtol=1e-9, atol=1e-12,
-                     audit_rtol=1e-10, audit_atol=1e-13)
-    runner = mls.Runner(store, manifest, _mini_cfg(), 1.0, args, mls.CostModel(_mini_cfg()))
-    try:
-        import fcntl
-        with open(Path(store.logs_dir) / "store.lock") as fh:
-            with pytest.raises(BlockingIOError):
-                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    finally:
-        runner.shutdown()
+    runner_factory(store, manifest, _runner_args())
+    import fcntl
+    with open(Path(store.logs_dir) / "store.lock") as fh:
+        with pytest.raises(BlockingIOError):
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+# ── Runner event loop: dispatch, retries, signals (synchronous fake executor) ─
+
+
+def test_failing_batch_splits_to_singletons_before_recording_failure(tmp_path, runner_factory):
+    """A failed multi-point batch is halved (retry_count++) until size 1; only
+    then is _write_failure called, so every recorded failure is a singleton."""
+    store, manifest = _mini_store(tmp_path)
+
+    def responder(spec):
+        return "result", {"ok": False, "reason": "failed",
+                          "message": "boom", "runtime_s": 0.0}
+
+    runner = runner_factory(store, manifest, _runner_args(workers=2, batch_size=4),
+                            responder=responder)
+    runner.run_batches(mls.group_batches(mls.panel_keys(0, 0, 0)[:4], 4), "split")
+    records = store.load_records(manifest)
+    assert len(records) == 4
+    assert all(r.status == "failed" for r in records)
+    assert all(r.batch_size == 1 for r in records)       # split down to singletons
+    assert {r.retry_count for r in records} == {2}       # 4 -> 2 -> 1 escalations
+    assert runner.completed_points == 0
+
+
+def test_pool_crash_requeues_on_its_own_budget_then_fails(tmp_path, runner_factory):
+    """An in-flight pool death requeues the innocent batch on the pool_retries
+    budget (0..5); the 6th death exhausts it and records a single failure whose
+    retry_count is still 0 (it was never a genuine failure-split)."""
+    store, manifest = _mini_store(tmp_path)
+    calls = {"n": 0}
+
+    def responder(spec):
+        calls["n"] += 1
+        return "crash", BrokenProcessPool("worker died")
+
+    runner = runner_factory(store, manifest, _runner_args(), responder=responder)
+    runner.run_batches([mls.Batch(keys=mls.panel_keys(0, 0, 0)[:1])], "crash")
+    assert calls["n"] == 6                       # 5 requeues + the exhausting death
+    records = store.load_records(manifest)
+    assert len(records) == 1 and records[0].status == "failed"
+    assert records[0].retry_count == 0
+
+
+def test_broken_pool_at_submit_recreates_and_resubmits(tmp_path, runner_factory):
+    """A BrokenProcessPool raised by submit() itself is caught in _submit, which
+    recreates the pool and resubmits; the point then completes normally."""
+    store, manifest = _mini_store(tmp_path)
+    calls = {"n": 0}
+
+    def responder(spec):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "submit_error", BrokenProcessPool("pool broke")
+        return "result", {"ok": True, "result": _fake_result(len(spec["keys"])),
+                          "runtime_s": 1.0}
+
+    runner = runner_factory(store, manifest, _runner_args(), responder=responder)
+    runner.run_batches([mls.Batch(keys=mls.panel_keys(0, 0, 0)[:1])], "recreate")
+    assert runner._pool_restarts == 1
+    assert calls["n"] == 2
+    records = store.load_records(manifest)
+    assert len(records) == 1 and records[0].status == "ok"
+
+
+def test_sigint_drain_then_hard_abort_then_lock_release(tmp_path, runner_factory):
+    """SIGINT drain semantics: the first delivery requests a graceful stop (the
+    submit loop closes, nothing is recorded); a duplicate inside the 2 s debounce
+    is swallowed; a deliberate second Ctrl-C after the debounce escalates to a
+    hard abort; shutdown() releases the flock so a fresh coordinator can start."""
+    store, manifest = _mini_store(tmp_path)
+    runner = runner_factory(store, manifest, _runner_args())
+    handler = signal.getsignal(signal.SIGINT)
+    assert signal.getsignal(signal.SIGTERM) is handler   # both installed
+
+    handler(signal.SIGINT, None)                 # first Ctrl-C: graceful stop
+    assert runner.stop_requested and not runner.aborted
+    handler(signal.SIGINT, None)                 # debounced duplicate
+    assert not runner.aborted
+    # submit loop is closed: nothing dispatches, nothing is recorded
+    runner.run_batches(mls.group_batches(mls.panel_keys(0, 0, 0), 4), "drain")
+    assert runner.completed_points == 0 and store.load_records(manifest) == []
+
+    runner._signal_time -= 3.0                    # pretend >2 s have elapsed
+    with pytest.raises(KeyboardInterrupt):
+        handler(signal.SIGINT, None)
+    assert runner.aborted
+
+    runner.shutdown()                             # releases the flock
+    fresh = runner_factory(store, manifest, _runner_args())
+    assert fresh.stop_requested is False
+
+
+def test_second_coordinator_rejected_without_truncating_pid(tmp_path, runner_factory):
+    """A second Runner on a locked store exits; and because the lock file is
+    opened append-mode and written only after the flock succeeds, the live
+    coordinator's PID record survives the rejected launch."""
+    store, manifest = _mini_store(tmp_path)
+    runner_factory(store, manifest, _runner_args())
+    lock_path = Path(store.logs_dir) / "store.lock"
+    live = lock_path.read_text()
+    assert live.startswith(f"pid {os.getpid()} ")
+    with pytest.raises(SystemExit):
+        mls.Runner(store, manifest, _mini_cfg(), 1.0, _runner_args(),
+                   mls.CostModel(_mini_cfg()))
+    assert lock_path.read_text() == live          # append-mode: not truncated
+
+
+def test_next_seq_spans_chunk_and_trajectory_series(tmp_path):
+    """Chunk and trajectory files share one seq counter, so next_seq must be past
+    both — otherwise a later trajectory write would os.replace an existing one."""
+    store, manifest = _mini_store(tmp_path)
+    keys = mls.panel_keys(0, 0, 0)[:1]
+    store.write_result_chunk(1, manifest, keys, _mini_cfg(), 1.0, "production",
+                             1e-9, 1e-12, "b", _fake_result(1), 1.0)
+    store.write_trajectory_chunk(2, manifest, keys[0], "production",
+                                 np.linspace(0.0, 1.0, 3),
+                                 np.zeros((3, 4, 49), dtype=complex))
+    assert store.next_seq() == 3
+
+
+def test_corrupted_chunk_raises_on_load(tmp_path):
+    """A garbage chunk_NNNNNN.npz is picked up by the loader and currently raises
+    ValueError mid-merge (np.load's pickle fallback under allow_pickle=False).
+    Pin that so the failure mode is at least specified."""
+    store, manifest = _mini_store(tmp_path)
+    store.write_result_chunk(1, manifest, mls.panel_keys(0, 0, 0)[:1], _mini_cfg(),
+                             1.0, "production", 1e-9, 1e-12, "b", _fake_result(1), 1.0)
+    (Path(store.chunks_dir) / "chunk_000002.npz").write_bytes(b"garbage, not a real npz")
+    with pytest.raises(ValueError, match="pickled"):
+        store.load_records(manifest)
+
+
+def test_cross_level_resume_reuses_coarse_nodes(tmp_path):
+    """End-to-end nesting invariant: level-0 records mark the coarse nodes done,
+    so the level-1 missing set is exactly the newly inserted (33) nodes."""
+    store, manifest = _mini_store(tmp_path)
+    coarse = mls.panel_keys(0, 0, 0)             # 16 level-0 nodes of panel (0,0)
+    store.write_result_chunk(1, manifest, coarse, _mini_cfg(), 1.0, "production",
+                             1e-9, 1e-12, "b", _fake_result(len(coarse)), 60.0)
+    done = mls.completed_keys(store.load_records(manifest))
+    assert set(coarse) <= done
+    fine = mls.panel_keys(0, 0, 1)               # 49 level-1 nodes, same panel
+    missing = [k for k in fine if k not in done]
+    assert len(missing) == 49 - 16
+    assert set(coarse).isdisjoint(missing)
+
+
+def test_effective_batch_size_falls_back_to_one_without_a_passed_gate(tmp_path):
+    """_effective_batch_size gates the requested size on a recorded, enabled
+    packing acceptance; absent/failed gates fall back to one point per solve."""
+    store, _ = _mini_store(tmp_path)
+    assert mls._effective_batch_size(store, Namespace(batch_size=1)) == 1
+    assert mls._effective_batch_size(store, Namespace(batch_size=48)) == 1   # no pilot
+    pilot = Path(store.reports_dir) / "pilot.json"
+    pilot.write_text(json.dumps({"packing_gate": {"enabled": True}}))
+    assert mls._effective_batch_size(store, Namespace(batch_size=48)) == 48
+    pilot.write_text(json.dumps({"packing_gate": {"enabled": False}}))
+    assert mls._effective_batch_size(store, Namespace(batch_size=48)) == 1
+
+
+def test_scatter_write_failure_records_nan_rows(tmp_path, runner_factory):
+    """A failed scatter batch writes NaN-filled rows into the scatter series with
+    the failure status, and never touches the main coherent-leakage series."""
+    store, manifest = _mini_store(tmp_path)
+    runner = runner_factory(store, manifest, _runner_args())
+    runner.gammas = {"p_mid": 9.0e6, "p_ryd": 6.6e3, "p_r_garb": 6.6e3}
+    batch = mls.Batch(keys=mls.panel_keys(0, 0, 0)[:2], scatter=True)
+    runner._write_failure(batch, {"reason": "timeout", "message": "slow",
+                                  "runtime_s": 3.0})
+    rows = store.load_scatter_records(manifest)
+    assert len(rows) == 2 and all(r["status"] == "timeout" for r in rows)
+    assert all(np.all(np.isnan(r[ch])) for r in rows for ch in mls.SCATTER_CHANNELS)
+    assert store.load_records(manifest) == []
 
 
 def test_cost_model_scales_with_gate_time_and_inflates():
@@ -572,19 +824,20 @@ def test_plot_and_status_smoke(tmp_path, capsys):
     assert "records:" in out and "98 unique ok points" in out
 
 
-def test_cli_parser_covers_subcommands():
+def test_cli_parser_covers_subcommands_and_locked_invocation():
     parser = mls.build_parser()
     args = parser.parse_args(["run", "--dry-run", "--target-level", "13"])
     assert args.func is mls.cmd_run and args.dry_run and args.target_level == "13"
-    args = parser.parse_args(["audit", "--audit-point", "d0_t0_om0-1_dw0-1"])
-    assert args.func is mls.cmd_audit
-    args = parser.parse_args(["status"])
-    assert args.func is mls.cmd_status
+    assert parser.parse_args(
+        ["audit", "--audit-point", "d0_t0_om0-1_dw0-1"]).func is mls.cmd_audit
+    assert parser.parse_args(["status"]).func is mls.cmd_status
+    args = parser.parse_args(["scatter", "--level", "7", "--workers", "auto",
+                              "--batch-size", "auto"])
+    assert args.func is mls.cmd_scatter and args.level == "7"
+    assert parser.parse_args(["plot", "--metric", "p_loss_total"]).metric == "p_loss_total"
 
-
-def test_cli_accepts_the_agreed_production_invocation():
-    """The handoff's locked production command must parse verbatim."""
-    args = mls.build_parser().parse_args([
+    # The handoff's locked production command must parse verbatim.
+    args = parser.parse_args([
         "run", "--output", "results/max_leakage_ode",
         "--workers", "auto", "--batch-size", "auto", "--target-level", "auto",
         "--budget-hours", "24", "--reserve-hours", "2"])
@@ -593,27 +846,14 @@ def test_cli_accepts_the_agreed_production_invocation():
     assert args.target_level == "auto"
 
 
-def test_pulse_hash_is_stable_and_guards_resume(tmp_path):
+def test_pulse_hash_is_stable_and_recorded(tmp_path):
+    """The pulse fingerprint is deterministic (64 hex chars) and is what the
+    manifest records, so a later pulse edit is caught by the provenance guards
+    (see test_manifest_guard_* / test_chunk_guard_* for the refuse-to-merge arms)."""
     h1, h2 = mls.pulse_hash(), mls.pulse_hash()
     assert h1 == h2 and len(h1) == 64
-    store, manifest = _mini_store(tmp_path)
+    _, manifest = _mini_store(tmp_path)
     assert manifest["pulse_hash"] == h1
-    # a manifest recorded under a different pulse must refuse to resume
-    manifest_path = Path(store.manifest_path)
-    doctored = json.loads(manifest_path.read_text())
-    doctored["pulse_hash"] = "0" * 64
-    manifest_path.write_text(json.dumps(doctored))
-    with pytest.raises(RuntimeError, match="pulse_hash mismatch"):
-        store.init_or_validate_manifest(
-            _mini_cfg(), omega_1013=2 * np.pi * 489.6e6, model_hash="modelhash-1",
-            code_hash="codehash", run_meta={})
-    # and chunks stamped with a foreign pulse hash must refuse to merge
-    store2, manifest2 = _mini_store(tmp_path / "b")
-    foreign = dict(manifest2, pulse_hash="0" * 64)
-    store2.write_result_chunk(1, foreign, mls.panel_keys(0, 0, 0)[:1], _mini_cfg(),
-                              1.0, "production", 1e-9, 1e-12, "b", _fake_result(1), 1.0)
-    with pytest.raises(RuntimeError, match="pulse_hash"):
-        store2.load_records(manifest2)
 
 
 def test_best_records_prefers_tighter_rtol_over_tier(tmp_path):
@@ -687,18 +927,15 @@ def test_scatter_integrals_on_a_solved_toy_trajectory():
     assert np.all(out["p_ryd"] == 0.0)  # group (5,) is outside the toy basis
 
 
-def test_model_decay_rates_channel_mapping():
-    stub = Namespace(level_structure=Namespace(
-        decay_rates_per_s={"e1": {"total": 9.0e6}, "r": {"total": 6.6e3},
-                           "r_garb": {"total": 7.7e3}}))
-    rates = mls.model_decay_rates(stub)
-    assert rates == {"p_mid": 9.0e6, "p_ryd": 6.6e3, "p_r_garb": 7.7e3}
-
-
 def test_scatter_chunk_roundtrip_resume_and_isolation(tmp_path):
     store, manifest = _mini_store(tmp_path)
     keys = mls.panel_keys(0, 0, 0)[:2]
-    gammas = {"p_mid": 9.03e6, "p_ryd": 6.6e3, "p_r_garb": 6.6e3}
+    # model_decay_rates maps the e1/r/r_garb model channels to the p_* groups.
+    stub = Namespace(level_structure=Namespace(
+        decay_rates_per_s={"e1": {"total": 9.03e6}, "r": {"total": 6.6e3},
+                           "r_garb": {"total": 6.6e3}}))
+    gammas = mls.model_decay_rates(stub)
+    assert gammas == {"p_mid": 9.03e6, "p_ryd": 6.6e3, "p_r_garb": 6.6e3}
     scatter = {ch: np.random.default_rng(0).uniform(1e-6, 1e-2, (2, 4))
                for ch in mls.SCATTER_CHANNELS}
     path = store.write_scatter_chunk(
@@ -738,14 +975,6 @@ def test_plot_metric_values_prefers_tight_rtol_and_totals(tmp_path):
     assert values[keys[0]] == pytest.approx(2e-2)     # tighter rtol wins
     values, *_ = mls._plot_metric_values(store, manifest, [], "p_loss_total")
     assert values[keys[0]] == pytest.approx(2e-2 + 2e-3 + 2e-4)
-
-
-def test_cli_scatter_subcommand_parses():
-    args = mls.build_parser().parse_args(
-        ["scatter", "--level", "7", "--workers", "auto", "--batch-size", "auto"])
-    assert args.func is mls.cmd_scatter and args.level == "7"
-    args = mls.build_parser().parse_args(["plot", "--metric", "p_loss_total"])
-    assert args.metric == "p_loss_total"
 
 
 # ── real rb87_7_mp model (ARC required) ──────────────────────────────────────

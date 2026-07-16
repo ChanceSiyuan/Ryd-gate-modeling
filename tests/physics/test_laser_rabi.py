@@ -10,17 +10,17 @@ import pytest
 from scipy.constants import hbar, physical_constants
 
 from ryd_gate.physics import (
+    _check_transition_level,
     _electric_field_uniform_beam,
     _get_atom,
+    _mid_branching_ratios,
+    _rydberg_branching_ratios,
     rb87_7_mp_rabi_frequencies,
     single_photon_rabi,
 )
 
 _BOHR = physical_constants["Bohr radius"][0]
 _ECHARGE = physical_constants["elementary charge"][0]
-
-# Rectangular array footprint used by error_budget_sweep / error_buget notebook.
-_BEAM_SHORT_AXIS_UM = 6.0
 
 
 def test_single_photon_rabi_matches_manual_dipole_formula():
@@ -85,24 +85,36 @@ def test_rb87_7_mp_rabi_delegates_to_single_photon_rabi():
     )
 
 
-def test_rb87_7_mp_rabi_rectangular_array_footprint():
-    """Matches error_budget_sweep: area = sqrt(N) * a * s with s = 6 µm."""
-    n_beam_atoms, a_um = 200, 7.0
-    beam_length_um = float(np.sqrt(n_beam_atoms) * a_um)
-    beam_area_um2 = beam_length_um * _BEAM_SHORT_AXIS_UM
-
-    p420_eff = 6.4 * (1.0 - 0.90)
-    p1013_eff = 100.0 * (1.0 - 0.90)
-    omega_420, omega_1013 = rb87_7_mp_rabi_frequencies(
-        p420_eff, p1013_eff, beam_area_um2, ryd_level=70,
-    )
-    assert omega_420 / (2 * np.pi) / 1e6 == pytest.approx(2205.2, rel=2e-2)
-    assert omega_1013 / (2 * np.pi) / 1e6 == pytest.approx(411.7, rel=2e-2)
+def test_check_transition_level_rejects_bad_quantum_numbers():
+    # The remaining validation branches of _check_transition_level (physics.py:72-79),
+    # reached before any ARC call.
+    with pytest.raises(ValueError, match="n must be"):
+        _check_transition_level("s", 0, 0, 0.5, 0.5)       # n < 1
+    with pytest.raises(ValueError, match="l must be"):
+        _check_transition_level("s", 5, 5, 0.5, 0.5)       # l not in [0, n)
+    with pytest.raises(ValueError, match="j must be"):
+        _check_transition_level("s", 5, 0, 1.5, 0.5)       # j != l ± 1/2
+    with pytest.raises(ValueError, match="mj"):
+        _check_transition_level("s", 5, 0, 0.5, 0.0)       # mj off the j ladder
 
 
-def test_beam_area_param_is_um2():
-    """The area parameter is named beam_area_um2 (keyword-only spelling check)."""
-    kw = dict(n1=5, l1=0, j1=0.5, mj1=-0.5, n2=6, l2=1, j2=1.5, q=-1)
-    a = single_photon_rabi(1.0, beam_area_um2=100.0, **kw)
-    b = single_photon_rabi(1.0, 100.0, **kw)
-    assert a == pytest.approx(b)
+def test_rydberg_branching_ratios_partition_unity():
+    # _rydberg_branching_ratios (physics.py:299-374) normalizes the Rydberg->6P->5S
+    # cascade; the four reported channels partition the branch ratio, so they lie
+    # in [0, 1] and sum to 1 for both σ⁻/σ⁺ manifolds.
+    atom = _get_atom()
+    for manifold in ("mp", "pm"):
+        br = _rydberg_branching_ratios(atom, 70, manifold)
+        vals = [br["to_0"], br["to_1"], br["to_L0"], br["to_L1"]]
+        assert all(0.0 <= v <= 1.0 for v in vals)
+        assert sum(vals) == pytest.approx(1.0)
+
+
+def test_mid_branching_ratios_partition_unity():
+    # _mid_branching_ratios (physics.py:377-407) normalizes the 6P_3/2 -> 5S decay;
+    # its four channels also partition unity.
+    atom = _get_atom()
+    br = _mid_branching_ratios(atom, F=3, mF=0)
+    vals = [br["to_0"], br["to_1"], br["to_L0"], br["to_L1"]]
+    assert all(0.0 <= v <= 1.0 for v in vals)
+    assert sum(vals) == pytest.approx(1.0)

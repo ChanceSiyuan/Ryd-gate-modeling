@@ -114,3 +114,66 @@ class TestPlanSegments:
     def test_t0_recorded_when_zero_requested(self):
         record_at_start, segs = plan_segments(1.0, np.array([0.0, 1.0]), 0.5)
         assert record_at_start
+
+
+class TestBroadcast:
+    def test_scalar_broadcasts_to_length_n(self):
+        from ryd_gate.backends.tn_common.compiler import _broadcast
+
+        np.testing.assert_array_equal(_broadcast(2.0, 3), np.full(3, 2.0 + 0j))
+
+    def test_length_n_array_passes_through(self):
+        from ryd_gate.backends.tn_common.compiler import _broadcast
+
+        np.testing.assert_array_equal(_broadcast([1, 2, 3], 3), np.array([1, 2, 3], dtype=complex))
+
+    def test_wrong_shape_rejected(self):
+        from ryd_gate.backends.tn_common.compiler import _broadcast
+
+        with pytest.raises(ValueError, match="scalar or length-3 array"):
+            _broadcast([1, 2], 3)
+
+
+class TestInitialLocalAmplitudes:
+    def test_plus_amplitudes_for_01r(self):
+        from ryd_gate.backends.tn_common.initial_state import initial_local_amplitudes
+
+        terms = compile_tn_terms(_sweep_system("01r", n=2))
+        amps = initial_local_amplitudes(terms, "plus")
+        assert amps.shape == (2, 3)
+        expected = np.array([1, 1, 0]) / np.sqrt(2)  # level order ("0", "1", "r")
+        for i in range(2):
+            np.testing.assert_allclose(amps[i], expected)
+
+    def test_plus_requires_0_and_1_levels(self):
+        from ryd_gate.backends.tn_common.initial_state import initial_local_amplitudes
+
+        terms = compile_tn_terms(_sweep_system("1r", n=2))  # levels ("1", "r")
+        with pytest.raises(ValueError, match="requires '0' and '1'"):
+            initial_local_amplitudes(terms, "plus")
+
+    def test_unknown_initial_state_string_rejected(self):
+        from ryd_gate.backends.tn_common.initial_state import initial_local_amplitudes
+
+        terms = compile_tn_terms(_sweep_system("1r", n=2))
+        with pytest.raises(ValueError, match="unknown initial_state string"):
+            initial_local_amplitudes(terms, "af1")
+
+    def test_label_list_length_and_labels_validated(self):
+        from ryd_gate.backends.tn_common.initial_state import initial_local_amplitudes
+
+        terms = compile_tn_terms(_sweep_system("1r", n=2))
+        with pytest.raises(ValueError, match="per-site labels"):
+            initial_local_amplitudes(terms, ["1"])  # wrong length
+        with pytest.raises(ValueError, match="unknown level label"):
+            initial_local_amplitudes(terms, ["1", "x"])
+
+
+def test_tn_real_expectation_rejects_non_real():
+    from ryd_gate.backends.tn_common.simulate import _real_expectation
+
+    out = _real_expectation(np.array([1.0 + 1e-12j, 0.5 + 0j]), "ok")
+    np.testing.assert_allclose(out, [1.0, 0.5])
+    assert out.dtype == np.float64
+    with pytest.raises(ValueError, match="non-real"):
+        _real_expectation(np.array([1.0 + 1.0j]), "bad")

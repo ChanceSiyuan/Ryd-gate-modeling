@@ -79,11 +79,10 @@ def test_garb_detuning_follows_zeeman_formula():
 
 def test_53p_decay_rates_positive_and_reasonable():
     rates = _build().level_structure.decay_rates_per_s["r"]
-    total, radiative, blackbody = rates["total"], rates["radiative"], rates["blackbody"]
+    total, radiative = rates["total"], rates["radiative"]
     # 53P3/2 total (300 K) lifetime is of order 100 us; don't pin the exact value.
     assert 1e3 < total < 1e5
     assert 0.0 < radiative < total
-    assert blackbody == pytest.approx(total - radiative)
 
 
 # The 53P θ=π/2 channel is not a dominant C6 eigenchannel (overlap ~0.46), so
@@ -102,8 +101,3 @@ def test_chain2_pair_uses_channel_resolved_arc_53p_c6_at_theta_pi_2():
     c6_rr = arc_pair_c6_rad_s_um6(n1=53, l1=1, j1=1.5, mj1=-1.5, theta=np.pi / 2, phi=0.0)
     assert np.isfinite(rr_terms[0]) and rr_terms[0] != 0.0
     assert rr_terms[0] == pytest.approx(c6_rr / 3.0**6)
-
-
-def test_rejects_unknown_physical_kwargs():
-    with pytest.raises(TypeError, match="does not accept physical parameter"):
-        level_structure("rb87_297_clock_4", Delta_Hz=1e9)

@@ -28,16 +28,12 @@ def test_local_markdown_links_exist():
             assert target_path.exists(), f"{source}: broken local link {target!r}"
 
 
-def test_python_blocks_are_syntactically_valid():
-    sources = [REPO / "README.md", *(DOCS / name for name in EXPECTED_DOCS)]
+def test_docs_guide_python_blocks_are_syntactically_valid():
+    # The README block is already compiled *and executed* by test_readme_examples;
+    # here we only guard the three docs guides, which are not executed.
+    sources = [DOCS / name for name in EXPECTED_DOCS]
     pattern = re.compile(r"```python\n(.*?)```", flags=re.S)
 
     for source in sources:
         for index, block in enumerate(pattern.findall(source.read_text())):
             compile(block, f"{source}::python-block-{index}", "exec")
-
-
-def test_quarto_surface_is_gone():
-    assert not list(DOCS.rglob("*.qmd"))
-    assert not (DOCS / "_quarto.yml").exists()
-    assert "quartodoc" not in (REPO / "pyproject.toml").read_text()

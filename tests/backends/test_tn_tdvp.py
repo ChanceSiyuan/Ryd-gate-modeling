@@ -120,35 +120,70 @@ class TestMPSOptionSchema:
 
 
 class TestMPSPreflight:
-    def test_t_eval_without_observables_is_error(self):
-        with pytest.raises(ValueError, match="observables"):
-            simulate(_system(n=2), backend="mps", t_eval=np.array([_T_GATE]),
-                     backend_options=_MPS_OPTS)
-
     def test_wrong_shape_expression_is_error(self):
         with pytest.raises(ValueError, match="n_sites, local_dim"):
             simulate(_system(n=3), backend="mps", t_eval=np.array([_T_GATE]),
                      observables={"bad": _system(n=2).observables.n("r", 0)},
                      backend_options=_MPS_OPTS)
 
-    def test_non_tn_preset_rejected(self):
-        # rb87_7 presets are not TN-capable (O09).
-        from ryd_gate.protocols.gate_cz import CZProtocol
-        from ryd_gate.protocols.pulses import blackman_pulse
 
-        proto = CZProtocol(
-            t_gate_s=0.2e-6, intermediate_detuning_rad_s=TWO_PI * 7.8e9,
-            omega_420_max_rad_s=TWO_PI * 100e6, omega_1013_max_rad_s=TWO_PI * 100e6,
-            envelope_420=lambda t: blackman_pulse(t, 20e-9, 0.2e-6),
-            phase_420_rad=lambda t: 0.0,
+class TestMPSInitialStateAndAnchors:
+    def test_mps_batch_returns_tuple_matching_single_solves(self):
+        # nested initial-state list -> tuple, via the TN batch dispatch loop.
+        system = _system(n=3)
+        obs = {"n_r": _n_r_total(system)}
+        batch = simulate(system, [["1", "1", "1"], ["r", "1", "1"]], backend="mps",
+                         observables=obs, backend_options=_MPS_OPTS)
+        assert isinstance(batch, tuple) and len(batch) == 2
+        a = simulate(system, ["1", "1", "1"], backend="mps", observables=obs, backend_options=_MPS_OPTS)
+        b = simulate(system, ["r", "1", "1"], backend="mps", observables=obs, backend_options=_MPS_OPTS)
+        np.testing.assert_allclose(batch[0].expectation("n_r"), a.expectation("n_r"), atol=1e-10)
+        np.testing.assert_allclose(batch[1].expectation("n_r"), b.expectation("n_r"), atol=1e-10)
+
+    def test_plus_initial_state_on_mps(self):
+        # "plus" builds the (|0>+|1>)/sqrt(2) product MPS (initial_state.py plus branch);
+        # t_eval=[0.0] also exercises the record-at-start anchor branch.
+        system = _system(preset="01r", n=3)
+        obs = {f"n_{lvl}_{i}": system.observables.n(lvl, i) for lvl in ("0", "1", "r")
+               for i in range(system.N)}
+        res = simulate(system, "plus", backend="mps", t_eval=np.array([0.0]),
+                       observables=obs, backend_options=_MPS_OPTS)
+        np.testing.assert_array_equal(res.times, [0.0])
+        for i in range(system.N):
+            assert res.expectation(f"n_0_{i}")[0] == pytest.approx(0.5, abs=1e-9)
+            assert res.expectation(f"n_1_{i}")[0] == pytest.approx(0.5, abs=1e-9)
+            assert res.expectation(f"n_r_{i}")[0] == pytest.approx(0.0, abs=1e-9)
+
+    def test_t0_anchor_recorded_then_evolves(self):
+        # record_at_start: the t=0 anchor holds the initial-state value; a later anchor differs.
+        system = _system(n=2)
+        obs = {"n_r": _n_r_total(system)}
+        res = simulate(system, backend="mps", t_eval=np.array([0.0, _T_GATE]),
+                       observables=obs, backend_options=_MPS_OPTS)
+        np.testing.assert_array_equal(res.times, [0.0, _T_GATE])
+        assert res.expectation("n_r")[0] == pytest.approx(0.0, abs=1e-9)  # |1,1> has n_r=0
+        assert res.expectation("n_r")[-1] > 1e-3
+
+    def test_identity_constant_observable_on_mps(self):
+        # An observable carrying a constant (factorless) identity term exercises the
+        # identity_coeff branch of the MPS lowering; `1 - n_r0` here (built via the private
+        # term type, since the public factory never emits a factorless term).
+        from ryd_gate.core.observables import ObservableExpr, _Term
+
+        system = _system(n=3)
+        n_r0 = system.observables.n("r", 0)
+        one_minus_nr0 = ObservableExpr(
+            (_Term(1.0 + 0.0j, ()),) + tuple(_Term(-t.coefficient, t.factors) for t in n_r0._terms),
+            n_r0._n_sites, n_r0._local_dim,
         )
-        system = RydbergSystem(
-            level_structure=level_structure("rb87_7_mp", magnetic_field_G=20.0),
-            register=Register.chain(2, spacing_um=5.0),
-            protocol=proto,
-        )
-        with pytest.raises(ValueError, match="TN-capable"):
-            simulate(system, backend="mps", backend_options=_MPS_OPTS)
+        obs = {"one_minus_nr0": one_minus_nr0, "n_r0": n_r0}
+        t_eval = np.array([0.15e-6, _T_GATE])
+        exact = simulate(system, t_eval=t_eval, observables=obs)
+        mps = simulate(system, backend="mps", t_eval=t_eval, observables=obs, backend_options=_MPS_OPTS)
+        np.testing.assert_allclose(mps.expectation("one_minus_nr0"),
+                                   1.0 - mps.expectation("n_r0"), atol=1e-9)
+        np.testing.assert_allclose(mps.expectation("one_minus_nr0"),
+                                   exact.expectation("one_minus_nr0"), atol=1e-3)
 
 
 def test_exact_mps_parity_n_r():

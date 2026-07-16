@@ -34,10 +34,6 @@ def _channels_by_name(system):
     return {c.channel: c for c in channels}
 
 
-def test_compatible_presets():
-    assert SweepProtocol._compatible_presets == frozenset({"1r", "01r"})
-
-
 def test_binds_to_1r_and_01r_and_exposes_t_gate():
     t_gate = 0.5e-6
     proto = SweepProtocol(
@@ -154,3 +150,27 @@ def test_plot_returns_single_figure():
     )
     fig = proto.plot(_system(proto, n=2))
     assert isinstance(fig, Figure)
+
+
+def test_plot_rejects_too_few_points():
+    # Protocol.plot guards n_points < 2 (base.py:39-40), before any resolve/draw.
+    proto = SweepProtocol(
+        t_gate_s=1e-6, omega_half_rad_s=lambda t: 0.0, detuning_rad_s=lambda t: 0.0
+    )
+    with pytest.raises(ValueError, match="n_points >= 2"):
+        proto.plot(None, n_points=1)
+
+
+def test_plot_rejects_nonpositive_t_gate():
+    # Protocol.plot guards a non-positive resolved t_gate (base.py:43-44). The
+    # concrete protocols validate t_gate at construction, so a minimal subclass
+    # that resolves to t_gate = 0 exercises the branch.
+    from ryd_gate.protocols._resolved import _ResolvedProtocol
+    from ryd_gate.protocols.base import Protocol
+
+    class _ZeroGate(Protocol):
+        def _resolve(self, system):
+            return _ResolvedProtocol(t_gate=0.0, drives=())
+
+    with pytest.raises(ValueError, match="positive t_gate"):
+        _ZeroGate().plot(None)

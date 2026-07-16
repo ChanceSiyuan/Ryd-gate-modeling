@@ -57,6 +57,20 @@ class TestLatticeSpec:
         with pytest.raises(PEPSError, match="exact_ode.*mps|mps"):
             peps_lattice_spec(Register.triangular(2, 3))
 
+    def test_grid_shape_site_count_mismatch_rejected(self):
+        # Defensive layout check: an (accepted-factory) provenance whose grid_shape does
+        # not multiply to register.N is a validity error, not a silent reshape.
+        class _Origin:
+            factory = "rectangle"
+            grid_shape = (2, 3)
+
+        class _FakeRegister:
+            _origin = _Origin()
+            N = 5
+
+        with pytest.raises(PEPSError, match="does not match register.N"):
+            peps_lattice_spec(_FakeRegister())
+
 
 class TestTopologyValidation:
     def test_nearest_neighbour_subset_mapped_with_coeffs(self):

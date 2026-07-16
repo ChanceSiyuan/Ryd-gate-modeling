@@ -4,10 +4,11 @@ DOP853 integrator.
 Pins for the rewritten API: ``hamiltonian_format`` selects storage/matvec (dense
 vs sparse-matvec) and the two paths agree numerically; ``rtol``/``atol`` are
 validated (finite, strictly positive); unknown ``backend_options`` keys and the
-removed ``exact`` / ``exact_dense`` / ``exact_sparse`` backend names error
-loudly; a non-interacting single atom reproduces the analytic Rabi flop; a
-nested initial-state list batches into a tuple matching the separate solves; and
-the public ``EvolutionResult`` exposes no state trajectory.
+removed expm-era backend names error loudly with a message that names the
+surviving ``exact_ode`` backend; a non-interacting single atom reproduces the
+analytic Rabi flop; and a nested initial-state list batches into a tuple matching
+the separate solves. Also pins the compiled Hamiltonian's Hermiticity (E08) and
+the raw (un-renormalized) physical norm the backend exposes.
 """
 
 import numpy as np
@@ -15,6 +16,7 @@ import pytest
 
 import ryd_gate as rg
 from ryd_gate import Register, RydbergSystem, level_structure
+from ryd_gate.backends.exact.compiler import compile_exact
 from ryd_gate.backends.exact.ode import validated_exact_options
 from ryd_gate.protocols import SweepProtocol
 
@@ -83,23 +85,15 @@ def test_rtol_atol_must_be_finite_positive(key, bad):
         validated_exact_options({key: bad})
 
 
-def test_simulate_surfaces_bad_options():
-    """Option validation runs at ``simulate`` time, before any evolution."""
+@pytest.mark.parametrize("name", ["exact", "exact_dense", "exact_sparse", "exact_expm", "dense_expm"])
+def test_removed_exact_backends_error(name):
+    """The removed expm-era backend names route to the unknown-backend error, whose
+    message names the surviving ``exact_ode`` backend. This is the canonical pin for the
+    removed-alias contract (the tests/core copies are deleted)."""
     system = _interacting_1r()
-    with pytest.raises(ValueError, match="unknown exact backend option"):
-        rg.simulate(system, backend_options={"n_steps": 100})
-    with pytest.raises(ValueError, match="hamiltonian_format"):
-        rg.simulate(system, backend_options={"hamiltonian_format": "dense_expm"})
-    with pytest.raises(ValueError, match="strictly positive"):
-        rg.simulate(system, backend_options={"rtol": -1.0})
-
-
-def test_removed_exact_backends_error():
-    """The old expm backend names are gone: they route to the unknown-backend error."""
-    system = _interacting_1r()
-    for name in ("exact", "exact_dense", "exact_sparse"):
-        with pytest.raises(ValueError, match="unknown backend"):
-            rg.simulate(system, backend=name)
+    with pytest.raises(ValueError, match="unknown backend") as exc:
+        rg.simulate(system, backend=name)
+    assert "exact_ode" in str(exc.value)
 
 
 # ── dynamics ─────────────────────────────────────────────────────────────────
@@ -142,28 +136,71 @@ def test_batch_returns_tuple_matching_single_solves():
     np.testing.assert_allclose(batch[1].expectation("n_r"), single_b.expectation("n_r"), atol=1e-12)
 
 
-# ── measurement request + result surface ─────────────────────────────────────
+# ── Hermiticity (E08) + physical norm ────────────────────────────────────────
 
 
-def test_endpoint_only_times():
-    """``t_eval=None`` records only at ``t_gate``; ``times == [t_gate]`` (shape (1,))."""
-    system = _interacting_1r()
+def test_compiled_hamiltonian_is_hermitian_with_complex_channels():
+    """The compiled ``H(t)`` is Hermitian at every time, including off-diagonal complex
+    drive channels (each adds a matrix element and its conjugate transpose; diagonal
+    channels take the real part) — E08."""
+    from ryd_gate.protocols import DigitalAnalogProtocol
+
+    w = 2 * np.pi * 1e6
+    proto = DigitalAnalogProtocol(
+        t_gate_s=0.2e-6,
+        coupling_r1_rad_s=lambda t: [1.0 * w, (0.8 + 0.5j) * w],
+        coupling_10_rad_s=lambda t: 0.6 * w * np.exp(0.8j * t / 1e-6),
+        coupling_r0_rad_s=lambda t: [0.4j * w, 0.25 * w],
+        energy_r_rad_s=lambda t: [-0.7 * w, 0.5 * w],
+        energy_1_rad_s=lambda t: 0.3 * w,
+    )
+    system = RydbergSystem(
+        level_structure=level_structure("01r"),
+        register=Register.chain(2, spacing_um=8.0),
+        protocol=proto,
+    )
+    ham, t_gate = compile_exact(system)
+    dim = system._basis.total_dim
+    for t in (0.0, 0.05e-6, 0.123e-6, t_gate):
+        H = np.empty((dim, dim), dtype=complex)
+        for k in range(dim):
+            e = np.zeros(dim, dtype=complex)
+            e[k] = 1.0
+            H[:, k] = ham.apply(t, e)
+        np.testing.assert_allclose(H, H.conj().T, atol=1e-9, err_msg=f"t={t}")
+
+
+def test_real_expectation_rejects_non_real():
+    """The real-expectation guard passes tiny roundoff imaginary parts but rejects a
+    genuinely non-real value (defense in depth; observables are pre-checked Hermitian)."""
+    from ryd_gate.backends.exact.simulate import _real_expectation
+
+    out = _real_expectation(np.array([1.0 + 1e-12j, 0.5 + 0j]), "ok")
+    np.testing.assert_allclose(out, [1.0, 0.5])
+    assert out.dtype == np.float64
+    with pytest.raises(ValueError, match="non-real"):
+        _real_expectation(np.array([1.0 + 1.0j]), "bad")
+
+
+def test_exact_ode_exposes_raw_physical_norm():
+    """The exact_ode backend integrates the Schrodinger equation and does NOT renormalize
+    the state: the reader exposes the true integrated amplitudes, whose summed populations
+    are the physical ``||psi||^2``. For the coherent (Hermitian) Rydberg Hamiltonian this
+    is unitary, so the norm stays ~1 — i.e. no hidden renormalization inflates or truncates
+    it. (No decay term is currently folded into H, so there is no norm loss to observe;
+    ``1 - ||psi||^2`` would be the no-jump decay probability once decay is wired in.)"""
+    import itertools
+
+    system = RydbergSystem(
+        level_structure=level_structure("1r"),
+        register=Register.chain(2, spacing_um=9.0),
+        protocol=SweepProtocol(
+            t_gate_s=0.3e-6,
+            omega_half_rad_s=lambda t: 2 * np.pi * 2.0e6 * np.sin(np.pi * t / 0.3e-6),
+            detuning_rad_s=lambda t: 2 * np.pi * 1.0e6,
+        ),
+    )
     res = rg.simulate(system)
-    np.testing.assert_array_equal(res.times, [system.t_gate])
-    assert res.times.shape == (1,)
-
-
-def test_explicit_t_eval_requires_observables():
-    system = _interacting_1r()
-    with pytest.raises(ValueError, match="requires observables"):
-        rg.simulate(system, t_eval=np.linspace(0.0, system.t_gate, 5))
-
-
-def test_result_has_no_state_trajectory():
-    """The trajectory is discarded after expectations: no public state attributes."""
-    system = _interacting_1r()
-    res = rg.simulate(system)
-    for attr in ("final_state", "psi_final", "states", "metadata", "expectations"):
-        assert not hasattr(res, attr)
-    with pytest.raises(KeyError):
-        res.expectation("n_r")  # never requested
+    levels = system.level_structure.levels
+    norm2 = sum(abs(res.amplitude(list(lab))) ** 2 for lab in itertools.product(levels, repeat=system.N))
+    assert norm2 == pytest.approx(1.0, abs=1e-6)

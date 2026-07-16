@@ -9,8 +9,7 @@ declared by its module ``__all__``:
   * ``ryd_gate.results``    — 6 names (3 result types + 3 PEPS evidence records)
 
 For each namespace this file asserts ``__all__`` equals the exact list below (in
-API order), every listed name is importable, and names removed by the rewrite
-are gone from the namespace.
+API order) and every listed name is importable.
 """
 
 import importlib
@@ -63,39 +62,6 @@ FROZEN_NAMESPACES = [
     ("ryd_gate.results", RESULTS_API),
 ]
 
-# Names removed from the top-level namespace by the rewrite (deleted outright,
-# or relocated into ryd_gate.protocols / ryd_gate.results).
-REMOVED_TOP_LEVEL = [
-    "InteractionSpec",
-    "DEFAULT_C6",
-    "TFIMQuenchProtocol",
-    "TFIMAnnealProtocol",
-    "EvolutionResult",
-    "EnsembleResult",
-    "GroundStateResult",
-    "CZProtocol",
-    "SweepProtocol",
-    "blackman_pulse",
-    "phase_from_chirp",
-]
-
-# Names removed from ryd_gate.protocols (deleted, or living only in a submodule).
-REMOVED_PROTOCOLS = [
-    "TFIMQuenchProtocol",
-    "TFIMAnnealProtocol",
-    "Protocol",
-    "TFIMRydbergControls",
-    "tfim_to_rydberg_controls",
-    "interaction_longitudinal_shifts",
-]
-
-
-class TestVersion:
-    def test_version_is_str(self):
-        import ryd_gate
-
-        assert isinstance(ryd_gate.__version__, str)
-
 
 class TestFrozenNamespaces:
     @pytest.mark.parametrize("module_name, expected", FROZEN_NAMESPACES)
@@ -118,21 +84,3 @@ class TestFrozenNamespaces:
         exec("from ryd_gate import *", namespace)
         bound = {k for k in namespace if not k.startswith("__")}
         assert bound == set(TOP_LEVEL_API)
-
-
-class TestRemovedNames:
-    @pytest.mark.parametrize("name", REMOVED_TOP_LEVEL)
-    def test_removed_from_top_level(self, name):
-        import ryd_gate
-
-        assert name not in ryd_gate.__all__
-        with pytest.raises(AttributeError):
-            getattr(ryd_gate, name)
-
-    @pytest.mark.parametrize("name", REMOVED_PROTOCOLS)
-    def test_removed_from_protocols(self, name):
-        import ryd_gate.protocols as protocols
-
-        assert name not in protocols.__all__
-        with pytest.raises(AttributeError):
-            getattr(protocols, name)

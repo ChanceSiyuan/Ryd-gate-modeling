@@ -196,3 +196,128 @@ class TestEvidenceRecords:
         ev = _evidence(max_ntu_truncation_error=np.float64(1e-6), environment_iterations=np.int64(7))
         assert type(ev.max_ntu_truncation_error) is float
         assert type(ev.environment_iterations) is int
+
+
+# ── ported sequential sampler: candidate-weight validation (peps/_sampling._select) ──
+#
+# The two conditional samplers are OUR ported Apache code; _select is the pure
+# per-candidate validation + inverse-CDF selection every conditional site runs, so
+# it is unit-tested here (no YASTN needed) rather than only through an evolution.
+
+
+class TestSamplerSelect:
+    def test_valid_selection_returns_index_and_probability(self):
+        from ryd_gate.backends.peps._sampling import _select
+
+        # weights [1, 3] -> p [0.25, 0.75]; u picks each side of the CDF break at 0.25.
+        assert _select([1.0 + 0j, 3.0 + 0j], 0.1) == (0, 0.25)
+        assert _select([1.0 + 0j, 3.0 + 0j], 0.5) == (1, 0.75)
+
+    def test_non_finite_weight_rejected(self):
+        from ryd_gate.backends.peps._numerics import PEPSError
+        from ryd_gate.backends.peps._sampling import _select
+
+        with pytest.raises(PEPSError, match="not finite"):
+            _select([1.0 + 0j, complex(np.inf, 0.0)], 0.5)
+
+    def test_imaginary_beyond_slack_rejected(self):
+        from ryd_gate.backends.peps._numerics import PEPSError
+        from ryd_gate.backends.peps._sampling import _select
+
+        with pytest.raises(PEPSError, match="imaginary part"):
+            _select([1.0 + 0j, 0.5 + 0.1j], 0.5)
+
+    def test_negative_beyond_slack_rejected(self):
+        from ryd_gate.backends.peps._numerics import PEPSError
+        from ryd_gate.backends.peps._sampling import _select
+
+        with pytest.raises(PEPSError, match="negative beyond slack"):
+            _select([1.0 + 0j, -0.5 + 0j], 0.5)
+
+    def test_tiny_negative_within_slack_is_clamped(self):
+        from ryd_gate.backends.peps._sampling import _select
+
+        # -1e-12 is inside the per-candidate slack (~1.5e-8 * max(1,|z|)): clamped to 0,
+        # not rejected. The surviving weight then takes all the probability.
+        assert _select([1.0 + 0j, -1e-12 + 0j], 0.1) == (0, 1.0)
+
+    def test_zero_total_rejected(self):
+        from ryd_gate.backends.peps._numerics import PEPSError
+        from ryd_gate.backends.peps._sampling import _select
+
+        with pytest.raises(PEPSError, match="finite positive total"):
+            _select([0.0 + 0j, 0.0 + 0j], 0.5)
+
+    def test_selecting_zero_probability_candidate_rejected(self):
+        from ryd_gate.backends.peps._numerics import PEPSError
+        from ryd_gate.backends.peps._sampling import _select
+
+        # u at the top of the CDF would land on the trailing zero-probability candidate;
+        # the final guard rejects it rather than returning a p=0 selection.
+        with pytest.raises(PEPSError, match="non-positive probability"):
+            _select([1.0 + 0j, 0.0 + 0j], 1.0)
+
+
+# ── engine/environment validity helpers (dependency-free; no YASTN run) ───────
+
+
+class TestEngineValidityHelpers:
+    def test_finite_local_hamiltonians_rejects_nan(self):
+        from ryd_gate.backends.peps._engine import _finite_local_hamiltonians
+        from ryd_gate.backends.peps._numerics import PEPSError
+
+        class _T:
+            def local_hamiltonians(self, t):
+                m = np.zeros((1, 2, 2), dtype=complex)
+                m[0, 0, 0] = np.nan
+                return m
+
+        with pytest.raises(PEPSError, match="non-finite"):
+            _finite_local_hamiltonians(_T(), 0.0)
+
+    def test_hamiltonian_scale_zero_hamiltonian_rejected(self):
+        from ryd_gate.backends.peps._engine import _hamiltonian_scale
+        from ryd_gate.backends.peps._numerics import PEPSError
+
+        h_local = np.zeros((1, 2, 2), dtype=complex)  # no local energy
+        with pytest.raises(PEPSError, match="nonzero Hamiltonian"):
+            _hamiltonian_scale(h_local, (), [(0, 0)])
+
+    def test_hamiltonian_scale_nonfinite_component_rejected(self):
+        from ryd_gate.backends.peps._engine import _hamiltonian_scale
+        from ryd_gate.backends.peps._numerics import PEPSError
+
+        h_local = np.zeros((1, 2, 2), dtype=complex)
+        h_local[0, 0, 0] = np.inf
+        with pytest.raises(PEPSError, match="not finite/nonnegative"):
+            _hamiltonian_scale(h_local, (), [(0, 0)])
+
+    def test_hamiltonian_scale_returns_max_component(self):
+        from ryd_gate.backends.peps._engine import _hamiltonian_scale
+
+        h_local = np.zeros((1, 2, 2), dtype=complex)
+        h_local[0, 1, 1] = 2.0  # spectral norm 2.0
+        assert _hamiltonian_scale(h_local, (((0, 0), (1, 0), 5.0),), [(0, 0)]) == 5.0
+
+    def test_sweeps_invalid_count_rejected(self):
+        from ryd_gate.backends.peps._environment import _sweeps
+        from ryd_gate.backends.peps._numerics import PEPSError
+
+        class _Out:
+            def __init__(self, sweeps):
+                self.sweeps = sweeps
+
+        assert _sweeps(_Out(3), 5, "CTM") == 3
+        with pytest.raises(PEPSError, match="invalid sweep count"):
+            _sweeps(_Out(0), 5, "CTM")  # below 1
+        with pytest.raises(PEPSError, match="invalid sweep count"):
+            _sweeps(_Out(True), 5, "CTM")  # bool is not a valid sweep count
+
+    def test_ctm_residual_first_sweep_nan_is_structural_none(self):
+        from ryd_gate.backends.peps._environment import _ctm_residual
+        from ryd_gate.backends.peps._numerics import PEPSError
+
+        assert _ctm_residual(float("nan"), 1) is None  # one structural first-sweep NaN
+        assert _ctm_residual(1e-8, 3) == 1e-8
+        with pytest.raises(PEPSError, match="NaN after two or more sweeps"):
+            _ctm_residual(float("nan"), 2)

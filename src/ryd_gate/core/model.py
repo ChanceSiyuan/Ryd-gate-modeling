@@ -6,12 +6,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-import numpy as np
-
-if TYPE_CHECKING:
-    from numpy.typing import NDArray
 
 
 @dataclass(frozen=True)
@@ -63,25 +57,3 @@ class BasisSpec:
             return self.site_labels.index(label)
         except ValueError:
             raise ValueError(f"Site '{label}' not in {self.site_labels}") from None
-
-    def projector(self, site: str, level: str) -> NDArray[np.complexfloating]:
-        """Build ``|level><level|`` on the given site, tensored with identity on other sites.
-
-        Returns a total_dim x total_dim dense matrix.
-        """
-        site_idx = self.site_index(site)
-        level_idx = self.level_index(level)
-
-        sq = np.zeros((self.local_dim, self.local_dim), dtype=np.complex128)
-        sq[level_idx, level_idx] = 1.0
-
-        # Build tensor product: I^{site_idx} x sq x I^{n_sites - site_idx - 1}
-        result = sq
-        for i in range(self.n_sites - 1, -1, -1):
-            if i == site_idx:
-                continue
-            if i > site_idx:
-                result = np.kron(result, np.eye(self.local_dim, dtype=np.complex128))
-            else:
-                result = np.kron(np.eye(self.local_dim, dtype=np.complex128), result)
-        return result

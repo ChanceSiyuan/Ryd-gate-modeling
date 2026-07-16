@@ -53,20 +53,6 @@ def test_times_default_is_t_gate_and_readonly():
     assert result.times.flags.writeable is False
 
 
-def test_no_deleted_surface():
-    result = simulate(_idle_system())
-    for name in (
-        "final_state",
-        "psi_final",
-        "states",
-        "probabilities",
-        "metadata",
-        "basis",
-        "expectations",
-    ):
-        assert not hasattr(result, name)
-
-
 # ── expectation() ────────────────────────────────────────────────────────────
 
 
@@ -118,6 +104,18 @@ def test_amplitude_returns_complex():
     assert abs(amp) == pytest.approx(1.0)
 
 
+def test_amplitude_wrong_label_count_rejected():
+    result = simulate(_idle_system())  # N == 2
+    with pytest.raises(ValueError, match="per-site labels"):
+        result.amplitude(["1"])
+
+
+def test_amplitude_unknown_label_rejected():
+    result = simulate(_idle_system())
+    with pytest.raises(ValueError, match="unknown level label"):
+        result.amplitude(["x", "1"])
+
+
 # ── sample() ─────────────────────────────────────────────────────────────────
 
 
@@ -140,6 +138,12 @@ def test_sample_requires_keyword_ints():
         result.sample(shots=0, seed=0)
     with pytest.raises(TypeError, match="seed"):
         result.sample(shots=8, seed=None)
+
+
+def test_sample_negative_seed_rejected():
+    result = simulate(_idle_system())
+    with pytest.raises(ValueError, match="non-negative integer"):
+        result.sample(shots=8, seed=-1)
 
 
 # ── batch returns a tuple of results ─────────────────────────────────────────
