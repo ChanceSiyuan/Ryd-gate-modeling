@@ -69,6 +69,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 ryd_gate = ["py.typed"]
+qoc = ["py.typed"]
 
 [tool.mypy]
 python_version = "3.10"

@@ -3,16 +3,17 @@
 import re
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[1]
 DOCS = REPO / "docs"
 EXPECTED_DOCS = {"model.md", "simulation.md", "gates.md"}
+EXPECTED_DOCS_DIRECTORIES = {"adr", "agents", "contexts"}
 
 
-def test_docs_contains_only_the_three_user_guides():
+def test_docs_contains_only_the_three_user_guides_and_adrs():
     files = {path.name for path in DOCS.iterdir() if path.is_file()}
     directories = {path.name for path in DOCS.iterdir() if path.is_dir()}
     assert files == EXPECTED_DOCS
-    assert directories == set()
+    assert directories == EXPECTED_DOCS_DIRECTORIES
 
 
 def test_local_markdown_links_exist():

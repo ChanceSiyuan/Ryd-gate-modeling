@@ -20,6 +20,7 @@ TOP_LEVEL_API = [
     "Register",
     "RydbergSystem",
     "NoiseModel",
+    "bilinear_control_model",
     "level_structure",
     "simulate",
     "simulate_ensemble",
@@ -78,8 +79,8 @@ class TestFrozenNamespaces:
             assert hasattr(module, name), f"{module_name}.{name} is missing"
             assert getattr(module, name) is not None
 
-    def test_top_level_import_star_binds_exactly_the_six(self):
-        """``from ryd_gate import *`` binds exactly the six frozen names."""
+    def test_top_level_import_star_binds_exactly_the_seven(self):
+        """``from ryd_gate import *`` binds exactly the seven frozen names."""
         namespace: dict = {}
         exec("from ryd_gate import *", namespace)
         bound = {k for k in namespace if not k.startswith("__")}

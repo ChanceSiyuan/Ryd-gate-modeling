@@ -14,13 +14,15 @@ construct one fully specified protocol, bind it in a :class:`RydbergSystem`, the
     )
     result = simulate(system)                       # backend="exact_ode" | "mps" | "peps"
 
-The top-level namespace is exactly the six names below. Protocols live in
+The top-level namespace is exactly the seven names below. Protocols live in
 ``ryd_gate.protocols``, forward physics helpers in ``ryd_gate.physics``, and the
-returned result types in ``ryd_gate.results``.
+returned result types in ``ryd_gate.results``. :func:`bilinear_control_model`
+is the search-side export of a system's compiled bilinear form (ADR-0024).
 """
 
 __version__ = "0.1.0"
 
+from .bilinear import bilinear_control_model
 from .core.level_structures import level_structure
 from .core.system import RydbergSystem
 from .lattice import Register
@@ -31,6 +33,7 @@ __all__ = [
     "Register",
     "RydbergSystem",
     "NoiseModel",
+    "bilinear_control_model",
     "level_structure",
     "simulate",
     "simulate_ensemble",
