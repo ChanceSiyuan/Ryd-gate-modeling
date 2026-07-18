@@ -134,6 +134,14 @@ def test_multiple_initial_states_sum_through_the_costates():
     np.testing.assert_allclose(grad_ab["ux"], grad_a["ux"] + grad_b["ux"], rtol=1e-10)
 
 
+def test_value_matches_value_and_grad():
+    """grape.value is the gradient-free evaluation of the same discrete loss."""
+    params, kwargs = _per_slice_setup(n_slices=6)
+    full_value, _gradient = grape.value_and_grad(params, **kwargs)
+    value_only_kwargs = {key: val for key, val in kwargs.items() if key != "control_pullback"}
+    np.testing.assert_allclose(grape.value(params, **value_only_kwargs), full_value, rtol=1e-14)
+
+
 def test_invalid_inputs_fail_fast():
     n_slices = 3
     time_grid = np.linspace(0.0, 1.0, n_slices + 1)

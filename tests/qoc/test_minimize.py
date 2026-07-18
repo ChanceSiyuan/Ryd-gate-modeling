@@ -99,6 +99,19 @@ def test_gradient_option_drives_lbfgsb():
     np.testing.assert_allclose(result.best_parameters["a"], 2.0, rtol=1e-5)
 
 
+def test_iteration_callback_sees_accepted_iterations_as_named_parameters():
+    iterates = []
+    result = qoc.minimize(
+        quadratic,
+        X0,
+        method="l-bfgs-b",
+        options={"gradient": quadratic_gradient, "iteration_callback": lambda params: iterates.append(params)},
+    )
+    assert len(iterates) == result.n_iterations
+    assert all(set(entry) == {"a", "w"} for entry in iterates)
+    assert isinstance(iterates[-1]["a"], float) and iterates[-1]["w"].shape == (3,)
+
+
 def test_gradient_option_is_rejected_for_gradient_free_methods():
     with pytest.raises(ValueError, match="gradient"):
         qoc.minimize(quadratic, X0, method="nelder-mead", options={"gradient": quadratic_gradient})

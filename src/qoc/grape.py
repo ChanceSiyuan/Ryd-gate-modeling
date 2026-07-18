@@ -75,7 +75,7 @@ def _require_channel_values(u: object, channels: tuple[str, ...], n_slices: int)
     return out
 
 
-def value_and_grad(
+def _forward_pass(
     parameters: Mapping[str, Any],
     *,
     h0: np.ndarray,
@@ -83,14 +83,10 @@ def value_and_grad(
     initial_states: Sequence[np.ndarray],
     time_grid: np.ndarray,
     control_map: Callable[[Mapping[str, Any]], Mapping[str, np.ndarray]],
-    control_pullback: Callable[[Mapping[str, Any], dict[str, np.ndarray]], Mapping[str, Any]],
     terminal_objective: Callable[[list[np.ndarray]], tuple[float, Sequence[np.ndarray]]],
-) -> tuple[float, dict[str, Any]]:
-    """Evaluate one candidate's scalar value and named parameter gradient.
-
-    Returns ``(value, gradient)`` where ``gradient`` is the named mapping
-    produced by ``control_pullback``.
-    """
+    keep_slices: bool,
+) -> dict[str, Any]:
+    """Shared validated forward propagation; evaluates the terminal objective."""
     drift = _require_hermitian("h0", h0)
     dim = drift.shape[0]
 
@@ -117,7 +113,6 @@ def value_and_grad(
 
     u = _require_channel_values(control_map(parameters), channels, n_slices)
 
-    # Forward pass: keep every slice generator, propagator, and state.
     generators: list[np.ndarray] = []
     propagators: list[np.ndarray] = []
     forward: list[np.ndarray] = [psi]
@@ -127,12 +122,13 @@ def value_and_grad(
             h_k += u[name][k] * operators[name]
         x_k = -1j * steps[k] * h_k
         u_k = expm(x_k)
-        generators.append(x_k)
-        propagators.append(u_k)
         psi = u_k @ psi
-        forward.append(psi)
+        if keep_slices:
+            generators.append(x_k)
+            propagators.append(u_k)
+            forward.append(psi)
 
-    final_states = [np.array(forward[-1][:, j]) for j in range(n_states)]
+    final_states = [np.array(psi[:, j]) for j in range(n_states)]
     objective = terminal_objective(final_states)
     try:
         raw_value, raw_costates = objective
@@ -145,7 +141,87 @@ def value_and_grad(
         raise ValueError(f"terminal_objective must return one finite real scalar value; got {value!r}.")
     if len(raw_costates) != n_states:
         raise ValueError(f"terminal_objective must return one costate per initial state; got {len(raw_costates)}.")
-    chi = np.column_stack([_require_vector(f"costates[{j}]", c, dim) for j, c in enumerate(raw_costates)])
+
+    return {
+        "dim": dim,
+        "channels": channels,
+        "operators": operators,
+        "steps": steps,
+        "n_slices": n_slices,
+        "generators": generators,
+        "propagators": propagators,
+        "forward": forward,
+        "value": value,
+        "raw_costates": raw_costates,
+    }
+
+
+def value(
+    parameters: Mapping[str, Any],
+    *,
+    h0: np.ndarray,
+    controls: Mapping[str, np.ndarray],
+    initial_states: Sequence[np.ndarray],
+    time_grid: np.ndarray,
+    control_map: Callable[[Mapping[str, Any]], Mapping[str, np.ndarray]],
+    terminal_objective: Callable[[list[np.ndarray]], tuple[float, Sequence[np.ndarray]]],
+) -> float:
+    """Evaluate one candidate's scalar value only (no backward pass).
+
+    Accepts the same ``terminal_objective`` contract as :func:`value_and_grad`;
+    the returned costates are ignored.
+    """
+    state = _forward_pass(
+        parameters,
+        h0=h0,
+        controls=controls,
+        initial_states=initial_states,
+        time_grid=time_grid,
+        control_map=control_map,
+        terminal_objective=terminal_objective,
+        keep_slices=False,
+    )
+    return float(state["value"])
+
+
+def value_and_grad(
+    parameters: Mapping[str, Any],
+    *,
+    h0: np.ndarray,
+    controls: Mapping[str, np.ndarray],
+    initial_states: Sequence[np.ndarray],
+    time_grid: np.ndarray,
+    control_map: Callable[[Mapping[str, Any]], Mapping[str, np.ndarray]],
+    control_pullback: Callable[[Mapping[str, Any], dict[str, np.ndarray]], Mapping[str, Any]],
+    terminal_objective: Callable[[list[np.ndarray]], tuple[float, Sequence[np.ndarray]]],
+) -> tuple[float, dict[str, Any]]:
+    """Evaluate one candidate's scalar value and named parameter gradient.
+
+    Returns ``(value, gradient)`` where ``gradient`` is the named mapping
+    produced by ``control_pullback``.
+    """
+    state = _forward_pass(
+        parameters,
+        h0=h0,
+        controls=controls,
+        initial_states=initial_states,
+        time_grid=time_grid,
+        control_map=control_map,
+        terminal_objective=terminal_objective,
+        keep_slices=True,
+    )
+    dim = state["dim"]
+    channels = state["channels"]
+    operators = state["operators"]
+    steps = state["steps"]
+    n_slices = state["n_slices"]
+    generators = state["generators"]
+    propagators = state["propagators"]
+    forward = state["forward"]
+    value = state["value"]
+    chi = np.column_stack(
+        [_require_vector(f"costates[{j}]", c, dim) for j, c in enumerate(state["raw_costates"])]
+    )
 
     # Backward pass: costates through the same slice propagators, exact
     # Frechet derivative of each slice exponential per channel.

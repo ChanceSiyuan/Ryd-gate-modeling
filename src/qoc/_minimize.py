@@ -57,11 +57,14 @@ def minimize(
     """Run one single-start solve of ``loss`` from the named candidate ``x0``.
 
     ``method`` is a stable lower-case name selecting one registered solver.
-    ``options`` is that method's option mapping, forwarded to the solver; the
-    reserved key ``"gradient"`` (gradient methods only) supplies a callable
-    mapping named parameters to a named gradient mapping with the same names
-    and shapes. ``callback(index, parameters, loss, best_loss)`` is invoked
-    after each successful finite loss evaluation.
+    ``options`` is that method's option mapping, forwarded to the solver, with
+    two reserved keys: ``"gradient"`` (gradient methods only) supplies a
+    callable mapping named parameters to a named gradient mapping with the
+    same names and shapes, and ``"iteration_callback"`` supplies a callable
+    invoked with the named parameters after each accepted solver iteration
+    (line-search evaluations are not iterations). ``callback(index,
+    parameters, loss, best_loss)`` is invoked after each successful finite
+    loss evaluation.
     """
     if not isinstance(method, str) or method not in _SCIPY_METHODS:
         raise ValueError(f"unknown optimization method {method!r}; registered methods: {sorted(_SCIPY_METHODS)}.")
@@ -86,6 +89,9 @@ def minimize(
             raise ValueError(f"options['gradient'] is only supported by methods {sorted(_GRADIENT_METHODS)}.")
         if not callable(gradient):
             raise TypeError(f"options['gradient'] must be callable; got {type(gradient).__name__}.")
+    iteration_callback = solver_options.pop("iteration_callback", None)
+    if iteration_callback is not None and not callable(iteration_callback):
+        raise TypeError(f"options['iteration_callback'] must be callable; got {type(iteration_callback).__name__}.")
 
     state: dict[str, Any] = {"n_evaluations": 0, "best_loss": math.inf, "best_z": None}
 
@@ -109,12 +115,19 @@ def minimize(
             packed = packer.pack(named, what="gradient")
             return packed * scale  # chain rule: d/d(x/s) = s * d/dx
 
+    scipy_callback = None
+    if iteration_callback is not None:
+
+        def scipy_callback(zk: np.ndarray) -> None:
+            iteration_callback(packer.unpack(np.asarray(zk, dtype=float) * scale))
+
     res = scipy.optimize.minimize(
         fun,
         z0,
         method=_SCIPY_METHODS[method],
         jac=jac,
         bounds=scipy_bounds,
+        callback=scipy_callback,
         options=solver_options or None,
     )
 
