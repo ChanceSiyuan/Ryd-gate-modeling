@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_file_location(
     "max_leakage_ode_sweep", ROOT / "scripts" / "max_leakage_ode_sweep.py")
 mls = importlib.util.module_from_spec(_spec)

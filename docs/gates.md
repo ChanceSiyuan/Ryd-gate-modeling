@@ -23,6 +23,20 @@ Effective gate models can instead be written on `01r` with
 `DigitalAnalogProtocol`. Backend compatibility is documented in
 [Simulation](simulation.md#backends).
 
+The complete two-atom `01r` computational-return workflow—including bounded
+amplitude/chirp splines, finite-blockade GRAPE, duration continuation, exact-ODE
+validation, and Rydberg-exposure diagnostics—is kept explicit in
+[`06_01r_adiabatic_optimization.ipynb`](../scripts/notebooks/06_01r_adiabatic_optimization.ipynb).
+It is research analysis code, not a package-level optimizer API.
+
+That notebook has one cache switch, `FORCE_RECOMPUTE`. On the first run (or with
+`FORCE_RECOMPUTE=True`) it optimizes, exact-validates, and atomically writes its
+optimization history and exact metrics to
+`results/01r_adiabatic_optimization/result.json` after every branch. When that
+file exists and `FORCE_RECOMPUTE=False`, Run All instead loads it and regenerates
+every table and figure from the saved spline coordinates without calling
+`minimize`, `simulate`, or ARC.
+
 Import protocols from their dedicated module:
 
 ```python
@@ -409,8 +423,6 @@ Hamiltonian is itself the intended model.
 - `examples/demo_noise_model.py`: noisy gate ensemble.
 - `scripts/notebooks/01_cz_gate.ipynb`: populations and decay budgets.
 - `scripts/notebooks/single_photon.ipynb`: Direct-297 comparison.
-- `scripts/optimize_ar_cz.py`: AR optimization.
-- `scripts/diagnose_ar_target.py`: symmetry and target diagnostics.
 - `scripts/gen_error_budget_g20.py`: error-budget maps.
 - `scripts/max_leakage_ode_sweep.py`: specialized large leakage scan.
 

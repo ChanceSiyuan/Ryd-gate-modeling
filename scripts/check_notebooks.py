@@ -27,6 +27,7 @@ NON_GATED = {
     "01_cz_gate.ipynb": "long-running 7-level exact_ode CZ scans",
     "04_quench_and_state_prep.ipynb": "long-running exact/MPS/PEPS benchmarks",
     "05_tn_and_error_budget.ipynb": "long-running PEPS/DMRG/error-budget scans",
+    "06_01r_adiabatic_optimization.ipynb": "long-running GRAPE plus four-state exact_ode validation",
     "error_buget.ipynb": "long-running parallel exact_ode CZ error-budget maps",
     "find_phase.ipynb": "long-running exact_ode effective-theory phase study",
     "single_photon.ipynb": "long-running 297-nm versus two-photon comparison",

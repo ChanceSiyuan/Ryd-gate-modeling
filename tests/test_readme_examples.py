@@ -3,7 +3,7 @@
 import re
 from pathlib import Path
 
-README = Path(__file__).resolve().parents[2] / "README.md"
+README = Path(__file__).resolve().parents[1] / "README.md"
 
 
 def _python_blocks():
