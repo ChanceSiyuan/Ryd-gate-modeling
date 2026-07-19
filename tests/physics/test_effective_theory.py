@@ -19,6 +19,7 @@ from ryd_gate.backends.exact import compile_exact
 from ryd_gate.core.effective_theory import (
     _single_pair_strength,
     _tex_frame_h7_fn,
+    dressed_gap_ratio,
     lower_cz_to_effective_01r,
     lower_cz_to_effective_pair,
     resolvent_elimination,
@@ -209,6 +210,32 @@ def test_vod4_s_terms_hermitian_and_quartic():
     h1013_ng[6, :] = 0.0
     h7_ng = h_const + h1013_ng + h1013_ng.conj().T + h420 + h420.conj().T
     assert np.allclose(vod4_s_terms(h7_ng, KEEP, [2, 3, 4]), s, atol=1e-9 * np.max(np.abs(s)))
+
+
+def test_dressed_gap_ratio_matches_analytic_toys():
+    """``η`` projects the coupling per dressed eigenstate: an uncoupled
+    near-degenerate level contributes nothing (the failure mode of any
+    norm-over-minimum-gap estimate), dressed mixing enters through the
+    eigenbasis, and a coupled degeneracy is ``inf``."""
+    g, delta = 0.3, 10.0
+
+    # Diagonal H_Q with one uncoupled level almost degenerate with E_0 = 0.
+    h = np.array([[0.0, g, 0.0], [g, delta, 0.0], [0.0, 0.0, 1e-9]], dtype=complex)
+    assert np.isclose(dressed_gap_ratio(h, [0]), g / delta)
+
+    # Internal H_Q mixing: eigenpairs (delta ± big, (1, ±1)/sqrt2), each seeing
+    # |<q|v>| = g/sqrt2 against its own dressed gap.
+    big = 4.0
+    h_mix = np.array([[0.0, g, 0.0], [g, delta, big], [0.0, big, delta]], dtype=complex)
+    expected = (g / np.sqrt(2.0)) / min(abs(delta - big), abs(delta + big))
+    assert np.isclose(dressed_gap_ratio(h_mix, [0]), expected)
+
+    # Coupled degeneracy: invalid reduction.
+    h_deg = np.array([[0.0, g], [g, 0.0]], dtype=complex)
+    assert dressed_gap_ratio(h_deg, [0]) == float("inf")
+
+    with pytest.raises(ValueError, match="Hermitian"):
+        dressed_gap_ratio(np.array([[0.0, 1.0, 0.0], [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]]), [0])
 
 
 def test_lemma1_cg_product_sums():

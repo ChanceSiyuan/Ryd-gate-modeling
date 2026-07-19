@@ -7,19 +7,32 @@ the effective ``{0, 1, r}`` model obtained by eliminating the complementary
 manifold.  It exists so the relationship is a *readable map*, not a
 ``compensate_stark`` switch buried inside a protocol.
 
-The physics is derived in ``Rydberg_sim.tex`` (Theorems 1–2 + Lemma 1) and
-validated numerically in ``scripts/notebooks/find_phase.ipynb`` §4.  The method
-is the *one-step resolvent elimination*: keep ``P``, eliminate ``Q`` with the
-exact block resolvent ``R_a = (H_Q - E_a)^{-1}``:
+The physics is derived in ``Rydberg_sim.tex`` (Theorems 1–2 + Lemma 1, restated
+2026-07 in the dressed-resolvent form) and validated numerically in
+``scripts/notebooks/find_phase.ipynb`` §4.  The method is the *one-step
+resolvent elimination*: keep ``P``, eliminate ``Q`` with the exact block
+resolvent ``R_a = (H_Q - E_a)^{-1}``:
 
     D_a = -<v_a| R_a |v_a>,     K_ab = -1/2 <v_a| (R_a + R_b) |v_b>,
 
 with ``|v_a> = Q H |a>``.  The ``e_F <-> r'`` couplings live *inside* ``H_Q``,
 so virtual paths through ``r'`` are resummed by the resolvent rather than
-treated in a separate (uncontrolled) local elimination.  The construction is
-carried out in the tex rotating frame — real optical couplings, the laser
-chirps moved onto the ``{e, r, r'}`` diagonal (``E_r = -Δ_add(t)``) — so the
-denominators carry the instantaneous detunings exactly as in the tex.
+expanded: because ``P`` couples to ``Q`` only through the ``e_F`` rows, the
+exact ``R_a`` is identical to the dressed e-block form
+
+    G_a = Λ_a + Λ_a v_r' [κ_a - v_r'^† Λ_a v_r']^{-1} v_r'^† Λ_a,
+
+i.e. the ``r'`` Schur complement is kept whole — never truncated at ``C^(4,d)``
+— so a large ``g_{Fr'}/δ_r`` does not by itself invalidate the reduction.  The
+controlled small parameter is *not* ``g_{Fr'}/δ_r`` but the ``P``–``Q``
+coupling measured against the dressed separation: per dressed eigenpair
+``(λ_q, |q>)`` of ``H_Q``, ``|<q|v_a>| / |λ_q - E_a|`` must stay small
+(:func:`dressed_gap_ratio`; ``≲ 0.1–0.2`` is the controlled regime).  The
+residual error of the reduction is ``O(V_od^4)`` plus the non-adiabatic
+``O(dH/dt / Δ_dressed²)``.  The construction is carried out in the tex rotating
+frame — real optical couplings, the laser chirps moved onto the ``{e, r, r'}``
+diagonal (``E_r = -Δ_add(t)``) — so the denominators carry the instantaneous
+detunings exactly as in the tex.
 
 Public surface:
 
@@ -42,6 +55,11 @@ Public surface:
   :class:`EffectivePairModel` (a 9x9 ``h_eff(t)``; evolve it directly — the
   compile pipeline has no driven pair channels).
 - :func:`resolvent_elimination` — the generic one-step reduction used by both.
+- :func:`dressed_gap_ratio` — the validity diagnostic ``η`` of the dressed
+  formulation: the largest ``|<q|v_a>| / |λ_q - E_a|`` over kept states ``a``
+  and dressed eigenpairs ``(λ_q, |q>)`` of ``H_Q``.  Projecting per eigenstate
+  matters: a ``Q`` eigenstate nearly degenerate with ``E_a`` but uncoupled to
+  it (e.g. the mostly-``r'`` state against ``|r>``) must not dominate ``η``.
 - :func:`schrieffer_wolff` — the plain 2nd-order (Löwdin) projection with
   diagonal denominators; the closed-form limit of the resolvent method when
   ``H_Q`` is diagonal (kept for the Theorem-1 closed-form cross-checks).
@@ -140,6 +158,43 @@ def resolvent_elimination(h, keep_idx: Sequence[int]) -> np.ndarray:
         for bi in range(len(keep)):
             eff[ai, bi] -= 0.5 * (np.vdot(v[:, ai], rv[bi]) + np.vdot(rv[ai], v[:, bi]))
     return eff
+
+
+def dressed_gap_ratio(h, keep_idx: Sequence[int]) -> float:
+    """Validity diagnostic ``η`` of the dressed reduction (coherent ``H`` only).
+
+    Diagonalizes the eliminated block ``H_Q`` (Hermitian) into dressed
+    eigenpairs ``(λ_q, |q>)`` and returns
+
+        η = max_{a ∈ keep} max_q  |<q|v_a>| / |λ_q - E_a|,
+
+    with ``|v_a> = H[Q, a]`` and ``E_a = Re H[a,a]``.  The reduction is a
+    controlled approximation while ``η ≲ 0.1–0.2``.  The per-eigenstate
+    projection is essential: a dressed state nearly degenerate with ``E_a`` but
+    uncoupled to ``|a>`` (the mostly-``r'`` state against ``|r>``) contributes
+    nothing, whereas any norm-over-minimum-gap estimate would diverge on it.
+    A dressed level that is both degenerate with ``E_a`` and coupled to it
+    returns ``inf`` — the reduction is invalid there.
+    """
+    h = np.asarray(h, dtype=complex)
+    keep = list(keep_idx)
+    elim = [q for q in range(h.shape[0]) if q not in keep]
+    hq = h[np.ix_(elim, elim)]
+    if not np.allclose(hq, hq.conj().T, rtol=0.0, atol=1e-10 * max(1.0, float(np.max(np.abs(hq))))):
+        raise ValueError("dressed_gap_ratio requires a Hermitian eliminated block (coherent H).")
+    lam, w = np.linalg.eigh(hq)
+    energy = np.real(np.diag(h))
+    eta = 0.0
+    for a in keep:
+        proj = np.abs(w.conj().T @ h[np.ix_(elim, [a])].ravel())
+        gaps = np.abs(lam - energy[a])
+        coupled = proj > 0.0
+        if np.any(coupled & (gaps == 0.0)):
+            return float("inf")
+        ratios = proj[coupled] / gaps[coupled]
+        if ratios.size:
+            eta = max(eta, float(np.max(ratios)))
+    return eta
 
 
 def vod4_s_terms(h, keep_idx: Sequence[int], mid_idx: Sequence[int]) -> np.ndarray:
@@ -409,11 +464,17 @@ def lower_cz_to_effective_01r(protocol, system7):
         H_eff = resolvent_elimination(H7) + vod4_s_terms(H7).
 
     The resolvent (2nd order in ``V_od``) resums the ``e <-> r'`` couplings and the
-    ``Δ_add`` ladder to all orders (``C^(2)+C^(3)+C^(4,d)``); :func:`vod4_s_terms`
-    adds the genuinely 4th-order ``V_od^4`` nested-commutator piece the resolvent
-    misses.  The returned protocol is in the tex frame — couplings real,
-    ``energy_r`` carrying ``-Δ_add(t)`` — which changes no computational-basis
-    observable.
+    ``Δ_add`` ladder to all orders — it IS the dressed-``G_a`` reduction, with the
+    ``r'`` Schur complement kept whole; :func:`vod4_s_terms` adds the genuinely
+    4th-order ``V_od^4`` nested-commutator piece the dressed 2nd-order result
+    misses.  Keeping the S terms is an *empirical* choice, not an order-purity
+    one: benchmarked against the full 7-level two-atom phases in the controlled
+    weak-drive domain (2026-07-19), resolvent+S tracks ``theta1``/``ZZ`` ~35-40%
+    closer than the pure dressed 2nd-order form (2.6e-3/7.4e-3 rad vs
+    4.0e-3/9.9e-3 rad); their bare-``Λ`` denominators live on the far-detuned
+    ``e_F`` block, where ``r'`` dressing is subleading.  The returned protocol is
+    in the tex frame — couplings real, ``energy_r`` carrying ``-Δ_add(t)`` —
+    which changes no computational-basis observable.
 
     CAVEAT: single-atom lowering cannot know that the r' shift is
     blockade-suppressed when the partner atom is in ``|r>``; for two-atom gate
