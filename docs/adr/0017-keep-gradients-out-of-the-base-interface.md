@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0025
+---
+
 # Keep gradients out of the base minimize interface
 
 The base `qoc.minimize(loss, x0, ...)` interface accepts only a scalar loss. It

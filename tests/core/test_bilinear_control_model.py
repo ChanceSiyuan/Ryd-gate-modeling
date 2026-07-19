@@ -65,6 +65,40 @@ def test_constant_control_parity_with_simulate():
         assert abs(psi[index] - result.amplitude(labels)) < 1e-6
 
 
+def test_complex_drive_parity_pins_the_imaginary_quadrature():
+    """The real-drive parity case leaves the :y operator multiplied by zero, so a
+    wrong sign on 1j*(A - A^H) or on u_y = Im c would pass it. This constant
+    COMPLEX drive makes both quadratures load-bearing against ``simulate``."""
+    from ryd_gate.protocols import DigitalAnalogProtocol
+
+    t_gate = 0.6e-6
+    coupling = (0.5 + 0.35j) * MHZ
+    system = RydbergSystem(
+        level_structure=level_structure("01r"),
+        register=Register.chain(1),
+        protocol=DigitalAnalogProtocol(t_gate_s=t_gate, coupling_r1_rad_s=lambda t: coupling),
+    )
+    h0, controls, states = bilinear_control_model(system, states=[["1"], ["r"]])
+    assert {"E[r,1]:x", "E[r,1]:y"} <= set(controls)
+
+    _t, lowered = lower_drives(system)
+    coefficient = {entry.channel: complex(entry.coefficient(0.5 * t_gate)) for entry in lowered}
+    assert abs(coefficient["E[r,1]"].imag) > 0.0  # the y quadrature must actually engage
+
+    h = h0.copy()
+    for label, value in coefficient.items():
+        if f"{label}:x" in controls:
+            h = h + value.real * controls[f"{label}:x"] + value.imag * controls[f"{label}:y"]
+        else:
+            h = h + value.real * controls[label]
+    psi = expm(-1j * h * t_gate) @ states[("1",)]
+
+    result = simulate(system, ["1"])
+    for labels in (["1"], ["r"]):
+        index = int(np.argmax(np.abs(states[tuple(labels)])))
+        assert abs(psi[index] - result.amplitude(labels)) < 1e-6
+
+
 def test_plus_state_export_matches_the_product_states():
     system = RydbergSystem(
         level_structure=level_structure("01r"),

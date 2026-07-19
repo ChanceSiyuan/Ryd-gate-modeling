@@ -81,7 +81,7 @@ The enforcement level a particular pulse-search method provides for a constraint
 _Avoid_: Constraint definition
 
 **Differentiable loss**:
-A scalar loss whose derivative is available inside a specialized optimization implementation. The base minimize interface does not ask the caller for this derivative or return it as a result; derivative provenance still determines whether a method may be called GRAPE.
+A scalar loss whose derivative is available to a gradient method. The base minimize signature does not take a derivative argument and the result does not return one; a gradient method receives the derivative through its method-specific options, and derivative provenance still determines whether a method may be called GRAPE.
 _Avoid_: Base-interface `jac`, returned gradient, automatically GRAPE
 
 **Black-box pulse optimization**:
