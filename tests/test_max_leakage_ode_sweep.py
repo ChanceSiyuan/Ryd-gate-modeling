@@ -835,6 +835,7 @@ def test_cli_parser_covers_subcommands_and_locked_invocation():
                               "--batch-size", "auto"])
     assert args.func is mls.cmd_scatter and args.level == "7"
     assert parser.parse_args(["plot", "--metric", "p_loss_total"]).metric == "p_loss_total"
+    assert parser.parse_args(["plot", "--metric", "total_error"]).metric == "total_error"
 
     # The handoff's locked production command must parse verbatim.
     args = parser.parse_args([
@@ -975,6 +976,31 @@ def test_plot_metric_values_prefers_tight_rtol_and_totals(tmp_path):
     assert values[keys[0]] == pytest.approx(2e-2)     # tighter rtol wins
     values, *_ = mls._plot_metric_values(store, manifest, [], "p_loss_total")
     assert values[keys[0]] == pytest.approx(2e-2 + 2e-3 + 2e-4)
+
+
+def test_total_error_sums_each_input_before_selecting_the_worst(tmp_path):
+    store, manifest = _mini_store(tmp_path)
+    key = mls.panel_keys(0, 0, 0)[0]
+    record = mls.PointRecord(
+        key=key, tier="production", rtol=1e-9, atol=1e-12, status="ok",
+        max_leakage=0.4, leakage=np.array([0.4, 0.1, 0.2, 0.3]),
+        worst_input="00", return_prob=np.ones(4), norm_err=np.zeros(4),
+        psi_final=mls._NO_STATES, nfev=1, runtime_s=1.0, batch_id="main",
+        batch_size=1, retry_count=0, priority_score=0.0, message="",
+        chunk_file="chunk", used_swap=True,
+    )
+    scatter = {
+        "p_mid": np.array([[0.0, 0.4, 0.1, 0.0]]),
+        "p_ryd": np.array([[0.0, 0.0, 0.2, 0.0]]),
+        "p_r_garb": np.array([[0.0, 0.0, 0.0, 0.2]]),
+    }
+    gammas = {"p_mid": 9.03e6, "p_ryd": 6.6e3, "p_r_garb": 6.6e3}
+    store.write_scatter_chunk(1, manifest, [key], _mini_cfg(), gammas, 1e-9,
+                              1e-12, "scatter", scatter, np.array([0.4]), 1.0)
+
+    values, *_ = mls._plot_metric_values(store, manifest, [record], "total_error")
+
+    assert values[key] == pytest.approx(0.5)
 
 
 # ── real rb87_7_mp model (ARC required) ──────────────────────────────────────

@@ -2815,8 +2815,9 @@ def _plot_metric_values(store: Store, manifest: dict, records, metric: str):
     """(values, vmin, vmax, colorbar_label) for a plot metric.
 
     ``max_leakage`` reads the coherent-leakage records (audit-derived floor);
-    the ``p_*`` metrics read the supplemental scatter series and report the
-    worst logical input, as in the notebook's p_*_max maps.
+    the ``p_*`` metrics read the supplemental scatter series. ``total_error``
+    adds coherent leakage and every scattering contribution per logical input
+    before selecting the worst input.
     """
     if metric == "max_leakage":
         best = best_records(records)
@@ -2827,25 +2828,37 @@ def _plot_metric_values(store: Store, manifest: dict, records, metric: str):
                  f"{'audit-derived' if not floor_info['fallback'] else 'fallback'};"
                  " values at floor are below the numerical credibility floor)")
         return values, vmin, 1.0, label
+    coherent = best_records(records) if metric == "total_error" else {}
     rows = [r for r in store.load_scatter_records(manifest) if r["status"] == "ok"]
     if not rows:
         raise SystemExit(f"no scatter records for --metric {metric}; "
                          "run the `scatter` subcommand first")
     per_key: dict[PointKey, tuple[float, float]] = {}
     for r in rows:
-        if metric == "p_loss_total":
-            v = float(np.max(r["p_mid"] + r["p_ryd"] + r["p_r_garb"]))
+        scattering = r["p_mid"] + r["p_ryd"] + r["p_r_garb"]
+        if metric == "total_error":
+            if r["key"] not in coherent:
+                continue
+            v = float(np.max(coherent[r["key"]].leakage + scattering))
+        elif metric == "p_loss_total":
+            v = float(np.max(scattering))
         else:
             v = float(np.max(r[metric]))
         cur = per_key.get(r["key"])
         if cur is None or r["rtol"] < cur[1]:
             per_key[r["key"]] = (v, r["rtol"])
     values = {k: v for k, (v, _) in per_key.items()}
+    if not values:
+        raise SystemExit(f"no overlapping coherent and scatter records for --metric {metric}")
     pos = [v for v in values.values() if v > 0]
     vmin = max(1e-12, min(pos)) if pos else 1e-12
     vmax = max(max(values.values()), vmin * 10)
-    label = (f"worst-input {metric} (scattering-rate integral, "
-             "trapezoid over 301 samples)")
+    if metric == "total_error":
+        label = ("worst-input total error budget (terminal coherent leakage + "
+                 "first-order scattering)")
+    else:
+        label = (f"worst-input {metric} (scattering-rate integral, "
+                 "trapezoid over 301 samples)")
     return values, vmin, vmax, label
 
 
@@ -2969,10 +2982,16 @@ def cmd_plot(args) -> None:
         cb = fig.colorbar(mesh, ax=axes, shrink=0.5, pad=0.01)
         cb.solids.set_rasterized(True)  # same PDF hairline-seam fix as the panels
         cb.set_label(cb_label, fontsize=9)
-    metric_title = ("Coherent terminal leakage" if args.metric == "max_leakage"
-                    else f"Scattering budget: {args.metric} (worst input)")
+    if args.metric == "max_leakage":
+        metric_title = "Coherent terminal leakage"
+    elif args.metric == "total_error":
+        metric_title = "Total first-order error budget (worst input)"
+    else:
+        metric_title = f"Scattering budget: {args.metric} (worst input)"
+    dynamics_note = ("closed-dynamics trajectory + first-order scattering"
+                     if args.metric == "total_error" else "closed dynamics")
     fig.suptitle(
-        f"{metric_title}, two-atom rb87_7_mp CZ (closed dynamics, "
+        f"{metric_title}, two-atom rb87_7_mp CZ ({dynamics_note}, "
         "original-frame DOP853; rasters are log-linear interpolation between "
         "exact nodes — dots"
         + ("; white veil: interpolation untrusted, LOO residual > "
@@ -3097,9 +3116,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="omit the uncertainty veil (raster is visualization only)")
     sp.add_argument("--metric", default="max_leakage",
                     choices=["max_leakage", "p_mid", "p_ryd", "p_r_garb",
-                             "p_loss_total"],
+                             "p_loss_total", "total_error"],
                     help="max_leakage from the main scan; p_* from the "
-                         "supplemental scatter series")
+                         "supplemental scatter series; total_error combines both")
     sp.add_argument("--individual", action="store_true", default=True,
                     help="also write per-panel PNGs (default on)")
     sp.add_argument("--no-individual", dest="individual", action="store_false")
