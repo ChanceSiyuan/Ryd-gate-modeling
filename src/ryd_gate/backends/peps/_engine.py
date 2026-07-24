@@ -25,7 +25,7 @@ from ryd_gate.backends.peps._readout import _GroundLedger, _GroundStateReader, _
 
 # Fixed private NTU algorithm (PEPS §7); not a public option.
 _NTU_METHOD = "mpo"
-_NTU_INIT = "EAT_SVD"
+_NTU_INIT = "EAT"  # EAT_SVD's parallel SVD path wins <10% of bonds at ~20% step cost (2026-07 profile)
 _NTU_FIX_METRIC = 0
 _NTU_PINV_CUTOFFS = (1e-12, 1e-11, 1e-10, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4)
 _NTU_POST_TRUNCATION = None
