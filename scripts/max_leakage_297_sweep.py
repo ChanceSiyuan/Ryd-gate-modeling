@@ -1557,7 +1557,7 @@ class Runner:
         self._acquire_store_lock()
         self.seq = store.next_seq()
         self.scatter_seq = store.next_scatter_seq()
-        self.gammas: dict[str, float] | None = None   # set for scatter runs
+        self.gammas: dict[int, dict[str, float]] | None = None   # set for scatter runs
         self.stop_requested = False
         self.start_time = time.time()
         self.dispatch_deadline = (self.start_time
@@ -2903,11 +2903,13 @@ def cmd_plot(args) -> None:
             else:
                 mesh = _draw_panel(ax, *data, vmin, vmax, cmap,
                                    veil=args.veil) or mesh
-            ax.set_title(f"n = {RYD_N[ni]}, T = {tg[ti]:g} us", fontsize=7)
+            if ni == 0:
+                ax.set_title(f"T = {tg[ti]:g} us", fontsize=9)
             if ni == n_rows - 1:
                 ax.set_xlabel(r"$\Omega_{297}/2\pi$ (MHz)", fontsize=8)
             if ti == 0:
-                ax.set_ylabel(r"$D_{\rm sweep}/2\pi$ (MHz)", fontsize=8)
+                ax.set_ylabel(f"$n$ = {ryd_axis[ni]:g}\n"
+                              r"$D_{\rm sweep}/2\pi$ (MHz)", fontsize=8)
             ax.tick_params(labelsize=7)
     if mesh is not None:
         cb = fig.colorbar(mesh, ax=axes, shrink=0.5, pad=0.01)
