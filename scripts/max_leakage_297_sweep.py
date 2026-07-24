@@ -223,7 +223,7 @@ def all_keys(level: int) -> list[PointKey]:
 
 def pilot_keys() -> list[PointKey]:
     """Reusable pilot nodes: all 72 panel centers + 16 factorial extremes, deduped."""
-    center = ((3, 2), (3, 2))  # (600 MHz, 15 MHz): level-1 node of both axes
+    center = ((3, 2), (3, 2))  # (13.5 MHz, 15 MHz): level-1 node of both axes
     keys = [make_key(di, ti, *center) for di, ti in all_panels()]
     extremes = [
         make_key(di, ti, (om, 1), (dw, 1))
@@ -319,13 +319,14 @@ def pulse_hash() -> str:
 
 # ── Model compilation and Hamiltonian aggregation ────────────────────────────
 #
-# The rb87_7_mp two-atom model is built and compiled ONCE per detuning row in the
-# parent process; workers inherit the immutable matrices copy-on-write over fork.
-# The 12 primitive drive channels are aggregated into fixed forward 420/1013 blocks
-# B; with X = B + B^dag and Y = i (B - B^dag) a complex laser coefficient c = a + ib
-# contributes a X + b Y, so the RHS needs no per-channel loop.  The grouped
-# Hamiltonian is verified against the repository compiler to complex128 precision
-# (``hamiltonian_equivalence_error``) before any production run.
+# The rb87_297_clock_4 two-atom model is built and compiled ONCE per Rydberg-n row
+# in the parent process; workers inherit the immutable matrices copy-on-write over
+# fork.  The primitive 297 drive channels (target |1>-|r> plus the garbage branch)
+# are aggregated into a single fixed forward block B; with X = B + B^dag and
+# Y = i (B - B^dag) a complex laser coefficient c = a + ib contributes a X + b Y,
+# so the RHS needs no per-channel loop.  The grouped Hamiltonian is verified against
+# the repository compiler to complex128 precision (``hamiltonian_equivalence_error``)
+# before any production run.
 
 
 def _dense(operator) -> np.ndarray:
@@ -336,66 +337,46 @@ def _dense(operator) -> np.ndarray:
 
 @dataclass
 class PanelOperators:
-    """Immutable aggregated operators for one detuning row (T-independent)."""
+    """Immutable aggregated operators for one Rydberg-n row (T-independent)."""
 
-    delta_e_hz: float
-    delta_rad_s: float                  # signed Delta = detuning_sign * 2pi * Delta_e_Hz
-    h_static_diag: np.ndarray           # (49,) float64 — verified real diagonal
-    x420: np.ndarray                    # (49, 49) complex128, Hermitian
-    y420: np.ndarray
-    x1013: np.ndarray
-    y1013: np.ndarray
+    ryd_n: int
+    h_static_diag: np.ndarray           # (16,) float64 — verified real diagonal
+    x297: np.ndarray                    # (16, 16) complex128, Hermitian
+    y297: np.ndarray
     amplitude_scale: float
     logical_indices: np.ndarray         # basis indices of |00>,|01>,|10>,|11>
-    swap_perm: np.ndarray               # atom-swap permutation of the 49 basis states
+    swap_perm: np.ndarray               # atom-swap permutation of the 16 basis states
     swap_symmetric: bool                # swap commutes with every H constituent
 
     def hash_bytes(self) -> bytes:
         h = hashlib.sha256()
-        for a in (self.h_static_diag, self.x420, self.y420, self.x1013, self.y1013,
-                  np.asarray([self.delta_rad_s, self.amplitude_scale])):
+        for a in (self.h_static_diag, self.x297, self.y297,
+                  np.asarray([float(self.ryd_n), self.amplitude_scale])):
             h.update(np.ascontiguousarray(a).tobytes())
         return h.digest()
 
 
-def build_system(cfg: ScanConfig, delta_e_hz: float):
-    """The notebook's two-atom rb87_7_mp system with a placeholder CZ protocol bound.
+def build_system(cfg: ScanConfig, ryd_n: int):
+    """Two-atom rb87_297_clock_4 system with a placeholder 297 protocol bound.
 
     The placeholder protocol only supplies the channel set for IR compilation; the
     production kernel computes drive coefficients analytically.
     """
     import ryd_gate as rg
-    from ryd_gate.protocols import CZProtocol
+    from ryd_gate.protocols import Direct297CZProtocol
     from ryd_gate.lattice import Register
 
-    delta_rad_s = cfg.detuning_sign * TAU * delta_e_hz
-    proto = CZProtocol(
-        t_gate_s=1e-6,                       # placeholder 1 us gate
-        intermediate_detuning_rad_s=delta_rad_s,
-        omega_420_max_rad_s=1.0, omega_1013_max_rad_s=1.0,
-        envelope_420=lambda t: 1.0, phase_420_rad=lambda t: 0.0,
-        envelope_1013=lambda t: 1.0, phase_1013_rad=lambda t: 0.0,
+    proto = Direct297CZProtocol(
+        t_gate_s=1e-6, omega_297_max_rad_s=1.0,
+        envelope_297=lambda t: 1.0, phase_297_rad=lambda t: 0.0,
     )
     return rg.RydbergSystem(
         level_structure=rg.level_structure(
-            "rb87_7_mp", ryd_level=cfg.ryd_level,
+            "rb87_297_clock_4", ryd_level=int(ryd_n),
             magnetic_field_G=cfg.magnetic_field_G),
         register=Register.chain(2, spacing_um=cfg.spacing_um),
         protocol=proto,
     )
-
-
-def compute_omega_1013(cfg: ScanConfig) -> float:
-    """Fixed 1013 Rabi (rad/s) under the notebook 100 W / optics_loss / top-hat convention."""
-    from ryd_gate.physics import rb87_7_mp_rabi_frequencies
-
-    _, omega_1013 = rb87_7_mp_rabi_frequencies(
-        1.0 * (1.0 - cfg.optics_loss),
-        cfg.p1013_nominal_w * (1.0 - cfg.optics_loss),
-        cfg.beam_area_um2,
-        ryd_level=cfg.ryd_level,
-    )
-    return float(omega_1013)
 
 
 def _swap_permutation(local_dim: int = 7) -> np.ndarray:
@@ -404,26 +385,23 @@ def _swap_permutation(local_dim: int = 7) -> np.ndarray:
     return b * local_dim + a
 
 
-def aggregate_operators(system, delta_e_hz: float) -> PanelOperators:
-    """Compile the system and aggregate its channels into fixed dense blocks."""
+def aggregate_operators(system, ryd_n: int) -> PanelOperators:
+    """Compile the system and aggregate its 297 channels into fixed dense blocks."""
     from ryd_gate.backends.exact.compiler import compile_exact
     from ryd_gate.core.states import product_index
 
     ham, _t_gate = compile_exact(system, hamiltonian_format="dense")
-    dim = ham.dim
 
-    # ham.h_static carries the atomic diagonal + the Rydberg pair interaction, but
-    # not the intermediate detuning: the protocol now supplies Delta as constant
-    # diagonal drive channels (E[e1,e1]/E[e2,e2]/E[e3,e3]).  Fold those constants
-    # into the static diagonal, then split off the off-diagonal laser channels.
+    # ham.h_static carries the atomic diagonal + the Rydberg pair interaction.  The
+    # single-photon 297 protocol supplies no constant diagonal drive channel, but
+    # keep the diag-folding loop general: fold any diagonal channel into the static
+    # diagonal (no intermediate detuning is retained here), then split off the
+    # off-diagonal laser channels.
     h_static = np.array(ham.h_static, dtype=np.complex128)
-    delta_rad_s = 0.0
     laser_channels = []
     for ch in ham.channels:
         if ch.is_diag:
-            c = complex(ch.coeff(0.0))
-            h_static += c * _dense(ch.sum_op)
-            delta_rad_s = c.real
+            h_static += complex(ch.coeff(0.0)) * _dense(ch.sum_op)
         else:
             laser_channels.append(ch)
 
@@ -437,24 +415,21 @@ def aggregate_operators(system, delta_e_hz: float) -> PanelOperators:
             "this scan requires closed Hermitian dynamics"
         )
 
-    ratios = {"420": {}, "1013": {}}
+    ratios = {"297": {}}
     for leg in system.level_structure._laser_legs:
         if leg.group in ratios:
             ratios[leg.group][leg.channel] = leg.factor
     ops = {ch._channel: _dense(ch.sum_op) for ch in laser_channels}
-    missing = (set(ratios["420"]) | set(ratios["1013"])) - set(ops)
+    missing = set(ratios["297"]) - set(ops)
     if missing:
         raise RuntimeError(f"drive channels missing from compiled Hamiltonian: {sorted(missing)}")
     for ch in laser_channels:
         if ch.sum_op_hc is None:
             raise RuntimeError(f"drive channel {ch._channel} lacks the h.c. leg")
 
-    b420 = sum(ratios["420"][ch] * ops[ch] for ch in ratios["420"])
-    b1013 = sum(ratios["1013"][ch] * ops[ch] for ch in ratios["1013"])
-    x420 = b420 + b420.conj().T
-    y420 = 1j * (b420 - b420.conj().T)
-    x1013 = b1013 + b1013.conj().T
-    y1013 = 1j * (b1013 - b1013.conj().T)
+    b297 = sum(ratios["297"][ch] * ops[ch] for ch in ratios["297"])
+    x297 = b297 + b297.conj().T
+    y297 = 1j * (b297 - b297.conj().T)
 
     logical = np.asarray(
         [product_index(list(s), system._basis) for s in LOGICAL_INPUTS]
@@ -466,14 +441,13 @@ def aggregate_operators(system, delta_e_hz: float) -> PanelOperators:
 
     swap_ok = (
         bool(np.array_equal(diag.real[perm], diag.real))
-        and all(_swap_invariant(m) for m in (x420, y420, x1013, y1013))
+        and all(_swap_invariant(m) for m in (x297, y297))
     )
 
     return PanelOperators(
-        delta_e_hz=float(delta_e_hz),
-        delta_rad_s=float(delta_rad_s),
+        ryd_n=int(ryd_n),
         h_static_diag=np.ascontiguousarray(diag.real),
-        x420=x420, y420=y420, x1013=x1013, y1013=y1013,
+        x297=x297, y297=y297,
         amplitude_scale=1.0,
         logical_indices=logical,
         swap_perm=perm,
@@ -485,32 +459,24 @@ def hamiltonian_equivalence_error(
     system,
     ops: PanelOperators,
     t_gate: float,
-    omega_420: float,
-    omega_1013: float,
+    omega_297: float,
     d_sweep: float,
     times: np.ndarray,
     ramp: float = 0.15,
 ) -> float:
-    """Max |H_grouped - H_compiled| over ``times`` for one concrete pulse.
+    """Max |H_grouped - H_compiled| over ``times`` for one concrete 297 pulse.
 
     Builds the repository Hamiltonian directly from a freshly compiled IR with the
-    *same* analytic pulse bound as a real CZProtocol, then compares against the
-    aggregated evaluation used by the production kernel.
+    *same* analytic pulse bound as a real Direct297CZProtocol, then compares against
+    the aggregated evaluation used by the production kernel.
     """
     from ryd_gate.backends.exact.compiler import compile_exact
-    from ryd_gate.protocols import CZProtocol
+    from ryd_gate.protocols import Direct297CZProtocol
 
-    d1, dr = stark_coefficients(omega_420, omega_1013, ops.delta_rad_s)
-    drmd1 = dr - d1
-
-    proto = CZProtocol(
-        t_gate_s=t_gate,
-        intermediate_detuning_rad_s=ops.delta_rad_s,
-        omega_420_max_rad_s=omega_420, omega_1013_max_rad_s=omega_1013,
-        envelope_420=lambda t: float(np.sqrt(envelope(t / t_gate, ramp))),
-        phase_420_rad=lambda t: float(phase_rad(t, t_gate, d_sweep, drmd1, ramp)),
-        envelope_1013=lambda t: float(np.sqrt(envelope(t / t_gate, ramp))),
-        phase_1013_rad=lambda t: 0.0,
+    proto = Direct297CZProtocol(
+        t_gate_s=t_gate, omega_297_max_rad_s=omega_297,
+        envelope_297=lambda t: float(np.sqrt(envelope(t / t_gate, ramp))),
+        phase_297_rad=lambda t: float(phase_rad(t, t_gate, d_sweep, ramp)),
     )
     bound = system.with_protocol(proto)
     ham, _ = compile_exact(bound, hamiltonian_format="dense")
@@ -531,12 +497,10 @@ def hamiltonian_equivalence_error(
 
         s = t / t_gate
         amp = float(np.sqrt(envelope(s, ramp)))
-        phi = float(phase_rad(t, t_gate, d_sweep, drmd1, ramp))
-        c420 = ops.amplitude_scale * omega_420 * amp * np.exp(-1j * phi)
-        c1013 = ops.amplitude_scale * omega_1013 * amp
+        phi = float(phase_rad(t, t_gate, d_sweep, ramp))
+        c297 = ops.amplitude_scale * omega_297 * amp * np.exp(-1j * phi)
         h_grp = (np.diag(ops.h_static_diag.astype(np.complex128))
-                 + c420.real * ops.x420 + c420.imag * ops.y420
-                 + c1013 * ops.x1013)  # c1013 is real: phi_1013 == 0 by construction
+                 + c297.real * ops.x297 + c297.imag * ops.y297)
         worst = max(worst, float(np.max(np.abs(h_ref - h_grp))))
     return worst
 
@@ -1426,10 +1390,9 @@ def scattering_integrals(times: np.ndarray, states: np.ndarray,
 
 
 def model_decay_rates(system) -> dict[str, float]:
-    """The rb87_7 decay rates (rad/s) used for the scattering integrals."""
+    """The rb87_297_clock_4 Rydberg decay rates (rad/s) for the scattering integrals."""
     rates = system.level_structure.decay_rates_per_s
     return {
-        "p_mid": float(rates["e1"]["total"]),
         "p_ryd": float(rates["r"]["total"]),
         "p_r_garb": float(rates["r_garb"]["total"]),
     }
@@ -1923,51 +1886,41 @@ def _script_code_hash() -> str:
         return hashlib.sha256(fh.read()).hexdigest()
 
 
-def warm_and_build(cfg: ScanConfig) -> tuple[dict[int, PanelOperators], float, str, dict]:
-    """Warm ARC in-parent, compile/aggregate all detuning rows, verify invariants.
+def warm_and_build(cfg: ScanConfig) -> tuple[dict[int, PanelOperators], str, dict]:
+    """Warm ARC in-parent, compile/aggregate all Rydberg-n rows, verify invariants.
 
-    Returns ``(ops_by_delta, omega_1013, model_hash, checks)``.  Raises if the
-    grouped Hamiltonian deviates from the repository compiler, if the static
-    Hamiltonian is not closed/Hermitian, or if the SciPy error-norm seam moved.
+    Returns ``(ops_by_n, model_hash, checks)``.  Raises if the grouped Hamiltonian
+    deviates from the repository compiler, if the static Hamiltonian is not
+    closed/Hermitian, or if the SciPy error-norm seam moved.
     """
     t0 = time.time()
-    omega_1013 = compute_omega_1013(cfg)   # first ARC touch happens here, pre-fork
-    omega_dev = abs(omega_1013 - OMEGA_1013_REFERENCE_RAD_S) / OMEGA_1013_REFERENCE_RAD_S
-    if omega_dev > 1e-6:
-        print(f"WARNING: Omega_1013/2pi = {omega_1013 / TAU / 1e6:.6f} MHz deviates "
-              f"from the recorded reference {OMEGA_1013_REFERENCE_RAD_S / TAU / 1e6:.6f} "
-              f"MHz by {omega_dev:.2e} (relative) — the 1013 model changed; the "
-              "manifest records the live value.", flush=True)
 
-    ops_by_delta: dict[int, PanelOperators] = {}
+    ops_by_n: dict[int, PanelOperators] = {}
     systems: dict[int, object] = {}
-    for di, de_ghz in enumerate(cfg.delta_e_ghz):
-        systems[di] = build_system(cfg, de_ghz * 1e9)
-        ops_by_delta[di] = aggregate_operators(systems[di], de_ghz * 1e9)
+    decay_by_n: dict[int, dict[str, float]] = {}
+    for n_idx, n in enumerate(cfg.ryd_n):
+        systems[n_idx] = build_system(cfg, n)   # ARC touch (lifetimes/C6) happens here
+        ops_by_n[n_idx] = aggregate_operators(systems[n_idx], n)
+        decay_by_n[n_idx] = model_decay_rates(systems[n_idx])
 
     h = hashlib.sha256()
-    for di in sorted(ops_by_delta):
-        h.update(ops_by_delta[di].hash_bytes())
-    h.update(np.asarray([omega_1013]).tobytes())
+    for n_idx in sorted(ops_by_n):
+        h.update(ops_by_n[n_idx].hash_bytes())
     model_hash = h.hexdigest()
 
-    # Grouped-vs-compiled Hamiltonian equivalence on every row: ramp edges,
-    # endpoints, and deterministic pseudo-random interior times.
-    rng = np.random.default_rng(20260712)
-    ham_dev_rel = 0.0
-    t_gate = cfg.t_gate_us[0] * 1e-6
-    probe_times = np.concatenate([
-        [0.0, cfg.ramp_frac * t_gate, (1 - cfg.ramp_frac) * t_gate, t_gate],
-        np.sort(rng.uniform(0.0, t_gate, 6)),
-    ])
-    for di in ops_by_delta:
-        dev = hamiltonian_equivalence_error(
-            systems[di], ops_by_delta[di], t_gate,
-            omega_420=TAU * 600e6, omega_1013=omega_1013, d_sweep=TAU * 15e6,
-            times=probe_times, ramp=cfg.ramp_frac)
-        scale = float(np.max(np.abs(ops_by_delta[di].h_static_diag))
-                      + 2 * TAU * 600e6 + 2 * omega_1013)
-        ham_dev_rel = max(ham_dev_rel, dev / scale)
+    # Grouped-vs-compiled Hamiltonian equivalence on the middle panel (n=60 row in
+    # the default 8-row config), across evenly spaced times spanning [0, T].
+    mid = (len(cfg.ryd_n) - 1) // 2
+    t_gate = 1.2e-6
+    omega_297 = TAU * 13.5e6
+    d_sweep = TAU * 15e6
+    probe_times = np.linspace(0.0, t_gate, 41)
+    dev = hamiltonian_equivalence_error(
+        systems[mid], ops_by_n[mid], t_gate,
+        omega_297=omega_297, d_sweep=d_sweep,
+        times=probe_times, ramp=cfg.ramp_frac)
+    scale = float(np.max(np.abs(ops_by_n[mid].h_static_diag)) + 2 * omega_297)
+    ham_dev_rel = dev / scale
     if ham_dev_rel > HAM_EQUIV_REL_TOL:
         raise RuntimeError(
             f"grouped Hamiltonian deviates from the compiled IR by relative "
@@ -1979,24 +1932,22 @@ def warm_and_build(cfg: ScanConfig) -> tuple[dict[int, PanelOperators], float, s
         print(f"WARNING: installed SciPy DOP853 error norm could not be reproduced "
               f"(max dev {err_norm_dev:.3e}); multi-point batching disabled.", flush=True)
 
-    swap_ok = all(o.swap_symmetric for o in ops_by_delta.values())
+    swap_ok = all(o.swap_symmetric for o in ops_by_n.values())
     if not swap_ok:
         print("WARNING: atom-swap symmetry verification failed on some rows; "
               "all four logical inputs will be propagated.", flush=True)
 
     checks = {
-        "omega_1013_rad_s": omega_1013,
-        "omega_1013_rel_dev_from_reference": omega_dev,
         "hamiltonian_equivalence_rel_dev": ham_dev_rel,
         "error_norm_max_dev": err_norm_dev,
         "error_norm_verified": bool(norm_ok),
         "swap_symmetric": bool(swap_ok),
-        "decay_rates_rad_s": model_decay_rates(systems[0]),
+        "decay_rates_rad_s": decay_by_n,
         "scipy_version": scipy.__version__,
         "numpy_version": np.__version__,
         "build_seconds": time.time() - t0,
     }
-    return ops_by_delta, omega_1013, model_hash, checks
+    return ops_by_n, model_hash, checks
 
 
 def setup_run(args) -> tuple[Store, dict, ScanConfig, dict[int, PanelOperators], float, dict]:
@@ -2008,9 +1959,9 @@ def setup_run(args) -> tuple[Store, dict, ScanConfig, dict[int, PanelOperators],
     )
     store = Store(args.output)
     store.ensure_dirs()
-    ops, omega_1013, model_hash, checks = warm_and_build(cfg)
+    ops, model_hash, checks = warm_and_build(cfg)
     manifest = store.init_or_validate_manifest(
-        cfg, omega_1013, model_hash, _script_code_hash(),
+        cfg, 0.0, model_hash, _script_code_hash(),  # Task 4: drop the omega_1013 arg
         run_meta={
             "argv": sys.argv[1:], "workers": args.workers,
             "batch_size": args.batch_size,
@@ -2021,13 +1972,13 @@ def setup_run(args) -> tuple[Store, dict, ScanConfig, dict[int, PanelOperators],
     with open(ver_path + ".tmp", "w") as fh:
         json.dump(checks, fh, indent=2)
     os.replace(ver_path + ".tmp", ver_path)
-    _set_worker_context(cfg, omega_1013, ops, use_swap=checks["swap_symmetric"],
+    _set_worker_context(cfg, 0.0, ops, use_swap=checks["swap_symmetric"],  # Task 4: drop omega_1013
                         gammas=checks["decay_rates_rad_s"])
-    print(f"[setup] Omega_1013/2pi = {omega_1013 / TAU / 1e6:.6f} MHz | "
+    print(f"[setup] panels(n) = {len(cfg.ryd_n)} | "
           f"H equivalence rel dev {checks['hamiltonian_equivalence_rel_dev']:.2e} | "
           f"error-norm dev {checks['error_norm_max_dev']:.2e} | "
           f"swap {'ok' if checks['swap_symmetric'] else 'FAILED'}", flush=True)
-    return store, manifest, cfg, ops, omega_1013, checks
+    return store, manifest, cfg, ops, 0.0, checks  # Task 4: drop the omega_1013 slot
 
 
 # ── Pilot: reusable nodes, throughput, packing acceptance gate ───────────────

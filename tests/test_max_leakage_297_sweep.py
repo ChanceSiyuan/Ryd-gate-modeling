@@ -66,3 +66,21 @@ def test_physics_hash_covers_axes_and_spacing():
     base = mls297.ScanConfig().physics_hash()
     assert mls297.ScanConfig(spacing_um=4.0).physics_hash() != base
     assert mls297.ScanConfig(ryd_n=(50, 53)).physics_hash() != base
+
+
+def test_swap_permutation_local_dim_4():
+    perm = mls297._swap_permutation(4)
+    a, b = np.divmod(np.arange(16), 4)
+    assert np.array_equal(perm, b * 4 + a)
+
+
+@pytest.mark.slow
+def test_warm_and_build_single_panel_matches_repo_hamiltonian():
+    cfg = mls297.ScanConfig(ryd_n=(53,))
+    ops_by_n, model_hash, checks = mls297.warm_and_build(cfg)
+    ops = ops_by_n[0]
+    assert ops.h_static_diag.shape == (16,)
+    assert checks["hamiltonian_equivalence_rel_dev"] < 1e-12
+    assert checks["swap_symmetric"]
+    assert set(checks["decay_rates_rad_s"][0]) == {"p_ryd", "p_r_garb"}
+    assert len(model_hash) == 64
