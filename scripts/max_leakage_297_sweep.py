@@ -510,7 +510,7 @@ def hamiltonian_equivalence_error(
 # scipy's DOP853 controls a single RMS error norm over the whole flattened vector,
 # which would let one inaccurate point/state hide inside a large batch.  The
 # subclass below reproduces the installed SciPy estimate *independently* for every
-# 49-component (point, logical input) block and returns the maximum, so tolerance
+# 16-component (point, logical input) block and returns the maximum, so tolerance
 # is enforced per block.  The private seam (E3/E5 + _estimate_error_norm) is pinned
 # by ``verify_scipy_error_norm`` at startup and by unit tests.
 
@@ -655,9 +655,8 @@ def _integrate_segments(
 def integrate_batch(
     ops: PanelOperators,
     t_gate: float,
-    omega_420: np.ndarray,
+    omega_297: np.ndarray,
     d_sweep: np.ndarray,
-    omega_1013: float,
     rtol: float,
     atol: float,
     ramp: float = 0.15,
@@ -666,18 +665,18 @@ def integrate_batch(
     segmented: bool = True,
     t_eval: np.ndarray | None = None,
 ) -> BatchResult:
-    """Propagate all logical inputs of ``len(omega_420)`` panel points together.
+    """Propagate all logical inputs of ``len(omega_297)`` panel points together.
 
     Columns are (point-major) the logical inputs 00/01/11 — 10 is reconstructed by
     the atom-swap permutation when the verified symmetry holds, else all four are
     propagated.  Each column is solved with its bare logical diagonal energy
     subtracted (H - c_s I) and the exact global phase exp(-i c_s T) restored.
     """
-    omega_420 = np.asarray(omega_420, dtype=float)
+    omega_297 = np.asarray(omega_297, dtype=float)
     d_sweep = np.asarray(d_sweep, dtype=float)
-    if omega_420.shape != d_sweep.shape or omega_420.ndim != 1:
-        raise ValueError("omega_420 and d_sweep must be equal-length 1-D arrays")
-    n_points = omega_420.size
+    if omega_297.shape != d_sweep.shape or omega_297.ndim != 1:
+        raise ValueError("omega_297 and d_sweep must be equal-length 1-D arrays")
+    n_points = omega_297.size
     dim = ops.h_static_diag.size
 
     if use_swap is None:
@@ -687,37 +686,29 @@ def integrate_batch(
     n_states = len(state_labels)
     n_cols = n_points * n_states
 
-    d1, dr = stark_coefficients(omega_420, omega_1013, ops.delta_rad_s)
-    drmd1 = dr - d1                                      # (n_points,)
     col_of_point = np.repeat(np.arange(n_points), n_states)
-    om_cols = omega_420[col_of_point]
+    om_cols = omega_297[col_of_point]
     dsw_cols = d_sweep[col_of_point]
-    drmd1_cols = drmd1[col_of_point]
 
     logical_of_state = {s: ops.logical_indices[LOGICAL_INPUTS.index(s)] for s in state_labels}
     col_logical_idx = np.asarray([logical_of_state[s] for s in state_labels] * n_points)
     shifts = ops.h_static_diag[col_logical_idx] if use_shifts else np.zeros(n_cols)
 
     diag_row = ops.h_static_diag[None, :] - shifts[:, None]   # (n_cols, dim) real
-    x420_t = np.ascontiguousarray(ops.x420.T)
-    y420_t = np.ascontiguousarray(ops.y420.T)
-    x1013_t = np.ascontiguousarray(ops.x1013.T)
+    x297_t = np.ascontiguousarray(ops.x297.T)
+    y297_t = np.ascontiguousarray(ops.y297.T)
     ascale = ops.amplitude_scale
     sin_coef = -t_gate / TAU
 
     def rhs(t, y):
         s = t / t_gate
-        env = envelope(s, ramp)
-        amp = math.sqrt(float(env))
-        phi = (sin_coef * math.sin(TAU * s)) * dsw_cols \
-            + (t_gate * float(envelope_integral(s, ramp))) * drmd1_cols
-        c420 = (ascale * amp) * om_cols * np.exp(-1j * phi)
-        g1013 = ascale * omega_1013 * amp
+        amp = math.sqrt(float(envelope(s, ramp)))
+        phi = (sin_coef * math.sin(TAU * s)) * dsw_cols
+        c297 = (ascale * amp) * om_cols * np.exp(-1j * phi)
         ym = y.reshape(n_cols, dim)
         out = diag_row * ym
-        out += c420.real[:, None] * (ym @ x420_t)
-        out += c420.imag[:, None] * (ym @ y420_t)
-        out += g1013 * (ym @ x1013_t)
+        out += c297.real[:, None] * (ym @ x297_t)
+        out += c297.imag[:, None] * (ym @ y297_t)
         return (-1j * out).ravel()
 
     y0 = np.zeros((n_cols, dim), dtype=np.complex128)
@@ -1118,7 +1109,7 @@ class Store:
         manifest: dict,
         keys: Sequence[PointKey],
         cfg: ScanConfig,
-        gammas: dict[str, float],
+        gammas: dict[int, dict[str, float]],
         rtol: float,
         atol: float,
         batch_id: str,
@@ -1131,6 +1122,8 @@ class Store:
         """Persist one scattering-supplement batch; never touches other series."""
         n = len(keys)
         statuses = list(statuses) if statuses is not None else ["ok"] * n
+        # Gamma depends on the Rydberg n row; every key in a batch shares one panel.
+        panel_gammas = gammas[keys[0].n_idx]
         payload = dict(
             schema_version=np.int64(SCHEMA_VERSION),
             scan_uuid=str(manifest["scan_uuid"]),
@@ -1145,9 +1138,8 @@ class Store:
             **{name: np.asarray(scatter[name]).reshape(n, 4)
                for name in SCATTER_CHANNELS},
             max_leakage_check=np.asarray(max_leakage),
-            gamma_mid=np.full(n, gammas["p_mid"]),
-            gamma_ryd=np.full(n, gammas["p_ryd"]),
-            gamma_r_garb=np.full(n, gammas["p_r_garb"]),
+            gamma_ryd=np.full(n, panel_gammas["p_ryd"]),
+            gamma_r_garb=np.full(n, panel_gammas["p_r_garb"]),
             n_eval=np.full(n, cfg.n_eval_trajectory, dtype=np.int32),
             rtol=np.full(n, rtol),
             atol=np.full(n, atol),
@@ -1353,17 +1345,19 @@ def export_store(store: Store, records: list[PointRecord] | None = None) -> tupl
 
 # ── Scattering-budget integrals (supplemental `scatter` data) ────────────────
 #
-# p_ch = Gamma_ch * integral_0^T <n_ch(t)> dt for the intermediate (e1,e2,e3),
-# Rydberg (r) and garbage-Rydberg (r_garb) manifolds, per logical input — the
-# same trapezoid-on-301-samples convention as error_buget.ipynb and the stored
-# pilot/audit trajectories.  These are written to a separate append-only
-# ``scatter/`` chunk series and never touch the coherent-leakage chunks.
+# p_ch = Gamma_ch * integral_0^T <n_ch(t)> dt for the Rydberg (r) and
+# garbage-Rydberg (r_garb) manifolds, per logical input — the same
+# trapezoid-on-301-samples convention as error_buget.ipynb and the stored
+# pilot/audit trajectories.  A single-photon 297 nm drive has no intermediate
+# state, so there is no p_mid channel.  These are written to a separate
+# append-only ``scatter/`` chunk series and never touch the coherent-leakage
+# chunks.
 
-SCATTER_CHANNELS = ("p_mid", "p_ryd", "p_r_garb")
-_SCATTER_LEVEL_GROUPS = {"p_mid": (2, 3, 4), "p_ryd": (5,), "p_r_garb": (6,)}
+SCATTER_CHANNELS = ("p_ryd", "p_r_garb")
+_SCATTER_LEVEL_GROUPS = {"p_ryd": (2,), "p_r_garb": (3,)}
 
 
-def _scatter_weight_vectors(local_dim: int = 7) -> dict[str, np.ndarray]:
+def _scatter_weight_vectors(local_dim: int = 4) -> dict[str, np.ndarray]:
     """Diagonal weights counting atoms of each decay group per two-atom index."""
     idx = np.arange(local_dim * local_dim)
     a, b = np.divmod(idx, local_dim)
@@ -1432,13 +1426,13 @@ def _worker_run_batch(spec: dict) -> dict:
         ops: PanelOperators = _WORKER_CTX["panel_ops"][spec["n_idx"]]
         keys = [PointKey(*k) for k in spec["keys"]]
         t_gate = cfg.t_gate_us[spec["t_idx"]] * 1e-6
-        omega_420 = np.asarray([float(k.omega_mhz()) for k in keys]) * 1e6 * TAU
+        omega_297 = np.asarray([float(k.omega_mhz()) for k in keys]) * 1e6 * TAU
         d_sweep = np.asarray([float(k.dsweep_mhz()) for k in keys]) * 1e6 * TAU
         scatter = bool(spec.get("scatter"))
         t_eval = (np.linspace(0.0, t_gate, cfg.n_eval_trajectory)
                   if (spec.get("save_traj") or scatter) else None)
         result = integrate_batch(
-            ops, t_gate, omega_420, d_sweep, _WORKER_CTX["omega_1013"],
+            ops, t_gate, omega_297, d_sweep,
             rtol=spec["rtol"], atol=spec["atol"], ramp=cfg.ramp_frac,
             use_swap=_WORKER_CTX["use_swap"] and ops.swap_symmetric,
             t_eval=t_eval,
@@ -1447,8 +1441,13 @@ def _worker_run_batch(spec: dict) -> dict:
             raise FloatingPointError("non-finite terminal state")
         out = {"ok": True, "result": result, "runtime_s": time.time() - start}
         if scatter:
+            # Gamma depends on the Rydberg n row: every key in a batch shares one
+            # panel, so index the nested per-panel gammas by this batch's n row.
+            spec_n_idx = spec["n_idx"]
+            assert all(k.n_idx == spec_n_idx for k in keys), \
+                "a scatter batch must stay within one Rydberg-n panel"
             out["scatter"] = scattering_integrals(
-                result.times, result.states, _WORKER_CTX["gammas"])
+                result.times, result.states, _WORKER_CTX["gammas"][spec_n_idx])
             if not spec.get("save_traj"):
                 result.times = None      # keep the return payload small: the
                 result.states = None     # trajectory is consumed, not persisted
@@ -2534,13 +2533,15 @@ def cmd_audit(args) -> None:
 
 
 def _scatter_equivalence_gate(runner: Runner, store: Store) -> dict:
-    """Validate the scatter pipeline against one stored production trajectory.
+    """Validate the scatter pipeline against an independent exact_ode reference.
 
-    Re-solves the cheapest trajectory point with the scatter path and compares
-    its in-worker integrals against a reference computed with *independent*
-    arithmetic: weights from the diagonal of the repository's
-    ``build_occ_operator`` and decay rates re-read from a freshly built system's
-    metadata — so a bug in the shared weight/Gamma plumbing cannot cancel out.
+    Picks the cheapest stored production trajectory point, re-solves it with the
+    in-worker scatter path (the batched block-DOP853 kernel), and compares its
+    integrals against a reference computed from a fully independent leg: the same
+    pulse propagated through the repository's public ``exact_ode`` backend, with
+    occupation weights from ``build_occ_operator`` and decay rates re-read from a
+    freshly built system's metadata — so a bug in the shared weight/Gamma/kernel
+    plumbing cannot cancel out.
     """
     best_file, best_key, best_t = None, None, float("inf")
     for name in sorted(os.listdir(store.traj_dir)):
@@ -2556,25 +2557,40 @@ def _scatter_equivalence_gate(runner: Runner, store: Store) -> dict:
     if best_file is None:
         return {"ok": False, "reason": "no production trajectory to validate against"}
 
-    with np.load(os.path.join(store.traj_dir, best_file), allow_pickle=False) as d:
-        times, states = np.array(d["times"]), np.array(d["states"])
-
-    # Independent reference leg (deliberately NOT scattering_integrals/gammas):
-    # weights from the repository occupation operators, rates re-read from a
-    # freshly built system, plain trapezoid.
+    # Independent reference leg (deliberately NOT the block-DOP853 kernel): the
+    # concrete pulse propagated through the public exact_ode backend, occupation
+    # weights from the repository operators, rates from the model, plain trapezoid.
+    from ryd_gate.backends.exact.compiler import compile_exact
+    from ryd_gate.backends.exact.ode import evolve_states
     from ryd_gate.core.operators import build_occ_operator
+    from ryd_gate.core.states import dense_product_state
+    from ryd_gate.protocols import Direct297CZProtocol
 
-    ref_sys = build_system(runner.cfg,
-                           runner.cfg.delta_e_ghz[best_key.n_idx] * 1e9)
-    _ref_rates_raw = ref_sys.level_structure.decay_rates_per_s
-    ref_rates = {"p_mid": float(_ref_rates_raw["e1"]["total"]),
-                 "p_ryd": float(_ref_rates_raw["r"]["total"]),
-                 "p_r_garb": float(_ref_rates_raw["r_garb"]["total"])}
-    ref_levels = {"p_mid": (2, 3, 4), "p_ryd": (5,), "p_r_garb": (6,)}
-    pops = np.abs(states) ** 2                       # (n_t, 4, dim)
+    cfg = runner.cfg
+    t_gate = cfg.t_gate_us[best_key.t_idx] * 1e-6
+    omega_297 = float(best_key.omega_mhz()) * 1e6 * TAU
+    d_sweep = float(best_key.dsweep_mhz()) * 1e6 * TAU
+    ramp = cfg.ramp_frac
+    proto = Direct297CZProtocol(
+        t_gate_s=t_gate, omega_297_max_rad_s=omega_297,
+        envelope_297=lambda t: float(np.sqrt(envelope(t / t_gate, ramp))),
+        phase_297_rad=lambda t: float(phase_rad(t, t_gate, d_sweep, ramp)))
+    ref_sys = build_system(cfg, cfg.ryd_n[best_key.n_idx]).with_protocol(proto)
+    ref_rates = model_decay_rates(ref_sys)
+
+    ham, _ = compile_exact(ref_sys, hamiltonian_format="dense")
+    times = np.linspace(0.0, t_gate, cfg.n_eval_trajectory)
+    psi0 = [dense_product_state(list(s), ref_sys._basis) for s in LOGICAL_INPUTS]
+    ys = evolve_states(ham, t_gate, psi0, times,
+                       rtol=cfg.rtol_audit, atol=cfg.atol_audit)
+    states = np.stack([y.T for y in ys], axis=1)     # (n_t, 4, dim)
+
+    local_dim = int(round(math.sqrt(states.shape[-1])))
+    ref_levels = {"p_ryd": (2,), "p_r_garb": (3,)}
+    pops = np.abs(states) ** 2                        # (n_t, 4, dim)
     ref = {}
     for ch, levels in ref_levels.items():
-        w = np.real(np.diag(sum(build_occ_operator(lv, 7) for lv in levels)))
+        w = np.real(np.diag(sum(build_occ_operator(lv, local_dim) for lv in levels)))
         ref[ch] = ref_rates[ch] * np.trapezoid(pops @ w, times, axis=0)
 
     out = _worker_run_batch(runner._spec(Batch(keys=[best_key], scatter=True)))
@@ -2767,7 +2783,7 @@ def _plot_metric_values(store: Store, manifest: dict, records, metric: str):
                          "run the `scatter` subcommand first")
     per_key: dict[PointKey, tuple[float, float]] = {}
     for r in rows:
-        scattering = r["p_mid"] + r["p_ryd"] + r["p_r_garb"]
+        scattering = r["p_ryd"] + r["p_r_garb"]
         if metric == "total_error":
             if r["key"] not in coherent:
                 continue
@@ -3037,7 +3053,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-veil", dest="veil", action="store_false", default=True,
                     help="omit the uncertainty veil (raster is visualization only)")
     sp.add_argument("--metric", default="max_leakage",
-                    choices=["max_leakage", "p_mid", "p_ryd", "p_r_garb",
+                    choices=["max_leakage", "p_ryd", "p_r_garb",
                              "p_loss_total", "total_error"],
                     help="max_leakage from the main scan; p_* from the "
                          "supplemental scatter series; total_error combines both")
