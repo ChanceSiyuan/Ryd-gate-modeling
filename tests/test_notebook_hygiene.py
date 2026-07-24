@@ -1,13 +1,14 @@
 """Keep checked-in research notebooks portable.
 
-Notebooks are source-only (no committed execution state) with two deliberate
-exceptions: notebooks 01 and 06 commit their rendered figures and summary
-tables. Per the user's 2026-07-17 decisions, the two-atom ``01r`` optimization
-notebook is executed in fast, deterministic cached-replay mode, and the CZ TO
-calibration notebook's executed outputs are themselves the calibration record;
-both are exempt from the execution-state check. The portability checks (no
-machine-local or retired paths) apply to every notebook, in cell source *and*
-in any committed text output.
+Notebooks are source-only (no committed execution state) with deliberate
+exceptions that commit their rendered figures and summary tables. Per the
+user's 2026-07-17 decisions, the two-atom ``01r`` optimization notebook (06)
+is executed in fast, deterministic cached-replay mode and the CZ TO
+calibration notebook's (01) executed outputs are themselves the calibration
+record; per the 2026-07-24 checkpoint, the anneal (03), quench (04), and
+GRAPE-validation (07) notebooks likewise keep their executed research-record
+outputs. The portability checks (no machine-local or retired paths) apply to
+every notebook, in cell source *and* in any committed text output.
 """
 
 import json
@@ -22,7 +23,9 @@ MACHINE_HOME = re.compile(
 RETIRED_PATHS = ("main.tex", "scripts/results/")
 # Exempt from the source-only execution-state check (see module docstring).
 RENDERED_OUTPUT_NOTEBOOKS = frozenset(
-    {"01_cz_gate.ipynb", "06_01r_adiabatic_optimization.ipynb"}
+    {"01_cz_gate.ipynb", "03_lattice_dynamics_annealing.ipynb",
+     "04_quench_and_state_prep.ipynb", "06_01r_adiabatic_optimization.ipynb",
+     "07_cz_grape_e2e_validation.ipynb"}
 )
 
 

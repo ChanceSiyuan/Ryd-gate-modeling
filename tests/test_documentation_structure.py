@@ -6,7 +6,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 DOCS = REPO / "docs"
 EXPECTED_DOCS = {"model.md", "simulation.md", "gates.md"}
-EXPECTED_DOCS_DIRECTORIES = {"adr", "agents", "contexts"}
+EXPECTED_DOCS_DIRECTORIES = {"adr", "agents", "contexts", "superpowers"}
 
 
 def test_docs_contains_only_the_three_user_guides_and_adrs():
