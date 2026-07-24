@@ -42,14 +42,15 @@ full 4x4 -> full 7x7 -> full 13x13 if the measured P90 ETA fits, else high-value
 
 Usage
 -----
-    python scripts/max_leakage_ode_sweep.py status --output results/max_leakage_ode
-    python scripts/max_leakage_ode_sweep.py pilot  --output ... --workers 40
-    python scripts/max_leakage_ode_sweep.py run    --output ... --budget-hours 24 \
+    # default store: results/max_leakage_ode/a{spacing:.1f} (spacing default 3.0)
+    python scripts/max_leakage_ode_sweep.py status
+    python scripts/max_leakage_ode_sweep.py pilot  --spacing-um 5 --workers 40
+    python scripts/max_leakage_ode_sweep.py run    --spacing-um 5 --budget-hours 24 \
         --reserve-hours 2 --target-level auto
-    python scripts/max_leakage_ode_sweep.py run    --output ... --dry-run
-    python scripts/max_leakage_ode_sweep.py audit  --output ...
-    python scripts/max_leakage_ode_sweep.py export --output ...
-    python scripts/max_leakage_ode_sweep.py plot   --output ...
+    python scripts/max_leakage_ode_sweep.py run    --spacing-um 5 --dry-run
+    python scripts/max_leakage_ode_sweep.py audit  --spacing-um 5
+    python scripts/max_leakage_ode_sweep.py export --spacing-um 5
+    python scripts/max_leakage_ode_sweep.py plot   --spacing-um 5
 """
 from __future__ import annotations
 
@@ -2022,6 +2023,7 @@ def warm_and_build(cfg: ScanConfig) -> tuple[dict[int, PanelOperators], float, s
 def setup_run(args) -> tuple[Store, dict, ScanConfig, dict[int, PanelOperators], float, dict]:
     """Shared bring-up for pilot/run/audit: build, verify, manifest, worker context."""
     cfg = ScanConfig(
+        spacing_um=args.spacing_um,
         rtol_production=args.rtol, atol_production=args.atol,
         rtol_audit=args.audit_rtol, atol_audit=args.audit_atol,
     )
@@ -3027,6 +3029,10 @@ def cmd_plot(args) -> None:
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
+def _default_output(spacing_um: float) -> str:
+    return os.path.join("results", "max_leakage_ode", f"a{spacing_um:.1f}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="max_leakage_ode_sweep",
@@ -3041,8 +3047,12 @@ def build_parser() -> argparse.ArgumentParser:
         return parse
 
     def common(sp, compute: bool = False):
-        sp.add_argument("--output", default="results/max_leakage_ode",
-                        help="scan store directory")
+        sp.add_argument("--output", default=None,
+                        help="scan store directory (default: "
+                             "results/max_leakage_ode/a{spacing:.1f})")
+        sp.add_argument("--spacing-um", type=float, default=3.0,
+                        help="atom spacing in um (physics-hash relevant; also "
+                             "selects the default store directory)")
         if compute:
             # "auto" = the pilot-benchmarked host default (40 of 40 logical CPUs
             # measured ~1.48x the 20-worker throughput) / the acceptance-gated
@@ -3128,6 +3138,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
+    if args.output is None:
+        args.output = _default_output(args.spacing_um)
     args.func(args)
 
 

@@ -847,6 +847,26 @@ def test_cli_parser_covers_subcommands_and_locked_invocation():
     assert args.target_level == "auto"
 
 
+def test_spacing_flag_and_derived_output_default():
+    parser = mls.build_parser()
+    args = parser.parse_args(["run", "--dry-run"])
+    assert args.spacing_um == 3.0 and args.output is None
+    assert mls._default_output(args.spacing_um) == os.path.join(
+        "results", "max_leakage_ode", "a3.0")
+    args = parser.parse_args(["scatter", "--level", "13", "--spacing-um", "7"])
+    assert args.spacing_um == 7.0
+    assert mls._default_output(args.spacing_um) == os.path.join(
+        "results", "max_leakage_ode", "a7.0")
+    args = parser.parse_args(
+        ["status", "--output", "results/max_leakage_ode/legacy_c6-874"])
+    assert args.output == "results/max_leakage_ode/legacy_c6-874"
+
+
+def test_spacing_um_changes_physics_hash():
+    assert (mls.ScanConfig(spacing_um=4.0).physics_hash()
+            != mls.ScanConfig().physics_hash())
+
+
 def test_pulse_hash_is_stable_and_recorded(tmp_path):
     """The pulse fingerprint is deterministic (64 hex chars) and is what the
     manifest records, so a later pulse edit is caught by the provenance guards
