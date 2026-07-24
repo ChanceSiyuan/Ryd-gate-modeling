@@ -518,7 +518,7 @@ def hamiltonian_equivalence_error(
 class BlockMaxDOP853(_ScipyDOP853):
     """DOP853 whose error norm is the max of per-block SciPy DOP853 norms."""
 
-    block_size: int = 49  # overridden per solve via a dynamic subclass
+    block_size: int = 16  # overridden per solve via a dynamic subclass
 
     def _estimate_error_norm(self, K, h, scale):
         err5 = np.dot(K.T, self.E5) / scale
@@ -894,7 +894,6 @@ class Store:
     def init_or_validate_manifest(
         self,
         cfg: ScanConfig,
-        omega_1013: float,
         model_hash: str,
         code_hash: str,
         run_meta: dict,
@@ -912,10 +911,6 @@ class Store:
                         "different physics/model/pulse code — use a fresh --output "
                         "directory."
                     )
-            rec = float(existing.get("omega_1013_rad_s", 0.0))
-            if abs(rec - omega_1013) > 1e-6 * abs(omega_1013):
-                raise RuntimeError(
-                    f"Omega_1013 mismatch: manifest {rec!r} vs current {omega_1013!r}")
             return existing
         self.ensure_dirs()
         manifest = {
@@ -928,17 +923,14 @@ class Store:
             "model_hash": model_hash,
             "pulse_hash": pulse_hash(),
             "code_hash": code_hash,
-            "omega_1013_rad_s": omega_1013,
-            "omega_1013_over_2pi_MHz": omega_1013 / TAU / 1e6,
-            "omega_1013_reference_rad_s": OMEGA_1013_REFERENCE_RAD_S,
             "tolerances": {
                 "production": {"rtol": cfg.rtol_production, "atol": cfg.atol_production},
                 "audit": {"rtol": cfg.rtol_audit, "atol": cfg.atol_audit},
             },
             "axes": {
-                "delta_e_ghz": list(cfg.delta_e_ghz),
+                "ryd_n": list(cfg.ryd_n),
                 "t_gate_us": list(cfg.t_gate_us),
-                "omega_anchors_mhz": [str(a) for a in OMEGA_ANCHORS_MHZ],
+                "omega297_anchors_mhz": [str(a) for a in OMEGA297_ANCHORS_MHZ],
                 "dsweep_anchors_mhz": [str(a) for a in DSWEEP_ANCHORS_MHZ],
                 "level_sizes": list(LEVEL_SIZES),
                 "dsweep_hw_limit_mhz": DSWEEP_HW_LIMIT_MHZ,
@@ -986,7 +978,6 @@ class Store:
         manifest: dict,
         keys: Sequence[PointKey],
         cfg: ScanConfig,
-        omega_1013: float,
         tier: str,
         rtol: float,
         atol: float,
@@ -1000,7 +991,7 @@ class Store:
     ) -> str:
         """Persist one completed (or failed) batch as an append-only chunk."""
         n = len(keys)
-        dim = 49
+        dim = 16
         if result is not None:
             psi = result.psi_final
             dim = psi.shape[2]
@@ -1024,7 +1015,7 @@ class Store:
 
         om_mhz = np.asarray([float(k.omega_mhz()) for k in keys])
         dw_mhz = np.asarray([float(k.dsweep_mhz()) for k in keys])
-        de_ghz = np.asarray([cfg.delta_e_ghz[k.n_idx] for k in keys])
+        ryd_n = np.asarray([cfg.ryd_n[k.n_idx] for k in keys])
         tg_us = np.asarray([cfg.t_gate_us[k.t_idx] for k in keys])
 
         payload = dict(
@@ -1034,15 +1025,13 @@ class Store:
             model_hash=str(manifest["model_hash"]),
             pulse_hash=str(manifest["pulse_hash"]),
             **keys_to_arrays(keys),
-            delta_e_ghz=de_ghz,
+            ryd_n=ryd_n,
             t_gate_us=tg_us,
-            omega_420_mhz=om_mhz,
+            omega297_mhz=om_mhz,
             dsweep_mhz=dw_mhz,
-            delta_e_rad_s=de_ghz * 1e9 * TAU,
             t_gate_s=tg_us * 1e-6,
-            omega_420_rad_s=om_mhz * 1e6 * TAU,
+            omega297_rad_s=om_mhz * 1e6 * TAU,
             dsweep_rad_s=dw_mhz * 1e6 * TAU,
-            omega_1013_rad_s=np.full(n, omega_1013),
             psi_final=psi,
             leakage=leak,
             max_leakage=max_leak,
@@ -1131,9 +1120,9 @@ class Store:
             model_hash=str(manifest["model_hash"]),
             pulse_hash=str(manifest["pulse_hash"]),
             **keys_to_arrays(keys),
-            delta_e_ghz=np.asarray([cfg.delta_e_ghz[k.n_idx] for k in keys]),
+            ryd_n=np.asarray([cfg.ryd_n[k.n_idx] for k in keys]),
             t_gate_us=np.asarray([cfg.t_gate_us[k.t_idx] for k in keys]),
-            omega_420_mhz=np.asarray([float(k.omega_mhz()) for k in keys]),
+            omega297_mhz=np.asarray([float(k.omega_mhz()) for k in keys]),
             dsweep_mhz=np.asarray([float(k.dsweep_mhz()) for k in keys]),
             **{name: np.asarray(scatter[name]).reshape(n, 4)
                for name in SCATTER_CHANNELS},
@@ -1297,9 +1286,9 @@ def export_store(store: Store, records: list[PointRecord] | None = None) -> tupl
         schema_version=np.int64(SCHEMA_VERSION),
         scan_uuid=str(manifest["scan_uuid"]),
         **keys_to_arrays(keys),
-        delta_e_ghz=np.asarray([cfg.delta_e_ghz[k.n_idx] for k in keys]),
+        ryd_n=np.asarray([cfg.ryd_n[k.n_idx] for k in keys]),
         t_gate_us=np.asarray([cfg.t_gate_us[k.t_idx] for k in keys]),
-        omega_420_mhz=np.asarray([float(k.omega_mhz()) for k in keys]),
+        omega297_mhz=np.asarray([float(k.omega_mhz()) for k in keys]),
         dsweep_mhz=np.asarray([float(k.dsweep_mhz()) for k in keys]),
         max_leakage=np.asarray([r.max_leakage for r in rows]),
         leakage=np.asarray([r.leakage for r in rows]).reshape(n, 4),
@@ -1310,12 +1299,12 @@ def export_store(store: Store, records: list[PointRecord] | None = None) -> tupl
         rtol=np.asarray([r.rtol for r in rows]),
         atol=np.asarray([r.atol for r in rows]),
         psi_final=np.asarray([r.psi_final for r in rows]).reshape(n, 4, -1)
-        if n else np.zeros((0, 4, 49), dtype=np.complex128),
+        if n else np.zeros((0, 4, 16), dtype=np.complex128),
     )
     _atomic_savez(merged_path, **payload)
 
     csv_path = os.path.join(store.exports_dir, "points.csv")
-    cols = ["point_id", "delta_e_ghz", "t_gate_us", "omega_420_mhz", "dsweep_mhz",
+    cols = ["point_id", "ryd_n", "t_gate_us", "omega297_mhz", "dsweep_mhz",
             "max_leakage", "leak_00", "leak_01", "leak_10", "leak_11", "worst_input",
             "min_return_prob", "norm_err_max", "tier", "rtol", "atol", "nfev",
             "runtime_s", "batch_id"]
@@ -1324,7 +1313,7 @@ def export_store(store: Store, records: list[PointRecord] | None = None) -> tupl
         fh.write(",".join(cols) + "\n")
         for k, r in zip(keys, rows):
             fh.write(",".join(str(v) for v in (
-                k.id(), cfg.delta_e_ghz[k.n_idx], cfg.t_gate_us[k.t_idx],
+                k.id(), cfg.ryd_n[k.n_idx], cfg.t_gate_us[k.t_idx],
                 float(k.omega_mhz()), float(k.dsweep_mhz()),
                 repr(r.max_leakage), repr(r.leakage[0]), repr(r.leakage[1]),
                 repr(r.leakage[2]), repr(r.leakage[3]), r.worst_input,
@@ -1403,13 +1392,12 @@ def _worker_process_init() -> None:
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
 
-def _set_worker_context(cfg: ScanConfig, omega_1013: float,
+def _set_worker_context(cfg: ScanConfig,
                         panel_ops: dict[int, PanelOperators], use_swap: bool,
-                        gammas: dict[str, float] | None = None) -> None:
+                        gammas: dict[int, dict[str, float]] | None = None) -> None:
     _WORKER_CTX.clear()
     _WORKER_CTX.update(
-        cfg=cfg, omega_1013=omega_1013, panel_ops=panel_ops, use_swap=use_swap,
-        gammas=gammas)
+        cfg=cfg, panel_ops=panel_ops, use_swap=use_swap, gammas=gammas)
 
 
 def _worker_run_batch(spec: dict) -> dict:
@@ -1486,7 +1474,7 @@ class Batch:
             self.batch_id = uuid.uuid4().hex[:12]
         panels = {k.panel for k in self.keys}
         if len(panels) != 1:
-            raise ValueError("a batch must stay within one (Delta_e, T) panel")
+            raise ValueError("a batch must stay within one (n, T) panel")
         (self.n_idx, self.t_idx), = panels
 
 
@@ -1560,11 +1548,10 @@ class Runner:
     """Submits batches to a fork pool, handles retries/splits, writes all chunks."""
 
     def __init__(self, store: Store, manifest: dict, cfg: ScanConfig,
-                 omega_1013: float, args, cost: CostModel):
+                 args, cost: CostModel):
         self.store = store
         self.manifest = manifest
         self.cfg = cfg
-        self.omega_1013 = omega_1013
         self.args = args
         self.cost = cost
         self._acquire_store_lock()
@@ -1701,7 +1688,7 @@ class Runner:
             self.completed_points += len(batch.keys)
             return
         self.store.write_result_chunk(
-            self.seq, self.manifest, batch.keys, self.cfg, self.omega_1013,
+            self.seq, self.manifest, batch.keys, self.cfg,
             batch.tier, rtol, atol, batch.batch_id, result, out["runtime_s"],
             retry_count=batch.retry_count,
             priority_scores=batch.priority_scores,
@@ -1731,7 +1718,7 @@ class Runner:
             self.scatter_seq += 1
         else:
             self.store.write_result_chunk(
-                self.seq, self.manifest, batch.keys, self.cfg, self.omega_1013,
+                self.seq, self.manifest, batch.keys, self.cfg,
                 batch.tier, rtol, atol, batch.batch_id, None,
                 out.get("runtime_s", 0.0),
                 statuses=[out.get("reason", "failed")] * len(batch.keys),
@@ -1949,7 +1936,7 @@ def warm_and_build(cfg: ScanConfig) -> tuple[dict[int, PanelOperators], str, dic
     return ops_by_n, model_hash, checks
 
 
-def setup_run(args) -> tuple[Store, dict, ScanConfig, dict[int, PanelOperators], float, dict]:
+def setup_run(args) -> tuple[Store, dict, ScanConfig, dict[int, PanelOperators], dict]:
     """Shared bring-up for pilot/run/audit: build, verify, manifest, worker context."""
     cfg = ScanConfig(
         spacing_um=args.spacing_um,
@@ -1960,7 +1947,7 @@ def setup_run(args) -> tuple[Store, dict, ScanConfig, dict[int, PanelOperators],
     store.ensure_dirs()
     ops, model_hash, checks = warm_and_build(cfg)
     manifest = store.init_or_validate_manifest(
-        cfg, 0.0, model_hash, _script_code_hash(),  # Task 4: drop the omega_1013 arg
+        cfg, model_hash, _script_code_hash(),
         run_meta={
             "argv": sys.argv[1:], "workers": args.workers,
             "batch_size": args.batch_size,
@@ -1971,19 +1958,19 @@ def setup_run(args) -> tuple[Store, dict, ScanConfig, dict[int, PanelOperators],
     with open(ver_path + ".tmp", "w") as fh:
         json.dump(checks, fh, indent=2)
     os.replace(ver_path + ".tmp", ver_path)
-    _set_worker_context(cfg, 0.0, ops, use_swap=checks["swap_symmetric"],  # Task 4: drop omega_1013
+    _set_worker_context(cfg, ops, use_swap=checks["swap_symmetric"],
                         gammas=checks["decay_rates_rad_s"])
     print(f"[setup] panels(n) = {len(cfg.ryd_n)} | "
           f"H equivalence rel dev {checks['hamiltonian_equivalence_rel_dev']:.2e} | "
           f"error-norm dev {checks['error_norm_max_dev']:.2e} | "
           f"swap {'ok' if checks['swap_symmetric'] else 'FAILED'}", flush=True)
-    return store, manifest, cfg, ops, 0.0, checks  # Task 4: drop the omega_1013 slot
+    return store, manifest, cfg, ops, checks
 
 
 # ── Pilot: reusable nodes, throughput, packing acceptance gate ───────────────
 
 # Deterministic packing-gate panel and varied in-panel nodes (all level-0, reusable).
-PACK_GATE_PANEL = (3, 0)          # Delta_e = 20 GHz, T = 1 us
+PACK_GATE_PANEL = (3, 0)          # n = RYD_N[3] = 60, T = 1 us
 PACK_GATE_COORDS = [((0, 1), (0, 1)), ((3, 1), (3, 1)), ((0, 1), (3, 1)),
                     ((3, 1), (0, 1)), ((1, 1), (2, 1)), ((2, 1), (1, 1))]
 
@@ -2177,7 +2164,6 @@ def stage_pilot(runner: Runner, panels: set[tuple[int, int]] | None = None) -> d
                 all_keys(lv), runner.args.workers) / 3600.0
             for lv in range(len(LEVEL_SIZES))
         },
-        "omega_1013_over_2pi_MHz": runner.omega_1013 / TAU / 1e6,
     }
     path = os.path.join(runner.store.reports_dir, "pilot.json")
     with open(path + ".tmp", "w") as fh:
@@ -2337,10 +2323,10 @@ def _filter_panels(keys: Iterable[PointKey],
 
 
 def cmd_pilot(args) -> None:
-    store, manifest, cfg, ops, omega_1013, checks = setup_run(args)
+    store, manifest, cfg, ops, checks = setup_run(args)
     cost = CostModel(cfg)
     _feed_cost_model(cost, store.load_records(manifest, include_states=False))
-    runner = Runner(store, manifest, cfg, omega_1013, args, cost)
+    runner = Runner(store, manifest, cfg, args, cost)
     try:
         stage_pilot(runner, _parse_panels(args))
     except KeyboardInterrupt:
@@ -2378,7 +2364,7 @@ def _effective_batch_size(store: Store, args) -> int:
 
 
 def cmd_run(args) -> None:
-    store, manifest, cfg, ops, omega_1013, checks = setup_run(args)
+    store, manifest, cfg, ops, checks = setup_run(args)
     panels = _parse_panels(args)
     records = store.load_records(manifest, include_states=False)
     done = completed_keys(records)
@@ -2393,7 +2379,7 @@ def cmd_run(args) -> None:
     if args.dry_run:
         n_panels = len(panels) if panels is not None else len(all_panels())
         print(f"panels: {n_panels}  "
-              f"(rows {list(cfg.delta_e_ghz)} GHz x cols {list(cfg.t_gate_us)} us)")
+              f"(rows n={list(cfg.ryd_n)} x cols {list(cfg.t_gate_us)} us)")
         for lv in range(len(LEVEL_SIZES)):
             keys = _filter_panels(all_keys(lv), panels)
             miss = [k for k in keys if k not in done]
@@ -2409,7 +2395,7 @@ def cmd_run(args) -> None:
               + (" (will retry: --rerun-failures)" if args.rerun_failures else ""))
         return
 
-    runner = Runner(store, manifest, cfg, omega_1013, args, cost)
+    runner = Runner(store, manifest, cfg, args, cost)
     try:
         stage_pilot(runner, panels)
         batch_size = _effective_batch_size(store, args)
@@ -2488,7 +2474,7 @@ def cmd_run(args) -> None:
 
 
 def cmd_audit(args) -> None:
-    store, manifest, cfg, ops, omega_1013, checks = setup_run(args)
+    store, manifest, cfg, ops, checks = setup_run(args)
     records = store.load_records(manifest, include_states=False)
     prod = sorted(completed_keys(records, "production"))
     audited = completed_keys(records, "audit")
@@ -2518,7 +2504,7 @@ def cmd_audit(args) -> None:
         return
     cost = CostModel(cfg)
     _feed_cost_model(cost, records)
-    runner = Runner(store, manifest, cfg, omega_1013, args, cost)
+    runner = Runner(store, manifest, cfg, args, cost)
     try:
         runner.run_batches(
             [Batch(keys=[k], tier="audit", save_traj=True) for k in targets],
@@ -2604,7 +2590,7 @@ def _scatter_equivalence_gate(runner: Runner, store: Store) -> dict:
 
 def cmd_scatter(args) -> None:
     """Supplemental scattering-budget pass: additive only (scatter/ series)."""
-    store, manifest, cfg, ops, omega_1013, checks = setup_run(args)
+    store, manifest, cfg, ops, checks = setup_run(args)
     level = LEVEL_FROM_SIZE[int(args.level)]
     panels = _parse_panels(args)
 
@@ -2619,7 +2605,7 @@ def cmd_scatter(args) -> None:
 
     cost = CostModel(cfg)
     _feed_cost_model(cost, store.load_records(manifest, include_states=False))
-    runner = Runner(store, manifest, cfg, omega_1013, args, cost)
+    runner = Runner(store, manifest, cfg, args, cost)
     runner.gammas = checks["decay_rates_rad_s"]
     gate_failed = False
     try:
@@ -2681,7 +2667,7 @@ def write_summary_reports(store: Store) -> None:
         pk = f"{k.n_idx},{k.t_idx}"
         if pk not in cand or r.max_leakage < cand[pk]["max_leakage"]:
             cand[pk] = {"point_id": k.id(), "max_leakage": r.max_leakage,
-                        "omega_420_mhz": float(k.omega_mhz()),
+                        "omega297_mhz": float(k.omega_mhz()),
                         "dsweep_mhz": float(k.dsweep_mhz()),
                         "worst_input": r.worst_input, "tier": r.tier}
     path = os.path.join(store.reports_dir, "candidates.json")
@@ -2701,8 +2687,7 @@ def cmd_status(args) -> None:
     done = completed_keys(records)
     failed = {r.key for r in records if r.status != "ok"} - done
     print(f"scan {manifest['scan_uuid'][:12]}  created {manifest['created_at']}")
-    print(f"Omega_1013/2pi = {manifest['omega_1013_over_2pi_MHz']:.6f} MHz  "
-          f"git {manifest['git']['commit'][:10]}"
+    print(f"git {manifest['git']['commit'][:10]}"
           f"{' (dirty)' if manifest['git']['dirty'] else ''}")
     for lv, size in enumerate(LEVEL_SIZES):
         keys = all_keys(lv)
@@ -2899,18 +2884,18 @@ def cmd_plot(args) -> None:
     if not values:
         raise SystemExit("no successful records to plot")
     cmap = "magma_r"
-    de = manifest["axes"]["delta_e_ghz"]
+    ryd_axis = manifest["axes"]["ryd_n"]
     tg = manifest["axes"]["t_gate_us"]
 
-    n_rows, n_cols = len(de), len(tg)
+    n_rows, n_cols = len(ryd_axis), len(tg)
     fig, axes = plt.subplots(n_rows, n_cols,
                              figsize=(2.1 * n_cols + 1.6, 1.9 * n_rows + 1.2),
                              sharex=True, sharey=True, constrained_layout=True)
     mesh = None
-    for di in range(n_rows):
+    for ni in range(n_rows):
         for ti in range(n_cols):
-            ax = axes[di][ti]
-            data = _panel_plot_data(values, (di, ti), vmin)
+            ax = axes[ni][ti]
+            data = _panel_plot_data(values, (ni, ti), vmin)
             if data is None:
                 ax.set_facecolor("0.92")
                 ax.text(0.5, 0.5, "no data", transform=ax.transAxes,
@@ -2918,13 +2903,11 @@ def cmd_plot(args) -> None:
             else:
                 mesh = _draw_panel(ax, *data, vmin, vmax, cmap,
                                    veil=args.veil) or mesh
-            if di == 0:
-                ax.set_title(f"T = {tg[ti]:g} us", fontsize=9)
-            if di == n_rows - 1:
-                ax.set_xlabel(r"$\Omega_{420}/2\pi$ (MHz)", fontsize=8)
+            ax.set_title(f"n = {RYD_N[ni]}, T = {tg[ti]:g} us", fontsize=7)
+            if ni == n_rows - 1:
+                ax.set_xlabel(r"$\Omega_{297}/2\pi$ (MHz)", fontsize=8)
             if ti == 0:
-                ax.set_ylabel(f"$\\Delta_e/2\\pi$ = {de[di]:g} GHz\n"
-                              r"$D_{\rm sweep}/2\pi$ (MHz)", fontsize=8)
+                ax.set_ylabel(r"$D_{\rm sweep}/2\pi$ (MHz)", fontsize=8)
             ax.tick_params(labelsize=7)
     if mesh is not None:
         cb = fig.colorbar(mesh, ax=axes, shrink=0.5, pad=0.01)
@@ -2939,7 +2922,7 @@ def cmd_plot(args) -> None:
     dynamics_note = ("closed-dynamics trajectory + first-order scattering"
                      if args.metric == "total_error" else "closed dynamics")
     fig.suptitle(
-        f"{metric_title}, two-atom rb87_7_mp CZ ({dynamics_note}, "
+        f"{metric_title}, two-atom 297 nm single-photon CZ ({dynamics_note}, "
         "original-frame DOP853; rasters are log-linear interpolation between "
         "exact nodes — dots"
         + ("; white veil: interpolation untrusted, LOO residual > "
@@ -2958,12 +2941,12 @@ def cmd_plot(args) -> None:
 
 
 def _default_output(spacing_um: float) -> str:
-    return os.path.join("results", "max_leakage_ode", f"a{spacing_um:.1f}")
+    return os.path.join("results", "max_leakage_297", f"a{spacing_um:.1f}")
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="max_leakage_ode_sweep",
+        prog="max_leakage_297_sweep",
         description=__doc__.split("\n\n")[0],
     )
     sub = p.add_subparsers(dest="command", required=True)
@@ -2977,7 +2960,7 @@ def build_parser() -> argparse.ArgumentParser:
     def common(sp, compute: bool = False):
         sp.add_argument("--output", default=None,
                         help="scan store directory (default: "
-                             "results/max_leakage_ode/a{spacing:.1f})")
+                             "results/max_leakage_297/a{spacing:.1f})")
         sp.add_argument("--spacing-um", type=float, default=3.0,
                         help="atom spacing in um (physics-hash relevant; also "
                              "selects the default store directory)")

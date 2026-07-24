@@ -260,3 +260,235 @@ def test_trajectory_sampling_and_time_dependent_restore():
         expect[idx] = 1.0
         np.testing.assert_allclose(np.abs(res.states[0, 0, j]), expect, atol=1e-12)
         assert res.states[0, 0, j][idx] == pytest.approx(1.0)  # phase too
+
+
+# ── persistence: manifest, chunks, resume, exports (dim 16, no omega_1013) ────
+
+
+def _mini_cfg():
+    return mls297.ScanConfig()
+
+
+def _mini_store(tmp_path, model_hash="modelhash-1"):
+    store = mls297.Store(str(tmp_path / "scan"))
+    store.ensure_dirs()
+    manifest = store.init_or_validate_manifest(
+        _mini_cfg(), model_hash=model_hash, code_hash="codehash", run_meta={})
+    return store, manifest
+
+
+def _fake_result(n, dim=16, seed=0):
+    rng = np.random.default_rng(seed)
+    psi = rng.standard_normal((n, 4, dim)) + 1j * rng.standard_normal((n, 4, dim))
+    psi /= np.linalg.norm(psi, axis=2, keepdims=True)
+    leak = rng.uniform(1e-6, 1e-2, size=(n, 4))
+    return mls297.BatchResult(
+        psi_final=psi, leakage=leak, max_leakage=leak.max(axis=1),
+        worst_input=[mls297.LOGICAL_INPUTS[int(i)] for i in leak.argmax(axis=1)],
+        return_prob=rng.uniform(0.9, 1.0, size=(n, 4)),
+        norm_err=np.full((n, 4), 1e-13), nfev=1234, used_swap=True,
+    )
+
+
+def test_manifest_has_297_axes_and_no_1013(tmp_path):
+    _, manifest = _mini_store(tmp_path)
+    assert manifest["axes"]["ryd_n"] == list(mls297.RYD_N)
+    assert manifest["axes"]["omega297_anchors_mhz"] == ["9", "12", "15", "18"]
+    assert not any("1013" in k for k in manifest)
+
+
+def test_chunk_roundtrip_preserves_states_exactly(tmp_path):
+    store, manifest = _mini_store(tmp_path)
+    keys = mls297.panel_keys(0, 0, 0)[:3]
+    result = _fake_result(3)
+    path = store.write_result_chunk(
+        1, manifest, keys, _mini_cfg(), "production", 1e-9, 1e-12,
+        "batch-a", result, runtime_s=30.0)
+    with np.load(path, allow_pickle=False) as d:  # loads without pickle
+        np.testing.assert_array_equal(d["psi_final"], result.psi_final)
+        assert d["psi_final"].dtype == np.complex128
+        assert list(d["status"]) == ["ok"] * 3
+    records = store.load_records(manifest)
+    assert len(records) == 3
+    assert {r.key for r in records} == set(keys)
+    np.testing.assert_array_equal(records[0].psi_final, result.psi_final[0])
+
+
+def test_atomic_write_rejects_object_arrays_and_leaves_no_file(tmp_path):
+    target = str(tmp_path / "chunk_000001.npz")
+    with pytest.raises(TypeError):
+        mls297._atomic_savez(target, bad=np.array([{"a": 1}], dtype=object))
+    assert not any(tmp_path.iterdir())  # neither the file nor a temp survives
+
+
+def test_stale_tmp_files_are_ignored_by_the_loader(tmp_path):
+    store, manifest = _mini_store(tmp_path)
+    keys = mls297.panel_keys(0, 0, 0)[:1]
+    store.write_result_chunk(1, manifest, keys, _mini_cfg(), "production",
+                             1e-9, 1e-12, "b", _fake_result(1), 1.0)
+    (Path(store.chunks_dir) / "chunk_000002.npz.tmp-dead").write_bytes(b"garbage")
+    assert len(store.load_records(manifest)) == 1
+    assert store.next_seq() == 2
+
+
+@pytest.mark.parametrize("field, doctored, match", [
+    ("physics_hash", "0" * 64, "physics_hash mismatch"),
+    ("model_hash", "0" * 64, "model_hash mismatch"),
+    ("pulse_hash", "0" * 64, "pulse_hash mismatch"),
+])
+def test_manifest_guard_rejects_mismatched_provenance(tmp_path, field, doctored, match):
+    """init_or_validate_manifest refuses to resume when any recorded provenance
+    hash disagrees with the live code/model.  (Omega_1013 is gone in the 297
+    single-photon fork, so there is no detuning-guard arm.)"""
+    store, _ = _mini_store(tmp_path, model_hash="modelhash-1")
+    manifest_path = Path(store.manifest_path)
+    doc = json.loads(manifest_path.read_text())
+    doc[field] = doctored
+    manifest_path.write_text(json.dumps(doc))
+    with pytest.raises(RuntimeError, match=match):
+        store.init_or_validate_manifest(
+            _mini_cfg(), model_hash="modelhash-1", code_hash="codehash",
+            run_meta={})
+
+
+@pytest.mark.parametrize("field", ["physics_hash", "model_hash", "pulse_hash"])
+def test_chunk_guard_refuses_to_merge_foreign_provenance(tmp_path, field):
+    """load_records refuses to merge a chunk whose stamped hash differs from the
+    manifest."""
+    store, manifest = _mini_store(tmp_path)
+    foreign = dict(manifest, **{field: "0" * 64})
+    store.write_result_chunk(1, foreign, mls297.panel_keys(0, 0, 0)[:1], _mini_cfg(),
+                             "production", 1e-9, 1e-12, "b", _fake_result(1), 1.0)
+    with pytest.raises(RuntimeError, match=field):
+        store.load_records(manifest)
+
+
+def test_resume_dedup_and_tier_preference(tmp_path):
+    store, manifest = _mini_store(tmp_path)
+    keys = mls297.panel_keys(0, 0, 0)[:2]
+    store.write_result_chunk(1, manifest, keys, _mini_cfg(), "production",
+                             1e-9, 1e-12, "b1", _fake_result(2, seed=1), 10.0)
+    store.write_result_chunk(2, manifest, keys[:1], _mini_cfg(), "audit",
+                             1e-10, 1e-13, "b2", _fake_result(1, seed=2), 12.0)
+    records = store.load_records(manifest)
+    best = mls297.best_records(records)
+    assert best[keys[0]].tier == "audit"          # tightest record wins exports
+    assert best[keys[1]].tier == "production"
+    done = mls297.completed_keys(records)
+    missing = [k for k in mls297.panel_keys(0, 0, 0) if k not in done]
+    assert len(missing) == 16 - 2                 # resume schedules only the rest
+    pairs = mls297.audit_pairs(records)
+    assert len(pairs) == 1 and pairs[0][0] == keys[0]
+
+
+def test_failed_points_recorded_and_not_counted_done(tmp_path):
+    store, manifest = _mini_store(tmp_path)
+    keys = mls297.panel_keys(0, 0, 0)[:1]
+    store.write_result_chunk(
+        1, manifest, keys, _mini_cfg(), "production", 1e-9, 1e-12,
+        "bf", None, 5.0, statuses=["timeout"], message="timeout after 5s",
+        retry_count=2)
+    records = store.load_records(manifest)
+    assert records[0].status == "timeout"
+    assert records[0].retry_count == 2
+    assert mls297.completed_keys(records) == set()
+    assert mls297.best_records(records) == {}
+
+
+def test_export_store_writes_merged_npz_and_csv(tmp_path):
+    store, manifest = _mini_store(tmp_path)
+    keys = mls297.panel_keys(0, 0, 0)
+    store.write_result_chunk(1, manifest, keys, _mini_cfg(), "production",
+                             1e-9, 1e-12, "b", _fake_result(len(keys)), 60.0)
+    merged, csv_path = mls297.export_store(store)
+    with np.load(merged, allow_pickle=False) as d:
+        assert d["max_leakage"].shape == (16,)
+        assert d["psi_final"].shape == (16, 4, 16)
+        assert "ryd_n" in d.files and "omega297_mhz" in d.files
+    lines = Path(csv_path).read_text().strip().splitlines()
+    assert len(lines) == 17 and lines[0].startswith("point_id,ryd_n,")
+
+
+# ── scheduling helper ────────────────────────────────────────────────────────
+
+
+def test_group_batches_stays_within_panel_and_orders_axes():
+    keys = mls297.panel_keys(0, 0, 0) + mls297.panel_keys(1, 2, 0)
+    batches = mls297.group_batches(keys, batch_size=6)
+    assert all(len({k.panel for k in b.keys}) == 1 for b in batches)
+    assert sum(len(b.keys) for b in batches) == 32
+    first = batches[0].keys
+    fracs = [(Fraction(k.om_num, k.om_den), Fraction(k.dw_num, k.dw_den)) for k in first]
+    assert fracs == sorted(fracs)
+    with pytest.raises(ValueError):
+        mls297.Batch(keys=keys)  # crosses panels
+
+
+# ── plotting / status / CLI smoke ────────────────────────────────────────────
+
+
+def test_plot_and_status_smoke(tmp_path, capsys):
+    store, manifest = _mini_store(tmp_path)
+    rng = np.random.default_rng(3)
+    gammas = {ni: {"p_ryd": 6.6e3, "p_r_garb": 6.6e3} for ni in (0, 3)}
+    for seq, panel in enumerate([(0, 0), (3, 4)], start=1):
+        keys = mls297.panel_keys(panel[0], panel[1], 1)   # full 7x7 grid
+        res = _fake_result(len(keys), seed=seq)
+        res.leakage = rng.uniform(1e-5, 1e-1, size=(len(keys), 4))
+        res.max_leakage = res.leakage.max(axis=1)
+        store.write_result_chunk(seq, manifest, keys, _mini_cfg(), "production",
+                                 1e-9, 1e-12, f"b{seq}", res, 60.0)
+        scatter = {ch: rng.uniform(1e-6, 1e-3, size=(len(keys), 4))
+                   for ch in mls297.SCATTER_CHANNELS}
+        store.write_scatter_chunk(seq, manifest, keys, _mini_cfg(), gammas, 1e-9,
+                                  1e-12, f"s{seq}", scatter, res.max_leakage, 60.0)
+    for metric in ("max_leakage", "p_ryd", "p_r_garb", "p_loss_total", "total_error"):
+        mls297.cmd_plot(Namespace(output=store.root, dpi=60, veil=True, metric=metric))
+        assert (Path(store.plots_dir) / f"{metric}_8x9.png").exists()
+        assert (Path(store.plots_dir) / f"{metric}_8x9.pdf").exists()
+    assert not list(Path(store.plots_dir).glob("panel_*.png"))
+
+    mls297.cmd_status(Namespace(output=store.root))
+    out = capsys.readouterr().out
+    assert "records:" in out and "98 unique ok points" in out
+
+
+def test_default_output_derivation():
+    parser = mls297.build_parser()
+    args = parser.parse_args(["run", "--dry-run"])
+    assert args.spacing_um == 3.0 and args.output is None
+    assert mls297._default_output(3.0) == os.path.join(
+        "results", "max_leakage_297", "a3.0")
+
+
+def test_plot_metric_choices_are_the_five_297_metrics():
+    parser = mls297.build_parser()
+    for m in ("max_leakage", "p_ryd", "p_r_garb", "p_loss_total", "total_error"):
+        assert parser.parse_args(["plot", "--metric", m]).metric == m
+    with pytest.raises(SystemExit):
+        parser.parse_args(["plot", "--metric", "p_mid"])
+
+
+def test_cli_parser_covers_subcommands_and_locked_invocation():
+    parser = mls297.build_parser()
+    args = parser.parse_args(["run", "--dry-run", "--target-level", "13"])
+    assert args.func is mls297.cmd_run and args.dry_run and args.target_level == "13"
+    assert parser.parse_args(
+        ["audit", "--audit-point", "n0_t0_om0-1_dw0-1"]).func is mls297.cmd_audit
+    assert parser.parse_args(["status"]).func is mls297.cmd_status
+    args = parser.parse_args(["scatter", "--level", "7", "--workers", "auto",
+                              "--batch-size", "auto"])
+    assert args.func is mls297.cmd_scatter and args.level == "7"
+    assert parser.parse_args(["plot", "--metric", "p_loss_total"]).metric == "p_loss_total"
+    assert parser.parse_args(["plot", "--metric", "total_error"]).metric == "total_error"
+
+    # No pinned two-photon store: --output defaults to None and the store dir is
+    # derived from --spacing-um (see main()).
+    args = parser.parse_args(["run", "--dry-run"])
+    assert args.output is None and args.spacing_um == 3.0
+    assert mls297._default_output(args.spacing_um) == os.path.join(
+        "results", "max_leakage_297", "a3.0")
+    args = parser.parse_args(["scatter", "--level", "13", "--spacing-um", "7"])
+    assert args.spacing_um == 7.0
+    assert mls297._default_output(args.spacing_um) == os.path.join(
+        "results", "max_leakage_297", "a7.0")
