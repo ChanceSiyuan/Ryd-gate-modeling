@@ -813,11 +813,12 @@ def test_plot_and_status_smoke(tmp_path, capsys):
         res.max_leakage = res.leakage.max(axis=1)
         store.write_result_chunk(seq, manifest, keys, _mini_cfg(), 1.0,
                                  "production", 1e-9, 1e-12, f"b{seq}", res, 60.0)
-    args = Namespace(output=store.root, dpi=60, individual=False, veil=True,
+    args = Namespace(output=store.root, dpi=60, veil=True,
                      metric="max_leakage")
     mls.cmd_plot(args)
     assert (Path(store.plots_dir) / "max_leakage_8x9.png").exists()
     assert (Path(store.plots_dir) / "max_leakage_8x9.pdf").exists()
+    assert not list(Path(store.plots_dir).glob("panel_*.png"))
 
     mls.cmd_status(Namespace(output=store.root))
     out = capsys.readouterr().out

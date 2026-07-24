@@ -3007,24 +3007,6 @@ def cmd_plot(args) -> None:
     plt.close(fig)
     print(f"plots: {png}\n       {pdf}")
 
-    if args.individual:
-        for di in range(n_rows):
-            for ti in range(n_cols):
-                data = _panel_plot_data(values, (di, ti), vmin)
-                if data is None:
-                    continue
-                f1, ax = plt.subplots(figsize=(4.6, 3.8), constrained_layout=True)
-                m = _draw_panel(ax, *data, vmin, vmax, cmap, veil=args.veil)
-                ax.set_xlabel(r"$\Omega_{420}/2\pi$ (MHz)")
-                ax.set_ylabel(r"$D_{\rm sweep}/2\pi$ (MHz)")
-                ax.set_title(f"$\\Delta_e/2\\pi$ = {de[di]:g} GHz, T = {tg[ti]:g} us")
-                f1.colorbar(m, ax=ax).set_label(args.metric)
-                path = os.path.join(store.plots_dir,
-                                    f"panel_{args.metric}_d{di}_t{ti}.png")
-                f1.savefig(path, dpi=args.dpi)
-                plt.close(f1)
-        print(f"individual panels -> {store.plots_dir}")
-
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
@@ -3129,9 +3111,6 @@ def build_parser() -> argparse.ArgumentParser:
                              "p_loss_total", "total_error"],
                     help="max_leakage from the main scan; p_* from the "
                          "supplemental scatter series; total_error combines both")
-    sp.add_argument("--individual", action="store_true", default=True,
-                    help="also write per-panel PNGs (default on)")
-    sp.add_argument("--no-individual", dest="individual", action="store_false")
     sp.set_defaults(func=cmd_plot)
     return p
 
