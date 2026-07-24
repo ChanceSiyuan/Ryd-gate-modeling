@@ -34,7 +34,7 @@ env/
 examples/results/
 results/**/*.log
 results/**/store.lock
-results/max_leakage_ode/reports/status.json
+results/max_leakage_ode/*/reports/status.json
 
 # OS
 .DS_Store
@@ -52,4 +52,4 @@ coverage.xml
 uv.lock
 
 # Large generated sweep exports (regenerable from authoritative chunks)
-results/max_leakage_ode/exports/
+results/max_leakage_ode/*/exports/
