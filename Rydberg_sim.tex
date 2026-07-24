@@ -1,0 +1,501 @@
+\chapter{Numerical simulations}
+
+
+\section{The full Hamiltonian}
+We first summarize the energy levels that involved in the process:
+\begin{itemize}
+    \item $\{\ket{0},\ket{1},\ket{e_F},\ket{r},\ket{r'}\}$ for two-photon process.
+    \item $\{\ket{0},\ket{1},\ket{r_m}\}$ for single-photon process.
+\end{itemize}
+
+Specifically, they correspond to the following atom states in $^{87}\mathrm{Rb}$ atoms with $I = 3/2$:
+\begin{align}
+&\ket 0=\ket{5S_{1/2},F=1,m_F=0},\qquad\ket1=\ket{5S_{1/2},F=2,m_F=0},\\
+&\ket{e_{F}}=\ket{6P_{3/2},F,m_F=-1},\quad F=1,2,3,\\
+&\ket r=\ket{70S_{1/2},m_J=-1/2}, \qquad\ket{r'}=\ket{70S_{1/2},m_J=1/2},\\
+&  \ket{r_m}=\ket{53P_{3/2},m_J}, m_J = -3/2,-1/2,1/2,3/2.
+\end{align}
+
+
+\subsection{The single-photon Hamiltonian}
+
+Decomposed the hyperfine state into
+\begin{align}
+\ket1
+&=\frac{1}{\sqrt2}
+\left(
+\ket{m_J=\tfrac12,m_I=-\tfrac12}
++\ket{m_J=-\tfrac12,m_I=\tfrac12}
+\right),\\
+\ket0
+&=\frac{1}{\sqrt2}
+\left(
+-\ket{m_J=\tfrac12,m_I=-\tfrac12}
++\ket{m_J=-\tfrac12,m_I=\tfrac12}
+\right),
+\end{align}
+we conclude that $\sigma^-, \pi, \sigma^+$ laser will coupling along the path
+\begin{align}
+&\sigma^-:
+\left\{
+\begin{aligned}
+&\ket{5S_{1/2},m_J=-1/2, m_I=1/2} \xrightarrow{} \ket{53P_{3/2},m_J=-3/2, m_I=1/2},\\
+&\ket{5S_{1/2},m_J=1/2, m_I=-1/2}  \xrightarrow{\gamma} \ket{53P_{3/2},m_J=-1/2, m_I=-1/2}
+\end{aligned}
+\right. \\
+&\sigma^+:
+\left\{
+\begin{aligned}
+&\ket{5S_{1/2},m_J=-1/2, m_I=1/2} \xrightarrow{\gamma} \ket{53P_{3/2},m_J=1/2, m_I=1/2},\\
+&\ket{5S_{1/2},m_J=1/2, m_I=-1/2} \xrightarrow{} \ket{53P_{3/2},m_J=3/2, m_I=-1/2}
+\end{aligned}
+\right.\\
+&\pi:
+\left\{
+\begin{aligned}
+&\ket{5S_{1/2},m_J=-1/2, m_I=1/2} \to \ket{53P_{3/2},m_J=-1/2, m_I=1/2},\\
+&\ket{5S_{1/2},m_J=1/2, m_I=-1/2} \to \ket{53P_{3/2},m_J=1/2, m_I=-1/2}
+\end{aligned}
+\right.
+\end{align}
+
+\subsection{The two-photon Hamiltonian}
+Two-photon process use the 420-nm beam, which is assumed to be pure $\sigma_-$, and the 1013-nm beam, which is assumed to drive the target Rydberg state through the corresponding $\sigma_+$ leg.
+The target Hamiltonian before choosing the optical rotating frame is:
+\begin{align}
+&H_P(t)
+=-\varepsilon_0\ket0\bra0  + \sum_{F=1}^3 \varepsilon_F\ket{e_{F}}\bra{e_{F}} + (\varepsilon_r-\Delta_{\mathrm{add}}(t))\ket r\bra r + (\varepsilon'_r-\Delta_{\mathrm{add}}(t))\ket{r'}\bra{r'} \\
+& V(t) =
+\sum_{F=1}^3 \sum_{a \in \{0,1,r,r'\}}
+\left[
+\frac{\Omega_{Fa}(t)e^{i\Phi_{Fa}(t)}}{2}\ket{e_{F}}\bra a
++\mathrm{h.c.}\right].
+\end{align}
+The optical phases contain the fast rotating terms, i.e.,
+\begin{align}
+&\Phi_{F0}(t)=\Phi_{F1}(t) = \phi_{\mathrm{420}}(t) - \omega_{\mathrm{420}} t, \quad \Phi_{Fr}(t) = \Phi_{Fr'}(t) =\phi_{\mathrm{1013}}(t) + \omega_{\mathrm{1013}}t.
+\end{align}
+We first use a unitary transformation $\ket{\psi} \to U\ket{\psi}$, $H = U H U^\dagger + i (\partial_t U) U^\dagger$ to transform the inherent energy level shifts to the driving frequency. A convenient optical-frame transformation matching the convention is
+\begin{align}
+&U_{\rm opt}(t) =
+\exp\left[
+-i\sum_{F'=1}^3\theta_{e}(t)\ket{e_{F'}}\bra{e_{F'}}
+-i\theta_r(t)\left(\ket r\bra r + \ket{r'}\bra{r'}\right)\right],\\
+&i\partial_t U_{\rm opt}(t)U^\dagger_{\rm opt}(t) = \sum_{F'=1}^3\dot\theta_{e}(t)\ket{e_{F'}}\bra{e_{F'}} + \dot\theta_r(t)\left(\ket r\bra r + \ket{r'}\bra{r'}\right).
+\end{align}
+The phases are chosen so that the 1013-nm couplings are time independent,
+while the 420-nm couplings carry one residual programmed phase. In particular,
+for the target ladder one may choose the gauge such that
+\begin{align}
+\theta_{e}(t)-\theta_r(t)= \omega_{\mathrm{1013}}t,
+\quad
+\theta_{e}(t) =  -\omega_{\mathrm{420}} t,
+\end{align}
+which solve to the result $\dot\theta_{e}(t) = -\omega_{\mathrm{420}}, \quad \dot\theta_r = (-\omega_{\mathrm{1013}} -\omega_{\mathrm{420}})$.
+Defining
+\begin{align}
+\Delta_e = \varepsilon_{F = 2}  - \omega_{\mathrm{420}}, \quad
+\Delta_r = \varepsilon_r - \omega_{\mathrm{1013}} - \omega_{\mathrm{420}}, \quad 
+\delta_r = \varepsilon_r' -  \varepsilon_r.
+\end{align}
+We choose the gauge such that $\Delta_r = 0$.
+For the single-atom effective model below, we keep the three-dimensional
+subspace
+$P_3=\ket0\bra0+\ket1\bra1+\ket r\bra r$ and eliminate
+$Q_4=\sum_{F=1}^3\ket{e_F}\bra{e_F}+\ket{r'}\bra{r'}$ in one step.
+Let $\mathcal A=\{0,1,r\}$.
+The Hamiltonian in this rotating frame is decomposed with respect to $P_3\oplus Q_4$ as
+\begin{align}
+&H_{\rm rot}(t)
+=H_0(t) +V_{\rm od}(t), \quad V_{\rm od}(t)=\sum_{a\in\mathcal A}\sum_{F=1}^3g_{Fa}(t)\ket{e_F}\bra a + \mathrm{h.c.},\label{eq:7level_Vod}\\
+H_0&=-\varepsilon_0\ket0\bra0
++\sum_{F=1}^3\delta_F\ket{e_F}\bra{e_F}
++ (\delta_r - \Delta_{\mathrm{add}}(t))\ket{r'}\bra{r'} \\
+&\quad + \sum_{F=1}^3 \left(g_{Fr'}(t)\ket{e_F}\bra{r'}+g_{Fr'}^*(t)\ket{r'}\bra{e_F}\right) -\Delta_{\mathrm{add}}(t) \ket r\bra r, \label{eq:7level_H0}
+\end{align}
+where $ g_{Fa}(t)={\Omega_{Fa}(t)e^{i\phi_a(t)}}/{2}, \phi_0=\phi_1=\phi_{\mathrm{420}},\phi_r=\phi_{r'}=\phi_{\mathrm{1013}}$.
+Here $\delta_F$ indicates the hyperfine shift of the $\ket{6P_{3/2},F= 1,2,3}$ state relative to the $\ket{5S_{1/2},F=2,m_F=-1}$ state with fixed value
+\begin{align}
+\delta_{F = 1}=\Delta_e - 2\pi\times 51\,{\rm MHz},\qquad
+\delta_{F = 2}=\Delta_e,\qquad
+\delta_{F = 3}=\Delta_e + 2\pi\times 87\,{\rm MHz}.
+\end{align}
+The $\varepsilon_0$ is the gap between the $\ket{0}$ and $\ket{1}$ states. For $^{87}\mathrm{Rb}$ atoms, $\varepsilon_0 = 2\pi \times  6.835\,{\rm GHz}$.
+After specifying the realistic Hamiltonian, we eliminate $Q_4$ and retain
+$P_3$.  Their ranges are
+\begin{align}
+\operatorname{Ran}P_3
+&=\operatorname{span}\{\ket0,\ket1,\ket r\},&
+\operatorname{Ran}Q_4
+&=\operatorname{span}\{\ket{e_1},\ket{e_2},\ket{e_3},\ket{r'}\}.
+\end{align}
+Below we write $P:=P_3$ and $Q:=Q_4$.
+The important point is that the $\ket{e_F}\leftrightarrow\ket{r'}$ couplings
+are part of the unperturbed $Q_4$ block and are not expanded in powers of
+their ratio to the bare $r$--$r'$ splitting.  Only the coupling $V_{\rm od}$
+between $P_3$ and $Q_4$ is treated perturbatively, then
+\begin{align}
+H_P:=PH_0P&=\sum_{a\in\mathcal A}E_a\ket a\bra a,
+\quad 
+E_0=-\varepsilon_0,
+E_1=0,
+E_r=-\Delta_{\rm add}(t).
+\label{eq:P3_bare_energies}
+\end{align}
+Set $H_Q:=QH_0Q$.  Following the sign convention in
+Eq.~\eqref{eq:7level_H0}, define
+$\mathbf v_a:=(g_{1a},g_{2a},g_{3a})^T,
+a\in\{0,1,r,r'\}$
+and introduce for $a\in\mathcal A$
+\begin{align}
+\Lambda_a
+&:=
+\operatorname{diag}\left(
+\frac{1}{\delta_1-E_a},
+\frac{1}{\delta_2-E_a},
+\frac{1}{\delta_3-E_a}
+\right),
+&
+\kappa_a
+&:=\delta_r-\Delta_{\rm add}(t)-E_a.
+\label{eq:dressed_resolvent_parameters}
+\end{align}
+In the ordered $Q_4$ basis
+$\{\ket{e_1},\ket{e_2},\ket{e_3},\ket{r'}\}$, the shifted $Q$-block is
+\begin{align}
+M_a
+:=H_Q-E_aQ =
+\begin{pmatrix}
+\Lambda_a^{-1}&\mathbf v_{r'}\\
+\mathbf v_{r'}^\dagger&\kappa_a
+\end{pmatrix}.
+\label{eq:dressed_Q_block}
+\end{align}
+Assuming the indicated inverses exist, its $e_F$-sector resolvent is
+\begin{align}
+G_a
+&:=\left[M_a^{-1}\right]_{ee}=
+\Lambda_a
++
+\Lambda_a\mathbf v_{r'}
+\frac{1}{
+\kappa_a-\mathbf v_{r'}^\dagger\Lambda_a\mathbf v_{r'}
+}
+\mathbf v_{r'}^\dagger\Lambda_a.
+\label{eq:dressed_ee_resolvent}
+\end{align}
+The second term in Eq.~\eqref{eq:dressed_ee_resolvent} resums all repeated
+paths through $\ket{r'}$ within $Q_4$.
+In particular, no expansion in
+$\|\mathbf v_{r'}\|/|\delta_r|$ is made.  The relevant Schur denominator is
+\begin{align}
+\zeta_a
+:=
+\kappa_a-\mathbf v_{r'}^\dagger\Lambda_a\mathbf v_{r'}.
+\label{eq:dressed_schur_denominator}
+\end{align}
+Thus a small bare $r$--$r'$ splitting is treated by the full resolvent rather
+than by a bare denominator expansion.  If $\zeta_a$ approaches zero and the
+associated dressed state has nonzero $e_F$ weight, however, the resolvent
+develops a pole and the $P_3$--$Q_4$ elimination fails.  The resonant dressed
+state must then be moved into the retained subspace.
+
+The relevant perturbative separation is the dressed block gap
+\begin{align}
+\Delta_{\rm dressed}(t)
+:=
+\operatorname{dist}\left(
+\operatorname{spec}H_P(t),
+\operatorname{spec}H_Q(t)
+\right).
+\label{eq:dressed_block_gap}
+\end{align}
+For uniform validity on a pulse interval $[0,T]$, we require
+\begin{align}
+\inf_{t\in[0,T]}\Delta_{\rm dressed}(t)&>0,&
+\sup_{t\in[0,T]}
+\frac{\|V_{\rm od}(t)\|}{\Delta_{\rm dressed}(t)}&\ll1.
+\label{eq:dressed_uniform_condition}
+\end{align}
+A useful state-resolved mixing diagnostic is
+\begin{align}
+\sup_{t\in[0,T]}\max_{a\in\mathcal A}
+\left\|(H_Q-E_aQ)^{-1}QV_{\rm od}\ket a\right\|\ll1.
+\end{align}
+
+\begin{theorem}[Direct effective 0-1-r Hamiltonian]
+\label{thm:stark-elimination}
+Within the instantaneous approximation, the effective Hamiltonian on $P_3$,
+to second order in the block-off-diagonal coupling $V_{\rm od}$ but to all
+orders in the internal $Q_4$ coupling $\mathbf v_{r'}$, is
+\begin{align}
+H_{\rm eff}^{(2)}
+&=
+\sum_{a,b\in\mathcal A}
+\left[
+E_a\delta_{ab}
+-\frac12\mathbf v_a^\dagger
+\left(G_a+G_b\right)
+\mathbf v_b
+\right]\ket a\bra b.
+\label{eq:dressed_second_order_Heff}
+\end{align}
+In this block-coupling expansion, with $H_Q$ held fixed, the next static
+correction is fourth order in $V_{\rm od}$.  Time-derivative corrections
+associated with the instantaneous approximation are not included in
+Eq.~\eqref{eq:dressed_second_order_Heff}.
+\end{theorem}
+
+\begin{proof}
+Fix $t$, introduce a bookkeeping factor $\varepsilon$ multiplying
+$V_{\rm od}$, and apply Proposition~\ref{prop:Feshbach_second_order} with
+$P=P_3$, $Q=Q_4$, $H_P=PH_0P$, and $H_Q=QH_0Q$.  In the notation of
+Eq.~\eqref{eq:general_Feshbach_resolvents},
+\begin{align}
+\ket{\nu_a}
+=QV_{\rm od}\ket a
+=\sum_{F=1}^3g_{Fa}\ket{e_F},
+\qquad
+R_a=(H_Q-E_aQ)^{-1}.
+\end{align}
+Because $\ket{\nu_a}$ has support only on the $e_F$ sector and
+$G_c=[(H_Q-E_cQ)^{-1}]_{ee}$ for $c\in\mathcal A$,
+\begin{align}
+\bra{\nu_a}R_c\ket{\nu_b}
+=\mathbf v_a^\dagger G_c\mathbf v_b.
+\end{align}
+Substitution into Eq.~\eqref{eq:general_Feshbach_second_order} gives
+Eq.~\eqref{eq:dressed_second_order_Heff} after setting $\varepsilon=1$.
+Since the complete
+$\ket{e_F}\leftrightarrow\ket{r'}$ coupling belongs to $H_Q$, it is retained
+to all orders in the resolvents $G_c$.  The dressed-gap and norm conditions
+stated above ensure the hypotheses of the proposition; the state-resolved
+quantity provides an additional mixing diagnostic.
+\end{proof}
+
+\begin{lemma}[Proportion of branch]
+    \label{lemma:proportion-of-Omega}
+   Define $\mathbf v_a=(g_{1a},g_{2a},g_{3a})^T, a\in\{0,1,r,r'\}$, then
+   \begin{align}
+\mathbf v_0
+&=\frac{\Omega_{420}e^{i\phi_{\mathrm{420}}}}{2}
+\left(\sqrt{\frac{3}{10}}+\sqrt{\frac{2}{15}},\,
+-\sqrt{\frac12},\,0\right)^T, \quad
+\mathbf v_1
+=\frac{\Omega_{420}e^{i\phi_{\mathrm{420}}}}{2}
+\left(\sqrt{\frac{3}{10}}-\sqrt{\frac{2}{15}},\,
+-\sqrt{\frac12},\,\sqrt{\frac45}\right)^T,\\
+\mathbf v_r
+&=\frac{\Omega_{1013}e^{i\phi_{\mathrm{1013}}}}{2}
+\left(\sqrt{\frac{3}{10}},\,-\sqrt{\frac12},\,\sqrt{\frac15}\right)^T, \quad
+\mathbf v_{r'}
+=\frac{\Omega_{1013}e^{i\phi_{\mathrm{1013}}}}{2}
+\left(-\sqrt{\frac{2}{15}},\,0,\,\sqrt{\frac15}\right)^T.
+\end{align}
+\end{lemma}
+\begin{proof}
+    The 420-nm coupling is evaluated in the uncoupled $\ket{m_J,m_I}$ basis, where the electric dipole operator preserves $m_I$ and changes $m_J$ by $q=-1$. With $I=3/2$ and CG phases,
+    \begin{align}
+    \ket1
+    &=\frac{
+    \ket{m_J=\tfrac12,m_I=-\tfrac12}
+    +\ket{m_J=-\tfrac12,m_I=\tfrac12}
+    }{\sqrt2}
+    ,\, \ket0
+    =\frac{-\ket{m_J=\tfrac12,m_I=-\tfrac12}
+    +\ket{m_J=-\tfrac12,m_I=\tfrac12}}{\sqrt2}.
+    \end{align}
+    Only two components of each $\ket{e_{F'}}=\ket{6P_{3/2},F',m_F=-1}$ are reached from $m_F=0$ by $\sigma_-$:
+    \begin{align}
+    \begin{array}{c|cc}
+    F'&
+    \ket{m_J=-\tfrac32,m_I=\tfrac12}&
+    \ket{m_J=-\tfrac12,m_I=-\tfrac12}\\
+    \hline
+    1&\sqrt{\frac{3}{10}}&-\sqrt{\frac{2}{5}}\\
+    2&-\sqrt{\frac{1}{2}}&0\\
+    3&\sqrt{\frac{1}{5}}&\sqrt{\frac{3}{5}}
+    \end{array}
+    \end{align}
+    The overall phase of each $\ket{e_{F'}}$ is conventional; the phase choice above matches the signs used for the effective Rabi sum.
+    Define
+    \begin{align}
+    \Omega_{420}(t)
+    &:=
+    \frac{
+    \langle 6P_{3/2},m_J=-\tfrac32,m_I=\tfrac12|
+    e\mathbf r\cdot\mathbf E^{(1)}_-(t)
+    |5S_{1/2},m_J=-\tfrac12,m_I=\tfrac12\rangle
+    }{\sqrt2\,\hbar},\\
+    \gamma\,\Omega_{420}(t)
+    &:=
+    \frac{
+    \langle 6P_{3/2},m_J=-\tfrac12,m_I=-\tfrac12|
+    e\mathbf r\cdot\mathbf E^{(1)}_-(t)
+    |5S_{1/2},m_J=\tfrac12,m_I=-\tfrac12\rangle
+    }{\sqrt2\,\hbar}.
+    \end{align}
+    With the same CG phase convention, the Wigner-Eckart theorem gives
+    \begin{align}
+    \gamma
+    =
+    \frac{
+    \langle 6P_{3/2},m_J'=-\tfrac12,m_I'=-\tfrac12|d_{-1}|5S_{1/2},m_J=\tfrac12,m_I=-\tfrac12\rangle
+    }{
+    \langle 6P_{3/2},m_J'=-\tfrac32,m_I'=\tfrac12|d_{-1}|5S_{1/2},m_J=-\tfrac12,m_I=\tfrac12\rangle
+    }
+    =\sqrt{{1}/{3}},
+    \end{align}
+    assuming ideal $\sigma_-$ polarization and no magnetic-field mixing.
+    The resulting 420-nm Rabi amplitudes are
+    \begin{align}
+        \left\{
+    \begin{aligned}
+    \Omega_{F=1,1}
+    &=\left(
+    \sqrt{\frac{3}{10}}
+    -\sqrt{\frac{2}{5}}\gamma\right)\Omega_{420}
+    =  \left(
+        \sqrt{\frac{3}{10}}
+        -\sqrt{\frac{2}{15}}
+        \right)\Omega_{420},\\
+    \Omega_{F=1,0}&=\left(
+    \sqrt{\frac{3}{10}}
+    +\sqrt{\frac{2}{5}}\gamma
+    \right)\Omega_{420}
+    = \left(
+        \sqrt{\frac{3}{10}}
+        +\sqrt{\frac{2}{15}}
+        \right)\Omega_{420},
+    \end{aligned}
+    \right.
+    \\
+    \left\{
+    \begin{aligned}
+    \Omega_{F=2,1}
+    &=
+    -\sqrt{\frac{1}{2}}\Omega_{420},\\
+    \Omega_{F=2,0}
+    &=
+    -\sqrt{\frac{1}{2}}\Omega_{420},
+    \end{aligned}
+    \right.
+    \qquad
+    \left\{
+    \begin{aligned}
+    \Omega_{F=3,1}&=
+    \left(
+    \sqrt{\frac{1}{5}}
+    +\sqrt{\frac{3}{5}}\gamma
+    \right)\Omega_{420} =
+        \sqrt{\frac{4}{5}}\Omega_{420},\\
+    \Omega_{F=3,0}
+    &=
+    \left(
+    \sqrt{\frac{1}{5}}
+    -\sqrt{\frac{3}{5}}\gamma
+    \right)\Omega_{420} =0,
+    \end{aligned}
+    \right.
+    \end{align}
+    
+    For the 1013-nm leg, define
+    \begin{align}
+    \Omega_{1013}(t)
+    &:=
+    \frac{
+    \langle 70S_{1/2},m_J=-\tfrac12,m_I=\tfrac12|
+    e\mathbf r\cdot\mathbf E^{(2)}_+(t)
+    |6P_{3/2},m_J=-\tfrac32,m_I=\tfrac12\rangle
+    }{\hbar},\\
+    \xi\,\Omega_{1013}(t)
+    &:=
+    \frac{
+    \langle 70S_{1/2},m_J=\tfrac12,m_I=-\tfrac12|
+    e\mathbf r\cdot\mathbf E^{(2)}_+(t)
+    |6P_{3/2},m_J=-\tfrac12,m_I=-\tfrac12\rangle
+    }{\hbar}.
+    \end{align}
+    By the Wigner-Eckart theorem,
+    \begin{align}
+    \xi
+    &=
+    \frac{
+    \langle 70S_{1/2},m_J=\tfrac12,m_I=-\tfrac12|d_{+1}|6P_{3/2},m_J=-\tfrac12,m_I=-\tfrac12\rangle
+    }{
+    \langle 70S_{1/2},m_J=-\tfrac12,m_I=\tfrac12|d_{+1}|6P_{3/2},m_J=-\tfrac32,m_I=\tfrac12\rangle
+    }
+    =\sqrt{{1}/{3}},
+    \end{align}
+    assuming ideal $\sigma_+$ polarization and no magnetic-field mixing.
+    Therefore, the target Rydberg state $\ket r=\ket{70S_{1/2},m_J=-1/2}$ is connected from the $\ket{m_J=-3/2,m_I=1/2}$ component of each $\ket{e_{F'}}$, while the off-resonant partner $\ket{r'}=\ket{70S_{1/2},m_J=1/2}$ is reached from the $\ket{m_J=-1/2,m_I=-1/2}$ component. The resulting 1013-nm Rabi amplitudes are
+    \begin{align}
+    &\Omega_{F = 1, r}=\sqrt{\frac{3}{10}}\Omega_{1013}, \quad
+    \Omega_{F = 2, r}=-\sqrt{\frac{1}{2}}\Omega_{1013}, \quad
+    \Omega_{F = 3, r}=\sqrt{\frac{1}{5}}\Omega_{1013},\\
+    &\Omega_{F = 1, r'}=-\sqrt{\frac{2}{5}}\xi\Omega_{1013}=-\sqrt{\frac{2}{15}}\Omega_{1013}, \quad
+    \Omega_{F = 2, r'}=0, \quad
+    \Omega_{F = 3, r'}=\sqrt{\frac{3}{5}}\xi\Omega_{1013}=\sqrt{\frac{1}{5}}\Omega_{1013}.
+    \end{align}
+\end{proof}
+
+\section{Pulse optimization}
+
+We focus on the Time-dependent Hamiltonian with the form $H(\mathbf{u})=H_0+\sum_\alpha u_{\alpha}(t)H_\alpha$,
+where $\mathbf{u}(t) := [u_{\alpha}(t)]_{\alpha \in \mathcal{A}}$ are different control channels.
+The continues time might be sampled on $N$ time
+intervals ${u}_{\alpha, k} := u_{\alpha}(t_k)$ for $k=0,\ldots,N-1$. 
+Given these $k$ intervals, the parameters $u_{\alpha,k}$ are optimized by the problem
+\begin{figure}[htbp!]
+    \centering
+    \includegraphics[width = 0.8\textwidth]{pic/GRAPE.png}
+\end{figure}
+\begin{align}
+    &\min_{\mathbf{u}_k, U_k}J(\mathbf{u}_k,U_k)=\Phi(U_{N}, U_{\mathrm{targ}}) \qquad \text{s.t.~}U_k=\exp\left(-iH(\mathbf u_k) \Delta t_k\right)U_{k - 1}, \quad U_0 = \mathbb{I}.
+\label{eq:grape_forward}
+\end{align}
+
+\subsection{GRAPE}
+The Gradient-ascent pulse engineering (GRAPE)  plugs the restrictions into the target loss function, make $J(\mathbf{u}_k)=\Phi(U_{N}, U_{\mathrm{targ}})$ as a function of pulse segments $\mathbf{u}_1,\cdots,\mathbf{u}_N$ only.
+Then applying the chain rule backward through this discretized evolution,
+it evaluates the complete gradient $\partial J/\partial u_{\alpha,k}$.
+Denoting $V_k := \exp\left(-iH(\mathbf u_k) \Delta t_k\right)$ and multiple input state $\ket{s}$ for $s\in\mathcal S$, we get 
+\begin{align}\label{eq:forward}
+    \ket{\psi_0^{(s)}}=\ket{s},\quad \ket{\psi_{k+1}^{(s)}}=V_k\ket{\psi_k^{(s)}}.
+\end{align}
+The loss function then can be first regarded as a real joint function $\Phi(\cdot)$ on properties of the final states and a restriction punishment on the control parameters $R(\cdot)$
+through $J=\Phi\!\left(\left\{\ket{\psi_N^{(s)}}\right\}_{s\in\mathcal S}\right) + R(\mathbf{u})$.
+A small change $u_{\alpha, k} \to u_{\alpha, k}+\delta u_{\alpha, k}$ gives the chains rule of $\psi_{k+1}^{(s)}$ through
+\begin{align}
+ \ket{\delta\psi_{k+1}^{(s)}}
+= \delta \left[V_k \ket{\psi_{k+1}^{(s)}}\right]
+= V_k\ket{\delta\psi_k^{(s)}}
++ \sum_\alpha \frac{\partial V_k}{\partial u_{\alpha,k}} \ket{\psi_k^{(s)}}\, \delta u_{\alpha k}.
+\end{align}
+We set up the dual state vector $\ket{\lambda_k^{(s)}}$ through the relation
+\begin{align}\label{eq:backward}
+    \ket{\lambda_N^{(s)}}=\partial \Phi /\partial \bra{\psi_N^{(s)}}, \quad 
+\ket{\lambda_k^{(s)}}=V_k^\dagger\ket{\lambda_{k+1}^{(s)}}.
+\end{align}
+Use the identity $\delta\Phi= 2\operatorname{Re} \sum_{s\in\mathcal S} \left\langle \lambda_N^{(s)} \middle|\delta\psi_N^{(s)}\right\rangle$ and conclude:
+\begin{align}
+    2\mathrm{Re}\left\langle\lambda_{k+1}^{(s)}\middle|\delta\psi_{k+1}^{(s)}\right\rangle
+&=2\mathrm{Re}\left\langle\lambda_{k+1}^{(s)}\middle|V_k\delta\psi_k^{(s)}\right\rangle+
+2\mathrm{Re}\sum_\alpha\left\langle\lambda_{k+1}^{(s)}\middle|\frac{\partial V_k}{\partial u_{\alpha,k}}\middle|\psi_k^{(s)}\right\rangle\delta u_{\alpha,k}\\
+&=2\mathrm{Re}\left\langle\lambda_{k}^{(s)}\middle|\delta\psi_k^{(s)}\right\rangle+
+2\mathrm{Re}\sum_\alpha\left\langle\lambda_{k+1}^{(s)}\middle|\frac{\partial V_k}{\partial u_{\alpha,k}}\middle|\psi_k^{(s)}\right\rangle\delta u_{\alpha,k},
+\end{align}
+This then gives the equation
+\begin{align}
+\delta\Phi&=
+    2\operatorname{Re}\sum_s\left\langle\lambda_0^{(s)}\middle|\delta\psi_0^{(s)}\right\rangle+\sum_{k,\alpha}2\operatorname{Re}\sum_s\left[\left\langle\lambda_{k+1}^{(s)}\middle|\frac{\partial V_k}{\partial u_{\alpha, k}}\middle|\psi_k^{(s)}\right\rangle\right]\delta u_{\alpha,k}.
+\end{align}
+Use the fact $\psi_0^{(s)}$ is fixed, we conclude the gradients as a vector inner products:
+\begin{align}\label{eq:fb_deri}
+    \frac{\partial \Phi}{\partial u_{\alpha,k}} = 2\operatorname{Re}\sum_s\left[\left\langle\lambda_{k+1}^{(s)}\middle|\frac{\partial V_k}{\partial u_{\alpha, k}}\middle|\psi_k^{(s)}\right\rangle\right].
+\end{align}
+Based on Eq.\eqref{eq:fb_deri}, the gradients now can be calculated through calculating the forwards and backwards propagation based on Eq.\eqref{eq:forward} and Eq.\eqref{eq:backward}, getting $\ket{\psi_k^{(s)}}$ and $\ket{\lambda_k^{(s)}}$, respectively. 
+The derivative of $V_k$ can be calculated through Lemma~\ref{lem:exp_deri} as
+\begin{align}
+\frac{\partial}{\partial u_{\alpha, k}}  e^{-i(H_0+\sum_\alpha u_{\alpha,k}H_\alpha) \Delta t_k}&= \int_{r = 0}^1 dr e^{(1-r)S} \dot{S} e^{rS},\quad S = (-i\Delta t_k) \cdot \left[H_0 + \sum_{\alpha} u_{\alpha,k} H_{\alpha}\right].
+\end{align}
