@@ -104,14 +104,8 @@ def runner_factory(monkeypatch):
         signal.signal(signal.SIGTERM, saved_term)
 
 
-# ── nested axes and canonical keys ───────────────────────────────────────────
-
-
-def test_axis_sizes_and_cumulative_totals():
-    for level, size in enumerate(mls.LEVEL_SIZES):
-        assert len(mls.axis_coords(level)) == size
-        assert len(mls.all_keys(level)) == 72 * size * size
-    assert [len(mls.all_keys(lv)) for lv in range(4)] == [1152, 3528, 12168, 45000]
+# ── nested axes and canonical keys (locked ode axis values; generic axis/key
+# machinery is covered in tests/test_sweeplib.py) ─────────────────────────────
 
 
 def test_axis_values_match_locked_specification():
@@ -124,32 +118,16 @@ def test_axis_values_match_locked_specification():
     assert dw1 == pytest.approx([2.0, 6.0, 10.0, 15.0, 20.0, 25.0, 30.0])
 
 
-def test_finer_levels_nest_and_20mhz_is_a_node_everywhere():
-    for level in range(3):
-        coarse = set(mls.axis_coords(level))
-        fine = set(mls.axis_coords(level + 1))
-        assert coarse < fine  # midpoint insertion reuses every previous exact node
+def test_20mhz_is_a_node_of_the_dsweep_axis_at_every_level():
     for level in range(4):
         values = [float(v) for v in mls.axis_values_mhz(mls.DSWEEP_ANCHORS_MHZ, level)]
         assert 20.0 in values
 
 
-def test_canonical_coordinates_reduce_to_identical_keys():
-    # level-1 coordinate k=2/den=2 is the level-0 node k=1/den=1
-    assert mls.canon_coord(2, 2) == (1, 1)
-    k_a = mls.make_key(0, 0, (2, 2), (4, 4))
-    k_b = mls.make_key(0, 0, (1, 1), (1, 1))
-    assert k_a == k_b and k_a.id() == k_b.id()
-    with pytest.raises(ValueError):
-        mls.canon_coord(9, 2)  # outside [0, 3]
-
-
-def test_point_key_values_and_level():
+def test_point_key_axis_values_are_locked_mhz():
     k = mls.make_key(3, 4, (3, 2), (3, 2))
     assert float(k.omega_mhz()) == 600.0
     assert float(k.dsweep_mhz()) == 15.0
-    assert k.level() == 1
-    assert mls.make_key(0, 0, (1, 1), (0, 1)).level() == 0
 
 
 def test_pilot_keys_dedup_and_reusability():
@@ -161,30 +139,8 @@ def test_pilot_keys_dedup_and_reusability():
     assert all(k in level0 for k in pkeys[72:])       # extremes are 4x4 nodes
 
 
-# ── analytic pulse ───────────────────────────────────────────────────────────
-
-
-def test_envelope_shape_integral_and_continuity():
-    r = 0.15
-    # shape + symmetry
-    assert mls.envelope(0.0, r) == 0.0
-    assert mls.envelope(0.075, r) == pytest.approx(0.5)   # q(1/2) = 0.5
-    assert mls.envelope(0.5, r) == 1.0
-    s = np.linspace(0, 1, 101)
-    assert np.allclose(mls.envelope(s, r), mls.envelope(1.0 - s, r))
-    # integral endpoints + branch-seam continuity
-    assert mls.envelope_integral(0.0, r) == 0.0
-    assert float(mls.envelope_integral(1.0, r)) == pytest.approx(1.0 - r)
-    for s0 in (r, 1.0 - r):  # branch seams
-        eps = 1e-9
-        lo = float(mls.envelope_integral(s0 - eps, r))
-        hi = float(mls.envelope_integral(s0 + eps, r))
-        assert abs(hi - lo) < 1e-8
-    # J' == E by quadrature on a coarse grid
-    s = np.linspace(0.0, 1.0, 20001)
-    j_num = np.concatenate([[0.0], np.cumsum(
-        0.5 * (mls.envelope(s[1:], r) + mls.envelope(s[:-1], r)) * np.diff(s))])
-    assert np.max(np.abs(j_num - mls.envelope_integral(s, r))) < 1e-8
+# ── analytic pulse (script-specific chirp/phase/Stark; the shared quintic
+# envelope is covered in tests/test_sweeplib.py) ──────────────────────────────
 
 
 def test_phase_is_exact_integral_of_chirp():
@@ -221,45 +177,8 @@ def test_phase_is_exact_integral_of_chirp():
     assert d1s < 0 and drs < 0
 
 
-# ── block-max DOP853 error norm ──────────────────────────────────────────────
-
-
-def test_error_norm_matches_installed_scipy():
-    assert mls.verify_scipy_error_norm() < mls.ERR_NORM_REL_TOL
-
-
-def test_block_solver_matches_stock_dop853_per_block():
-    """Two decoupled oscillator blocks integrated together under the block-max
-    norm agree with each block integrated alone by stock scipy DOP853."""
-    import scipy.integrate
-
-    w = [3.0, 41.0]
-
-    def rhs_block(wi):
-        return lambda t, y: -1j * wi * y
-
-    def rhs_joint(t, y):
-        out = np.empty_like(y)
-        out[:4] = -1j * w[0] * y[:4]
-        out[4:] = -1j * w[1] * y[4:]
-        return out
-
-    y0 = (np.arange(1, 9) + 1j) / 10.0
-    cls = mls.make_block_solver_class(4)
-    solver = cls(rhs_joint, 0.0, y0.astype(complex), 2.0, rtol=1e-10, atol=1e-12)
-    while solver.status == "running":
-        solver.step()
-    assert solver.status == "finished"
-    for b in range(2):
-        ref = scipy.integrate.solve_ivp(
-            rhs_block(w[b]), (0.0, 2.0), y0[4 * b:4 * b + 4].astype(complex),
-            method="DOP853", rtol=1e-10, atol=1e-12)
-        exact = y0[4 * b:4 * b + 4] * np.exp(-1j * w[b] * 2.0)
-        assert np.max(np.abs(solver.y[4 * b:4 * b + 4] - exact)) < 1e-8
-        assert np.max(np.abs(ref.y[:, -1] - exact)) < 1e-8
-
-
-# ── kernel invariants on a synthetic swap-symmetric model (no ARC) ───────────
+# ── toy swap-symmetric model shared by the scattering tests below (the block-max
+# DOP853 norm and the kernel invariants are covered in tests/test_sweeplib.py) ─
 
 
 def _toy_ops(v_pair=2 * np.pi * 5e6, w_hf=2 * np.pi * 40e6, w_e=2 * np.pi * 300e6):
@@ -306,65 +225,6 @@ def _toy_solve(**kw):
     return mls.integrate_batch(
         _toy_ops(), _TOY_T, kw.pop("om", _TOY_OM), kw.pop("dw", _TOY_DW),
         _TOY_OM1013, **kw)
-
-
-def test_kernel_norms_and_direct_leakage():
-    res = _toy_solve()
-    assert res.norm_err.max() < 1e-10
-    # direct Q population equals 1 - P population to machine accuracy here
-    pops = np.abs(res.psi_final) ** 2
-    p_log = pops[:, :, [0, 1, 3, 4]].sum(axis=2)
-    assert np.allclose(res.leakage, 1.0 - p_log, atol=1e-12)
-    assert res.max_leakage[0] == res.leakage[0].max()
-    assert res.worst_input[0] == mls.LOGICAL_INPUTS[int(np.argmax(res.leakage[0]))]
-    assert 0 < res.max_leakage[0] < 1
-
-
-def test_swap_reconstruction_matches_direct_propagation():
-    res_swap = _toy_solve(use_swap=True)
-    res_all4 = _toy_solve(use_swap=False)
-    assert res_swap.used_swap and not res_all4.used_swap
-    assert np.max(np.abs(res_swap.psi_final - res_all4.psi_final)) < 1e-9
-    # 01 and 10 must not be identical states (the permutation matters)
-    assert np.max(np.abs(res_swap.psi_final[0, 1] - res_swap.psi_final[0, 2])) > 1e-3
-
-
-def test_scalar_shift_is_exact_global_phase():
-    res_on = _toy_solve(use_shifts=True)
-    res_off = _toy_solve(use_shifts=False)
-    assert np.max(np.abs(res_on.psi_final - res_off.psi_final)) < 1e-8
-    assert np.max(np.abs(res_on.leakage - res_off.leakage)) < 1e-11
-
-
-def test_segmented_equals_unsegmented():
-    res_seg = _toy_solve(segmented=True)
-    res_one = _toy_solve(segmented=False)
-    assert np.max(np.abs(res_seg.psi_final - res_one.psi_final)) < 1e-8
-
-
-def test_batched_points_match_isolated_points():
-    om = 2 * np.pi * np.array([20e6, 30e6, 45e6])
-    dw = 2 * np.pi * np.array([8e6, 10e6, 14e6])
-    batched = _toy_solve(om=om, dw=dw)
-    for i in range(3):
-        alone = _toy_solve(om=om[i:i + 1], dw=dw[i:i + 1])
-        assert np.max(np.abs(batched.psi_final[i] - alone.psi_final[0])) < 1e-8
-        assert abs(batched.max_leakage[i] - alone.max_leakage[0]) < 1e-10
-
-
-def test_trajectory_sampling_and_time_dependent_restore():
-    t_eval = np.linspace(0.0, _TOY_T, 41)
-    res = _toy_solve(t_eval=t_eval)
-    assert res.states is not None
-    assert res.states.shape == (41, 1, 4, 9)
-    np.testing.assert_allclose(res.times, t_eval, rtol=0, atol=1e-18)
-    assert np.max(np.abs(res.states[-1] - res.psi_final)) < 1e-8
-    # t = 0 sample must be the unrotated initial basis states
-    for j, idx in enumerate([0, 1, 3, 4]):
-        expect = np.zeros(9)
-        expect[idx] = 1.0
-        np.testing.assert_allclose(np.abs(res.states[0, 0, j]), expect, atol=1e-12)
-        assert res.states[0, 0, j][idx] == pytest.approx(1.0)  # phase too
 
 
 # ── persistence: manifest, chunks, resume, exports ───────────────────────────

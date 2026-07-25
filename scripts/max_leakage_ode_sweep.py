@@ -72,11 +72,22 @@ import uuid
 from collections import deque
 from dataclasses import asdict, dataclass
 from fractions import Fraction
-from typing import Callable, Iterable, Sequence
+from typing import Iterable, Sequence
 
 import numpy as np
-import scipy.integrate
-from scipy.integrate._ivp.rk import DOP853 as _ScipyDOP853
+
+# The shared sweep machinery lives beside this script in scripts/sweeplib/; make it
+# importable whether the script is run as ``python scripts/max_leakage_ode_sweep.py``
+# (scripts/ on sys.path[0]) or loaded by tests via spec_from_file_location.
+_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+import sweeplib
+from sweeplib import (
+    LEVEL_DENS, LEVEL_SIZES, LEVEL_FROM_SIZE,
+    canon_coord, axis_coords, axis_values_mhz, make_pointkey_type,
+    envelope, envelope_integral, verify_scipy_error_norm, BatchResult,
+)
 
 TAU = 2.0 * math.pi
 SCHEMA_VERSION = 1
@@ -91,9 +102,7 @@ T_GATE_US = (1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5)          # panel colum
 OMEGA_ANCHORS_MHZ = (Fraction(200), Fraction(1400, 3), Fraction(2200, 3), Fraction(1000))
 DSWEEP_ANCHORS_MHZ = (Fraction(2), Fraction(10), Fraction(20), Fraction(30))
 
-LEVEL_DENS = (1, 2, 4, 8)          # nesting level 0..3 -> axis of 3*den+1 nodes
-LEVEL_SIZES = (4, 7, 13, 25)       # nodes per axis at each level
-LEVEL_FROM_SIZE = {4: 0, 7: 1, 13: 2, 25: 3}
+# LEVEL_DENS/LEVEL_SIZES/LEVEL_FROM_SIZE are imported from sweeplib.axes.
 
 DSWEEP_HW_LIMIT_MHZ = 20.0         # horizontal reference line in every panel
 
@@ -155,84 +164,15 @@ class ScanConfig:
 # in lowest terms and den a power of two (<= 8 through level 3).  Reduced (num, den)
 # pairs are the canonical resume keys: they never depend on string-rounded floats,
 # and a node inserted at level L+1 that coincides with a level-L node reduces to the
-# identical pair.
+# identical pair.  The nested-grid math (canon_coord/coord_value_mhz/axis_coords)
+# lives in sweeplib.axes; the PointKey type keeps its serialized ``delta_idx`` field
+# and ``d`` id prefix via the factory below.
 
-
-def canon_coord(num: int, den: int) -> tuple[int, int]:
-    """Reduce a fractional axis coordinate ``num/den`` to lowest terms."""
-    if den <= 0 or num < 0 or num > 3 * den:
-        raise ValueError(f"coordinate {num}/{den} outside the axis range [0, 3]")
-    g = math.gcd(num, den)
-    return num // g, den // g
-
-
-def coord_value_mhz(anchors: Sequence[Fraction], num: int, den: int) -> Fraction:
-    """Exact axis value (MHz) of the reduced coordinate ``num/den``."""
-    seg, rem = divmod(num, den)
-    if rem == 0:
-        return anchors[seg]
-    return anchors[seg] + (anchors[seg + 1] - anchors[seg]) * Fraction(rem, den)
-
-
-def axis_coords(level: int) -> list[tuple[int, int]]:
-    """Canonical coordinates of every axis node at nesting ``level`` (0..3)."""
-    den = LEVEL_DENS[level]
-    return [canon_coord(k, den) for k in range(3 * den + 1)]
-
-
-def axis_values_mhz(anchors: Sequence[Fraction], level: int) -> list[Fraction]:
-    return [coord_value_mhz(anchors, n, d) for n, d in axis_coords(level)]
-
-
-@dataclass(frozen=True, order=True)
-class PointKey:
-    """Canonical identity of one scan node: panel indices + reduced axis coords."""
-
-    delta_idx: int
-    t_idx: int
-    om_num: int
-    om_den: int
-    dw_num: int
-    dw_den: int
-
-    def id(self) -> str:
-        return (f"d{self.delta_idx}_t{self.t_idx}"
-                f"_om{self.om_num}-{self.om_den}_dw{self.dw_num}-{self.dw_den}")
-
-    @property
-    def panel(self) -> tuple[int, int]:
-        return (self.delta_idx, self.t_idx)
-
-    def omega_mhz(self) -> Fraction:
-        return coord_value_mhz(OMEGA_ANCHORS_MHZ, self.om_num, self.om_den)
-
-    def dsweep_mhz(self) -> Fraction:
-        return coord_value_mhz(DSWEEP_ANCHORS_MHZ, self.dw_num, self.dw_den)
-
-    def level(self) -> int:
-        """Finest nesting level this node first appears at."""
-        den = max(self.om_den, self.dw_den)
-        return LEVEL_DENS.index(den)
-
-
-def make_key(delta_idx: int, t_idx: int, om: tuple[int, int], dw: tuple[int, int]) -> PointKey:
-    om = canon_coord(*om)
-    dw = canon_coord(*dw)
-    return PointKey(delta_idx, t_idx, om[0], om[1], dw[0], dw[1])
-
-
-def panel_keys(delta_idx: int, t_idx: int, level: int) -> list[PointKey]:
-    """All nodes of one panel at nesting ``level`` (row-major: omega outer, dw inner)."""
-    coords = axis_coords(level)
-    return [make_key(delta_idx, t_idx, om, dw) for om in coords for dw in coords]
-
-
-def all_panels() -> list[tuple[int, int]]:
-    return [(di, ti) for di in range(len(DELTA_E_GHZ)) for ti in range(len(T_GATE_US))]
-
-
-def all_keys(level: int) -> list[PointKey]:
-    return [k for di, ti in all_panels() for k in panel_keys(di, ti, level)]
+PointKey, make_key, panel_keys, all_panels, all_keys = make_pointkey_type(
+    panel_field="delta_idx", id_prefix="d",
+    omega_anchors=OMEGA_ANCHORS_MHZ, dsweep_anchors=DSWEEP_ANCHORS_MHZ,
+    panel_len=len(DELTA_E_GHZ), n_t=len(T_GATE_US),
+)
 
 
 def pilot_keys() -> list[PointKey]:
@@ -264,37 +204,7 @@ def pilot_keys() -> list[PointKey]:
 # and its exact unwrapped integral is
 #     phi(t) = -(D T / 2 pi) sin(2 pi s) + (Dr - D1) T J(s),
 # with J(s) the closed-form integral of E below.  phi is *not* wrapped mod 2 pi.
-
-
-def quintic(u):
-    """Quintic smoothstep q(u) = 10 u^3 - 15 u^4 + 6 u^5 on [0, 1] (clipped)."""
-    u = np.clip(u, 0.0, 1.0)
-    return u * u * u * (10.0 + u * (-15.0 + 6.0 * u))
-
-
-def quintic_antideriv(u):
-    """Q(u) = integral_0^u q(v) dv = 2.5 u^4 - 3 u^5 + u^6 on [0, 1] (clipped)."""
-    u = np.clip(u, 0.0, 1.0)
-    return u ** 4 * (2.5 + u * (-3.0 + u))
-
-
-def envelope(s, ramp: float = 0.15):
-    """Power envelope E(s) on s in [0, 1]; scalar or ndarray."""
-    s = np.clip(s, 0.0, 1.0)
-    return np.where(
-        s < ramp,
-        quintic(s / ramp),
-        np.where(s > 1.0 - ramp, quintic((1.0 - s) / ramp), 1.0),
-    )
-
-
-def envelope_integral(s, ramp: float = 0.15):
-    """J(s) = integral_0^s E(v) dv, closed form; scalar or ndarray."""
-    s = np.clip(s, 0.0, 1.0)
-    rise = ramp * quintic_antideriv(s / ramp)
-    mid = s - 0.5 * ramp
-    fall = 1.0 - ramp - ramp * quintic_antideriv((1.0 - s) / ramp)
-    return np.where(s < ramp, rise, np.where(s > 1.0 - ramp, fall, mid))
+# quintic/quintic_antideriv/envelope/envelope_integral are imported from sweeplib.solver.
 
 
 def stark_coefficients(omega_420: float, omega_1013: float, delta: float) -> tuple[float, float]:
@@ -562,151 +472,49 @@ def hamiltonian_equivalence_error(
     return worst
 
 
-# ── Block-max DOP853 solver ──────────────────────────────────────────────────
-#
-# scipy's DOP853 controls a single RMS error norm over the whole flattened vector,
-# which would let one inaccurate point/state hide inside a large batch.  The
-# subclass below reproduces the installed SciPy estimate *independently* for every
-# 49-component (point, logical input) block and returns the maximum, so tolerance
-# is enforced per block.  The private seam (E3/E5 + _estimate_error_norm) is pinned
-# by ``verify_scipy_error_norm`` at startup and by unit tests.
-
-
-class BlockMaxDOP853(_ScipyDOP853):
-    """DOP853 whose error norm is the max of per-block SciPy DOP853 norms."""
-
-    block_size: int = 49  # overridden per solve via a dynamic subclass
-
-    def _estimate_error_norm(self, K, h, scale):
-        err5 = np.dot(K.T, self.E5) / scale
-        err3 = np.dot(K.T, self.E3) / scale
-        e5 = err5.reshape(-1, self.block_size)
-        e3 = err3.reshape(-1, self.block_size)
-        n5 = np.einsum("ij,ij->i", e5.real, e5.real) + np.einsum("ij,ij->i", e5.imag, e5.imag)
-        n3 = np.einsum("ij,ij->i", e3.real, e3.real) + np.einsum("ij,ij->i", e3.imag, e3.imag)
-        denom = n5 + 0.01 * n3
-        out = np.zeros_like(n5)
-        mask = denom > 0.0
-        out[mask] = np.abs(h) * n5[mask] / np.sqrt(denom[mask] * self.block_size)
-        return float(out.max())
-
-
-def make_block_solver_class(block_size: int) -> type:
-    """A BlockMaxDOP853 subclass bound to ``block_size`` (usable with solve_ivp)."""
-    return type(f"BlockMaxDOP853_{block_size}", (BlockMaxDOP853,), {"block_size": block_size})
-
-
-def verify_scipy_error_norm(n_blocks: int = 3, block: int = 49, seed: int = 12345) -> float:
-    """Worst *relative* deviation of the custom norm from installed SciPy, random inputs.
-
-    Verifies (1) the single-block custom norm reproduces the installed SciPy DOP853
-    ``_estimate_error_norm`` and (2) the multi-block norm equals the max of the
-    per-block SciPy norms.  Pins the private E3/E5/_estimate_error_norm seam.
-    """
-    rng = np.random.default_rng(seed)
-    n_stages = _ScipyDOP853.n_stages
-
-    class _Probe:
-        E3 = _ScipyDOP853.E3
-        E5 = _ScipyDOP853.E5
-
-    def _custom(n: int, K, h, scale) -> float:
-        solver = make_block_solver_class(block)(
-            lambda t, y: 0 * y, 0.0, np.zeros(n, complex), 1.0)
-        return BlockMaxDOP853._estimate_error_norm(solver, K, h, scale)
-
-    def _rel(a: float, b: float) -> float:
-        return abs(a - b) / max(abs(a), abs(b), 1e-300)
-
-    worst = 0.0
-    for _ in range(20):
-        h = float(rng.uniform(1e-12, 1e-6))
-        k1 = (rng.standard_normal((n_stages + 1, block))
-              + 1j * rng.standard_normal((n_stages + 1, block)))
-        scale1 = rng.uniform(1e-12, 1e-6, size=block)
-        ref = _ScipyDOP853._estimate_error_norm(_Probe(), k1, h, scale1)
-        worst = max(worst, _rel(ref, _custom(block, k1, h, scale1)))
-
-        km = (rng.standard_normal((n_stages + 1, n_blocks * block))
-              + 1j * rng.standard_normal((n_stages + 1, n_blocks * block)))
-        scalem = rng.uniform(1e-12, 1e-6, size=n_blocks * block)
-        per_block = max(
-            _ScipyDOP853._estimate_error_norm(
-                _Probe(), km[:, b * block:(b + 1) * block], h,
-                scalem[b * block:(b + 1) * block])
-            for b in range(n_blocks)
-        )
-        worst = max(worst, _rel(per_block, _custom(n_blocks * block, km, h, scalem)))
-    return worst
-
-
 # ── Batched original-frame integration kernel ────────────────────────────────
+#
+# The generic block-max DOP853 kernel (segmented restarts, per-column global-phase
+# shifts, atom-swap reconstruction, t_eval trajectory sampling) and BatchResult live
+# in sweeplib.solver; this script injects the two-drive (420/1013) + Stark-chirp RHS
+# for the rb87_7_mp model.  Each column is solved with its bare logical diagonal
+# energy subtracted (via cols["shift"]); sweeplib restores the exact global phase.
 
 
-@dataclass
-class BatchResult:
-    """Terminal states and diagnostics for one integrated batch."""
+def _ode_rhs_factory(omega_1013: float):
+    """Build the two-drive + Stark-chirp RHS factory consumed by sweeplib.integrate_batch."""
 
-    psi_final: np.ndarray        # (n_points, 4, dim) complex128, original frame
-    leakage: np.ndarray          # (n_points, 4) direct nonlogical population
-    max_leakage: np.ndarray      # (n_points,)
-    worst_input: list[str]       # per point, the argmax logical input
-    return_prob: np.ndarray      # (n_points, 4) |<s|psi_s>|^2
-    norm_err: np.ndarray         # (n_points, 4) | ||psi||^2 - 1 |
-    nfev: int
-    used_swap: bool
-    times: np.ndarray | None = None      # trajectory sample times (if requested)
-    states: np.ndarray | None = None     # (n_times, n_points, 4, dim) (if requested)
+    def rhs_factory(ops, cols, t_gate, ramp):
+        om_cols = cols["omega_420"]
+        dsw_cols = cols["d_sweep"]
+        d1, dr = stark_coefficients(om_cols, omega_1013, ops.delta_rad_s)
+        drmd1_cols = dr - d1
+        diag_row = ops.h_static_diag[None, :] - cols["shift"][:, None]   # (n_cols, dim) real
+        x420_t = np.ascontiguousarray(ops.x420.T)
+        y420_t = np.ascontiguousarray(ops.y420.T)
+        x1013_t = np.ascontiguousarray(ops.x1013.T)
+        ascale = ops.amplitude_scale
+        sin_coef = -t_gate / TAU
+        n_cols, dim = diag_row.shape
 
+        def rhs(t, y):
+            s = t / t_gate
+            env = envelope(s, ramp)
+            amp = math.sqrt(float(env))
+            phi = (sin_coef * math.sin(TAU * s)) * dsw_cols \
+                + (t_gate * float(envelope_integral(s, ramp))) * drmd1_cols
+            c420 = (ascale * amp) * om_cols * np.exp(-1j * phi)
+            g1013 = ascale * omega_1013 * amp
+            ym = y.reshape(n_cols, dim)
+            out = diag_row * ym
+            out += c420.real[:, None] * (ym @ x420_t)
+            out += c420.imag[:, None] * (ym @ y420_t)
+            out += g1013 * (ym @ x1013_t)
+            return (-1j * out).ravel()
 
-def _integrate_segments(
-    rhs: Callable,
-    y0: np.ndarray,
-    t_gate: float,
-    ramp: float,
-    rtol: float,
-    atol: float,
-    block_size: int,
-    t_eval: np.ndarray | None,
-):
-    """Adaptive DOP853 over [0, rT], [rT, (1-r)T], [(1-r)T, T] with state carry-over.
+        return rhs
 
-    Returns ``(y_final, nfev, times, states)``; trajectory arrays are None unless
-    ``t_eval`` is given (then states has shape (n_times, len(y0))).
-    """
-    cls = make_block_solver_class(block_size)
-    breakpoints = [0.0, ramp * t_gate, (1.0 - ramp) * t_gate, t_gate]
-    y = y0
-    nfev = 0
-    times_out: list[np.ndarray] = []
-    states_out: list[np.ndarray] = []
-    for t0, t1 in zip(breakpoints[:-1], breakpoints[1:]):
-        if t_eval is None:
-            solver = cls(rhs, t0, y, t1, rtol=rtol, atol=atol)
-            while solver.status == "running":
-                solver.step()
-            if solver.status != "finished":
-                raise RuntimeError(f"DOP853 failed on segment [{t0:g}, {t1:g}]")
-            y = solver.y
-            nfev += solver.nfev
-        else:
-            mask = (t_eval >= t0) & (t_eval < t1) if t1 < t_gate else \
-                   (t_eval >= t0) & (t_eval <= t1)
-            seg_eval = np.unique(np.concatenate([t_eval[mask], [t1]]))
-            sol = scipy.integrate.solve_ivp(
-                rhs, (t0, t1), y, method=cls, rtol=rtol, atol=atol, t_eval=seg_eval)
-            if not sol.success:
-                raise RuntimeError(f"DOP853 failed on segment [{t0:g}, {t1:g}]: {sol.message}")
-            keep = np.isin(sol.t, t_eval[mask])
-            times_out.append(sol.t[keep])
-            states_out.append(sol.y.T[keep])
-            y = sol.y[:, -1]
-            nfev += sol.nfev
-    if t_eval is None:
-        return y, nfev, None, None
-    times = np.concatenate(times_out) if times_out else np.empty(0)
-    states = np.concatenate(states_out, axis=0) if states_out else None
-    return y, nfev, times, states
+    return rhs_factory
 
 
 def integrate_batch(
@@ -727,106 +535,24 @@ def integrate_batch(
 
     Columns are (point-major) the logical inputs 00/01/11 — 10 is reconstructed by
     the atom-swap permutation when the verified symmetry holds, else all four are
-    propagated.  Each column is solved with its bare logical diagonal energy
-    subtracted (H - c_s I) and the exact global phase exp(-i c_s T) restored.
+    propagated.  Thin wrapper that supplies the two-drive+Stark RHS to the shared
+    sweeplib kernel.
     """
     omega_420 = np.asarray(omega_420, dtype=float)
     d_sweep = np.asarray(d_sweep, dtype=float)
     if omega_420.shape != d_sweep.shape or omega_420.ndim != 1:
         raise ValueError("omega_420 and d_sweep must be equal-length 1-D arrays")
-    n_points = omega_420.size
-    dim = ops.h_static_diag.size
-
     if use_swap is None:
         use_swap = ops.swap_symmetric
     state_labels = ("00", "01", "11") if use_swap else LOGICAL_INPUTS
-    state_cols = {s: i for i, s in enumerate(state_labels)}
-    n_states = len(state_labels)
-    n_cols = n_points * n_states
-
-    d1, dr = stark_coefficients(omega_420, omega_1013, ops.delta_rad_s)
-    drmd1 = dr - d1                                      # (n_points,)
-    col_of_point = np.repeat(np.arange(n_points), n_states)
-    om_cols = omega_420[col_of_point]
-    dsw_cols = d_sweep[col_of_point]
-    drmd1_cols = drmd1[col_of_point]
-
-    logical_of_state = {s: ops.logical_indices[LOGICAL_INPUTS.index(s)] for s in state_labels}
-    col_logical_idx = np.asarray([logical_of_state[s] for s in state_labels] * n_points)
-    shifts = ops.h_static_diag[col_logical_idx] if use_shifts else np.zeros(n_cols)
-
-    diag_row = ops.h_static_diag[None, :] - shifts[:, None]   # (n_cols, dim) real
-    x420_t = np.ascontiguousarray(ops.x420.T)
-    y420_t = np.ascontiguousarray(ops.y420.T)
-    x1013_t = np.ascontiguousarray(ops.x1013.T)
-    ascale = ops.amplitude_scale
-    sin_coef = -t_gate / TAU
-
-    def rhs(t, y):
-        s = t / t_gate
-        env = envelope(s, ramp)
-        amp = math.sqrt(float(env))
-        phi = (sin_coef * math.sin(TAU * s)) * dsw_cols \
-            + (t_gate * float(envelope_integral(s, ramp))) * drmd1_cols
-        c420 = (ascale * amp) * om_cols * np.exp(-1j * phi)
-        g1013 = ascale * omega_1013 * amp
-        ym = y.reshape(n_cols, dim)
-        out = diag_row * ym
-        out += c420.real[:, None] * (ym @ x420_t)
-        out += c420.imag[:, None] * (ym @ y420_t)
-        out += g1013 * (ym @ x1013_t)
-        return (-1j * out).ravel()
-
-    y0 = np.zeros((n_cols, dim), dtype=np.complex128)
-    for p in range(n_points):
-        for j, s in enumerate(state_labels):
-            y0[p * n_states + j, logical_of_state[s]] = 1.0
-
-    if segmented:
-        y_fin, nfev, times, traj = _integrate_segments(
-            rhs, y0.ravel(), t_gate, ramp, rtol, atol, dim, t_eval)
-    else:
-        cls = make_block_solver_class(dim)
-        solver = cls(rhs, 0.0, y0.ravel(), t_gate, rtol=rtol, atol=atol)
-        while solver.status == "running":
-            solver.step()
-        if solver.status != "finished":
-            raise RuntimeError("DOP853 failed (unsegmented)")
-        y_fin, nfev, times, traj = solver.y, solver.nfev, None, None
-
-    def assemble(y_flat: np.ndarray, t_at: float) -> np.ndarray:
-        """(n_cols*dim,) chi at time ``t_at`` -> (n_points, 4, dim) restored psi."""
-        chi = y_flat.reshape(n_cols, dim) * np.exp(-1j * shifts * t_at)[:, None]
-        psi = np.empty((n_points, 4, dim), dtype=np.complex128)
-        for p in range(n_points):
-            for j, s in enumerate(LOGICAL_INPUTS):
-                if s in state_cols:
-                    psi[p, j] = chi[p * n_states + state_cols[s]]
-                else:  # s == "10", reconstructed from 01 by the atom swap
-                    psi[p, j] = chi[p * n_states + state_cols["01"]][ops.swap_perm]
-        return psi
-
-    psi_final = assemble(y_fin, t_gate)
-
-    nonlogical = np.setdiff1d(np.arange(dim), ops.logical_indices)
-    pops = np.abs(psi_final) ** 2
-    leakage = pops[:, :, nonlogical].sum(axis=2)
-    max_leakage = leakage.max(axis=1)
-    worst_input = [LOGICAL_INPUTS[int(np.argmax(leakage[p]))] for p in range(n_points)]
-    return_prob = np.stack(
-        [pops[:, j, ops.logical_indices[j]] for j in range(4)], axis=1)
-    norm_err = np.abs(pops.sum(axis=2) - 1.0)
-
-    states = None
-    if traj is not None:
-        states = np.stack(
-            [assemble(traj[i], float(times[i])) for i in range(traj.shape[0])], axis=0)
-
-    return BatchResult(
-        psi_final=psi_final, leakage=leakage, max_leakage=max_leakage,
-        worst_input=worst_input, return_prob=return_prob, norm_err=norm_err,
-        nfev=int(nfev), used_swap=bool(use_swap),
-        times=times, states=states,
+    return sweeplib.integrate_batch(
+        ops, t_gate,
+        {"omega_420": omega_420, "d_sweep": d_sweep},
+        state_labels,
+        rhs_factory=_ode_rhs_factory(omega_1013),
+        dim=ops.h_static_diag.size,
+        rtol=rtol, atol=atol, ramp=ramp,
+        use_shifts=use_shifts, segmented=segmented, t_eval=t_eval,
     )
 
 
