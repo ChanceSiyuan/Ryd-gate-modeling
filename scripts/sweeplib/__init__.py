@@ -4,9 +4,13 @@
 point-key factory; ``solver`` holds the quintic envelope, the block-max DOP853
 error norm, and the injected-RHS batched integration kernel; ``store`` holds the
 append-only chunk/scatter store + provenance gates; ``runner`` holds the fork-pool
-worker entry, cost model and budget runner.
+worker entry, cost model and budget runner; ``plotting`` holds the log-linear
+interpolation, LOO veil, credibility floor and 8x9 grid renderer; ``cli`` holds
+the shared parser scaffold and derived-output resolution.
 """
 from __future__ import annotations
+
+from . import cli, plotting
 
 from .axes import (
     LEVEL_DENS,
@@ -50,6 +54,21 @@ from .runner import (
     _worker_run_batch,
     _worker_process_init,
 )
+from .plotting import (
+    PlotSpec,
+    credibility_floor,
+    holdout_residuals,
+    plot_metric_values,
+    render_panel_grid,
+    PLOT_LOO_MASK_DEX,
+    PLOT_RASTER_N,
+)
+from .cli import (
+    add_common_args,
+    default_output,
+    int_or_auto,
+    resolve_output,
+)
 
 __all__ = [
     "LEVEL_DENS",
@@ -82,4 +101,17 @@ __all__ = [
     "Runner",
     "group_batches",
     "set_worker_context",
+    "cli",
+    "plotting",
+    "PlotSpec",
+    "credibility_floor",
+    "holdout_residuals",
+    "plot_metric_values",
+    "render_panel_grid",
+    "PLOT_LOO_MASK_DEX",
+    "PLOT_RASTER_N",
+    "add_common_args",
+    "default_output",
+    "int_or_auto",
+    "resolve_output",
 ]

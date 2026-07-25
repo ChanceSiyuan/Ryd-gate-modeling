@@ -86,6 +86,7 @@ from sweeplib import (
     envelope, envelope_integral, verify_scipy_error_norm, BatchResult,
     ProvenanceColumns, PointRecord, best_records, completed_keys,
     audit_pairs, Runner, CostModel, Batch, group_batches, set_worker_context,
+    cli, PlotSpec, render_panel_grid, credibility_floor as _credibility_floor,
 )
 from sweeplib.store import _atomic_savez, _NO_STATES
 from sweeplib.runner import _worker_run_batch
@@ -1029,23 +1030,9 @@ def stage_pilot(runner: Runner, panels: set[tuple[int, int]] | None = None) -> d
 
 
 # ── Stage orchestration and CLI commands ─────────────────────────────────────
-
-
-def _credibility_floor(records: list[PointRecord],
-                       floor_min: float = 1e-12) -> tuple[float, dict]:
-    """vmin = max(1e-12, 10 * P95(|L_prod - L_audit|)); documented fallback."""
-    pairs = audit_pairs(records)
-    if len(pairs) >= 8:
-        diffs = np.abs([p - a for _, p, a in pairs])
-        vmin = float(max(floor_min, 10.0 * np.percentile(diffs, 95)))
-        info = {"rule": "10*P95(|L_prod - L_audit|)", "n_pairs": len(pairs),
-                "p95_abs_diff": float(np.percentile(diffs, 95)), "vmin": vmin,
-                "fallback": False}
-    else:
-        vmin = max(floor_min, 1e-11)
-        info = {"rule": "fallback 1e-11 (fewer than 8 audit pairs)",
-                "n_pairs": len(pairs), "vmin": vmin, "fallback": True}
-    return vmin, info
+#
+# The credibility floor (audit-derived vmin) lives in sweeplib.plotting and is
+# imported above as ``_credibility_floor``.
 
 
 def _run_level(runner: Runner, level: int, done: set[PointKey],
@@ -1449,231 +1436,43 @@ def cmd_export(args) -> None:
 
 # ── Plotting ─────────────────────────────────────────────────────────────────
 #
-# Rasters are *visualization only*: piecewise-linear Delaunay interpolation of
-# log10(leakage) over the exact nodes, never extrapolated outside their convex
-# hull, with exact-node markers overlaid; every node whose axis-neighbor
-# leave-one-out residual exceeds 0.2 dex is hatched (marking its surrounding
-# cells as uncertain).  One global LogNorm/colorbar; values below the
-# audit-derived credibility floor are shown as "below floor".
+# The log-linear interpolation, LOO credibility veil, audit-derived floor and the
+# 8x9 grid renderer live in sweeplib.plotting (rasters are visualization only; no
+# per-panel PNGs).  This script binds the rb87_7_mp scatter-channel table, the
+# Delta_e row labeller, the 420-drive x-axis label and the system description.
 
-PLOT_LOO_MASK_DEX = 0.2
-PLOT_RASTER_N = 81
-
-
-def _panel_plot_data(values: dict[PointKey, float], panel: tuple[int, int],
-                     vmin: float):
-    """(x_mhz, y_mhz, z_log10) arrays of one panel's exact nodes, or None."""
-    pts = [(float(k.omega_mhz()), float(k.dsweep_mhz()), v)
-           for k, v in values.items() if k.panel == panel]
-    if not pts:
-        return None
-    pts.sort(key=lambda t: (t[0], t[1]))
-    x = np.asarray([p[0] for p in pts])
-    y = np.asarray([p[1] for p in pts])
-    z = np.log10(np.maximum([p[2] for p in pts], vmin / 10.0))
-    return x, y, z
-
-
-def _plot_metric_values(store: Store, manifest: dict, records, metric: str):
-    """(values, vmin, vmax, colorbar_label) for a plot metric.
-
-    ``max_leakage`` reads the coherent-leakage records (audit-derived floor);
-    the ``p_*`` metrics read the supplemental scatter series. ``total_error``
-    adds coherent leakage and every scattering contribution per logical input
-    before selecting the worst input.
-    """
-    if metric == "max_leakage":
-        best = best_records(records)
-        values = {k: r.max_leakage for k, r in best.items()}
-        vmin, floor_info = _credibility_floor(records)
-        label = ("terminal max leakage  "
-                 f"(floor {vmin:.1e}: "
-                 f"{'audit-derived' if not floor_info['fallback'] else 'fallback'};"
-                 " values at floor are below the numerical credibility floor)")
-        return values, vmin, 1.0, label
-    coherent = best_records(records) if metric == "total_error" else {}
-    rows = [r for r in store.load_scatter_records(manifest) if r["status"] == "ok"]
-    if not rows:
-        raise SystemExit(f"no scatter records for --metric {metric}; "
-                         "run the `scatter` subcommand first")
-    per_key: dict[PointKey, tuple[float, float]] = {}
-    for r in rows:
-        scattering = r["p_mid"] + r["p_ryd"] + r["p_r_garb"]
-        if metric == "total_error":
-            if r["key"] not in coherent:
-                continue
-            v = float(np.max(coherent[r["key"]].leakage + scattering))
-        elif metric == "p_loss_total":
-            v = float(np.max(scattering))
-        else:
-            v = float(np.max(r[metric]))
-        cur = per_key.get(r["key"])
-        if cur is None or r["rtol"] < cur[1]:
-            per_key[r["key"]] = (v, r["rtol"])
-    values = {k: v for k, (v, _) in per_key.items()}
-    if not values:
-        raise SystemExit(f"no overlapping coherent and scatter records for --metric {metric}")
-    pos = [v for v in values.values() if v > 0]
-    vmin = max(1e-12, min(pos)) if pos else 1e-12
-    vmax = max(max(values.values()), vmin * 10)
-    if metric == "total_error":
-        label = ("worst-input total error budget (terminal coherent leakage + "
-                 "first-order scattering)")
-    else:
-        label = (f"worst-input {metric} (scattering-rate integral, "
-                 "trapezoid over 301 samples)")
-    return values, vmin, vmax, label
-
-
-def _holdout_residuals(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:
-    """Axis-neighbor leave-one-out residual (dex) for EVERY node.
-
-    Each node is re-estimated by linear interpolation between its nearest present
-    neighbors along each grid axis (holding it out); the residual is the worse of
-    the two axes.  O(n log n), so no node is ever skipped — a node lacking both
-    neighbors on both axes (panel edges) gets 0.
-    """
-    n = x.size
-    resid = np.zeros(n)
-
-    def _along(primary: np.ndarray, secondary: np.ndarray) -> None:
-        for line in np.unique(secondary):
-            idx = np.where(secondary == line)[0]
-            if idx.size < 3:
-                continue
-            order = idx[np.argsort(primary[idx])]
-            p, v = primary[order], z[order]
-            est = v[:-2] + (v[2:] - v[:-2]) * (p[1:-1] - p[:-2]) / (p[2:] - p[:-2])
-            np.maximum.at(resid, order[1:-1], np.abs(v[1:-1] - est))
-
-    _along(x, y)
-    _along(y, x)
-    return resid
-
-
-def _draw_panel(ax, x, y, z, vmin, vmax, cmap, veil: bool = True):
-    """One panel: interpolated raster + uncertainty veil + nodes + hardware line.
-
-    Regions whose nearest node has an axis-holdout LOO residual above
-    ``PLOT_LOO_MASK_DEX`` are masked with a translucent white veil (the spec's
-    "hatch or mask" rule) — a wash reads cleanly at any node density, where
-    per-node hatched markers drown the map once grids reach 13x13/25x25.
-    ``veil=False`` omits the overlay (raster is then pure interpolation —
-    remember it is visualization only).
-    """
-    from matplotlib.colors import ListedColormap, LogNorm
-    from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
-
-    norm = LogNorm(vmin=vmin, vmax=vmax, clip=True)
-    xg = np.linspace(x.min(), x.max(), PLOT_RASTER_N)
-    yg = np.linspace(y.min(), y.max(), PLOT_RASTER_N)
-    XX, YY = np.meshgrid(xg, yg)
-    resid = _holdout_residuals(x, y, z)
-    bad = (resid > PLOT_LOO_MASK_DEX) if veil else np.zeros(x.size, dtype=bool)
-    if x.size >= 4 and np.unique(x).size > 1 and np.unique(y).size > 1:
-        interp = LinearNDInterpolator(np.column_stack([x, y]), z)
-        ZZ = interp(XX, YY)                     # NaN outside the convex hull
-        # rasterized: in vector (PDF) output each mesh quad is otherwise a
-        # separate filled path, and viewers antialias the quad boundaries into
-        # hairline white seams; rasterizing embeds the color field as one image
-        # (axes/markers/text stay vector) and shrinks the file dramatically.
-        mesh = ax.pcolormesh(XX, YY, np.ma.masked_invalid(10.0 ** ZZ),
-                             cmap=cmap, norm=norm, shading="nearest",
-                             rasterized=True)
-        if np.any(bad):
-            near_bad = NearestNDInterpolator(
-                np.column_stack([x, y]), bad.astype(float))(XX, YY)
-            veil = np.ma.masked_where(
-                (near_bad < 0.5) | ~np.isfinite(ZZ), np.ones_like(near_bad))
-            ax.pcolormesh(XX, YY, veil, cmap=ListedColormap([(1, 1, 1, 0.45)]),
-                          vmin=0, vmax=1, shading="nearest", rasterized=True)
-    else:
-        mesh = ax.scatter(x, y, c=np.maximum(10.0 ** z, vmin), cmap=cmap,
-                          norm=norm, s=14)
-        if np.any(bad):
-            ax.scatter(x[bad], y[bad], marker="s", s=40, facecolors="none",
-                       edgecolors="w", linewidths=0.7)
-    ax.plot(x, y, ".", color="k", ms=1.2, alpha=0.4)
-    ax.axhline(DSWEEP_HW_LIMIT_MHZ, color="c", ls="--", lw=1.0, alpha=0.9)
-    return mesh
+_PLOT_SPEC = PlotSpec(
+    scatter_channels=SCATTER_CHANNELS,
+    row_axis_key="delta_e_ghz",
+    row_label=lambda v: f"$\\Delta_e/2\\pi$ = {v:g} GHz",
+    xlabel=r"$\Omega_{420}/2\pi$ (MHz)",
+    system_desc="two-atom rb87_7_mp CZ",
+    hw_limit_mhz=DSWEEP_HW_LIMIT_MHZ,
+)
 
 
 def cmd_plot(args) -> None:
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
     store = Store(args.output)
     manifest = store.load_manifest()
     if manifest is None:
         raise SystemExit(f"no manifest under {store.root}")
-    store.ensure_dirs()
     records = store.load_records(manifest, include_states=False)
-    values, vmin, vmax, cb_label = _plot_metric_values(
-        store, manifest, records, args.metric)
-    if not values:
-        raise SystemExit("no successful records to plot")
-    cmap = "magma_r"
-    de = manifest["axes"]["delta_e_ghz"]
-    tg = manifest["axes"]["t_gate_us"]
-
-    n_rows, n_cols = len(de), len(tg)
-    fig, axes = plt.subplots(n_rows, n_cols,
-                             figsize=(2.1 * n_cols + 1.6, 1.9 * n_rows + 1.2),
-                             sharex=True, sharey=True, constrained_layout=True)
-    mesh = None
-    for di in range(n_rows):
-        for ti in range(n_cols):
-            ax = axes[di][ti]
-            data = _panel_plot_data(values, (di, ti), vmin)
-            if data is None:
-                ax.set_facecolor("0.92")
-                ax.text(0.5, 0.5, "no data", transform=ax.transAxes,
-                        ha="center", va="center", fontsize=7, color="0.4")
-            else:
-                mesh = _draw_panel(ax, *data, vmin, vmax, cmap,
-                                   veil=args.veil) or mesh
-            if di == 0:
-                ax.set_title(f"T = {tg[ti]:g} us", fontsize=9)
-            if di == n_rows - 1:
-                ax.set_xlabel(r"$\Omega_{420}/2\pi$ (MHz)", fontsize=8)
-            if ti == 0:
-                ax.set_ylabel(f"$\\Delta_e/2\\pi$ = {de[di]:g} GHz\n"
-                              r"$D_{\rm sweep}/2\pi$ (MHz)", fontsize=8)
-            ax.tick_params(labelsize=7)
-    if mesh is not None:
-        cb = fig.colorbar(mesh, ax=axes, shrink=0.5, pad=0.01)
-        cb.solids.set_rasterized(True)  # same PDF hairline-seam fix as the panels
-        cb.set_label(cb_label, fontsize=9)
-    if args.metric == "max_leakage":
-        metric_title = "Coherent terminal leakage"
-    elif args.metric == "total_error":
-        metric_title = "Total first-order error budget (worst input)"
-    else:
-        metric_title = f"Scattering budget: {args.metric} (worst input)"
-    dynamics_note = ("closed-dynamics trajectory + first-order scattering"
-                     if args.metric == "total_error" else "closed dynamics")
-    fig.suptitle(
-        f"{metric_title}, two-atom rb87_7_mp CZ ({dynamics_note}, "
-        "original-frame DOP853; rasters are log-linear interpolation between "
-        "exact nodes — dots"
-        + ("; white veil: interpolation untrusted, LOO residual > "
-           f"{PLOT_LOO_MASK_DEX} dex)" if args.veil else
-           "; NO uncertainty veil — raster is visualization only)"), fontsize=11)
-
-    png = os.path.join(store.plots_dir, f"{args.metric}_8x9.png")
-    pdf = os.path.join(store.plots_dir, f"{args.metric}_8x9.pdf")
-    fig.savefig(png, dpi=args.dpi)
-    fig.savefig(pdf, dpi=args.dpi)  # dpi applies to the rasterized mesh layers
-    plt.close(fig)
+    png, pdf = render_panel_grid(store, manifest, records, args.metric,
+                                 _PLOT_SPEC, veil=args.veil, dpi=args.dpi)
     print(f"plots: {png}\n       {pdf}")
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
+#
+# The shared parser scaffold (--output/--spacing-um + the compute pool/tolerance/
+# --panels flags) and the derived-output resolution live in sweeplib.cli; this
+# script keeps its subcommand wiring, its metric list and its store-family root.
+
+_FAMILY_ROOT = "max_leakage_ode"
 
 
 def _default_output(spacing_um: float) -> str:
-    return os.path.join("results", "max_leakage_ode", f"a{spacing_um:.1f}")
+    return cli.default_output(_FAMILY_ROOT, spacing_um)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1683,37 +1482,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="command", required=True)
 
-    def int_or_auto(default):
-        def parse(value):
-            return default if value == "auto" else int(value)
-        parse.__name__ = "int-or-auto"
-        return parse
-
     def common(sp, compute: bool = False):
-        sp.add_argument("--output", default=None,
-                        help="scan store directory (default: "
-                             "results/max_leakage_ode/a{spacing:.1f})")
-        sp.add_argument("--spacing-um", type=float, default=3.0,
-                        help="atom spacing in um (physics-hash relevant; also "
-                             "selects the default store directory)")
-        if compute:
-            # "auto" = the pilot-benchmarked host default (40 of 40 logical CPUs
-            # measured ~1.48x the 20-worker throughput) / the acceptance-gated
-            # packing size, so the agreed production invocation parses verbatim.
-            sp.add_argument("--workers", type=int_or_auto(min(40, os.cpu_count() or 40)),
-                            default=40)
-            sp.add_argument("--batch-size", type=int_or_auto(48), default=48,
-                            help="max points packed per solve (acceptance-gated)")
-            sp.add_argument("--point-timeout", type=float, default=3600.0,
-                            help="wall-clock timeout per point (scaled by batch size)")
-            sp.add_argument("--rtol", type=float, default=1e-9,
-                            help="production relative tolerance")
-            sp.add_argument("--atol", type=float, default=1e-12,
-                            help="production absolute tolerance")
-            sp.add_argument("--audit-rtol", type=float, default=1e-10)
-            sp.add_argument("--audit-atol", type=float, default=1e-13)
-            sp.add_argument("--panels", default=None, metavar="DI,TI[;DI,TI...]",
-                            help="restrict to specific panels (smoke tests, reruns)")
+        cli.add_common_args(sp, _FAMILY_ROOT, compute=compute)
 
     sp = sub.add_parser("status", help="summarize an existing scan store")
     common(sp)
@@ -1774,8 +1544,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
-    if args.output is None:
-        args.output = _default_output(args.spacing_um)
+    cli.resolve_output(args, _FAMILY_ROOT)
     args.func(args)
 
 

@@ -233,37 +233,19 @@ def test_ensure_scatter_gate_runs_once_and_skips_when_recorded_ok(tmp_path, monk
     assert calls["n"] == 2
 
 
-def test_credibility_floor_rule_and_fallback():
-    keys = mls.panel_keys(0, 0, 0)
-
-    def rec(k, tier, leak):
-        return mls.PointRecord(
-            key=k, tier=tier, rtol=1e-9, atol=1e-12, status="ok",
-            max_leakage=leak, leakage=np.full(4, leak), worst_input="11",
-            return_prob=np.ones(4), norm_err=np.zeros(4), psi_final=mls._NO_STATES,
-            nfev=1, runtime_s=1.0, batch_id="b", batch_size=1, retry_count=0,
-            priority_score=0.0, message="", chunk_file="c", used_swap=True)
-
-    few = [rec(keys[0], "production", 1e-4), rec(keys[0], "audit", 1e-4 + 1e-13)]
-    vmin, info = mls._credibility_floor(few)
-    assert info["fallback"] and vmin == pytest.approx(1e-11)
-
-    many = []
-    for i, k in enumerate(keys[:10]):
-        many.append(rec(k, "production", 1e-4))
-        many.append(rec(k, "audit", 1e-4 + (i + 1) * 1e-13))
-    vmin, info = mls._credibility_floor(many)
-    assert not info["fallback"]
-    assert vmin == pytest.approx(max(1e-12, 10 * np.percentile(
-        np.arange(1, 11) * 1e-13, 95)))
-
-
 # ── plotting smoke test (synthetic store) ────────────────────────────────────
+#
+# The shared plot machinery (holdout residuals, credibility floor, metric
+# selection, renderer) is unit-tested parameterized in tests/test_sweeplib.py;
+# here the ode plot renders end-to-end for every metric, including the
+# total_error coherent+scatter join, and never emits per-panel PNGs.
 
 
 def test_plot_and_status_smoke(tmp_path, capsys):
     store, manifest = _mini_store(tmp_path)
     rng = np.random.default_rng(3)
+    gammas = {di: {"p_mid": 9.03e6, "p_ryd": 6.6e3, "p_r_garb": 6.6e3}
+              for di in range(len(mls.DELTA_E_GHZ))}
     for seq, panel in enumerate([(0, 0), (3, 4)], start=1):
         keys = mls.panel_keys(panel[0], panel[1], 1)   # full 7x7 grid
         res = _fake_result(len(keys), seed=seq)
@@ -271,11 +253,17 @@ def test_plot_and_status_smoke(tmp_path, capsys):
         res.max_leakage = res.leakage.max(axis=1)
         store.write_result_chunk(seq, manifest, keys, _mini_cfg(),
                                  "production", 1e-9, 1e-12, f"b{seq}", res, 60.0)
-    args = Namespace(output=store.root, dpi=60, veil=True,
-                     metric="max_leakage")
-    mls.cmd_plot(args)
-    assert (Path(store.plots_dir) / "max_leakage_8x9.png").exists()
-    assert (Path(store.plots_dir) / "max_leakage_8x9.pdf").exists()
+        scatter = {ch: rng.uniform(1e-6, 1e-2, size=(len(keys), 4))
+                   for ch in mls.SCATTER_CHANNELS}
+        store.write_scatter_chunk(seq, manifest, keys, _mini_cfg(), gammas,
+                                  1e-9, 1e-12, f"s{seq}", scatter,
+                                  res.max_leakage, 60.0)
+
+    for metric in ("max_leakage", "p_mid", "p_ryd", "p_r_garb",
+                   "p_loss_total", "total_error"):
+        mls.cmd_plot(Namespace(output=store.root, dpi=60, veil=True, metric=metric))
+        assert (Path(store.plots_dir) / f"{metric}_8x9.png").exists()
+        assert (Path(store.plots_dir) / f"{metric}_8x9.pdf").exists()
     assert not list(Path(store.plots_dir).glob("panel_*.png"))
 
     mls.cmd_status(Namespace(output=store.root))
@@ -350,22 +338,6 @@ def test_pulse_hash_is_stable_and_recorded(tmp_path):
     assert manifest["pulse_hash"] == h1
 
 
-def test_holdout_residuals_cover_every_interior_node():
-    xs, ys = np.meshgrid(np.arange(5.0), np.arange(5.0))
-    x, y = xs.ravel(), ys.ravel()
-    z = np.zeros_like(x)
-    assert np.all(mls._holdout_residuals(x, y, z) == 0.0)
-    z2 = x + 2 * y            # linear field: every holdout estimate is exact
-    assert np.max(mls._holdout_residuals(x, y, z2)) < 1e-12
-    z3 = z2.copy()
-    spike = np.flatnonzero((x == 2) & (y == 2))[0]
-    z3[spike] += 1.0          # one bad node: it (and only its lines) flags
-    resid = mls._holdout_residuals(x, y, z3)
-    assert resid[spike] == pytest.approx(1.0)
-    corner = np.flatnonzero((x == 0) & (y == 0))[0]
-    assert resid[corner] == 0.0
-
-
 # ── scattering supplement (channel tables + integrals; the shared Store scatter
 # series round-trip is covered in tests/test_sweeplib.py) ─────────────────────
 
@@ -417,49 +389,6 @@ def test_model_decay_rates_maps_channels():
                            "r_garb": {"total": 6.6e3}}))
     gammas = mls.model_decay_rates(stub)
     assert gammas == {"p_mid": 9.03e6, "p_ryd": 6.6e3, "p_r_garb": 6.6e3}
-
-
-def test_plot_metric_values_prefers_tight_rtol_and_totals(tmp_path):
-    store, manifest = _mini_store(tmp_path)
-    keys = mls.panel_keys(0, 0, 0)[:1]
-    gammas = {0: {"p_mid": 9.03e6, "p_ryd": 6.6e3, "p_r_garb": 6.6e3}}
-    ones = {ch: np.full((1, 4), v) for ch, v in
-            zip(mls.SCATTER_CHANNELS, (1e-2, 1e-3, 1e-4))}
-    store.write_scatter_chunk(1, manifest, keys, _mini_cfg(), gammas, 1e-6,
-                              1e-9, "loose", ones, np.array([1e-4]), 1.0)
-    tight = {ch: np.full((1, 4), v) for ch, v in
-             zip(mls.SCATTER_CHANNELS, (2e-2, 2e-3, 2e-4))}
-    store.write_scatter_chunk(2, manifest, keys, _mini_cfg(), gammas, 1e-9,
-                              1e-12, "tight", tight, np.array([1e-4]), 1.0)
-    values, vmin, vmax, label = mls._plot_metric_values(store, manifest, [], "p_mid")
-    assert values[keys[0]] == pytest.approx(2e-2)     # tighter rtol wins
-    values, *_ = mls._plot_metric_values(store, manifest, [], "p_loss_total")
-    assert values[keys[0]] == pytest.approx(2e-2 + 2e-3 + 2e-4)
-
-
-def test_total_error_sums_each_input_before_selecting_the_worst(tmp_path):
-    store, manifest = _mini_store(tmp_path)
-    key = mls.panel_keys(0, 0, 0)[0]
-    record = mls.PointRecord(
-        key=key, tier="production", rtol=1e-9, atol=1e-12, status="ok",
-        max_leakage=0.4, leakage=np.array([0.4, 0.1, 0.2, 0.3]),
-        worst_input="00", return_prob=np.ones(4), norm_err=np.zeros(4),
-        psi_final=mls._NO_STATES, nfev=1, runtime_s=1.0, batch_id="main",
-        batch_size=1, retry_count=0, priority_score=0.0, message="",
-        chunk_file="chunk", used_swap=True,
-    )
-    scatter = {
-        "p_mid": np.array([[0.0, 0.4, 0.1, 0.0]]),
-        "p_ryd": np.array([[0.0, 0.0, 0.2, 0.0]]),
-        "p_r_garb": np.array([[0.0, 0.0, 0.0, 0.2]]),
-    }
-    gammas = {0: {"p_mid": 9.03e6, "p_ryd": 6.6e3, "p_r_garb": 6.6e3}}
-    store.write_scatter_chunk(1, manifest, [key], _mini_cfg(), gammas, 1e-9,
-                              1e-12, "scatter", scatter, np.array([0.4]), 1.0)
-
-    values, *_ = mls._plot_metric_values(store, manifest, [record], "total_error")
-
-    assert values[key] == pytest.approx(0.5)
 
 
 # ── real rb87_7_mp model (ARC required) ──────────────────────────────────────

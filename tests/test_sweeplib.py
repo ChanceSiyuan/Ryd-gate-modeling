@@ -1035,3 +1035,165 @@ def test_worker_entry_solves_and_scatters():
     assert np.all(out["scatter"]["p_e"] >= 0.0)
     # the trajectory was consumed, not returned, since save_traj is False
     assert out["result"].states is None
+
+
+# ── shared plotting: interpolation, LOO veil, credibility floor, 8x9 renderer ─
+#
+# The plot machinery (holdout residuals, audit-derived floor, metric selection,
+# 8x9 grid renderer) is model-agnostic given a scatter-channel table and a plot
+# spec; the ``_plot_metric_values`` scatter/total_error logic and the renderer are
+# exercised parameterized over both script configs.  The ode's own six-metric plot
+# smoke (incl. total_error joins, asserts no panel_*.png) lives in its script test.
+
+
+def test_holdout_residuals_cover_every_interior_node():
+    xs, ys = np.meshgrid(np.arange(5.0), np.arange(5.0))
+    x, y = xs.ravel(), ys.ravel()
+    z = np.zeros_like(x)
+    assert np.all(sweeplib.holdout_residuals(x, y, z) == 0.0)
+    z2 = x + 2 * y            # linear field: every holdout estimate is exact
+    assert np.max(sweeplib.holdout_residuals(x, y, z2)) < 1e-12
+    z3 = z2.copy()
+    spike = np.flatnonzero((x == 2) & (y == 2))[0]
+    z3[spike] += 1.0          # one bad node: it (and only its lines) flags
+    resid = sweeplib.holdout_residuals(x, y, z3)
+    assert resid[spike] == pytest.approx(1.0)
+    corner = np.flatnonzero((x == 0) & (y == 0))[0]
+    assert resid[corner] == 0.0
+
+
+def test_credibility_floor_rule_and_fallback(bundle):
+    keys = bundle.panel_keys(0, 0, 0)
+
+    def rec(k, tier, leak):
+        return sweeplib.PointRecord(
+            key=k, tier=tier, rtol=1e-9, atol=1e-12, status="ok",
+            max_leakage=leak, leakage=np.full(4, leak), worst_input="11",
+            return_prob=np.ones(4), norm_err=np.zeros(4),
+            psi_final=sweeplib._NO_STATES, nfev=1, runtime_s=1.0, batch_id="b",
+            batch_size=1, retry_count=0, priority_score=0.0, message="",
+            chunk_file="c", used_swap=True)
+
+    few = [rec(keys[0], "production", 1e-4), rec(keys[0], "audit", 1e-4 + 1e-13)]
+    vmin, info = sweeplib.credibility_floor(few)
+    assert info["fallback"] and vmin == pytest.approx(1e-11)
+
+    many = []
+    for i, k in enumerate(keys[:10]):
+        many.append(rec(k, "production", 1e-4))
+        many.append(rec(k, "audit", 1e-4 + (i + 1) * 1e-13))
+    vmin, info = sweeplib.credibility_floor(many)
+    assert not info["fallback"]
+    assert vmin == pytest.approx(max(1e-12, 10 * np.percentile(
+        np.arange(1, 11) * 1e-13, 95)))
+
+
+def test_plot_metric_values_scatter_metrics_and_total_error(bundle, tmp_path):
+    """A tighter rtol wins per key; p_loss_total sums the channels; total_error
+    joins the coherent leakage with the summed scatter before selecting the worst
+    input — parameterized over both channel tables."""
+    store, manifest = mini_store(bundle, tmp_path)
+    key = bundle.panel_keys(0, 0, 0)[0]
+    gammas = {0: bundle.scatter_rates}
+    channels = bundle.scatter_channels
+    loose = {ch: np.full((1, 4), 1e-3 * (j + 1)) for j, ch in enumerate(channels)}
+    tight = {ch: np.full((1, 4), 2e-3 * (j + 1)) for j, ch in enumerate(channels)}
+    store.write_scatter_chunk(1, manifest, [key], bundle.cfg, gammas, 1e-6, 1e-9,
+                              "loose", loose, np.array([1e-4]), 1.0)
+    store.write_scatter_chunk(2, manifest, [key], bundle.cfg, gammas, 1e-9, 1e-12,
+                              "tight", tight, np.array([1e-4]), 1.0)
+    values, *_ = sweeplib.plot_metric_values(
+        store, manifest, [], channels[0], scatter_channels=channels)
+    assert values[key] == pytest.approx(2e-3)          # tighter rtol wins
+    values, *_ = sweeplib.plot_metric_values(
+        store, manifest, [], "p_loss_total", scatter_channels=channels)
+    assert values[key] == pytest.approx(
+        sum(2e-3 * (j + 1) for j in range(len(channels))))
+
+    record = sweeplib.PointRecord(
+        key=key, tier="production", rtol=1e-9, atol=1e-12, status="ok",
+        max_leakage=0.4, leakage=np.array([0.4, 0.1, 0.2, 0.3]), worst_input="00",
+        return_prob=np.ones(4), norm_err=np.zeros(4), psi_final=sweeplib._NO_STATES,
+        nfev=1, runtime_s=1.0, batch_id="m", batch_size=1, retry_count=0,
+        priority_score=0.0, message="", chunk_file="c", used_swap=True)
+    values, *_ = sweeplib.plot_metric_values(
+        store, manifest, [record], "total_error", scatter_channels=channels)
+    expect = float(np.max(record.leakage + sum(tight[ch][0] for ch in channels)))
+    assert values[key] == pytest.approx(expect)
+
+
+def _bundle_plot_spec(bundle):
+    return sweeplib.PlotSpec(
+        scatter_channels=bundle.scatter_channels,
+        row_axis_key=bundle.cfg.panel_axis_name,
+        row_label=lambda v: f"row = {v:g}",
+        xlabel=r"$\Omega/2\pi$ (MHz)",
+        system_desc=f"two-atom {bundle.name} CZ")
+
+
+def test_render_panel_grid_writes_frozen_files_and_no_panel_pngs(bundle, tmp_path):
+    """The renderer emits only <metric>_8x9.{png,pdf}; total_error joins the
+    coherent and scatter series; no per-panel PNGs are ever produced."""
+    store, manifest = mini_store(bundle, tmp_path)
+    rng = np.random.default_rng(5)
+    gammas = {ri: bundle.scatter_rates for ri in range(len(bundle.cfg.panel_axis))}
+    for seq, (ri, ti) in enumerate([(0, 0), (1, 1)], start=1):
+        keys = bundle.panel_keys(ri, ti, 1)            # full 7x7 grid
+        res = _fake_result(bundle, len(keys), seed=seq)
+        res.leakage = rng.uniform(1e-5, 1e-1, size=(len(keys), 4))
+        res.max_leakage = res.leakage.max(axis=1)
+        store.write_result_chunk(seq, manifest, keys, bundle.cfg, "production",
+                                 1e-9, 1e-12, f"b{seq}", res, 60.0)
+        scatter = {ch: rng.uniform(1e-6, 1e-2, size=(len(keys), 4))
+                   for ch in bundle.scatter_channels}
+        store.write_scatter_chunk(seq, manifest, keys, bundle.cfg, gammas, 1e-9,
+                                  1e-12, f"s{seq}", scatter, res.max_leakage, 60.0)
+    records = store.load_records(manifest, include_states=False)
+    spec = _bundle_plot_spec(bundle)
+    for metric in ("max_leakage", "total_error"):
+        png, pdf = sweeplib.render_panel_grid(
+            store, manifest, records, metric, spec, veil=True, dpi=60)
+        assert Path(png).exists() and Path(pdf).exists()
+        assert Path(png).name == f"{metric}_8x9.png"
+    assert not list(Path(store.plots_dir).glob("panel_*.png"))
+
+
+# ── shared CLI scaffold (common args + derived-output resolution) ─────────────
+
+
+def test_cli_scaffold_common_args_and_derived_output():
+    """add_common_args builds the shared skeleton (workers/batch-size 'auto',
+    tolerances, --panels) and default_output/resolve_output derive the store dir
+    per store-family root — verified for both script families."""
+    import argparse
+
+    for family in ("max_leakage_ode", "max_leakage_297"):
+        p = argparse.ArgumentParser()
+        sub = p.add_subparsers()
+        run = sub.add_parser("run")
+        sweeplib.add_common_args(run, family, compute=True)
+        args = p.parse_args(["run", "--spacing-um", "5", "--workers", "auto",
+                             "--batch-size", "auto"])
+        assert args.spacing_um == 5.0 and args.output is None
+        assert isinstance(args.workers, int) and 1 <= args.workers <= 40
+        assert args.batch_size == 48
+        assert args.rtol == 1e-9 and args.atol == 1e-12
+        assert args.audit_rtol == 1e-10 and args.audit_atol == 1e-13
+        assert args.panels is None
+        args = p.parse_args(["run", "--workers", "12", "--batch-size", "4",
+                             "--panels", "0,0;1,2"])
+        assert args.workers == 12 and args.batch_size == 4 and args.panels == "0,0;1,2"
+        assert sweeplib.default_output(family, 3.0) == os.path.join(
+            "results", family, "a3.0")
+        args = p.parse_args(["run"])
+        sweeplib.resolve_output(args, family)
+        assert args.output == os.path.join("results", family, "a3.0")
+
+    # a non-compute subparser omits the pool/tolerance/--panels flags
+    p = argparse.ArgumentParser()
+    sub = p.add_subparsers()
+    st = sub.add_parser("status")
+    sweeplib.add_common_args(st, "max_leakage_ode", compute=False)
+    parsed = p.parse_args(["status", "--spacing-um", "7"])
+    assert parsed.spacing_um == 7.0
+    assert not hasattr(parsed, "workers") and not hasattr(parsed, "panels")
