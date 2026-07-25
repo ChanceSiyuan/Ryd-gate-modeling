@@ -35,6 +35,7 @@ examples/results/
 results/**/*.log
 results/**/store.lock
 results/max_leakage_ode/*/reports/status.json
+results/max_leakage_297/*/reports/status.json
 
 # OS
 .DS_Store
@@ -53,3 +54,4 @@ uv.lock
 
 # Large generated sweep exports (regenerable from authoritative chunks)
 results/max_leakage_ode/*/exports/
+results/max_leakage_297/*/exports/
