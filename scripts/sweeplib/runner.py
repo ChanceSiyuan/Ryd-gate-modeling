@@ -458,6 +458,10 @@ class Runner:
                 # before the dispatch deadline is deferred, keeping the reserve.
                 predicted = self.cost.predict_batch(batch) * self.cost.inflation_p90()
                 if enforce_deadline and time.time() + predicted > self.dispatch_deadline:
+                    if self.deferred == 0:
+                        print(f"[deadline] deferring {len(batch.keys)} points past "
+                              "the dispatch deadline (re-invoke run to resume)",
+                              flush=True)
                     self.deferred += len(batch.keys)
                     continue
                 fut = self._submit(batch)
@@ -516,6 +520,10 @@ class Runner:
         if self.stop_requested:
             print(f"[{phase}] stopped on request; "
                   f"{sum(len(b.keys) for b in pending)} points left unscheduled",
+                  flush=True)
+        if self.deferred > 0:
+            print(f"[{phase}] WARNING: {self.deferred} points deferred past the "
+                  "dispatch deadline; re-invoke run to complete this store",
                   flush=True)
 
     def write_status(self, phase: str) -> None:

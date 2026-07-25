@@ -806,10 +806,12 @@ def test_cost_model_scales_with_gate_time_and_inflates(bundle):
 # ── Runner event loop: dispatch, retries, signals (synchronous fake executor) ─
 
 
-def test_budget_scheduler_defers_everything_past_the_deadline(bundle, tmp_path, runner_factory):
+def test_budget_scheduler_defers_everything_past_the_deadline(bundle, tmp_path, runner_factory, capsys):
     """With the dispatch deadline already in the past, run_batches launches no
     work (the default responder would assert if submit ran), defers every point,
-    and records nothing — never-computed points must not be marked failed."""
+    and records nothing — never-computed points must not be marked failed.  The
+    deferral is announced loudly: a first-deferral line and an end-of-stage
+    WARNING naming the total (so a driver log can't silently exit 0)."""
     store, manifest = mini_store(bundle, tmp_path)
     runner = runner_factory(store, manifest, bundle.cfg,
                             _runner_args(workers=2, batch_size=4,
@@ -819,6 +821,28 @@ def test_budget_scheduler_defers_everything_past_the_deadline(bundle, tmp_path, 
     assert runner.deferred == 16
     assert runner.completed_points == 0
     assert store.load_records(manifest) == []
+    out = capsys.readouterr().out
+    assert "[deadline] deferring" in out                       # first-deferral heads-up
+    assert "WARNING: 16 points deferred" in out                # end-of-stage total
+
+
+def test_no_deferral_warning_when_nothing_deferred(bundle, tmp_path, runner_factory, capsys):
+    """A stage that defers nothing prints neither the deferral heads-up nor the
+    end-of-stage WARNING (the loud path is gated on deferred > 0)."""
+    store, manifest = mini_store(bundle, tmp_path)
+
+    def responder(spec):
+        return "result", {"ok": True, "result": _fake_result(bundle, len(spec["keys"])),
+                          "runtime_s": 1.0}
+
+    runner = runner_factory(store, manifest, bundle.cfg,
+                            _runner_args(workers=2, batch_size=4), responder=responder)
+    runner.run_batches(sweeplib.group_batches(bundle.panel_keys(0, 0, 0), batch_size=4),
+                       "no-defer")
+    assert runner.deferred == 0
+    out = capsys.readouterr().out
+    assert "WARNING" not in out
+    assert "deferring" not in out
 
 
 def test_store_lock_rejects_concurrent_writers(bundle, tmp_path, runner_factory):

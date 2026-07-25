@@ -87,7 +87,7 @@ from sweeplib import (
     audit_pairs, Runner, CostModel, Batch, group_batches, set_worker_context,
     cli, PlotSpec, render_panel_grid, credibility_floor as _credibility_floor,
 )
-from sweeplib.store import _atomic_savez, _NO_STATES
+from sweeplib.store import _atomic_savez
 from sweeplib.runner import _worker_run_batch
 
 TAU = 2.0 * math.pi
@@ -770,8 +770,6 @@ def setup_run(args) -> tuple[Store, dict, ScanConfig, dict[int, PanelOperators],
         run_meta={
             "argv": sys.argv[1:], "workers": args.workers,
             "batch_size": args.batch_size,
-            "budget_hours": getattr(args, "budget_hours", None),
-            "reserve_hours": getattr(args, "reserve_hours", None),
         },
         **_manifest_extras(cfg))
     ver_path = os.path.join(store.reports_dir, "verification.json")
