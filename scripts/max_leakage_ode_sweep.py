@@ -1016,7 +1016,7 @@ def stage_pilot(runner: Runner, panels: set[tuple[int, int]] | None = None) -> d
                 all_keys(lv), runner.args.workers) / 3600.0
             for lv in range(len(LEVEL_SIZES))
         },
-        "omega_1013_over_2pi_MHz": runner.omega_1013 / TAU / 1e6,
+        "omega_1013_over_2pi_MHz": float(runner.manifest["omega_1013_rad_s"]) / TAU / 1e6,
     }
     path = os.path.join(runner.store.reports_dir, "pilot.json")
     with open(path + ".tmp", "w") as fh:
