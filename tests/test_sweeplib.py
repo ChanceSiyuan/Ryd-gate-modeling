@@ -9,9 +9,17 @@ imports: only sweeplib itself is exercised here.
 """
 
 import dataclasses
+import hashlib
 import importlib.util
+import json
 import math
+import os
+import signal
 import sys
+from argparse import Namespace
+from concurrent.futures import Future
+from concurrent.futures.process import BrokenProcessPool
+from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
@@ -328,3 +336,662 @@ def test_trajectory_sampling_and_time_dependent_restore():
         expect[idx] = 1.0
         np.testing.assert_allclose(np.abs(res.states[0, 0, j]), expect, atol=1e-12)
         assert res.states[0, 0, j][idx] == pytest.approx(1.0)  # phase too
+
+
+# ── Store / Runner machinery (parameterized over two script configs) ─────────
+#
+# The Store/Runner/CostModel/worker machinery is config-agnostic; exercise it
+# under two "script configs" — an ode-shaped one (delta_idx / d, three scatter
+# channels, dim 49, with the fixed-1013 manifest block + resume guard) and a
+# synthetic one (n_idx / n, two channels, dim 16, no extra manifest block) — to
+# prove the parameterization generalizes.  No script or ARC imports.
+
+_OM1013 = 2 * np.pi * 489.6e6
+
+
+@dataclass(frozen=True)
+class _FakeScanConfig:
+    """Minimal ScanConfig stand-in: only the fields Store/Runner/CostModel read."""
+
+    tag: str
+    t_gate_us: tuple
+    panel_axis_name: str
+    panel_axis: tuple
+    ramp_frac: float = 0.15
+    n_eval_trajectory: int = 301
+    rtol_production: float = 1e-9
+    atol_production: float = 1e-12
+    rtol_audit: float = 1e-10
+    atol_audit: float = 1e-13
+    interp_space: str = "log10"
+    credibility_floor_min: float = 1e-12
+
+    def __post_init__(self):
+        # expose the panel axis under its serialized name (delta_e_ghz / ryd_n)
+        object.__setattr__(self, self.panel_axis_name, self.panel_axis)
+
+    def physics_payload(self):
+        return {"schema_version": 1, "tag": self.tag,
+                "t_gate_us": list(self.t_gate_us),
+                self.panel_axis_name: list(self.panel_axis)}
+
+    def physics_hash(self):
+        return hashlib.sha256(
+            json.dumps(self.physics_payload(), sort_keys=True).encode()).hexdigest()
+
+
+def _make_descriptor(panel_axis_name, panel_field, omega_col):
+    def descriptor(cfg, keys):
+        axis = getattr(cfg, panel_axis_name)
+        return {
+            panel_axis_name: np.asarray([axis[getattr(k, panel_field)] for k in keys]),
+            "t_gate_us": np.asarray([cfg.t_gate_us[k.t_idx] for k in keys]),
+            omega_col: np.asarray([float(k.omega_mhz()) for k in keys]),
+            "dsweep_mhz": np.asarray([float(k.dsweep_mhz()) for k in keys]),
+        }
+    return descriptor
+
+
+def _make_result_extra(panel_axis_name, panel_field, omega_col, has_omega_1013):
+    def result_extra(cfg, keys, manifest):
+        axis = getattr(cfg, panel_axis_name)
+        tg_us = np.asarray([cfg.t_gate_us[k.t_idx] for k in keys])
+        om_mhz = np.asarray([float(k.omega_mhz()) for k in keys])
+        dw_mhz = np.asarray([float(k.dsweep_mhz()) for k in keys])
+        out = {
+            "t_gate_s": tg_us * 1e-6,
+            omega_col.replace("_mhz", "_rad_s"): om_mhz * 1e6 * 2 * np.pi,
+            "dsweep_rad_s": dw_mhz * 1e6 * 2 * np.pi,
+        }
+        if has_omega_1013:
+            axis_rad = np.asarray([axis[getattr(k, panel_field)] for k in keys]) * 1e9 * 2 * np.pi
+            out = {panel_axis_name.replace("_ghz", "_rad_s"): axis_rad, **out,
+                   "omega_1013_rad_s": np.full(len(keys), float(manifest["omega_1013_rad_s"]))}
+        return out
+    return result_extra
+
+
+def _sweep_bundle(name):
+    if name == "ode":
+        panel_field, id_prefix = "delta_idx", "d"
+        omega_anchors = (Fraction(200), Fraction(1400, 3), Fraction(2200, 3), Fraction(1000))
+        dsweep_anchors = (Fraction(2), Fraction(10), Fraction(20), Fraction(30))
+        panel_axis_name, panel_axis = "delta_e_ghz", (9.0, 12.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0)
+        t_gate_us = (1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5)
+        omega_col = "omega_420_mhz"
+        scatter_channels = ("p_mid", "p_ryd", "p_r_garb")
+        scatter_rates = {"p_mid": 9.0e6, "p_ryd": 6.6e3, "p_r_garb": 6.6e3}
+        dim = 49
+        has_omega_1013 = True
+        pulse_hash = "ode-pulse-hash"
+    else:
+        panel_field, id_prefix = "n_idx", "n"
+        omega_anchors = (Fraction(1), Fraction(2), Fraction(4), Fraction(8))
+        dsweep_anchors = (Fraction(3), Fraction(5), Fraction(7), Fraction(11))
+        panel_axis_name, panel_axis = "ryd_n", (60, 70, 80)
+        t_gate_us = (1.0, 2.0, 3.0, 4.0)
+        omega_col = "omega297_mhz"
+        scatter_channels = ("p_ryd", "p_r_garb")
+        scatter_rates = {"p_ryd": 6.6e3, "p_r_garb": 6.6e3}
+        dim = 16
+        has_omega_1013 = False
+        pulse_hash = "syn-pulse-hash"
+
+    PointKey, make_key, panel_keys, all_panels, all_keys = sweeplib.make_pointkey_type(
+        panel_field=panel_field, id_prefix=id_prefix,
+        omega_anchors=omega_anchors, dsweep_anchors=dsweep_anchors,
+        panel_len=len(panel_axis), n_t=len(t_gate_us))
+    key_fields = (panel_field, "t_idx", "om_num", "om_den", "dw_num", "dw_den")
+    cfg = _FakeScanConfig(tag=name, t_gate_us=t_gate_us,
+                          panel_axis_name=panel_axis_name, panel_axis=panel_axis)
+    provenance = sweeplib.ProvenanceColumns(
+        scatter_channels=scatter_channels, default_dim=dim,
+        descriptor=_make_descriptor(panel_axis_name, panel_field, omega_col),
+        result_extra=_make_result_extra(panel_axis_name, panel_field, omega_col, has_omega_1013),
+        schema_version=1)
+
+    def manifest_extras():
+        axes = {panel_axis_name: list(panel_axis), "t_gate_us": list(t_gate_us),
+                "level_sizes": list(sweeplib.LEVEL_SIZES)}
+        extra_fields = None
+        extra_guard = None
+        if has_omega_1013:
+            extra_fields = {"omega_1013_rad_s": _OM1013,
+                            "omega_1013_over_2pi_MHz": _OM1013 / (2 * np.pi) / 1e6}
+
+            def extra_guard(existing):
+                rec = float(existing.get("omega_1013_rad_s", 0.0))
+                if abs(rec - _OM1013) > 1e-6 * abs(_OM1013):
+                    raise RuntimeError(
+                        f"Omega_1013 mismatch: manifest {rec!r} vs current {_OM1013!r}")
+        return dict(pulse_hash=pulse_hash, axes=axes,
+                    extra_fields=extra_fields, extra_guard=extra_guard)
+
+    guard_cases = [("physics_hash", "0" * 64, "physics_hash mismatch"),
+                   ("model_hash", "0" * 64, "model_hash mismatch"),
+                   ("pulse_hash", "0" * 64, "pulse_hash mismatch")]
+    if has_omega_1013:
+        guard_cases.append(("omega_1013_rad_s", 1.0, "Omega_1013 mismatch"))
+
+    return SimpleNamespace(
+        name=name, PointKey=PointKey, make_key=make_key, panel_keys=panel_keys,
+        all_panels=all_panels, all_keys=all_keys, key_fields=key_fields, cfg=cfg,
+        provenance=provenance, manifest_extras=manifest_extras, dim=dim,
+        scatter_channels=scatter_channels, scatter_rates=scatter_rates,
+        guard_cases=guard_cases)
+
+
+@pytest.fixture(params=["ode", "synthetic"])
+def bundle(request):
+    return _sweep_bundle(request.param)
+
+
+def mini_store(bundle, tmp_path, name="scan", model_hash="modelhash-1"):
+    store = sweeplib.Store(str(Path(tmp_path) / name), key_type=bundle.PointKey,
+                           key_fields=bundle.key_fields,
+                           provenance_columns=bundle.provenance)
+    store.ensure_dirs()
+    manifest = store.init_or_validate_manifest(
+        bundle.cfg, model_hash, "codehash", {}, **bundle.manifest_extras())
+    return store, manifest
+
+
+def _fake_result(bundle, n, seed=0):
+    dim = bundle.dim
+    rng = np.random.default_rng(seed)
+    psi = rng.standard_normal((n, 4, dim)) + 1j * rng.standard_normal((n, 4, dim))
+    psi /= np.linalg.norm(psi, axis=2, keepdims=True)
+    leak = rng.uniform(1e-6, 1e-2, size=(n, 4))
+    return sweeplib.BatchResult(
+        psi_final=psi, leakage=leak, max_leakage=leak.max(axis=1),
+        worst_input=[sweeplib.LOGICAL_INPUTS[int(i)] for i in leak.argmax(axis=1)],
+        return_prob=rng.uniform(0.9, 1.0, size=(n, 4)),
+        norm_err=np.full((n, 4), 1e-13), nfev=1234, used_swap=True)
+
+
+# ── Synchronous fake executor for the Runner dispatch loop ───────────────────
+#
+# The Runner event loop (submit -> Future -> wait -> result/split/requeue) is the
+# high-risk uncovered code.  A real ProcessPoolExecutor would fork and run the
+# solver; instead ``runner_factory`` overrides Runner._make_executor with this
+# inline stand-in.  A test supplies ``responder(spec) -> (kind, payload)``:
+#   "result"       -> the future resolves to ``payload`` (an out dict)
+#   "crash"        -> the future raises ``payload`` (an in-flight pool death)
+#   "submit_error" -> submit() itself raises ``payload`` (a broken pool)
+
+
+class _FakeExecutor:
+    def __init__(self, responder):
+        self._responder = responder
+        self._processes = {}                 # Runner.shutdown() introspects this
+
+    def submit(self, fn, spec):
+        kind, payload = self._responder(spec)
+        if kind == "submit_error":
+            raise payload
+        fut = Future()
+        if kind == "crash":
+            fut.set_exception(payload)
+        else:
+            fut.set_result(payload)
+        return fut
+
+    def shutdown(self, wait=True, cancel_futures=False):
+        pass
+
+
+def _runner_args(**over):
+    base = dict(workers=1, batch_size=1, budget_hours=1.0, reserve_hours=0.0,
+                point_timeout=60.0)
+    base.update(over)
+    return Namespace(**base)
+
+
+@pytest.fixture
+def runner_factory(monkeypatch):
+    """Build Runners whose executor is the synchronous fake above.
+
+    Runner._install_signals permanently replaces the process SIGINT/SIGTERM
+    handlers and shutdown() never restores them, so the fixture saves/restores
+    them and shuts down every Runner it builds (releasing the store flock)."""
+    saved_int = signal.getsignal(signal.SIGINT)
+    saved_term = signal.getsignal(signal.SIGTERM)
+    built = []
+
+    def _build(store, manifest, cfg, args, responder=None, cost=None):
+        if responder is None:
+            def responder(spec):
+                raise AssertionError("executor.submit called unexpectedly")
+        monkeypatch.setattr(sweeplib.Runner, "_make_executor",
+                            lambda self: _FakeExecutor(responder))
+        runner = sweeplib.Runner(store, manifest, cfg, args,
+                                 cost or sweeplib.CostModel(cfg))
+        built.append(runner)
+        return runner
+
+    try:
+        yield _build
+    finally:
+        for r in built:
+            try:
+                r.shutdown()
+            except Exception:
+                pass
+        signal.signal(signal.SIGINT, saved_int)
+        signal.signal(signal.SIGTERM, saved_term)
+
+
+# ── persistence: manifest, chunks, resume, exports ───────────────────────────
+
+
+def test_chunk_roundtrip_preserves_states_exactly(bundle, tmp_path):
+    store, manifest = mini_store(bundle, tmp_path)
+    keys = bundle.panel_keys(0, 0, 0)[:3]
+    result = _fake_result(bundle, 3)
+    path = store.write_result_chunk(
+        1, manifest, keys, bundle.cfg, "production", 1e-9, 1e-12,
+        "batch-a", result, runtime_s=30.0)
+    with np.load(path, allow_pickle=False) as d:  # loads without pickle
+        np.testing.assert_array_equal(d["psi_final"], result.psi_final)
+        assert d["psi_final"].dtype == np.complex128
+        assert list(d["status"]) == ["ok"] * 3
+    records = store.load_records(manifest)
+    assert len(records) == 3
+    assert {r.key for r in records} == set(keys)
+    np.testing.assert_array_equal(records[0].psi_final, result.psi_final[0])
+
+
+def test_atomic_write_rejects_object_arrays_and_leaves_no_file(tmp_path):
+    target = str(tmp_path / "chunk_000001.npz")
+    with pytest.raises(TypeError):
+        sweeplib._atomic_savez(target, bad=np.array([{"a": 1}], dtype=object))
+    assert not any(tmp_path.iterdir())  # neither the file nor a temp survives
+
+
+def test_stale_tmp_files_are_ignored_by_the_loader(bundle, tmp_path):
+    store, manifest = mini_store(bundle, tmp_path)
+    keys = bundle.panel_keys(0, 0, 0)[:1]
+    store.write_result_chunk(1, manifest, keys, bundle.cfg, "production",
+                             1e-9, 1e-12, "b", _fake_result(bundle, 1), 1.0)
+    (Path(store.chunks_dir) / "chunk_000002.npz.tmp-dead").write_bytes(b"garbage")
+    assert len(store.load_records(manifest)) == 1
+    assert store.next_seq() == 2
+
+
+def test_manifest_guard_rejects_mismatched_provenance(bundle, tmp_path):
+    """init_or_validate_manifest refuses to resume when any recorded provenance
+    field (the three hashes or, for the ode config, Omega_1013) disagrees with the
+    live code/model."""
+    for field, doctored, match in bundle.guard_cases:
+        store, _ = mini_store(bundle, tmp_path, name=field)
+        manifest_path = Path(store.manifest_path)
+        doc = json.loads(manifest_path.read_text())
+        doc[field] = doctored
+        manifest_path.write_text(json.dumps(doc))
+        with pytest.raises(RuntimeError, match=match):
+            store.init_or_validate_manifest(
+                bundle.cfg, "modelhash-1", "codehash", {}, **bundle.manifest_extras())
+
+
+def test_chunk_guard_refuses_to_merge_foreign_provenance(bundle, tmp_path):
+    """load_records refuses to merge a chunk whose stamped hash differs from the
+    manifest.  (Omega_1013 is manifest-only, so it has no chunk arm.)"""
+    for field in ("physics_hash", "model_hash", "pulse_hash"):
+        store, manifest = mini_store(bundle, tmp_path, name=field)
+        foreign = dict(manifest, **{field: "0" * 64})
+        store.write_result_chunk(1, foreign, bundle.panel_keys(0, 0, 0)[:1],
+                                 bundle.cfg, "production", 1e-9, 1e-12, "b",
+                                 _fake_result(bundle, 1), 1.0)
+        with pytest.raises(RuntimeError, match=field):
+            store.load_records(manifest)
+
+
+def test_resume_dedup_and_tier_preference(bundle, tmp_path):
+    store, manifest = mini_store(bundle, tmp_path)
+    keys = bundle.panel_keys(0, 0, 0)[:2]
+    store.write_result_chunk(1, manifest, keys, bundle.cfg, "production",
+                             1e-9, 1e-12, "b1", _fake_result(bundle, 2, seed=1), 10.0)
+    store.write_result_chunk(2, manifest, keys[:1], bundle.cfg, "audit",
+                             1e-10, 1e-13, "b2", _fake_result(bundle, 1, seed=2), 12.0)
+    records = store.load_records(manifest)
+    best = sweeplib.best_records(records)
+    assert best[keys[0]].tier == "audit"          # tightest record wins exports
+    assert best[keys[1]].tier == "production"
+    done = sweeplib.completed_keys(records)
+    missing = [k for k in bundle.panel_keys(0, 0, 0) if k not in done]
+    assert len(missing) == 16 - 2                 # resume schedules only the rest
+    pairs = sweeplib.audit_pairs(records)
+    assert len(pairs) == 1 and pairs[0][0] == keys[0]
+
+
+def test_failed_points_recorded_and_not_counted_done(bundle, tmp_path):
+    store, manifest = mini_store(bundle, tmp_path)
+    keys = bundle.panel_keys(0, 0, 0)[:1]
+    store.write_result_chunk(
+        1, manifest, keys, bundle.cfg, "production", 1e-9, 1e-12,
+        "bf", None, 5.0, statuses=["timeout"], message="timeout after 5s",
+        retry_count=2)
+    records = store.load_records(manifest)
+    assert records[0].status == "timeout"
+    assert records[0].retry_count == 2
+    assert sweeplib.completed_keys(records) == set()
+    assert sweeplib.best_records(records) == {}
+
+
+def test_best_records_prefers_tighter_rtol_over_tier(bundle, tmp_path):
+    """A loosened ad-hoc audit must not displace a tighter production record."""
+    store, manifest = mini_store(bundle, tmp_path)
+    keys = bundle.panel_keys(0, 0, 0)[:1]
+    store.write_result_chunk(1, manifest, keys, bundle.cfg, "production",
+                             1e-9, 1e-12, "b1", _fake_result(bundle, 1, seed=1), 1.0)
+    store.write_result_chunk(2, manifest, keys, bundle.cfg, "audit",
+                             1e-8, 1e-11, "b2", _fake_result(bundle, 1, seed=2), 1.0)
+    best = sweeplib.best_records(store.load_records(manifest))
+    assert best[keys[0]].tier == "production" and best[keys[0]].rtol == 1e-9
+
+
+def test_next_seq_spans_chunk_and_trajectory_series(bundle, tmp_path):
+    """Chunk and trajectory files share one seq counter, so next_seq must be past
+    both — otherwise a later trajectory write would os.replace an existing one."""
+    store, manifest = mini_store(bundle, tmp_path)
+    keys = bundle.panel_keys(0, 0, 0)[:1]
+    store.write_result_chunk(1, manifest, keys, bundle.cfg, "production",
+                             1e-9, 1e-12, "b", _fake_result(bundle, 1), 1.0)
+    store.write_trajectory_chunk(2, manifest, keys[0], "production",
+                                 np.linspace(0.0, 1.0, 3),
+                                 np.zeros((3, 4, bundle.dim), dtype=complex))
+    assert store.next_seq() == 3
+
+
+def test_corrupted_chunk_raises_on_load(bundle, tmp_path):
+    """A garbage chunk_NNNNNN.npz is picked up by the loader and raises ValueError
+    mid-merge (np.load's pickle fallback under allow_pickle=False)."""
+    store, manifest = mini_store(bundle, tmp_path)
+    store.write_result_chunk(1, manifest, bundle.panel_keys(0, 0, 0)[:1], bundle.cfg,
+                             "production", 1e-9, 1e-12, "b", _fake_result(bundle, 1), 1.0)
+    (Path(store.chunks_dir) / "chunk_000002.npz").write_bytes(b"garbage, not a real npz")
+    with pytest.raises(ValueError, match="pickled"):
+        store.load_records(manifest)
+
+
+def test_cross_level_resume_reuses_coarse_nodes(bundle, tmp_path):
+    """End-to-end nesting invariant: level-0 records mark the coarse nodes done,
+    so the level-1 missing set is exactly the newly inserted (33) nodes."""
+    store, manifest = mini_store(bundle, tmp_path)
+    coarse = bundle.panel_keys(0, 0, 0)             # 16 level-0 nodes of panel (0,0)
+    store.write_result_chunk(1, manifest, coarse, bundle.cfg, "production",
+                             1e-9, 1e-12, "b", _fake_result(bundle, len(coarse)), 60.0)
+    done = sweeplib.completed_keys(store.load_records(manifest))
+    assert set(coarse) <= done
+    fine = bundle.panel_keys(0, 0, 1)               # 49 level-1 nodes, same panel
+    missing = [k for k in fine if k not in done]
+    assert len(missing) == 49 - 16
+    assert set(coarse).isdisjoint(missing)
+
+
+# ── scatter series ───────────────────────────────────────────────────────────
+
+
+def test_scatter_chunk_roundtrip_resume_and_isolation(bundle, tmp_path):
+    store, manifest = mini_store(bundle, tmp_path)
+    keys = bundle.panel_keys(0, 0, 0)[:2]
+    gammas = {0: bundle.scatter_rates}
+    scatter = {ch: np.random.default_rng(0).uniform(1e-6, 1e-2, (2, 4))
+               for ch in bundle.scatter_channels}
+    path = store.write_scatter_chunk(
+        1, manifest, keys, bundle.cfg, gammas, 1e-9, 1e-12, "sb1",
+        scatter, np.array([1e-4, 2e-4]), runtime_s=10.0)
+    assert "scatter" in path
+    rows = store.load_scatter_records(manifest)
+    assert len(rows) == 2 and rows[0]["status"] == "ok"
+    ch0 = bundle.scatter_channels[0]
+    np.testing.assert_array_equal(rows[1][ch0], scatter[ch0][1])
+    # resume: done keys are skipped
+    done = {r["key"] for r in rows if r["status"] == "ok"}
+    assert set(keys) == done
+    # isolation: no main-series chunk was created
+    assert store.load_records(manifest) == []
+    assert store.next_seq() == 1 and store.next_scatter_seq() == 2
+    # foreign pulse hash refuses to merge
+    foreign = dict(manifest, pulse_hash="0" * 64)
+    store.write_scatter_chunk(2, foreign, keys, bundle.cfg, gammas, 1e-9,
+                              1e-12, "sb2", scatter, np.array([1e-4, 2e-4]), 1.0)
+    with pytest.raises(RuntimeError, match="pulse_hash"):
+        store.load_scatter_records(manifest)
+
+
+# ── scheduling helpers ───────────────────────────────────────────────────────
+
+
+def test_group_batches_stays_within_panel_and_orders_axes(bundle):
+    keys = bundle.panel_keys(0, 0, 0) + bundle.panel_keys(1, 2, 0)
+    batches = sweeplib.group_batches(keys, batch_size=6)
+    assert all(len({k.panel for k in b.keys}) == 1 for b in batches)
+    assert sum(len(b.keys) for b in batches) == 32
+    first = batches[0].keys
+    fracs = [(Fraction(k.om_num, k.om_den), Fraction(k.dw_num, k.dw_den)) for k in first]
+    assert fracs == sorted(fracs)
+    with pytest.raises(ValueError):
+        sweeplib.Batch(keys=keys)  # crosses panels
+
+
+def test_batch_split_isolates_points_and_counts_retries(bundle):
+    batch = sweeplib.Batch(keys=bundle.panel_keys(0, 0, 0)[:5],
+                           priority_scores=[1, 2, 3, 4, 5])
+    parts = sweeplib.Runner._split(None, batch)
+    assert [len(p.keys) for p in parts] == [2, 3]
+    assert all(p.retry_count == 1 for p in parts)
+    assert parts[0].priority_scores == [1, 2]
+    single = sweeplib.Batch(keys=batch.keys[:1])
+    assert [len(p.keys) for p in sweeplib.Runner._split(None, single)] == [1]
+
+
+def test_cost_model_scales_with_gate_time_and_inflates(bundle):
+    cfg = bundle.cfg
+    cost = sweeplib.CostModel(cfg)
+    assert cost.predict_point((0, 0)) == pytest.approx(150.0 * cfg.t_gate_us[0])
+    cost.observe((0, 0), 100.0)                 # first panel column
+    assert cost.predict_point((0, 0)) == 100.0
+    last = len(cfg.t_gate_us) - 1
+    assert cost.predict_point((0, last)) == pytest.approx(
+        100.0 * cfg.t_gate_us[last] / cfg.t_gate_us[0])   # same row, scaled
+    assert cost.inflation_p90() == 1.5          # too few ratios -> conservative
+    for r in (1.0, 1.1, 1.2, 1.0, 1.05, 1.3):
+        cost.observe_batch(100.0, 100.0 * r)
+    assert 1.0 <= cost.inflation_p90() <= 1.3
+    eta = cost.eta_seconds(bundle.panel_keys(0, 0, 0), n_workers=4)
+    assert eta == pytest.approx(16 * 100.0 * cost.inflation_p90() / 4)
+
+
+# ── Runner event loop: dispatch, retries, signals (synchronous fake executor) ─
+
+
+def test_budget_scheduler_defers_everything_past_the_deadline(bundle, tmp_path, runner_factory):
+    """With the dispatch deadline already in the past, run_batches launches no
+    work (the default responder would assert if submit ran), defers every point,
+    and records nothing — never-computed points must not be marked failed."""
+    store, manifest = mini_store(bundle, tmp_path)
+    runner = runner_factory(store, manifest, bundle.cfg,
+                            _runner_args(workers=2, batch_size=4,
+                                         budget_hours=0.0, reserve_hours=1.0))
+    runner.run_batches(sweeplib.group_batches(bundle.panel_keys(0, 0, 0), batch_size=4),
+                       "test-budget")
+    assert runner.deferred == 16
+    assert runner.completed_points == 0
+    assert store.load_records(manifest) == []
+
+
+def test_store_lock_rejects_concurrent_writers(bundle, tmp_path, runner_factory):
+    store, manifest = mini_store(bundle, tmp_path)
+    runner_factory(store, manifest, bundle.cfg, _runner_args())
+    import fcntl
+    with open(Path(store.logs_dir) / "store.lock") as fh:
+        with pytest.raises(BlockingIOError):
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def test_failing_batch_splits_to_singletons_before_recording_failure(bundle, tmp_path, runner_factory):
+    """A failed multi-point batch is halved (retry_count++) until size 1; only
+    then is _write_failure called, so every recorded failure is a singleton."""
+    store, manifest = mini_store(bundle, tmp_path)
+
+    def responder(spec):
+        return "result", {"ok": False, "reason": "failed",
+                          "message": "boom", "runtime_s": 0.0}
+
+    runner = runner_factory(store, manifest, bundle.cfg,
+                            _runner_args(workers=2, batch_size=4), responder=responder)
+    runner.run_batches(sweeplib.group_batches(bundle.panel_keys(0, 0, 0)[:4], 4), "split")
+    records = store.load_records(manifest)
+    assert len(records) == 4
+    assert all(r.status == "failed" for r in records)
+    assert all(r.batch_size == 1 for r in records)       # split down to singletons
+    assert {r.retry_count for r in records} == {2}       # 4 -> 2 -> 1 escalations
+    assert runner.completed_points == 0
+
+
+def test_pool_crash_requeues_on_its_own_budget_then_fails(bundle, tmp_path, runner_factory):
+    """An in-flight pool death requeues the innocent batch on the pool_retries
+    budget (0..5); the 6th death exhausts it and records a single failure whose
+    retry_count is still 0 (it was never a genuine failure-split)."""
+    store, manifest = mini_store(bundle, tmp_path)
+    calls = {"n": 0}
+
+    def responder(spec):
+        calls["n"] += 1
+        return "crash", BrokenProcessPool("worker died")
+
+    runner = runner_factory(store, manifest, bundle.cfg, _runner_args(), responder=responder)
+    runner.run_batches([sweeplib.Batch(keys=bundle.panel_keys(0, 0, 0)[:1])], "crash")
+    assert calls["n"] == 6                       # 5 requeues + the exhausting death
+    records = store.load_records(manifest)
+    assert len(records) == 1 and records[0].status == "failed"
+    assert records[0].retry_count == 0
+
+
+def test_broken_pool_at_submit_recreates_and_resubmits(bundle, tmp_path, runner_factory):
+    """A BrokenProcessPool raised by submit() itself is caught in _submit, which
+    recreates the pool and resubmits; the point then completes normally."""
+    store, manifest = mini_store(bundle, tmp_path)
+    calls = {"n": 0}
+
+    def responder(spec):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "submit_error", BrokenProcessPool("pool broke")
+        return "result", {"ok": True, "result": _fake_result(bundle, len(spec["keys"])),
+                          "runtime_s": 1.0}
+
+    runner = runner_factory(store, manifest, bundle.cfg, _runner_args(), responder=responder)
+    runner.run_batches([sweeplib.Batch(keys=bundle.panel_keys(0, 0, 0)[:1])], "recreate")
+    assert runner._pool_restarts == 1
+    assert calls["n"] == 2
+    records = store.load_records(manifest)
+    assert len(records) == 1 and records[0].status == "ok"
+
+
+def test_sigint_drain_then_hard_abort_then_lock_release(bundle, tmp_path, runner_factory):
+    """SIGINT drain semantics: the first delivery requests a graceful stop (the
+    submit loop closes, nothing is recorded); a duplicate inside the 2 s debounce
+    is swallowed; a deliberate second Ctrl-C after the debounce escalates to a
+    hard abort; shutdown() releases the flock so a fresh coordinator can start."""
+    store, manifest = mini_store(bundle, tmp_path)
+    runner = runner_factory(store, manifest, bundle.cfg, _runner_args())
+    handler = signal.getsignal(signal.SIGINT)
+    assert signal.getsignal(signal.SIGTERM) is handler   # both installed
+
+    handler(signal.SIGINT, None)                 # first Ctrl-C: graceful stop
+    assert runner.stop_requested and not runner.aborted
+    handler(signal.SIGINT, None)                 # debounced duplicate
+    assert not runner.aborted
+    # submit loop is closed: nothing dispatches, nothing is recorded
+    runner.run_batches(sweeplib.group_batches(bundle.panel_keys(0, 0, 0), 4), "drain")
+    assert runner.completed_points == 0 and store.load_records(manifest) == []
+
+    runner._signal_time -= 3.0                    # pretend >2 s have elapsed
+    with pytest.raises(KeyboardInterrupt):
+        handler(signal.SIGINT, None)
+    assert runner.aborted
+
+    runner.shutdown()                             # releases the flock
+    fresh = runner_factory(store, manifest, bundle.cfg, _runner_args())
+    assert fresh.stop_requested is False
+
+
+def test_second_coordinator_rejected_without_truncating_pid(bundle, tmp_path, runner_factory):
+    """A second Runner on a locked store exits; and because the lock file is
+    opened append-mode and written only after the flock succeeds, the live
+    coordinator's PID record survives the rejected launch."""
+    store, manifest = mini_store(bundle, tmp_path)
+    runner_factory(store, manifest, bundle.cfg, _runner_args())
+    lock_path = Path(store.logs_dir) / "store.lock"
+    live = lock_path.read_text()
+    assert live.startswith(f"pid {os.getpid()} ")
+    with pytest.raises(SystemExit):
+        sweeplib.Runner(store, manifest, bundle.cfg, _runner_args(),
+                        sweeplib.CostModel(bundle.cfg))
+    assert lock_path.read_text() == live          # append-mode: not truncated
+
+
+def test_scatter_write_failure_records_nan_rows(bundle, tmp_path, runner_factory):
+    """A failed scatter batch writes NaN-filled rows into the scatter series with
+    the failure status, and never touches the main coherent-leakage series."""
+    store, manifest = mini_store(bundle, tmp_path)
+    runner = runner_factory(store, manifest, bundle.cfg, _runner_args())
+    runner.gammas = {0: bundle.scatter_rates}
+    batch = sweeplib.Batch(keys=bundle.panel_keys(0, 0, 0)[:2], scatter=True)
+    runner._write_failure(batch, {"reason": "timeout", "message": "slow",
+                                  "runtime_s": 3.0})
+    rows = store.load_scatter_records(manifest)
+    assert len(rows) == 2 and all(r["status"] == "timeout" for r in rows)
+    assert all(np.all(np.isnan(r[ch])) for r in rows for ch in bundle.scatter_channels)
+    assert store.load_records(manifest) == []
+
+
+# ── shared worker entry (injected solve + scatter, via the worker context) ────
+
+
+def _toy_scattering_integrals(times, states, gammas):
+    """Toy per-channel scattering integral: counts atoms in local level 2."""
+    pops = np.abs(states) ** 2                     # (n_t, n_p, 4, 9)
+    idx = np.arange(9)
+    a, b = np.divmod(idx, 3)
+    w = (a == 2).astype(float) + (b == 2).astype(float)
+    return {"p_e": gammas["p_e"] * np.trapezoid(pops @ w, times, axis=0)}
+
+
+def test_worker_entry_solves_and_scatters():
+    """The shared _worker_run_batch calls the injected solve + scattering_integrals
+    from the (fork-inherited) worker context and returns both series."""
+    ops = _toy_ops()
+    PointKey, make_key, _pk, _ap, _ak = sweeplib.make_pointkey_type(
+        panel_field="delta_idx", id_prefix="d",
+        omega_anchors=_ODE_OME, dsweep_anchors=_ODE_DSW, panel_len=1, n_t=1)
+    key_fields = ("delta_idx", "t_idx", "om_num", "om_den", "dw_num", "dw_den")
+    key = make_key(0, 0, (0, 1), (0, 1))          # 200 MHz, 2 MHz
+    cfg = SimpleNamespace(t_gate_us=(0.05,), n_eval_trajectory=21, ramp_frac=0.15)
+
+    def _solve(ops, t_gate, om, dw, *, rtol, atol, ramp, use_swap, t_eval):
+        state_labels = ("00", "01", "11") if use_swap else sweeplib.LOGICAL_INPUTS
+        return sweeplib.integrate_batch(
+            ops, t_gate, {"omega_420": om, "d_sweep": dw}, state_labels,
+            rhs_factory=_toy_rhs_factory(_TOY_OM1013), dim=ops.h_static_diag.size,
+            rtol=rtol, atol=atol, ramp=ramp, use_shifts=True, segmented=True,
+            t_eval=t_eval)
+
+    sweeplib.set_worker_context(
+        cfg, {0: ops}, use_swap=True, gammas={0: {"p_e": 1.0e7}},
+        key_type=PointKey, solve=_solve, scattering_integrals=_toy_scattering_integrals)
+
+    spec = dict(keys=[tuple(getattr(key, f) for f in key_fields)],
+                panel_idx=0, t_idx=0, rtol=1e-9, atol=1e-12,
+                save_traj=False, scatter=True, timeout_s=60)
+    out = sweeplib._worker_run_batch(spec)
+    assert out["ok"]
+    assert isinstance(out["result"], sweeplib.BatchResult)
+    assert out["result"].psi_final.shape == (1, 4, 9)
+    assert np.all(np.isfinite(out["result"].psi_final.view(float)))
+    assert out["scatter"]["p_e"].shape == (1, 4)
+    assert np.all(out["scatter"]["p_e"] >= 0.0)
+    # the trajectory was consumed, not returned, since save_traj is False
+    assert out["result"].states is None

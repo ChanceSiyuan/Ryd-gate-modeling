@@ -64,11 +64,8 @@ import argparse
 import hashlib
 import json
 import math
-import signal
-import subprocess
 import sys
 import time
-import uuid
 from collections import deque
 from dataclasses import asdict, dataclass
 from fractions import Fraction
@@ -87,7 +84,11 @@ from sweeplib import (
     LEVEL_DENS, LEVEL_SIZES, LEVEL_FROM_SIZE,
     canon_coord, axis_coords, axis_values_mhz, make_pointkey_type,
     envelope, envelope_integral, verify_scipy_error_norm, BatchResult,
+    ProvenanceColumns, PointRecord, best_records, completed_keys,
+    audit_pairs, Runner, CostModel, Batch, group_batches, set_worker_context,
 )
+from sweeplib.store import _atomic_savez, _NO_STATES
+from sweeplib.runner import _worker_run_batch, _worker_process_init
 
 TAU = 2.0 * math.pi
 SCHEMA_VERSION = 1
@@ -569,502 +570,76 @@ def integrate_batch(
 # are authoritative — every index/export below is derived and regenerable.
 
 _KEY_FIELDS = ("delta_idx", "t_idx", "om_num", "om_den", "dw_num", "dw_den")
-TIER_RANK = {"production": 0, "audit": 1}
-_NO_STATES = np.empty((4, 0), dtype=np.complex128)  # states-skipped sentinel
+
+# The Store, atomic NPZ writes, three-hash provenance gates, chunk/scatter series
+# and the PointRecord loader live in sweeplib.store; this script supplies its
+# serialized field name (delta_idx), the physical descriptor columns and the fixed
+# 1013 Rabi via the ProvenanceColumns bundle below (formats frozen).
 
 
-def _atomic_savez(path: str, **arrays) -> None:
-    for name, value in arrays.items():
-        if np.asarray(value).dtype == object:
-            raise TypeError(
-                f"array {name!r} has dtype=object; chunks must load with "
-                "allow_pickle=False")
-    tmp = f"{path}.tmp-{uuid.uuid4().hex[:8]}"
-    try:
-        with open(tmp, "wb") as fh:
-            np.savez(fh, **arrays)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, path)
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-    dir_fd = os.open(os.path.dirname(path) or ".", os.O_RDONLY)
-    try:
-        os.fsync(dir_fd)
-    finally:
-        os.close(dir_fd)
-
-
-def _git_state(repo_root: str) -> dict:
-    def _run(*args):
-        try:
-            return subprocess.run(
-                ["git", *args], cwd=repo_root, capture_output=True, text=True,
-                timeout=10).stdout.strip()
-        except Exception:
-            return ""
+def _ode_descriptor(cfg: "ScanConfig", keys) -> dict:
+    """Base physical-descriptor columns of one batch (delta_e / t_gate / drives)."""
     return {
-        "commit": _run("rev-parse", "HEAD"),
-        "dirty": bool(_run("status", "--porcelain")),
+        "delta_e_ghz": np.asarray([cfg.delta_e_ghz[k.delta_idx] for k in keys]),
+        "t_gate_us": np.asarray([cfg.t_gate_us[k.t_idx] for k in keys]),
+        "omega_420_mhz": np.asarray([float(k.omega_mhz()) for k in keys]),
+        "dsweep_mhz": np.asarray([float(k.dsweep_mhz()) for k in keys]),
     }
 
 
-def keys_to_arrays(keys: Sequence[PointKey]) -> dict[str, np.ndarray]:
+def _ode_result_extra(cfg: "ScanConfig", keys, manifest: dict) -> dict:
+    """Extended coherent-chunk columns: rad/s conversions + the fixed 1013 Rabi."""
+    de_ghz = np.asarray([cfg.delta_e_ghz[k.delta_idx] for k in keys])
+    tg_us = np.asarray([cfg.t_gate_us[k.t_idx] for k in keys])
+    om_mhz = np.asarray([float(k.omega_mhz()) for k in keys])
+    dw_mhz = np.asarray([float(k.dsweep_mhz()) for k in keys])
     return {
-        "delta_idx": np.asarray([k.delta_idx for k in keys], dtype=np.int16),
-        "t_idx": np.asarray([k.t_idx for k in keys], dtype=np.int16),
-        "om_num": np.asarray([k.om_num for k in keys], dtype=np.int32),
-        "om_den": np.asarray([k.om_den for k in keys], dtype=np.int32),
-        "dw_num": np.asarray([k.dw_num for k in keys], dtype=np.int32),
-        "dw_den": np.asarray([k.dw_den for k in keys], dtype=np.int32),
+        "delta_e_rad_s": de_ghz * 1e9 * TAU,
+        "t_gate_s": tg_us * 1e-6,
+        "omega_420_rad_s": om_mhz * 1e6 * TAU,
+        "dsweep_rad_s": dw_mhz * 1e6 * TAU,
+        "omega_1013_rad_s": np.full(len(keys), float(manifest["omega_1013_rad_s"])),
     }
 
 
-def arrays_to_keys(d) -> list[PointKey]:
-    return [
-        PointKey(int(a), int(b), int(c), int(e), int(f), int(g))
-        for a, b, c, e, f, g in zip(
-            d["delta_idx"], d["t_idx"], d["om_num"], d["om_den"], d["dw_num"], d["dw_den"])
-    ]
-
-
-@dataclass
-class PointRecord:
-    """One per-point result row loaded back from a chunk."""
-
-    key: PointKey
-    tier: str
-    rtol: float
-    atol: float
-    status: str                  # 'ok' | 'failed' | 'timeout'
-    max_leakage: float
-    leakage: np.ndarray          # (4,)
-    worst_input: str
-    return_prob: np.ndarray      # (4,)
-    norm_err: np.ndarray         # (4,)
-    psi_final: np.ndarray        # (4, dim)
-    nfev: int
-    runtime_s: float
-    batch_id: str
-    batch_size: int
-    retry_count: int
-    priority_score: float
-    message: str
-    chunk_file: str
-    used_swap: bool
-
-
-class Store:
-    """The on-disk scan store: manifest + chunk read/write + derived indices."""
+class Store(sweeplib.Store):
+    """The rb87_7_mp scan store: the shared sweeplib.Store bound to this script's
+    serialized ``delta_idx`` field, physical descriptor columns and 1013 Rabi
+    provenance.  Constructible from just the output directory (resume/status)."""
 
     def __init__(self, output_dir: str):
-        self.root = output_dir
-        self.chunks_dir = os.path.join(output_dir, "chunks")
-        self.traj_dir = os.path.join(output_dir, "trajectories")
-        self.scatter_dir = os.path.join(output_dir, "scatter")
-        self.logs_dir = os.path.join(output_dir, "logs")
-        self.reports_dir = os.path.join(output_dir, "reports")
-        self.exports_dir = os.path.join(output_dir, "exports")
-        self.plots_dir = os.path.join(output_dir, "plots")
-        self.manifest_path = os.path.join(output_dir, "manifest.json")
-
-    def ensure_dirs(self) -> None:
-        for d in (self.root, self.chunks_dir, self.traj_dir, self.scatter_dir,
-                  self.logs_dir, self.reports_dir, self.exports_dir,
-                  self.plots_dir):
-            os.makedirs(d, exist_ok=True)
-
-    # -- manifest ---------------------------------------------------------
-
-    def load_manifest(self) -> dict | None:
-        if not os.path.exists(self.manifest_path):
-            return None
-        with open(self.manifest_path) as fh:
-            return json.load(fh)
-
-    def init_or_validate_manifest(
-        self,
-        cfg: ScanConfig,
-        omega_1013: float,
-        model_hash: str,
-        code_hash: str,
-        run_meta: dict,
-    ) -> dict:
-        """Create the manifest on first run; on resume, refuse hash mismatches."""
-        existing = self.load_manifest()
-        if existing is not None:
-            for name, val in (("physics_hash", cfg.physics_hash()),
-                              ("model_hash", model_hash),
-                              ("pulse_hash", pulse_hash())):
-                if existing.get(name) != val:
-                    raise RuntimeError(
-                        f"{name} mismatch: manifest has {existing.get(name)!r}, current "
-                        f"code/model gives {val!r}.  Refusing to mix data produced by "
-                        "different physics/model/pulse code — use a fresh --output "
-                        "directory."
-                    )
-            rec = float(existing.get("omega_1013_rad_s", 0.0))
-            if abs(rec - omega_1013) > 1e-6 * abs(omega_1013):
-                raise RuntimeError(
-                    f"Omega_1013 mismatch: manifest {rec!r} vs current {omega_1013!r}")
-            return existing
-        self.ensure_dirs()
-        manifest = {
-            "schema_version": SCHEMA_VERSION,
-            "scan_uuid": uuid.uuid4().hex,
-            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "git": _git_state(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "physics": cfg.physics_payload(),
-            "physics_hash": cfg.physics_hash(),
-            "model_hash": model_hash,
-            "pulse_hash": pulse_hash(),
-            "code_hash": code_hash,
-            "omega_1013_rad_s": omega_1013,
-            "omega_1013_over_2pi_MHz": omega_1013 / TAU / 1e6,
-            "omega_1013_reference_rad_s": OMEGA_1013_REFERENCE_RAD_S,
-            "tolerances": {
-                "production": {"rtol": cfg.rtol_production, "atol": cfg.atol_production},
-                "audit": {"rtol": cfg.rtol_audit, "atol": cfg.atol_audit},
-            },
-            "axes": {
-                "delta_e_ghz": list(cfg.delta_e_ghz),
-                "t_gate_us": list(cfg.t_gate_us),
-                "omega_anchors_mhz": [str(a) for a in OMEGA_ANCHORS_MHZ],
-                "dsweep_anchors_mhz": [str(a) for a in DSWEEP_ANCHORS_MHZ],
-                "level_sizes": list(LEVEL_SIZES),
-                "dsweep_hw_limit_mhz": DSWEEP_HW_LIMIT_MHZ,
-            },
-            "policies": {
-                "interp_space": cfg.interp_space,
-                "credibility_floor": "vmin = max(1e-12, 10 * P95(|L_prod - L_audit|))",
-                "refine_residual_dex": 0.25,
-                "refine_contour_residual_dex": 0.10,
-                "decision_contours": [1e-3, 1e-2, 1e-4],
-            },
-            "run_meta": run_meta,
-        }
-        tmp = self.manifest_path + ".tmp"
-        with open(tmp, "w") as fh:
-            json.dump(manifest, fh, indent=2, sort_keys=True)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, self.manifest_path)
-        return manifest
-
-    # -- chunk writing ------------------------------------------------------
-
-    def next_seq(self) -> int:
-        seqs = [0]
-        if os.path.isdir(self.chunks_dir):
-            for name in os.listdir(self.chunks_dir):
-                if name.startswith("chunk_") and name.endswith(".npz"):
-                    try:
-                        seqs.append(int(name[len("chunk_"):-len(".npz")]))
-                    except ValueError:
-                        pass
-        if os.path.isdir(self.traj_dir):
-            for name in os.listdir(self.traj_dir):
-                if name.startswith("traj_") and name.endswith(".npz"):
-                    try:
-                        seqs.append(int(name[len("traj_"):-len(".npz")]))
-                    except ValueError:
-                        pass
-        return max(seqs) + 1
-
-    def write_result_chunk(
-        self,
-        seq: int,
-        manifest: dict,
-        keys: Sequence[PointKey],
-        cfg: ScanConfig,
-        omega_1013: float,
-        tier: str,
-        rtol: float,
-        atol: float,
-        batch_id: str,
-        result: BatchResult | None,
-        runtime_s: float,
-        statuses: Sequence[str] | None = None,
-        message: str = "",
-        retry_count: int = 0,
-        priority_scores: Sequence[float] | None = None,
-    ) -> str:
-        """Persist one completed (or failed) batch as an append-only chunk."""
-        n = len(keys)
-        dim = 49
-        if result is not None:
-            psi = result.psi_final
-            dim = psi.shape[2]
-            leak, max_leak = result.leakage, result.max_leakage
-            worst, ret = result.worst_input, result.return_prob
-            nerr = result.norm_err
-            nfev = np.full(n, result.nfev // max(n, 1), dtype=np.int64)
-            used_swap = result.used_swap
-        else:
-            psi = np.full((n, 4, dim), np.nan, dtype=np.complex128)
-            leak = np.full((n, 4), np.nan)
-            max_leak = np.full(n, np.nan)
-            worst = [""] * n
-            ret = np.full((n, 4), np.nan)
-            nerr = np.full((n, 4), np.nan)
-            nfev = np.zeros(n, dtype=np.int64)
-            used_swap = False
-        statuses = list(statuses) if statuses is not None else ["ok"] * n
-        scores = (np.asarray(priority_scores, dtype=float)
-                  if priority_scores is not None else np.zeros(n))
-
-        om_mhz = np.asarray([float(k.omega_mhz()) for k in keys])
-        dw_mhz = np.asarray([float(k.dsweep_mhz()) for k in keys])
-        de_ghz = np.asarray([cfg.delta_e_ghz[k.delta_idx] for k in keys])
-        tg_us = np.asarray([cfg.t_gate_us[k.t_idx] for k in keys])
-
-        payload = dict(
-            schema_version=np.int64(SCHEMA_VERSION),
-            scan_uuid=str(manifest["scan_uuid"]),
-            physics_hash=str(manifest["physics_hash"]),
-            model_hash=str(manifest["model_hash"]),
-            pulse_hash=str(manifest["pulse_hash"]),
-            **keys_to_arrays(keys),
-            delta_e_ghz=de_ghz,
-            t_gate_us=tg_us,
-            omega_420_mhz=om_mhz,
-            dsweep_mhz=dw_mhz,
-            delta_e_rad_s=de_ghz * 1e9 * TAU,
-            t_gate_s=tg_us * 1e-6,
-            omega_420_rad_s=om_mhz * 1e6 * TAU,
-            dsweep_rad_s=dw_mhz * 1e6 * TAU,
-            omega_1013_rad_s=np.full(n, omega_1013),
-            psi_final=psi,
-            leakage=leak,
-            max_leakage=max_leak,
-            worst_input=np.asarray(worst, dtype="U2"),
-            return_prob=ret,
-            norm_err=nerr,
-            all_finite=np.asarray([bool(np.all(np.isfinite(psi[i].view(float))))
-                                   for i in range(n)]),
-            solver=np.asarray(["DOP853"] * n, dtype="U8"),
-            tier=np.asarray([tier] * n, dtype="U10"),
-            rtol=np.full(n, rtol),
-            atol=np.full(n, atol),
-            used_swap=np.asarray([used_swap] * n),
-            nfev=nfev,
-            runtime_s=np.full(n, runtime_s / max(n, 1)),
-            batch_id=np.asarray([batch_id] * n, dtype="U40"),
-            batch_size=np.full(n, n, dtype=np.int32),
-            status=np.asarray(statuses, dtype="U16"),
-            message=np.asarray([message] * n, dtype="U240"),
-            retry_count=np.full(n, retry_count, dtype=np.int32),
-            priority_score=scores,
-        )
-        path = os.path.join(self.chunks_dir, f"chunk_{seq:06d}.npz")
-        _atomic_savez(path, **payload)
-        return path
-
-    def write_trajectory_chunk(
-        self,
-        seq: int,
-        manifest: dict,
-        key: PointKey,
-        tier: str,
-        times: np.ndarray,
-        states: np.ndarray,
-    ) -> str:
-        payload = dict(
-            schema_version=np.int64(SCHEMA_VERSION),
-            scan_uuid=str(manifest["scan_uuid"]),
-            **keys_to_arrays([key]),
-            tier=np.asarray([tier], dtype="U10"),
-            times=np.asarray(times, dtype=float),
-            states=np.asarray(states, dtype=np.complex128),
-        )
-        path = os.path.join(self.traj_dir, f"traj_{seq:06d}.npz")
-        _atomic_savez(path, **payload)
-        return path
-
-    # -- scattering supplement (separate append-only series) ---------------
-
-    def next_scatter_seq(self) -> int:
-        seqs = [0]
-        if os.path.isdir(self.scatter_dir):
-            for name in os.listdir(self.scatter_dir):
-                if name.startswith("scatter_") and name.endswith(".npz"):
-                    try:
-                        seqs.append(int(name[len("scatter_"):-len(".npz")]))
-                    except ValueError:
-                        pass
-        return max(seqs) + 1
-
-    def write_scatter_chunk(
-        self,
-        seq: int,
-        manifest: dict,
-        keys: Sequence[PointKey],
-        cfg: ScanConfig,
-        gammas: dict[str, float],
-        rtol: float,
-        atol: float,
-        batch_id: str,
-        scatter: dict[str, np.ndarray],
-        max_leakage: np.ndarray,
-        runtime_s: float,
-        statuses: Sequence[str] | None = None,
-        message: str = "",
-    ) -> str:
-        """Persist one scattering-supplement batch; never touches other series."""
-        n = len(keys)
-        statuses = list(statuses) if statuses is not None else ["ok"] * n
-        payload = dict(
-            schema_version=np.int64(SCHEMA_VERSION),
-            scan_uuid=str(manifest["scan_uuid"]),
-            physics_hash=str(manifest["physics_hash"]),
-            model_hash=str(manifest["model_hash"]),
-            pulse_hash=str(manifest["pulse_hash"]),
-            **keys_to_arrays(keys),
-            delta_e_ghz=np.asarray([cfg.delta_e_ghz[k.delta_idx] for k in keys]),
-            t_gate_us=np.asarray([cfg.t_gate_us[k.t_idx] for k in keys]),
-            omega_420_mhz=np.asarray([float(k.omega_mhz()) for k in keys]),
-            dsweep_mhz=np.asarray([float(k.dsweep_mhz()) for k in keys]),
-            **{name: np.asarray(scatter[name]).reshape(n, 4)
-               for name in SCATTER_CHANNELS},
-            max_leakage_check=np.asarray(max_leakage),
-            gamma_mid=np.full(n, gammas["p_mid"]),
-            gamma_ryd=np.full(n, gammas["p_ryd"]),
-            gamma_r_garb=np.full(n, gammas["p_r_garb"]),
-            n_eval=np.full(n, cfg.n_eval_trajectory, dtype=np.int32),
-            rtol=np.full(n, rtol),
-            atol=np.full(n, atol),
-            batch_id=np.asarray([batch_id] * n, dtype="U40"),
-            batch_size=np.full(n, n, dtype=np.int32),
-            status=np.asarray(statuses, dtype="U16"),
-            message=np.asarray([message] * n, dtype="U240"),
-            runtime_s=np.full(n, runtime_s / max(n, 1)),
-        )
-        path = os.path.join(self.scatter_dir, f"scatter_{seq:06d}.npz")
-        _atomic_savez(path, **payload)
-        return path
-
-    def load_scatter_records(self, manifest: dict | None = None) -> list[dict]:
-        """Per-point scattering rows from every scatter chunk (hash-validated)."""
-        if manifest is None:
-            manifest = self.load_manifest()
-        rows: list[dict] = []
-        if not os.path.isdir(self.scatter_dir):
-            return rows
-        for name in sorted(os.listdir(self.scatter_dir)):
-            if not (name.startswith("scatter_") and name.endswith(".npz")):
-                continue
-            with np.load(os.path.join(self.scatter_dir, name),
-                         allow_pickle=False) as npz:
-                d = {f: npz[f] for f in npz.files}
-            if manifest is not None:
-                for fieldname in ("physics_hash", "model_hash", "pulse_hash"):
-                    if str(d[fieldname]) != manifest[fieldname]:
-                        raise RuntimeError(
-                            f"scatter chunk {name} has a different {fieldname}; "
-                            "refusing to merge data from different model/pulse code")
-            for i, key in enumerate(arrays_to_keys(d)):
-                rows.append({
-                    "key": key,
-                    "status": str(d["status"][i]),
-                    "rtol": float(d["rtol"][i]),
-                    **{ch: np.array(d[ch][i]) for ch in SCATTER_CHANNELS},
-                    "max_leakage_check": float(d["max_leakage_check"][i]),
-                    "runtime_s": float(d["runtime_s"][i]),
-                })
-        return rows
-
-    # -- loading / derived indices -----------------------------------------
-
-    def load_records(self, manifest: dict | None = None,
-                     include_states: bool = True) -> list[PointRecord]:
-        """All per-point records from every chunk (hash-validated).
-
-        ``include_states=False`` skips the (4, dim) final-state payload — use it
-        for scheduling/status/plotting indices over large stores.
-        """
-        if manifest is None:
-            manifest = self.load_manifest()
-        records: list[PointRecord] = []
-        if not os.path.isdir(self.chunks_dir):
-            return records
-        for name in sorted(os.listdir(self.chunks_dir)):
-            if not (name.startswith("chunk_") and name.endswith(".npz")):
-                continue
-            path = os.path.join(self.chunks_dir, name)
-            with np.load(path, allow_pickle=False) as npz:
-                # NpzFile re-decompresses a member on every __getitem__; read once.
-                d = {f: npz[f] for f in npz.files
-                     if include_states or f != "psi_final"}
-                if manifest is not None:
-                    for fieldname in ("physics_hash", "model_hash", "pulse_hash"):
-                        if str(d[fieldname]) != manifest[fieldname]:
-                            raise RuntimeError(
-                                f"chunk {name} has a different {fieldname}; refusing to "
-                                "merge data from different model/pulse code")
-                keys = arrays_to_keys(d)
-                for i, key in enumerate(keys):
-                    records.append(PointRecord(
-                        key=key,
-                        tier=str(d["tier"][i]),
-                        rtol=float(d["rtol"][i]),
-                        atol=float(d["atol"][i]),
-                        status=str(d["status"][i]),
-                        max_leakage=float(d["max_leakage"][i]),
-                        leakage=np.array(d["leakage"][i]),
-                        worst_input=str(d["worst_input"][i]),
-                        return_prob=np.array(d["return_prob"][i]),
-                        norm_err=np.array(d["norm_err"][i]),
-                        psi_final=(np.array(d["psi_final"][i]) if include_states
-                                   else _NO_STATES),
-                        nfev=int(d["nfev"][i]),
-                        runtime_s=float(d["runtime_s"][i]),
-                        batch_id=str(d["batch_id"][i]),
-                        batch_size=int(d["batch_size"][i]),
-                        retry_count=int(d["retry_count"][i]),
-                        priority_score=float(d["priority_score"][i]),
-                        message=str(d["message"][i]),
-                        chunk_file=name,
-                        used_swap=bool(d["used_swap"][i]),
-                    ))
-        return records
+        super().__init__(
+            output_dir, key_type=PointKey, key_fields=_KEY_FIELDS,
+            provenance_columns=ProvenanceColumns(
+                scatter_channels=SCATTER_CHANNELS, default_dim=49,
+                descriptor=_ode_descriptor, result_extra=_ode_result_extra,
+                schema_version=SCHEMA_VERSION))
 
 
-def best_records(records: Iterable[PointRecord]) -> dict[PointKey, PointRecord]:
-    """Tightest successful record per point: lowest rtol wins; the audit tier only
-    breaks ties, so a loosened ad-hoc audit can never displace a tighter
-    production record in exports."""
-    best: dict[PointKey, PointRecord] = {}
-    for r in records:
-        if r.status != "ok":
-            continue
-        cur = best.get(r.key)
-        if cur is None:
-            best[r.key] = r
-            continue
-        a = (-r.rtol, TIER_RANK.get(r.tier, 0))
-        b = (-cur.rtol, TIER_RANK.get(cur.tier, 0))
-        if a > b:
-            best[r.key] = r
-    return best
+def _manifest_extras(cfg: "ScanConfig", omega_1013: float) -> dict:
+    """The ODE-specific manifest payload + resume guard for init_or_validate_manifest."""
+    axes = {
+        "delta_e_ghz": list(cfg.delta_e_ghz),
+        "t_gate_us": list(cfg.t_gate_us),
+        "omega_anchors_mhz": [str(a) for a in OMEGA_ANCHORS_MHZ],
+        "dsweep_anchors_mhz": [str(a) for a in DSWEEP_ANCHORS_MHZ],
+        "level_sizes": list(LEVEL_SIZES),
+        "dsweep_hw_limit_mhz": DSWEEP_HW_LIMIT_MHZ,
+    }
+    extra_fields = {
+        "omega_1013_rad_s": omega_1013,
+        "omega_1013_over_2pi_MHz": omega_1013 / TAU / 1e6,
+        "omega_1013_reference_rad_s": OMEGA_1013_REFERENCE_RAD_S,
+    }
 
+    def _guard(existing: dict) -> None:
+        rec = float(existing.get("omega_1013_rad_s", 0.0))
+        if abs(rec - omega_1013) > 1e-6 * abs(omega_1013):
+            raise RuntimeError(
+                f"Omega_1013 mismatch: manifest {rec!r} vs current {omega_1013!r}")
 
-def completed_keys(records: Iterable[PointRecord], tier: str | None = None) -> set[PointKey]:
-    return {r.key for r in records
-            if r.status == "ok" and (tier is None or r.tier == tier)}
-
-
-def audit_pairs(records: Iterable[PointRecord]) -> list[tuple[PointKey, float, float]]:
-    """(key, L_production, L_audit) for every point holding both successful tiers."""
-    prod: dict[PointKey, float] = {}
-    aud: dict[PointKey, float] = {}
-    for r in records:
-        if r.status != "ok":
-            continue
-        d = prod if r.tier == "production" else aud
-        if r.key not in d:
-            d[r.key] = r.max_leakage
-    return [(k, prod[k], aud[k]) for k in sorted(prod.keys() & aud.keys())]
+    return dict(pulse_hash=pulse_hash(), axes=axes, extra_fields=extra_fields,
+                extra_guard=_guard)
 
 
 def export_store(store: Store, records: list[PointRecord] | None = None) -> tuple[str, str]:
@@ -1087,7 +662,7 @@ def export_store(store: Store, records: list[PointRecord] | None = None) -> tupl
     payload = dict(
         schema_version=np.int64(SCHEMA_VERSION),
         scan_uuid=str(manifest["scan_uuid"]),
-        **keys_to_arrays(keys),
+        **store.keys_to_arrays(keys),
         delta_e_ghz=np.asarray([cfg.delta_e_ghz[k.delta_idx] for k in keys]),
         t_gate_us=np.asarray([cfg.t_gate_us[k.t_idx] for k in keys]),
         omega_420_mhz=np.asarray([float(k.omega_mhz()) for k in keys]),
@@ -1127,12 +702,6 @@ def export_store(store: Store, records: list[PointRecord] | None = None) -> tupl
     os.replace(tmp, csv_path)
     return merged_path, csv_path
 
-
-# ── Worker process entry point ───────────────────────────────────────────────
-#
-# The parent warms ARC, compiles/aggregates every detuning row, and stores the
-# immutable context in module globals BEFORE creating the fork pool, so workers
-# share it copy-on-write and never touch ARC's SQLite database.
 
 # ── Scattering-budget integrals (supplemental `scatter` data) ────────────────
 #
@@ -1182,479 +751,10 @@ def model_decay_rates(system) -> dict[str, float]:
     }
 
 
-_WORKER_CTX: dict = {}
-
-
-def _worker_process_init() -> None:
-    """Fork-pool initializer: workers ignore SIGINT (the parent coordinates a
-    graceful drain on Ctrl-C) but keep the default SIGTERM so a hard abort can
-    still terminate them immediately."""
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-    signal.signal(signal.SIGTERM, signal.SIG_DFL)
-
-
-def _set_worker_context(cfg: ScanConfig, omega_1013: float,
-                        panel_ops: dict[int, PanelOperators], use_swap: bool,
-                        gammas: dict[str, float] | None = None) -> None:
-    _WORKER_CTX.clear()
-    _WORKER_CTX.update(
-        cfg=cfg, omega_1013=omega_1013, panel_ops=panel_ops, use_swap=use_swap,
-        gammas=gammas)
-
-
-def _worker_run_batch(spec: dict) -> dict:
-    """Integrate one batch in a worker.  Never raises: failures are reported."""
-    start = time.time()
-
-    def _on_alarm(signum, frame):
-        raise TimeoutError("batch exceeded its wall-clock timeout")
-
-    prev = signal.signal(signal.SIGALRM, _on_alarm)
-    signal.alarm(int(spec.get("timeout_s") or 0))
-    try:
-        cfg: ScanConfig = _WORKER_CTX["cfg"]
-        ops: PanelOperators = _WORKER_CTX["panel_ops"][spec["delta_idx"]]
-        keys = [PointKey(*k) for k in spec["keys"]]
-        t_gate = cfg.t_gate_us[spec["t_idx"]] * 1e-6
-        omega_420 = np.asarray([float(k.omega_mhz()) for k in keys]) * 1e6 * TAU
-        d_sweep = np.asarray([float(k.dsweep_mhz()) for k in keys]) * 1e6 * TAU
-        scatter = bool(spec.get("scatter"))
-        t_eval = (np.linspace(0.0, t_gate, cfg.n_eval_trajectory)
-                  if (spec.get("save_traj") or scatter) else None)
-        result = integrate_batch(
-            ops, t_gate, omega_420, d_sweep, _WORKER_CTX["omega_1013"],
-            rtol=spec["rtol"], atol=spec["atol"], ramp=cfg.ramp_frac,
-            use_swap=_WORKER_CTX["use_swap"] and ops.swap_symmetric,
-            t_eval=t_eval,
-        )
-        if not np.all(np.isfinite(result.psi_final.view(float))):
-            raise FloatingPointError("non-finite terminal state")
-        out = {"ok": True, "result": result, "runtime_s": time.time() - start}
-        if scatter:
-            out["scatter"] = scattering_integrals(
-                result.times, result.states, _WORKER_CTX["gammas"])
-            if not spec.get("save_traj"):
-                result.times = None      # keep the return payload small: the
-                result.states = None     # trajectory is consumed, not persisted
-        return out
-    except TimeoutError:
-        return {"ok": False, "reason": "timeout",
-                "message": f"timeout after {time.time() - start:.0f}s",
-                "runtime_s": time.time() - start}
-    except Exception as exc:  # noqa: BLE001 — worker must never crash the pool
-        import traceback
-        return {"ok": False, "reason": "failed",
-                "message": f"{type(exc).__name__}: {exc}"[:240],
-                "traceback": traceback.format_exc()[-2000:],
-                "runtime_s": time.time() - start}
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, prev)
-
-
-# ── Cost model, batches, and the budget-aware runner ─────────────────────────
-
-
-@dataclass
-class Batch:
-    keys: list[PointKey]
-    tier: str = "production"
-    save_traj: bool = False
-    scatter: bool = False       # scattering-supplement solve -> scatter/ series
-    retry_count: int = 0        # failure-split escalations (this batch's points)
-    pool_retries: int = 0       # innocent requeues after pool crashes (separate budget)
-    priority_scores: list[float] | None = None
-    batch_id: str = ""
-
-    def __post_init__(self):
-        if not self.batch_id:
-            self.batch_id = uuid.uuid4().hex[:12]
-        panels = {k.panel for k in self.keys}
-        if len(panels) != 1:
-            raise ValueError("a batch must stay within one (Delta_e, T) panel")
-        (self.delta_idx, self.t_idx), = panels
-
-
-class CostModel:
-    """Measured per-point runtimes -> deterministic panel-level ETA prediction."""
-
-    DEFAULT_POINT_S = 150.0
-
-    def __init__(self, cfg: ScanConfig):
-        self.cfg = cfg
-        self.samples: dict[tuple[int, int], list[float]] = {}
-        self.ratios: list[float] = []       # actual / predicted per completed batch
-
-    def observe(self, panel: tuple[int, int], per_point_s: float) -> None:
-        if np.isfinite(per_point_s) and per_point_s > 0:
-            self.samples.setdefault(panel, []).append(per_point_s)
-
-    def observe_batch(self, predicted_s: float, actual_s: float) -> None:
-        if predicted_s > 0 and actual_s > 0:
-            self.ratios.append(actual_s / predicted_s)
-
-    def predict_point(self, panel: tuple[int, int]) -> float:
-        if panel in self.samples:
-            return float(np.median(self.samples[panel]))
-        t_here = self.cfg.t_gate_us[panel[1]]
-        same_row = [(np.median(v), self.cfg.t_gate_us[p[1]])
-                    for p, v in self.samples.items() if p[0] == panel[0]]
-        if same_row:
-            med, t_ref = min(same_row, key=lambda mt: abs(mt[1] - t_here))
-            return float(med * t_here / t_ref)
-        anywhere = [(np.median(v), self.cfg.t_gate_us[p[1]])
-                    for p, v in self.samples.items()]
-        if anywhere:
-            med, t_ref = min(anywhere, key=lambda mt: abs(mt[1] - t_here))
-            return float(med * t_here / t_ref)
-        return self.DEFAULT_POINT_S * t_here
-
-    def inflation_p90(self) -> float:
-        if len(self.ratios) < 5:
-            return 1.5
-        return float(max(1.0, np.percentile(self.ratios, 90)))
-
-    def predict_batch(self, batch: Batch) -> float:
-        return self.predict_point((batch.delta_idx, batch.t_idx)) * len(batch.keys)
-
-    def eta_seconds(self, keys: Iterable[PointKey], n_workers: int) -> float:
-        total = sum(self.predict_point(k.panel) for k in keys)
-        return total * self.inflation_p90() / max(1, n_workers)
-
-
-def group_batches(keys: Sequence[PointKey], batch_size: int, tier: str = "production",
-                  save_traj: bool = False,
-                  scores: dict[PointKey, float] | None = None) -> list[Batch]:
-    """Group keys into within-panel batches of adjacent points (axis row-major)."""
-    by_panel: dict[tuple[int, int], list[PointKey]] = {}
-    for k in keys:
-        by_panel.setdefault(k.panel, []).append(k)
-    batches = []
-    for panel in sorted(by_panel):
-        pts = sorted(by_panel[panel],
-                     key=lambda k: (Fraction(k.om_num, k.om_den), Fraction(k.dw_num, k.dw_den)))
-        for i in range(0, len(pts), max(1, batch_size)):
-            chunk = pts[i:i + max(1, batch_size)]
-            batches.append(Batch(
-                keys=chunk, tier=tier, save_traj=save_traj,
-                priority_scores=[scores.get(k, 0.0) for k in chunk] if scores else None))
-    return batches
-
-
-class Runner:
-    """Submits batches to a fork pool, handles retries/splits, writes all chunks."""
-
-    def __init__(self, store: Store, manifest: dict, cfg: ScanConfig,
-                 omega_1013: float, args, cost: CostModel):
-        self.store = store
-        self.manifest = manifest
-        self.cfg = cfg
-        self.omega_1013 = omega_1013
-        self.args = args
-        self.cost = cost
-        self._acquire_store_lock()
-        self.seq = store.next_seq()
-        self.scatter_seq = store.next_scatter_seq()
-        self.gammas: dict[str, float] | None = None   # set for scatter runs
-        self.stop_requested = False
-        self.start_time = time.time()
-        self.dispatch_deadline = (self.start_time
-                                  + (args.budget_hours - args.reserve_hours) * 3600.0)
-        self.point_timeout_s = float(args.point_timeout)
-        self.failures: list[dict] = []
-        self.deferred: int = 0
-        self.completed_points = 0
-        self.aborted = False
-        self._signal_time = 0.0
-        self._pool_restarts = 0
-        self._executor = self._make_executor()
-        self._install_signals()
-
-    def _make_executor(self):
-        import multiprocessing as mp
-        from concurrent.futures import ProcessPoolExecutor
-
-        return ProcessPoolExecutor(
-            max_workers=self.args.workers, mp_context=mp.get_context("fork"),
-            initializer=_worker_process_init)
-
-    def _acquire_store_lock(self) -> None:
-        """Single-coordinator lock: chunk sequence numbers must not race.
-
-        Opened append-mode so a *rejected* second launch cannot truncate the live
-        coordinator's PID record; the PID/run id is written only after the flock
-        succeeds.
-        """
-        import fcntl
-
-        self.store.ensure_dirs()
-        self._lock_fh = open(os.path.join(self.store.logs_dir, "store.lock"), "a+")
-        try:
-            fcntl.flock(self._lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            self._lock_fh.close()
-            raise SystemExit(
-                f"another pilot/run/audit already holds {self.store.root}; "
-                "wait for it or use a different --output")
-        self._lock_fh.seek(0)
-        self._lock_fh.truncate()
-        self._lock_fh.write(
-            f"pid {os.getpid()} scan {self.manifest['scan_uuid']} "
-            f"started {time.strftime('%Y-%m-%dT%H:%M:%S%z')}\n")
-        self._lock_fh.flush()
-
-    def _install_signals(self):
-        def handler(signum, frame):
-            now = time.monotonic()
-            # Debounce duplicate deliveries: `timeout`/terminals signal the whole
-            # process group AND `uv run` forwards to its child, so one Ctrl-C can
-            # arrive several times within milliseconds.  A deliberate second
-            # Ctrl-C (>2 s later) escalates to a hard abort.
-            if self.stop_requested and now - self._signal_time > 2.0:
-                self.aborted = True
-                raise KeyboardInterrupt
-            if not self.stop_requested:
-                self.stop_requested = True
-                self._signal_time = now
-                print(f"\n[signal {signum}] stopping dispatch; in-flight batches "
-                      "will finish and checkpoint (repeat to abort hard)", flush=True)
-        signal.signal(signal.SIGINT, handler)
-        signal.signal(signal.SIGTERM, handler)
-
-    def shutdown(self):
-        # On a hard abort the in-flight results are already lost — don't block on
-        # the workers (they ignore SIGINT), SIGTERM them so interpreter shutdown
-        # doesn't join them for up to a full solve; on a clean stop everything is
-        # drained, so wait is instant.
-        if self.aborted:
-            procs = list(getattr(self._executor, "_processes", {}).values())
-            self._executor.shutdown(wait=False, cancel_futures=True)
-            for p in procs:
-                try:
-                    p.terminate()
-                except Exception:
-                    pass
-        else:
-            self._executor.shutdown(wait=True, cancel_futures=True)
-        self._lock_fh.close()
-
-    def _submit(self, batch: Batch):
-        """Submit a batch spec; a broken pool (worker died) is recreated once per
-        incident so a single crash cannot burn the remaining wall budget."""
-        from concurrent.futures.process import BrokenProcessPool
-
-        spec = self._spec(batch)
-        try:
-            return self._executor.submit(_worker_run_batch, spec)
-        except BrokenProcessPool:
-            self._pool_restarts += 1
-            print(f"[pool] worker pool broke (restart #{self._pool_restarts}); "
-                  "recreating", flush=True)
-            self._executor.shutdown(wait=False, cancel_futures=True)
-            self._executor = self._make_executor()
-            return self._executor.submit(_worker_run_batch, spec)
-
-    def _tier_tols(self, tier: str) -> tuple[float, float]:
-        if tier == "audit":
-            return self.cfg.rtol_audit, self.cfg.atol_audit
-        return self.cfg.rtol_production, self.cfg.atol_production
-
-    def _spec(self, batch: Batch) -> dict:
-        rtol, atol = self._tier_tols(batch.tier)
-        return dict(
-            keys=[tuple(getattr(k, f) for f in _KEY_FIELDS) for k in batch.keys],
-            delta_idx=batch.delta_idx, t_idx=batch.t_idx,
-            tier=batch.tier, rtol=rtol, atol=atol,
-            save_traj=batch.save_traj,
-            scatter=batch.scatter,
-            timeout_s=self.point_timeout_s * len(batch.keys),
-        )
-
-    def _write_success(self, batch: Batch, out: dict) -> None:
-        rtol, atol = self._tier_tols(batch.tier)
-        result: BatchResult = out["result"]
-        if batch.scatter:
-            # Supplemental data: its own append-only series; the coherent-leakage
-            # chunks and trajectories are never touched by a scatter batch.
-            self.store.write_scatter_chunk(
-                self.scatter_seq, self.manifest, batch.keys, self.cfg,
-                self.gammas, rtol, atol, batch.batch_id, out["scatter"],
-                result.max_leakage, out["runtime_s"])
-            self.scatter_seq += 1
-            self.cost.observe((batch.delta_idx, batch.t_idx),
-                              out["runtime_s"] / len(batch.keys))
-            self.completed_points += len(batch.keys)
-            return
-        self.store.write_result_chunk(
-            self.seq, self.manifest, batch.keys, self.cfg, self.omega_1013,
-            batch.tier, rtol, atol, batch.batch_id, result, out["runtime_s"],
-            retry_count=batch.retry_count,
-            priority_scores=batch.priority_scores,
-        )
-        self.seq += 1
-        if batch.save_traj and result.states is not None:
-            for i, key in enumerate(batch.keys):
-                self.store.write_trajectory_chunk(
-                    self.seq, self.manifest, key, batch.tier,
-                    result.times, result.states[:, i])
-                self.seq += 1
-        per_point = out["runtime_s"] / len(batch.keys)
-        self.cost.observe((batch.delta_idx, batch.t_idx), per_point)
-        self.completed_points += len(batch.keys)
-
-    def _write_failure(self, batch: Batch, out: dict) -> None:
-        rtol, atol = self._tier_tols(batch.tier)
-        if batch.scatter:
-            n = len(batch.keys)
-            self.store.write_scatter_chunk(
-                self.scatter_seq, self.manifest, batch.keys, self.cfg,
-                self.gammas, rtol, atol, batch.batch_id,
-                {ch: np.full((n, 4), np.nan) for ch in SCATTER_CHANNELS},
-                np.full(n, np.nan), out.get("runtime_s", 0.0),
-                statuses=[out.get("reason", "failed")] * n,
-                message=out.get("message", ""))
-            self.scatter_seq += 1
-        else:
-            self.store.write_result_chunk(
-                self.seq, self.manifest, batch.keys, self.cfg, self.omega_1013,
-                batch.tier, rtol, atol, batch.batch_id, None,
-                out.get("runtime_s", 0.0),
-                statuses=[out.get("reason", "failed")] * len(batch.keys),
-                message=out.get("message", ""), retry_count=batch.retry_count,
-                priority_scores=batch.priority_scores,
-            )
-            self.seq += 1
-        self.failures.append({
-            "batch_id": batch.batch_id, "keys": [k.id() for k in batch.keys],
-            "tier": batch.tier, "reason": out.get("reason", "failed"),
-            "message": out.get("message", ""), "retry_count": batch.retry_count,
-        })
-
-    def _split(self, batch: Batch) -> list[Batch]:
-        half = len(batch.keys) // 2
-        parts = []
-        for sl in (slice(0, half), slice(half, None)):
-            keys = batch.keys[sl]
-            if keys:
-                parts.append(Batch(
-                    keys=keys, tier=batch.tier, save_traj=batch.save_traj,
-                    scatter=batch.scatter,
-                    retry_count=batch.retry_count + 1,
-                    priority_scores=(batch.priority_scores[sl]
-                                     if batch.priority_scores else None)))
-        return parts
-
-    def run_batches(self, batches: list[Batch], phase: str,
-                    enforce_deadline: bool = True,
-                    preserve_order: bool = False) -> None:
-        """Run batches (longest-predicted first unless ``preserve_order``); split
-        failures recursively; write every chunk from this (parent) process."""
-        from concurrent.futures import FIRST_COMPLETED, wait
-
-        if preserve_order:
-            pending = deque(batches)
-        else:
-            pending = deque(sorted(batches, key=self.cost.predict_batch, reverse=True))
-        inflight: dict = {}
-        # Keep the executor's internal queue shallow: the deadline check runs at
-        # submit time, so a deep queue could carry a whole extra wave of batches
-        # past the reserve boundary.
-        max_outstanding = self.args.workers + max(2, self.args.workers // 8)
-        n_total = sum(len(b.keys) for b in batches)
-        n_done = 0
-        t0 = time.time()
-        print(f"[{phase}] {len(batches)} batches / {n_total} points", flush=True)
-
-        while pending or inflight:
-            while pending and len(inflight) < max_outstanding and not self.stop_requested:
-                batch = pending.popleft()
-                # A batch occupies one core; its predicted wall time is the P90-
-                # inflated single-core estimate.  Anything that cannot finish
-                # before the dispatch deadline is deferred, keeping the reserve.
-                predicted = self.cost.predict_batch(batch) * self.cost.inflation_p90()
-                if enforce_deadline and time.time() + predicted > self.dispatch_deadline:
-                    self.deferred += len(batch.keys)
-                    continue
-                fut = self._submit(batch)
-                inflight[fut] = (batch, self.cost.predict_batch(batch))
-            if not inflight:
-                break
-            done, _ = wait(list(inflight), return_when=FIRST_COMPLETED)
-            for fut in done:
-                batch, predicted = inflight.pop(fut)
-                try:
-                    out = fut.result()
-                except Exception as exc:
-                    # In-flight victims of a pool crash are innocent: requeue them
-                    # on their own bounded budget (separate from failure splits) so
-                    # repeated worker deaths cannot mark never-computed points as
-                    # failed, while a deterministically pool-killing point is still
-                    # isolated by splitting once its own requeues are exhausted.
-                    if batch.pool_retries < 5:
-                        requeued = Batch(
-                            keys=batch.keys, tier=batch.tier,
-                            save_traj=batch.save_traj, scatter=batch.scatter,
-                            retry_count=batch.retry_count,
-                            pool_retries=batch.pool_retries + 1,
-                            priority_scores=batch.priority_scores)
-                        pending.appendleft(requeued)
-                        print(f"[{phase}] batch {batch.batch_id} lost to a pool "
-                              f"error ({exc}); requeued "
-                              f"({requeued.pool_retries}/5)", flush=True)
-                        continue
-                    out = {"ok": False, "reason": "failed",
-                           "message": f"pool error: {exc}"[:240], "runtime_s": 0.0}
-                if out["ok"]:
-                    self._write_success(batch, out)
-                    self.cost.observe_batch(predicted, out["runtime_s"])
-                    n_done += len(batch.keys)
-                elif len(batch.keys) > 1:
-                    print(f"[{phase}] batch {batch.batch_id} "
-                          f"{out.get('reason')}: splitting {len(batch.keys)} points",
-                          flush=True)
-                    for part in self._split(batch):
-                        pending.appendleft(part)
-                else:
-                    self._write_failure(batch, out)
-                    n_done += 1
-                    print(f"[{phase}] point {batch.keys[0].id()} "
-                          f"{out.get('reason')}: {out.get('message', '')}", flush=True)
-            elapsed = time.time() - t0
-            rate = n_done / elapsed if elapsed > 0 and n_done else 0.0
-            eta = (n_total - n_done) / rate if rate > 0 else float("nan")
-            print(f"[{phase}] {n_done}/{n_total} points "
-                  f"({elapsed / 60:.1f} min elapsed, ~{eta / 60:.0f} min left)",
-                  flush=True)
-            self.write_status(phase)
-            # when stop was requested, the submit loop stays closed and the outer
-            # loop simply drains the in-flight futures before returning
-        if self.stop_requested:
-            print(f"[{phase}] stopped on request; "
-                  f"{sum(len(b.keys) for b in pending)} points left unscheduled",
-                  flush=True)
-
-    def write_status(self, phase: str) -> None:
-        status = {
-            "phase": phase,
-            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "elapsed_s": time.time() - self.start_time,
-            "dispatch_deadline_in_s": self.dispatch_deadline - time.time(),
-            "completed_points_this_run": self.completed_points,
-            "deferred_points": self.deferred,
-            "failures": len(self.failures),
-            "inflation_p90": self.cost.inflation_p90(),
-            "workers": self.args.workers,
-        }
-        path = os.path.join(self.store.reports_dir, "status.json")
-        with open(path + ".tmp", "w") as fh:
-            json.dump(status, fh, indent=2)
-        os.replace(path + ".tmp", path)
-
-    def write_failure_report(self) -> None:
-        path = os.path.join(self.store.reports_dir, "failures.json")
-        with open(path + ".tmp", "w") as fh:
-            json.dump(self.failures, fh, indent=2)
-        os.replace(path + ".tmp", path)
+def _per_panel_gammas(cfg: ScanConfig, decay_rates: dict[str, float]) -> dict[int, dict[str, float]]:
+    """The shared worker/store API keys gammas by panel row; this model's decay
+    rates are Delta_e-independent, so every row shares the one measured dict."""
+    return {di: decay_rates for di in range(len(cfg.delta_e_ghz))}
 
 
 # ── Startup: warm ARC, compile every row, run the mandatory verifications ────
@@ -1757,19 +857,31 @@ def setup_run(args) -> tuple[Store, dict, ScanConfig, dict[int, PanelOperators],
     store.ensure_dirs()
     ops, omega_1013, model_hash, checks = warm_and_build(cfg)
     manifest = store.init_or_validate_manifest(
-        cfg, omega_1013, model_hash, _script_code_hash(),
+        cfg, model_hash, _script_code_hash(),
         run_meta={
             "argv": sys.argv[1:], "workers": args.workers,
             "batch_size": args.batch_size,
             "budget_hours": getattr(args, "budget_hours", None),
             "reserve_hours": getattr(args, "reserve_hours", None),
-        })
+        },
+        **_manifest_extras(cfg, omega_1013))
     ver_path = os.path.join(store.reports_dir, "verification.json")
     with open(ver_path + ".tmp", "w") as fh:
         json.dump(checks, fh, indent=2)
     os.replace(ver_path + ".tmp", ver_path)
-    _set_worker_context(cfg, omega_1013, ops, use_swap=checks["swap_symmetric"],
-                        gammas=checks["decay_rates_rad_s"])
+
+    # The shared worker context takes the script's solve wrapper (which closes over
+    # the fixed 1013 Rabi) and its scattering_integrals; gammas are keyed by panel
+    # row (this model's decay rates are row-independent, so the same dict for all).
+    def _solve(ops, t_gate, omega_420, d_sweep, *, rtol, atol, ramp, use_swap, t_eval):
+        return integrate_batch(ops, t_gate, omega_420, d_sweep, omega_1013,
+                               rtol=rtol, atol=atol, ramp=ramp, use_swap=use_swap,
+                               t_eval=t_eval)
+
+    set_worker_context(
+        cfg, ops, use_swap=checks["swap_symmetric"],
+        gammas=_per_panel_gammas(cfg, checks["decay_rates_rad_s"]),
+        key_type=PointKey, solve=_solve, scattering_integrals=scattering_integrals)
     print(f"[setup] Omega_1013/2pi = {omega_1013 / TAU / 1e6:.6f} MHz | "
           f"H equivalence rel dev {checks['hamiltonian_equivalence_rel_dev']:.2e} | "
           f"error-norm dev {checks['error_norm_max_dev']:.2e} | "
@@ -2137,7 +1249,7 @@ def cmd_pilot(args) -> None:
     store, manifest, cfg, ops, omega_1013, checks = setup_run(args)
     cost = CostModel(cfg)
     _feed_cost_model(cost, store.load_records(manifest, include_states=False))
-    runner = Runner(store, manifest, cfg, omega_1013, args, cost)
+    runner = Runner(store, manifest, cfg, args, cost)
     try:
         stage_pilot(runner, _parse_panels(args))
     except KeyboardInterrupt:
@@ -2206,7 +1318,7 @@ def cmd_run(args) -> None:
               + (" (will retry: --rerun-failures)" if args.rerun_failures else ""))
         return
 
-    runner = Runner(store, manifest, cfg, omega_1013, args, cost)
+    runner = Runner(store, manifest, cfg, args, cost)
     try:
         stage_pilot(runner, panels)
         batch_size = _effective_batch_size(store, args)
@@ -2315,7 +1427,7 @@ def cmd_audit(args) -> None:
         return
     cost = CostModel(cfg)
     _feed_cost_model(cost, records)
-    runner = Runner(store, manifest, cfg, omega_1013, args, cost)
+    runner = Runner(store, manifest, cfg, args, cost)
     try:
         runner.run_batches(
             [Batch(keys=[k], tier="audit", save_traj=True) for k in targets],
@@ -2345,7 +1457,7 @@ def _scatter_equivalence_gate(runner: Runner, store: Store) -> dict:
         with np.load(os.path.join(store.traj_dir, name), allow_pickle=False) as d:
             if str(d["tier"][0]) != "production":
                 continue
-            key = arrays_to_keys(d)[0]
+            key = store.arrays_to_keys(d)[0]
         t_gate = runner.cfg.t_gate_us[key.t_idx]
         if t_gate < best_t:
             best_file, best_key, best_t = name, key, t_gate
@@ -2399,8 +1511,8 @@ def cmd_scatter(args) -> None:
 
     cost = CostModel(cfg)
     _feed_cost_model(cost, store.load_records(manifest, include_states=False))
-    runner = Runner(store, manifest, cfg, omega_1013, args, cost)
-    runner.gammas = checks["decay_rates_rad_s"]
+    runner = Runner(store, manifest, cfg, args, cost)
+    runner.gammas = _per_panel_gammas(cfg, checks["decay_rates_rad_s"])
     gate_failed = False
     try:
         gate = _scatter_equivalence_gate(runner, store)

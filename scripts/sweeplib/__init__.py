@@ -2,7 +2,9 @@
 
 ``axes`` holds the nested rational-grid math and the per-script canonical
 point-key factory; ``solver`` holds the quintic envelope, the block-max DOP853
-error norm, and the injected-RHS batched integration kernel.
+error norm, and the injected-RHS batched integration kernel; ``store`` holds the
+append-only chunk/scatter store + provenance gates; ``runner`` holds the fork-pool
+worker entry, cost model and budget runner.
 """
 from __future__ import annotations
 
@@ -28,6 +30,26 @@ from .solver import (
     BatchResult,
     integrate_batch,
 )
+from .store import (
+    Store,
+    ProvenanceColumns,
+    PointRecord,
+    TIER_RANK,
+    best_records,
+    completed_keys,
+    audit_pairs,
+    _atomic_savez,
+    _NO_STATES,
+)
+from .runner import (
+    Batch,
+    CostModel,
+    Runner,
+    group_batches,
+    set_worker_context,
+    _worker_run_batch,
+    _worker_process_init,
+)
 
 __all__ = [
     "LEVEL_DENS",
@@ -48,4 +70,16 @@ __all__ = [
     "verify_scipy_error_norm",
     "BatchResult",
     "integrate_batch",
+    "Store",
+    "ProvenanceColumns",
+    "PointRecord",
+    "TIER_RANK",
+    "best_records",
+    "completed_keys",
+    "audit_pairs",
+    "Batch",
+    "CostModel",
+    "Runner",
+    "group_batches",
+    "set_worker_context",
 ]
