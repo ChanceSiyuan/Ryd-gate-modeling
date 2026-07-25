@@ -72,6 +72,7 @@ from fractions import Fraction
 from typing import Iterable, Sequence
 
 import numpy as np
+import scipy
 
 # The shared sweep machinery lives beside this script in scripts/sweeplib/; make it
 # importable whether the script is run as ``python scripts/max_leakage_ode_sweep.py``
