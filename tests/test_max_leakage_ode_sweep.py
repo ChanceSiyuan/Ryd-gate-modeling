@@ -204,34 +204,33 @@ def test_effective_batch_size_falls_back_to_one_without_a_passed_gate(tmp_path):
     assert mls._effective_batch_size(store, Namespace(batch_size=48)) == 1
 
 
-# ── refinement priorities ────────────────────────────────────────────────────
+# ── scatter-equivalence gate as a per-store setup step ───────────────────────
 
 
-def test_refinement_prefers_decision_contour_and_is_deterministic():
-    coords = mls.axis_coords(0)
-    leak, worst = {}, {}
-    for panel, base in (((0, 0), 1e-6), ((0, 1), 1e-6)):
-        for i, om in enumerate(coords):
-            for j, dw in enumerate(coords):
-                k = mls.make_key(panel[0], panel[1], om, dw)
-                # panel (0,0): flat 1e-6 (no refinement); panel (0,1): one cell
-                # crosses 1e-3 between the last two omega rows
-                val = base
-                if panel == (0, 1) and i == 3 and j >= 2:
-                    val = 1e-2
-                leak[k] = val
-                worst[k] = "11"
-    cand = mls.refinement_candidates(leak, worst, level=0)
-    assert cand, "the contour-crossing panel must be refined"
-    assert all(k.panel == (0, 1) for k, _ in cand)
-    assert all(k in set(mls.all_keys(1)) for k, _ in cand)   # exact level-1 nodes
-    assert all(k not in leak for k, _ in cand)               # only missing nodes
-    scores = [s for _, s in cand]
-    assert scores == sorted(scores, reverse=True)
-    assert cand == mls.refinement_candidates(leak, worst, level=0)  # deterministic
-    # incomplete panels are skipped entirely
-    del leak[mls.make_key(0, 1, coords[0], coords[0])]
-    assert mls.refinement_candidates(leak, worst, level=0) == []
+def test_ensure_scatter_gate_runs_once_and_skips_when_recorded_ok(tmp_path, monkeypatch):
+    """The gate is a per-store setup step: it runs (and records
+    reports/scatter_gate.json) when absent or not ok, and is skipped when a
+    passed record already exists — so run/scatter share one gate per store."""
+    store, _ = _mini_store(tmp_path)
+    calls = {"n": 0}
+
+    def fake_gate(runner, st):
+        calls["n"] += 1
+        return {"ok": True, "point_id": "d0_t0_om3-2_dw3-2", "max_abs_dev": 0.0}
+
+    monkeypatch.setattr(mls, "_scatter_equivalence_gate", fake_gate)
+    gate_path = Path(store.reports_dir) / "scatter_gate.json"
+
+    out = mls._ensure_scatter_gate(None, store)          # absent -> runs, records
+    assert out["ok"] and calls["n"] == 1 and gate_path.exists()
+    assert json.loads(gate_path.read_text())["ok"] is True
+
+    mls._ensure_scatter_gate(None, store)                # present-and-ok -> skipped
+    assert calls["n"] == 1
+
+    gate_path.write_text(json.dumps({"ok": False, "reason": "moved"}))
+    mls._ensure_scatter_gate(None, store)                # recorded not-ok -> re-runs
+    assert calls["n"] == 2
 
 
 def test_credibility_floor_rule_and_fallback():
@@ -288,23 +287,37 @@ def test_cli_parser_covers_subcommands_and_locked_invocation():
     parser = mls.build_parser()
     args = parser.parse_args(["run", "--dry-run", "--target-level", "13"])
     assert args.func is mls.cmd_run and args.dry_run and args.target_level == "13"
+    assert parser.parse_args(["run", "--dry-run"]).target_level == "13"  # explicit default
     assert parser.parse_args(
         ["audit", "--audit-point", "d0_t0_om0-1_dw0-1"]).func is mls.cmd_audit
     assert parser.parse_args(["status"]).func is mls.cmd_status
-    args = parser.parse_args(["scatter", "--level", "7", "--workers", "auto",
-                              "--batch-size", "auto"])
-    assert args.func is mls.cmd_scatter and args.level == "7"
     assert parser.parse_args(["plot", "--metric", "p_loss_total"]).metric == "p_loss_total"
     assert parser.parse_args(["plot", "--metric", "total_error"]).metric == "total_error"
 
-    # The handoff's locked production command must parse verbatim.
-    args = parser.parse_args([
-        "run", "--output", "results/max_leakage_ode",
-        "--workers", "auto", "--batch-size", "auto", "--target-level", "auto",
-        "--budget-hours", "24", "--reserve-hours", "2"])
+    # The locked driver invocations must keep parsing verbatim.
+    assert parser.parse_args(
+        ["pilot", "--spacing-um", "5", "--workers", "auto",
+         "--batch-size", "auto"]).func is mls.cmd_pilot
+    args = parser.parse_args(
+        ["run", "--spacing-um", "5", "--workers", "auto", "--batch-size", "auto",
+         "--target-level", "13"])
+    assert args.func is mls.cmd_run and args.target_level == "13"
     assert isinstance(args.workers, int) and 1 <= args.workers <= 40
     assert args.batch_size == 48
-    assert args.target_level == "auto"
+    args = parser.parse_args(
+        ["scatter", "--spacing-um", "5", "--level", "13", "--workers", "auto",
+         "--batch-size", "auto"])
+    assert args.func is mls.cmd_scatter and args.level == "13"
+    assert parser.parse_args(["export", "--spacing-um", "5"]).func is mls.cmd_export
+    args = parser.parse_args(
+        ["plot", "--spacing-um", "5", "--metric", "p_ryd", "--no-veil"])
+    assert args.func is mls.cmd_plot and args.metric == "p_ryd" and args.veil is False
+
+    # The deleted machinery no longer parses.
+    for gone in (["run", "--target-level", "auto"], ["run", "--budget-hours", "24"],
+                 ["run", "--reserve-hours", "2"], ["pilot", "--bench-workers", "20,40"]):
+        with pytest.raises(SystemExit):
+            parser.parse_args(gone)
 
 
 def test_spacing_flag_and_derived_output_default():

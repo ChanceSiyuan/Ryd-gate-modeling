@@ -35,19 +35,19 @@ The only production solver is original-frame complex128 adaptive DOP853
   * stepper restarts at the analytic envelope breakpoints t = 0.15 T and 0.85 T.
 
 Results are append-only NPZ chunks under ``results/max_leakage_ode/`` with a
-hash-validated manifest; interrupted scans resume without recomputing.  Runs are
-staged under a hard wall-time budget (default 24 h with a 2 h reserve): pilot ->
-full 4x4 -> full 7x7 -> full 13x13 if the measured P90 ETA fits, else high-value
-13-level nodes by a deterministic contour/residual priority.
+hash-validated manifest; interrupted scans resume without recomputing.  ``run``
+is a single pass: every production solve samples the trajectory and writes BOTH
+the coherent-leakage chunk and the scattering-budget records, staging pilot ->
+full 4x4 -> full 7x7 -> the requested ``--target-level`` (13x13 by default).
 
 Usage
 -----
     # default store: results/max_leakage_ode/a{spacing:.1f} (spacing default 3.0)
     python scripts/max_leakage_ode_sweep.py status
     python scripts/max_leakage_ode_sweep.py pilot  --spacing-um 5 --workers 40
-    python scripts/max_leakage_ode_sweep.py run    --spacing-um 5 --budget-hours 24 \
-        --reserve-hours 2 --target-level auto
+    python scripts/max_leakage_ode_sweep.py run    --spacing-um 5 --target-level 13
     python scripts/max_leakage_ode_sweep.py run    --spacing-um 5 --dry-run
+    python scripts/max_leakage_ode_sweep.py scatter --spacing-um 5 --level 13
     python scripts/max_leakage_ode_sweep.py audit  --spacing-um 5
     python scripts/max_leakage_ode_sweep.py export --spacing-um 5
     python scripts/max_leakage_ode_sweep.py plot   --spacing-um 5
@@ -66,7 +66,6 @@ import json
 import math
 import sys
 import time
-from collections import deque
 from dataclasses import asdict, dataclass
 from fractions import Fraction
 from typing import Iterable, Sequence
@@ -89,7 +88,7 @@ from sweeplib import (
     audit_pairs, Runner, CostModel, Batch, group_batches, set_worker_context,
 )
 from sweeplib.store import _atomic_savez, _NO_STATES
-from sweeplib.runner import _worker_run_batch, _worker_process_init
+from sweeplib.runner import _worker_run_batch
 
 TAU = 2.0 * math.pi
 SCHEMA_VERSION = 1
@@ -956,63 +955,6 @@ def run_packing_gate(runner: Runner, done: set[PointKey]) -> dict:
     }
 
 
-def bench_worker_counts(runner: Runner, counts: list[int]) -> dict:
-    """Measure *saturated* end-to-end throughput at several worker counts.
-
-    Each configuration solves exactly ``count`` distinct, still-missing level-0
-    nodes from the cheapest (T = 1 us) panel column — one full wave, so every
-    worker is busy and the wall time reflects real scaling.  Points run isolated
-    (batch size 1: solver throughput, not packing) and are persisted as
-    authoritative production records, so the benchmark is useful scan work.
-    """
-    import multiprocessing as mp
-    from concurrent.futures import ProcessPoolExecutor
-
-    records = runner.store.load_records(runner.manifest, include_states=False)
-    done = completed_keys(records)
-    # Order by in-panel position first so every configuration draws a similar
-    # (Omega, D) cost mix; the T = 1 us column first, then T = 1.2 us as
-    # overflow (the two cheapest columns together always cover 116 bench nodes).
-    node_pool: deque[PointKey] = deque()
-    for t_idx in (0, 1):
-        col = [k for k in all_keys(0) if k.t_idx == t_idx and k not in done]
-        col.sort(key=lambda k: (Fraction(k.om_num, k.om_den),
-                                Fraction(k.dw_num, k.dw_den), k.delta_idx))
-        node_pool.extend(col)
-
-    out: dict[str, dict] = {}
-    for n in counts:
-        take = [node_pool.popleft() for _ in range(min(n, len(node_pool)))]
-        if len(take) < n:
-            out[str(n)] = {"points": len(take),
-                           "error": "not enough missing T=1us level-0 nodes"}
-            continue
-        ex = ProcessPoolExecutor(max_workers=n, mp_context=mp.get_context("fork"),
-                                 initializer=_worker_process_init)
-        t0 = time.time()
-        ok = 0
-        try:
-            futs = {ex.submit(_worker_run_batch, runner._spec(b)): b
-                    for b in (Batch(keys=[k]) for k in take)}
-            for fut, b in futs.items():
-                res = fut.result()
-                if res.get("ok"):
-                    runner._write_success(b, res)
-                    ok += 1
-        except Exception as exc:  # a bench pool crash is a data point, not fatal
-            out[str(n)] = {"points": len(take), "error": str(exc)[:200]}
-            ex.shutdown(wait=False, cancel_futures=True)
-            continue
-        wall = time.time() - t0
-        ex.shutdown()
-        out[str(n)] = {"points": len(take), "ok": ok, "wall_s": wall,
-                       "points_per_hour": ok / wall * 3600.0,
-                       "point_ids": [k.id() for k in take]}
-        print(f"[bench] {n} workers: {ok}/{len(take)} pts in {wall:.0f} s "
-              f"({out[str(n)]['points_per_hour']:.0f} pts/h)", flush=True)
-    return out
-
-
 def stage_pilot(runner: Runner, panels: set[tuple[int, int]] | None = None) -> dict:
     """Stage 1: pilot nodes (+ initial audits + packing gate); returns pilot report."""
     records = runner.store.load_records(runner.manifest, include_states=False)
@@ -1058,18 +1000,6 @@ def stage_pilot(runner: Runner, panels: set[tuple[int, int]] | None = None) -> d
         elif not runner.stop_requested:
             gate = run_packing_gate(runner, done)
 
-    bench = None
-    if os.path.exists(pilot_path):
-        try:
-            with open(pilot_path) as fh:
-                bench = json.load(fh).get("worker_benchmark")
-        except (OSError, json.JSONDecodeError):
-            bench = None
-    if (getattr(runner.args, "bench_workers", None) and bench is None
-            and not runner.stop_requested):
-        counts = [int(v) for v in runner.args.bench_workers.split(",")]
-        bench = bench_worker_counts(runner, counts)
-
     records = runner.store.load_records(runner.manifest, include_states=False)
     pairs = audit_pairs(records)
     per_panel = {f"{p[0]},{p[1]}": float(np.median(v))
@@ -1078,7 +1008,6 @@ def stage_pilot(runner: Runner, panels: set[tuple[int, int]] | None = None) -> d
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "n_pilot_points": len(pkeys),
         "packing_gate": gate,
-        "worker_benchmark": bench,
         "per_panel_median_point_s": per_panel,
         "inflation_p90": runner.cost.inflation_p90(),
         "audit_pairs": len(pairs),
@@ -1099,102 +1028,7 @@ def stage_pilot(runner: Runner, panels: set[tuple[int, int]] | None = None) -> d
     return report
 
 
-# ── Adaptive refinement priorities ───────────────────────────────────────────
-
-REFINE_RESIDUAL_DEX = 0.25
-REFINE_CONTOUR_RESIDUAL_DEX = 0.10
-DECISION_CONTOURS = (1e-3, 1e-2, 1e-4)
-
-
-def _mid_coord(a: tuple[int, int], b: tuple[int, int]) -> tuple[int, int]:
-    p = (Fraction(*a) + Fraction(*b)) / 2
-    return canon_coord(p.numerator, p.denominator)
-
-
-def refinement_candidates(
-    leak_by_key: dict[PointKey, float],
-    worst_by_key: dict[PointKey, str],
-    level: int,
-    floor: float = 1e-12,
-) -> list[tuple[PointKey, float]]:
-    """Prioritized missing level-(level+1) nodes from the completed level grid.
-
-    Deterministic: cells are scored in ``z = log10(max(L, floor))`` by decision-
-    contour crossings, worst-input identity changes, cell z-range, and an
-    axis-neighbor leave-one-out residual; nodes inherit their best cell score.
-    Panels whose level grid is incomplete are skipped (they are still owed their
-    uniform pass).
-    """
-    if level + 1 >= len(LEVEL_DENS):
-        return []
-    coords = axis_coords(level)
-    n = len(coords)
-    scored: dict[PointKey, float] = {}
-
-    for panel in all_panels():
-        z = np.full((n, n), np.nan)
-        worst = np.full((n, n), "", dtype="U2")
-        for i, om in enumerate(coords):
-            for j, dw in enumerate(coords):
-                k = make_key(panel[0], panel[1], om, dw)
-                if k in leak_by_key:
-                    z[i, j] = math.log10(max(leak_by_key[k], floor))
-                    worst[i, j] = worst_by_key.get(k, "")
-        if not np.all(np.isfinite(z)):
-            continue
-
-        loo = np.zeros((n, n))
-        loo[1:-1, :] = np.abs(z[1:-1, :] - 0.5 * (z[:-2, :] + z[2:, :]))
-        loo[:, 1:-1] = np.maximum(
-            loo[:, 1:-1], np.abs(z[:, 1:-1] - 0.5 * (z[:, :-2] + z[:, 2:])))
-
-        for i in range(n - 1):
-            for j in range(n - 1):
-                zc = z[i:i + 2, j:j + 2]
-                zmin, zmax = float(zc.min()), float(zc.max())
-                dz = zmax - zmin
-                resid = float(loo[i:i + 2, j:j + 2].max())
-                crosses_decision = zmin <= math.log10(DECISION_CONTOURS[0]) <= zmax
-                crosses_secondary = any(
-                    zmin <= math.log10(c) <= zmax for c in DECISION_CONTOURS[1:])
-                labels = set(worst[i:i + 2, j:j + 2].ravel())
-                # Spec priority order: primary contour > holdout residual >
-                # secondary contours > worst-input change > residual/gradient.
-                score = (8.0 * crosses_decision
-                         + min(6.0, 3.0 * resid / REFINE_RESIDUAL_DEX)
-                         + 3.0 * crosses_secondary
-                         + 2.0 * (len(labels) > 1) + min(dz, 2.0))
-                needs = (crosses_decision or crosses_secondary
-                         or dz > REFINE_RESIDUAL_DEX or resid > REFINE_RESIDUAL_DEX)
-                if crosses_decision and (dz > REFINE_CONTOUR_RESIDUAL_DEX
-                                         or resid > REFINE_CONTOUR_RESIDUAL_DEX):
-                    needs = True
-                if not needs:
-                    continue
-                om0, om1 = coords[i], coords[i + 1]
-                dw0, dw1 = coords[j], coords[j + 1]
-                omm, dwm = _mid_coord(om0, om1), _mid_coord(dw0, dw1)
-                cell_nodes = [
-                    make_key(panel[0], panel[1], omm, dwm),
-                    make_key(panel[0], panel[1], omm, dw0),
-                    make_key(panel[0], panel[1], omm, dw1),
-                    make_key(panel[0], panel[1], om0, dwm),
-                    make_key(panel[0], panel[1], om1, dwm),
-                ]
-                for nk in cell_nodes:
-                    if nk not in leak_by_key:
-                        scored[nk] = max(scored.get(nk, 0.0), score)
-
-    return sorted(scored.items(), key=lambda kv: (-kv[1], kv[0]))
-
-
 # ── Stage orchestration and CLI commands ─────────────────────────────────────
-
-
-def _leak_maps(records: list[PointRecord]) -> tuple[dict, dict]:
-    best = best_records(records)
-    return ({k: r.max_leakage for k, r in best.items()},
-            {k: r.worst_input for k, r in best.items()})
 
 
 def _credibility_floor(records: list[PointRecord],
@@ -1296,9 +1130,7 @@ def cmd_run(args) -> None:
     cost = CostModel(cfg)
     _feed_cost_model(cost, records)
 
-    target = args.target_level
-    max_level = (len(LEVEL_SIZES) - 1 if target == "auto"
-                 else LEVEL_FROM_SIZE[int(target)])
+    max_level = LEVEL_FROM_SIZE[int(args.target_level)]
 
     if args.dry_run:
         n_panels = len(panels) if panels is not None else len(all_panels())
@@ -1320,69 +1152,38 @@ def cmd_run(args) -> None:
         return
 
     runner = Runner(store, manifest, cfg, args, cost)
+    # Single-pass: every production level solve writes the coherent chunk AND the
+    # scattering-budget records in one step.  Gammas are keyed by panel row (this
+    # model's decay rates are row-independent), and already-scattered keys are
+    # skipped at write time so a resumed run never duplicates a scatter record.
+    runner.gammas = _per_panel_gammas(cfg, checks["decay_rates_rad_s"])
+    runner.scatter_done = {r["key"] for r in store.load_scatter_records(manifest)
+                           if r["status"] == "ok"}
     try:
         stage_pilot(runner, panels)
+        # The trajectory-equivalence gate is a per-store setup step: it needs a
+        # stored production trajectory (the pilot just produced one), runs once,
+        # and is recorded/skipped thereafter.  Only enable the merged scatter
+        # writes once it passes; otherwise the run still produces coherent data.
+        gate = _ensure_scatter_gate(runner, store)
+        if gate.get("ok"):
+            runner.write_both_series = True
+            print("[run] single-pass scatter enabled (equivalence gate ok)",
+                  flush=True)
+        else:
+            print(f"[run] scatter-equivalence gate not ok "
+                  f"({gate.get('reason')}); writing the coherent series only",
+                  flush=True)
         batch_size = _effective_batch_size(store, args)
         print(f"[run] effective batch size: {batch_size}", flush=True)
 
-        for level in (0, 1):
+        for level in range(len(LEVEL_SIZES)):
             if runner.stop_requested or level > max_level:
                 break
             records = store.load_records(manifest, include_states=False)
             done = completed_keys(records)
             _run_level(runner, level, done, batch_size, args.rerun_failures,
                        failed, panels)
-
-        # Stage 4/5: full 13x13 only if the measured P90 ETA fits the compute
-        # deadline, else high-value 13-level nodes by deterministic priority.
-        if not runner.stop_requested and max_level >= 2:
-            records = store.load_records(manifest, include_states=False)
-            done = completed_keys(records)
-            missing2 = [k for k in _filter_panels(all_keys(2), panels)
-                        if k not in done]
-            eta2 = cost.eta_seconds(missing2, args.workers)
-            fits = time.time() + eta2 <= runner.dispatch_deadline
-            print(f"[run] level 13 decision: {len(missing2)} nodes, P90 ETA "
-                  f"{eta2 / 3600:.2f} h, deadline in "
-                  f"{(runner.dispatch_deadline - time.time()) / 3600:.2f} h -> "
-                  f"{'full grid' if fits or target != 'auto' else 'high-value cells'}",
-                  flush=True)
-            if fits or target != "auto":
-                _run_level(runner, 2, done, batch_size, args.rerun_failures,
-                           failed, panels)
-            else:
-                leak, worst = _leak_maps(records)
-                vmin, _ = _credibility_floor(records, cfg.credibility_floor_min)
-                cand = refinement_candidates(leak, worst, level=1, floor=vmin)
-                cand = [(k, s) for k, s in cand
-                        if k not in done and (panels is None or k.panel in panels)]
-                scores = dict(cand)
-                batches = group_batches([k for k, _ in cand], batch_size,
-                                        scores=scores)
-                batches.sort(key=lambda b: -max(b.priority_scores or [0.0]))
-                runner.run_batches(batches, "level-13-refine", preserve_order=True)
-
-        # Bonus stage: adaptive level-25 nodes in high-value cells if the full
-        # 13x13 grid finished and budget remains.
-        if not runner.stop_requested and max_level >= 3:
-            records = store.load_records(manifest, include_states=False)
-            done = completed_keys(records)
-            if all(k in done for k in _filter_panels(all_keys(2), panels)):
-                leak, worst = _leak_maps(records)
-                vmin, _ = _credibility_floor(records, cfg.credibility_floor_min)
-                cand = [(k, s) for k, s in
-                        refinement_candidates(leak, worst, level=2, floor=vmin)
-                        if k not in done and (panels is None or k.panel in panels)]
-                if target != "auto":
-                    cand = [(k, 0.0)
-                            for k in _filter_panels(all_keys(3), panels)
-                            if k not in done]
-                scores = dict(cand)
-                batches = group_batches([k for k, _ in cand], batch_size,
-                                        scores=scores)
-                batches.sort(key=lambda b: -max(b.priority_scores or [0.0]))
-                if batches:
-                    runner.run_batches(batches, "level-25-refine", preserve_order=True)
     except KeyboardInterrupt:
         print("[run] hard abort; in-flight batches were discarded (their points "
               "resume on the next run)", flush=True)
@@ -1440,6 +1241,31 @@ def cmd_audit(args) -> None:
         runner.shutdown()
     if not runner.aborted:
         write_summary_reports(store)
+
+
+def _ensure_scatter_gate(runner: Runner, store: Store) -> dict:
+    """Run the trajectory-equivalence gate once per store (shared by run/scatter).
+
+    Executed only when ``reports/scatter_gate.json`` is absent or not ok; the
+    result is recorded there and a passed record is returned as-is on the next
+    contact.  (The live a3.0 stores already carry a passed record, so merged code
+    skips the gate on them; a store without one runs it once against its stored
+    pilot trajectory.)
+    """
+    path = os.path.join(store.reports_dir, "scatter_gate.json")
+    if os.path.exists(path):
+        try:
+            with open(path) as fh:
+                prev = json.load(fh)
+            if prev.get("ok"):
+                return prev
+        except (OSError, json.JSONDecodeError):
+            pass
+    gate = _scatter_equivalence_gate(runner, store)
+    with open(path + ".tmp", "w") as fh:
+        json.dump(gate, fh, indent=2)
+    os.replace(path + ".tmp", path)
+    return gate
 
 
 def _scatter_equivalence_gate(runner: Runner, store: Store) -> dict:
@@ -1516,13 +1342,9 @@ def cmd_scatter(args) -> None:
     runner.gammas = _per_panel_gammas(cfg, checks["decay_rates_rad_s"])
     gate_failed = False
     try:
-        gate = _scatter_equivalence_gate(runner, store)
-        path = os.path.join(store.reports_dir, "scatter_gate.json")
-        with open(path + ".tmp", "w") as fh:
-            json.dump(gate, fh, indent=2)
-        os.replace(path + ".tmp", path)
+        gate = _ensure_scatter_gate(runner, store)
         print(f"[scatter] trajectory-equivalence gate: {gate}", flush=True)
-        if not gate["ok"]:
+        if not gate.get("ok"):
             gate_failed = True
             raise SystemExit("[scatter] equivalence gate failed; not running")
 
@@ -1882,8 +1704,6 @@ def build_parser() -> argparse.ArgumentParser:
                             default=40)
             sp.add_argument("--batch-size", type=int_or_auto(48), default=48,
                             help="max points packed per solve (acceptance-gated)")
-            sp.add_argument("--budget-hours", type=float, default=24.0)
-            sp.add_argument("--reserve-hours", type=float, default=2.0)
             sp.add_argument("--point-timeout", type=float, default=3600.0,
                             help="wall-clock timeout per point (scaled by batch size)")
             sp.add_argument("--rtol", type=float, default=1e-9,
@@ -1901,15 +1721,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("pilot", help="run the pilot stage only")
     common(sp, compute=True)
-    sp.add_argument("--bench-workers", default="20,24,32,40", metavar="N,N,...",
-                    help="worker counts to benchmark during the pilot "
-                         "(runs once per store; pass '' to skip)")
     sp.set_defaults(func=cmd_pilot)
 
-    sp = sub.add_parser("run", help="resumable staged scan under a wall budget")
+    sp = sub.add_parser("run", help="resumable staged single-pass scan")
     common(sp, compute=True)
-    sp.add_argument("--target-level", default="auto",
-                    choices=["4", "7", "13", "25", "auto"])
+    sp.add_argument("--target-level", default="13",
+                    choices=["4", "7", "13", "25"],
+                    help="finest grid level to fill (13x13 by default)")
     sp.add_argument("--dry-run", action="store_true",
                     help="print point counts, missing nodes and ETA; no simulation")
     sp.add_argument("--rerun-failures", action="store_true",

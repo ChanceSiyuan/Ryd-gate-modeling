@@ -948,6 +948,46 @@ def test_scatter_write_failure_records_nan_rows(bundle, tmp_path, runner_factory
     assert store.load_records(manifest) == []
 
 
+def test_merged_run_writes_both_series_and_dedupes_scatter(bundle, tmp_path, runner_factory):
+    """Single-pass merge: a production batch with write_both_series on writes the
+    coherent chunk AND the scatter records in one completion step; keys already in
+    the scatter series are skipped at write time (resume dedup), so a subsequent
+    scatter-missing check over the computed keys reports zero missing."""
+    store, manifest = mini_store(bundle, tmp_path)
+    keys = bundle.panel_keys(0, 0, 0)[:4]
+    # a prior scatter pass already covered the first two keys
+    seed = {ch: np.full((2, 4), 0.5) for ch in bundle.scatter_channels}
+    store.write_scatter_chunk(1, manifest, keys[:2], bundle.cfg,
+                              {0: bundle.scatter_rates}, 1e-9, 1e-12, "seed",
+                              seed, np.array([1e-4, 1e-4]), 1.0)
+
+    def responder(spec):
+        n = len(spec["keys"])
+        assert spec["both"] is True                 # production run -> merged spec
+        scatter = {ch: np.random.default_rng(1).uniform(1e-6, 1e-2, (n, 4))
+                   for ch in bundle.scatter_channels}
+        return "result", {"ok": True, "result": _fake_result(bundle, n),
+                          "scatter": scatter, "runtime_s": 5.0}
+
+    runner = runner_factory(store, manifest, bundle.cfg,
+                            _runner_args(workers=2, batch_size=4), responder=responder)
+    runner.gammas = {0: bundle.scatter_rates}
+    runner.write_both_series = True
+    runner.scatter_done = {r["key"] for r in store.load_scatter_records(manifest)
+                           if r["status"] == "ok"}
+    runner.run_batches(sweeplib.group_batches(keys, batch_size=4), "merged")
+
+    # coherent series: every computed key present
+    assert set(keys) <= sweeplib.completed_keys(store.load_records(manifest))
+    # scatter series: every computed key present exactly once (the two seeded keys
+    # were not re-written), so cmd_scatter's missing check would be empty
+    from collections import Counter
+    counts = Counter(r["key"] for r in store.load_scatter_records(manifest)
+                     if r["status"] == "ok")
+    assert set(counts) == set(keys) and all(v == 1 for v in counts.values())
+    assert [k for k in keys if k not in counts] == []
+
+
 # ── shared worker entry (injected solve + scatter, via the worker context) ────
 
 

@@ -73,9 +73,12 @@ def _worker_run_batch(spec: dict) -> dict:
         t_gate = cfg.t_gate_us[spec["t_idx"]] * 1e-6
         omega = np.asarray([float(k.omega_mhz()) for k in keys]) * 1e6 * TAU
         d_sweep = np.asarray([float(k.dsweep_mhz()) for k in keys]) * 1e6 * TAU
-        scatter = bool(spec.get("scatter"))
+        # ``scatter`` -> scatter/ series only; ``both`` -> the merged single-pass
+        # run (coherent chunk AND scatter records from the one solve).  Either one
+        # needs the trajectory sampled at ``n_eval_trajectory`` points.
+        want_scatter = bool(spec.get("scatter")) or bool(spec.get("both"))
         t_eval = (np.linspace(0.0, t_gate, cfg.n_eval_trajectory)
-                  if (spec.get("save_traj") or scatter) else None)
+                  if (spec.get("save_traj") or want_scatter) else None)
         result = ctx["solve"](
             ops, t_gate, omega, d_sweep,
             rtol=spec["rtol"], atol=spec["atol"], ramp=cfg.ramp_frac,
@@ -83,7 +86,7 @@ def _worker_run_batch(spec: dict) -> dict:
         if not np.all(np.isfinite(result.psi_final.view(float))):
             raise FloatingPointError("non-finite terminal state")
         out = {"ok": True, "result": result, "runtime_s": time.time() - start}
-        if scatter:
+        if want_scatter:
             # Gamma depends on the panel row; every key in a batch shares one
             # panel, so index the per-panel gammas by this batch's row.
             out["scatter"] = ctx["scattering_integrals"](
@@ -209,10 +212,14 @@ class Runner:
         self.seq = store.next_seq()
         self.scatter_seq = store.next_scatter_seq()
         self.gammas: dict | None = None   # dict[panel_row -> dict] set for scatter runs
+        self.write_both_series = False    # merged single-pass: coherent + scatter in one step
+        self.scatter_done: set = set()    # keys already in the scatter series (write-time dedup)
         self.stop_requested = False
         self.start_time = time.time()
-        self.dispatch_deadline = (self.start_time
-                                  + (args.budget_hours - args.reserve_hours) * 3600.0)
+        self.dispatch_deadline = (
+            self.start_time
+            + (getattr(args, "budget_hours", 24.0)
+               - getattr(args, "reserve_hours", 2.0)) * 3600.0)
         self.point_timeout_s = float(args.point_timeout)
         self.failures: list[dict] = []
         self.deferred: int = 0
@@ -320,6 +327,8 @@ class Runner:
             tier=batch.tier, rtol=rtol, atol=atol,
             save_traj=batch.save_traj,
             scatter=batch.scatter,
+            both=(self.write_both_series and batch.tier == "production"
+                  and not batch.scatter),
             timeout_s=self.point_timeout_s * len(batch.keys),
         )
 
@@ -351,9 +360,32 @@ class Runner:
                     self.seq, self.manifest, key, batch.tier,
                     result.times, result.states[:, i])
                 self.seq += 1
+        if "scatter" in out:
+            # Merged single-pass: the same solve carried the scattering integrals;
+            # append them to the scatter/ series alongside the coherent chunk.
+            self._write_merged_scatter(batch, out, rtol, atol)
         per_point = out["runtime_s"] / len(batch.keys)
         self.cost.observe((batch.panel_idx, batch.t_idx), per_point)
         self.completed_points += len(batch.keys)
+
+    def _write_merged_scatter(self, batch: Batch, out: dict, rtol: float,
+                              atol: float) -> None:
+        """Append this batch's scatter integrals, skipping keys already in the
+        scatter series (write-time resume dedup)."""
+        new_idx = [i for i, k in enumerate(batch.keys) if k not in self.scatter_done]
+        if not new_idx:
+            return
+        sub_keys = [batch.keys[i] for i in new_idx]
+        idx = np.asarray(new_idx)
+        scatter = {ch: np.asarray(out["scatter"][ch])[idx]
+                   for ch in self.store.scatter_channels}
+        max_leakage = np.asarray(out["result"].max_leakage)[idx]
+        self.store.write_scatter_chunk(
+            self.scatter_seq, self.manifest, sub_keys, self.cfg,
+            self.gammas, rtol, atol, batch.batch_id, scatter, max_leakage,
+            out["runtime_s"])
+        self.scatter_seq += 1
+        self.scatter_done.update(sub_keys)
 
     def _write_failure(self, batch: Batch, out: dict) -> None:
         rtol, atol = self._tier_tols(batch.tier)
