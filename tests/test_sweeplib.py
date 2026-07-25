@@ -1110,16 +1110,31 @@ def test_plot_metric_values_scatter_metrics_and_total_error(bundle, tmp_path):
     assert values[key] == pytest.approx(
         sum(2e-3 * (j + 1) for j in range(len(channels))))
 
+    # total_error must sum coherent leakage + scatter PER INPUT and only then take
+    # the worst input.  Use a distinct key whose scatter is asymmetric across the
+    # four inputs so the worst-coherent input (0) is NOT the worst-total input:
+    # this discriminates the correct per-input-sum-then-max from a buggy
+    # max-then-sum (which would over-count by pairing the two unrelated maxima).
+    key2 = bundle.panel_keys(0, 0, 0)[1]
+    leakage = np.array([0.40, 0.10, 0.20, 0.30])         # worst coherent at input 0
+    scat_sum = np.array([0.05, 0.40, 0.30, 0.20])        # worst scatter at input 1
+    te_scatter = {ch: np.array([scat_sum / len(channels)]) for ch in channels}
+    store.write_scatter_chunk(3, manifest, [key2], bundle.cfg, gammas, 1e-9, 1e-12,
+                              "te", te_scatter, np.array([1e-4]), 1.0)
     record = sweeplib.PointRecord(
-        key=key, tier="production", rtol=1e-9, atol=1e-12, status="ok",
-        max_leakage=0.4, leakage=np.array([0.4, 0.1, 0.2, 0.3]), worst_input="00",
+        key=key2, tier="production", rtol=1e-9, atol=1e-12, status="ok",
+        max_leakage=float(leakage.max()), leakage=leakage, worst_input="00",
         return_prob=np.ones(4), norm_err=np.zeros(4), psi_final=sweeplib._NO_STATES,
         nfev=1, runtime_s=1.0, batch_id="m", batch_size=1, retry_count=0,
         priority_score=0.0, message="", chunk_file="c", used_swap=True)
     values, *_ = sweeplib.plot_metric_values(
         store, manifest, [record], "total_error", scatter_channels=channels)
-    expect = float(np.max(record.leakage + sum(tight[ch][0] for ch in channels)))
-    assert values[key] == pytest.approx(expect)
+    total = leakage + scat_sum                           # per-input totals
+    assert np.argmax(total) != np.argmax(leakage)        # the worst input flips
+    per_input_then_max = float(total.max())              # correct: 0.50
+    max_then_sum = float(leakage.max() + scat_sum.max())  # buggy: 0.80
+    assert per_input_then_max != pytest.approx(max_then_sum)
+    assert values[key2] == pytest.approx(per_input_then_max)
 
 
 def _bundle_plot_spec(bundle):
