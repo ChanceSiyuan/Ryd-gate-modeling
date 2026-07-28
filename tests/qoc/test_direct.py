@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from scipy.linalg import expm as _expm
 
-from qoc.direct import _DirectNLP
+from qoc.direct import DirectResult, _DirectNLP, optimize
 
 
 def _random_problem(seed, *, slice_sampling="midpoint", regularization=None):
@@ -154,10 +155,6 @@ def test_validation_errors():
     with pytest.raises(ValueError, match="initial_unitaries"):
         build().initial_point(None, np.zeros((2, 2, 2)))
 
-
-from scipy.linalg import expm as _expm
-
-from qoc.direct import DirectResult, optimize
 
 _SX = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
 _SY = np.array([[0.0, -1.0j], [1.0j, 0.0]])
