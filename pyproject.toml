@@ -29,6 +29,15 @@ dev = [
     "nbconvert",
     "nbclient",
     "ipykernel",
+    "cyipopt>=1.4",
+]
+# IPOPT-backed direct trajectory optimization (qoc.direct.optimize).
+# No PyPI wheels: the sdist links against a system IPOPT found via
+# pkg-config (on the DGX: conda-forge ipopt at ~/opt/ipopt; first build
+# needs PKG_CONFIG_PATH=$HOME/opt/ipopt/lib/pkgconfig and
+# LDFLAGS="-Wl,-rpath,$HOME/opt/ipopt/lib").
+qoc-direct = [
+    "cyipopt>=1.4",
 ]
 tn = [
     "physics-tenpy>=1.0",

@@ -378,3 +378,153 @@ class _DirectNLP:
         for k in range(1, self.K + 1):
             x0[self._u_off(k) : self._u_off(k) + self.M] = _isovec(mats[k - 1])
         return np.clip(x0, self.lb, self.ub)
+
+
+_DEFAULT_IPOPT_OPTIONS = {
+    "hessian_approximation": "limited-memory",
+    "tol": 1e-8,
+    "print_level": 0,
+    "sb": "yes",
+    "mu_strategy": "adaptive",
+}
+
+# IPOPT return statuses accepted as convergence: 0 = Solve_Succeeded,
+# 1 = Solved_To_Acceptable_Level.
+_ACCEPTED_IPOPT_STATUS = (0, 1)
+
+
+@dataclass(frozen=True)
+class DirectResult:
+    """Solution of one direct trajectory-optimization solve.
+
+    ``accepted`` requires both a converged IPOPT status and a recomputed
+    maximum defect residual within ``feasibility_tol``; a converged-but-
+    infeasible run never reports ``accepted=True``. ``objective`` is the
+    terminal value only (regularizers excluded); ``controls``/``du``/``ddu``
+    are per-channel knot arrays in physical units.
+    """
+
+    controls: dict[str, np.ndarray]
+    du: dict[str, np.ndarray]
+    ddu: dict[str, np.ndarray]
+    unitaries: np.ndarray
+    objective: float
+    max_defect: float
+    ipopt_status: int
+    ipopt_message: str
+    n_iter: int
+    accepted: bool
+
+
+def optimize(
+    h0,
+    controls,
+    *,
+    n_slices,
+    dt,
+    terminal_objective,
+    u_bounds,
+    du_bounds=None,
+    ddu_bounds=None,
+    fix_endpoints=True,
+    regularization=None,
+    slice_sampling="midpoint",
+    initial_controls=None,
+    initial_unitaries=None,
+    maxiter=1000,
+    feasibility_tol=1e-8,
+    ipopt_options=None,
+):
+    """Solve the direct-method NLP with IPOPT and return a :class:`DirectResult`."""
+    try:
+        import cyipopt
+    except ImportError as exc:
+        raise ImportError(
+            "qoc.direct.optimize requires the optional cyipopt dependency; "
+            "install it with `uv sync --extra qoc-direct`."
+        ) from exc
+
+    nlp = _DirectNLP(
+        h0=h0,
+        controls=controls,
+        n_slices=n_slices,
+        dt=dt,
+        terminal_objective=terminal_objective,
+        u_bounds=u_bounds,
+        du_bounds=du_bounds,
+        ddu_bounds=ddu_bounds,
+        fix_endpoints=fix_endpoints,
+        regularization=regularization,
+        slice_sampling=slice_sampling,
+    )
+    x0 = nlp.initial_point(initial_controls, initial_unitaries)
+
+    iterations = {"n": 0}
+
+    class _Callbacks:
+        def objective(self, x):
+            return nlp.objective(x)
+
+        def gradient(self, x):
+            return nlp.gradient(x)
+
+        def constraints(self, x):
+            return nlp.constraints(x)
+
+        def jacobian(self, x):
+            return nlp.jacobian(x)
+
+        def jacobianstructure(self):
+            return nlp.jac_rows, nlp.jac_cols
+
+        def intermediate(self, alg_mod, iter_count, *args):
+            iterations["n"] = int(iter_count)
+
+    problem = cyipopt.Problem(
+        n=nlp.n,
+        m=nlp.m,
+        problem_obj=_Callbacks(),
+        lb=nlp.lb,
+        ub=nlp.ub,
+        cl=np.zeros(nlp.m),
+        cu=np.zeros(nlp.m),
+    )
+    merged = dict(_DEFAULT_IPOPT_OPTIONS)
+    merged["max_iter"] = int(maxiter)
+    merged["constr_viol_tol"] = float(feasibility_tol)
+    if ipopt_options:
+        merged.update(ipopt_options)
+    for name, value in merged.items():
+        problem.add_option(name, value)
+
+    x_opt, info = problem.solve(x0)
+    x_opt = np.ascontiguousarray(x_opt, dtype=float)
+
+    max_defect = float(np.max(np.abs(nlp.constraints(x_opt)[: nlp.K * nlp.M])))
+    fwd = nlp._forward(x_opt)
+    unitaries = np.stack(fwd["U"])
+    value, _ = nlp._terminal(fwd["U"][nlp.K])
+    controls_out, du_out, ddu_out = {}, {}, {}
+    for a, name in enumerate(nlp.channels):
+        c0 = nlp._c_off(a)
+        s = nlp.scales[a]
+        controls_out[name] = s * x_opt[c0 : c0 + nlp.K + 1]
+        du_out[name] = (s / nlp.dt) * x_opt[c0 + nlp.K + 1 : c0 + 2 * (nlp.K + 1)]
+        ddu_out[name] = (s / nlp.dt**2) * x_opt[c0 + 2 * (nlp.K + 1) : c0 + 3 * nlp.K + 2]
+
+    status = int(info["status"])
+    message = info["status_msg"]
+    if isinstance(message, bytes):
+        message = message.decode(errors="replace")
+    return DirectResult(
+        controls=controls_out,
+        du=du_out,
+        ddu=ddu_out,
+        unitaries=unitaries,
+        objective=float(value),
+        max_defect=max_defect,
+        ipopt_status=status,
+        ipopt_message=str(message),
+        n_iter=iterations["n"],
+        accepted=(status in _ACCEPTED_IPOPT_STATUS) and (max_defect <= float(feasibility_tol)),
+    )

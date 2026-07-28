@@ -153,3 +153,81 @@ def test_validation_errors():
         build().initial_point({"zz": np.zeros(4)}, None)
     with pytest.raises(ValueError, match="initial_unitaries"):
         build().initial_point(None, np.zeros((2, 2, 2)))
+
+
+from scipy.linalg import expm as _expm
+
+from qoc.direct import DirectResult, optimize
+
+_SX = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
+_SY = np.array([[0.0, -1.0j], [1.0j, 0.0]])
+_SZ = np.diag([1.0, -1.0]).astype(complex)
+
+
+def _infidelity(target):
+    d = target.shape[0]
+
+    def objective(u_final):
+        c = np.trace(target.conj().T @ u_final)
+        return 1.0 - abs(c) ** 2 / d**2, -(c / d**2) * target
+
+    return objective
+
+
+def _solve(**overrides):
+    kwargs = dict(
+        h0=0.1 * _SZ,
+        controls={"x": _SX, "y": _SY},
+        n_slices=8,
+        dt=0.25,
+        terminal_objective=_infidelity(_expm(-1j * (np.pi / 2) * _SX)),
+        u_bounds={"x": (-2.0, 2.0), "y": (-2.0, 2.0)},
+        maxiter=500,
+    )
+    kwargs.update(overrides)
+    return optimize(**kwargs)
+
+
+def test_known_synthesis_converges():
+    result = _solve(
+        initial_controls={"x": 1.3 * np.sin(np.linspace(0.0, np.pi, 9)), "y": np.zeros(9)}
+    )
+    assert isinstance(result, DirectResult)
+    assert result.accepted
+    assert result.objective < 1e-3
+    assert result.max_defect <= 1e-8
+    assert result.unitaries.shape == (9, 2, 2)
+    np.testing.assert_allclose(result.unitaries[0], np.eye(2), atol=1e-14)
+    for name in ("x", "y"):
+        assert result.controls[name].shape == (9,)
+        assert result.du[name].shape == (9,)
+        assert result.ddu[name].shape == (8,)
+
+
+def test_infeasible_identity_start_converges():
+    result = _solve(
+        initial_unitaries=np.stack([np.eye(2, dtype=complex)] * 8),
+        initial_controls={"x": 1.3 * np.sin(np.linspace(0.0, np.pi, 9)), "y": np.zeros(9)},
+    )
+    assert result.accepted
+    assert result.objective < 1e-3
+
+
+def test_bounds_and_endpoints_respected():
+    result = _solve(
+        du_bounds={"x": 4.0, "y": 4.0},
+        ddu_bounds={"x": 40.0, "y": 40.0},
+        initial_controls={"x": 1.3 * np.sin(np.linspace(0.0, np.pi, 9)), "y": np.zeros(9)},
+    )
+    assert result.accepted
+    for name in ("x", "y"):
+        u = result.controls[name]
+        assert abs(u[0]) < 1e-9 and abs(u[-1]) < 1e-9
+        assert np.all(u >= -2.0 - 1e-9) and np.all(u <= 2.0 + 1e-9)
+        assert np.max(np.abs(result.du[name])) <= 4.0 + 1e-6
+        assert np.max(np.abs(result.ddu[name])) <= 40.0 + 1e-4
+
+
+def test_unconverged_run_reports_not_accepted():
+    result = _solve(maxiter=1)
+    assert not result.accepted
