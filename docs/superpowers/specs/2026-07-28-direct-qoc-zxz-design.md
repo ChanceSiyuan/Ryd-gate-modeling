@@ -1,6 +1,9 @@
 # Direct Quantum Optimal Control (qoc.direct) + ZXZ Synthesis Reproduction — Design
 
 Date: 2026-07-28. Status: approved (solver route A: cyipopt/IPOPT).
+Scope 2026-07-28 (user): implementation covers the qoc-side deliverables
+only (engine, cyipopt extra, ADR-0026, engine tests); the ZXZ study
+(deliverable 3 and §4) is deferred and kept here as reference wiring.
 
 ## Goal
 

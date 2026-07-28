@@ -14,16 +14,22 @@ systems, protocols, or simulations.
 ``qoc.grape`` holds the discrete-adjoint GRAPE engine over one bilinear
 control model (ADR-0024). It consumes only plain arrays and mappings and never
 imports a physics package.
+
+``qoc.direct`` solves the same bilinear control model as a direct
+trajectory-optimization NLP (ADR-0026): knot unitaries and control chains
+are decision variables, slice dynamics are defect constraints, and IPOPT
+(optional ``cyipopt`` dependency) solves the program.
 """
 
 __version__ = "0.1.0"
 
-from . import grape
+from . import direct, grape
 from ._minimize import minimize
 from ._result import OptimizationResult
 
 __all__ = [
     "OptimizationResult",
+    "direct",
     "grape",
     "minimize",
 ]
