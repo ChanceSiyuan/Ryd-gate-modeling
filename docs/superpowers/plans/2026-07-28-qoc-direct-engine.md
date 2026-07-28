@@ -672,8 +672,14 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"'
 Prerequisite (done by the controller, recorded here): cyipopt has **no
 binary wheels on PyPI** — every release is an sdist that links against a
 system IPOPT via `pkg-config`. The DGX provides IPOPT user-locally at
-`~/opt/ipopt` (conda-forge `ipopt` installed with micromamba; includes
-MUMPS/OpenBLAS with in-env rpaths). The **first** build of the cyipopt
+`~/opt/ipopt` (conda-forge `ipopt=3.14.11` installed with micromamba;
+includes MUMPS with in-env rpaths). The version is **pinned at 3.14.11
+deliberately**: newer conda-forge builds link `libspral`, whose
+`CXXABI_1.3.15` requirement exceeds the system libstdc++ (1.3.13), and
+because scipy loads the system libstdc++ first, the conda copy on the
+extension's rpath cannot satisfy it at runtime — the gcc-11-era 3.14.11
+closure (GLIBCXX <= 3.4.29) runs against the system libstdc++ with no
+environment variables. The **first** build of the cyipopt
 sdist therefore needs
 `PKG_CONFIG_PATH=$HOME/opt/ipopt/lib/pkgconfig` and
 `LDFLAGS="-Wl,-rpath,$HOME/opt/ipopt/lib"` in the environment of the `uv`
