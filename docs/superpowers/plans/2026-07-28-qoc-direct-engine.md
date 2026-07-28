@@ -669,18 +669,34 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"'
 
 - [ ] **Step 1: Add cyipopt to pyproject**
 
+Prerequisite (done by the controller, recorded here): cyipopt has **no
+binary wheels on PyPI** — every release is an sdist that links against a
+system IPOPT via `pkg-config`. The DGX provides IPOPT user-locally at
+`~/opt/ipopt` (conda-forge `ipopt` installed with micromamba; includes
+MUMPS/OpenBLAS with in-env rpaths). The **first** build of the cyipopt
+sdist therefore needs
+`PKG_CONFIG_PATH=$HOME/opt/ipopt/lib/pkgconfig` and
+`LDFLAGS="-Wl,-rpath,$HOME/opt/ipopt/lib"` in the environment of the `uv`
+command; uv caches the built wheel afterwards, and the baked rpath makes
+runtime imports work with no environment variables.
+
 In `pyproject.toml`, add `"cyipopt>=1.4",` as the last entry of the `dev`
 list, and insert a new extra directly after the `dev` block:
 
 ```toml
 # IPOPT-backed direct trajectory optimization (qoc.direct.optimize).
+# No PyPI wheels: the sdist links against a system IPOPT found via
+# pkg-config (on the DGX: conda-forge ipopt at ~/opt/ipopt; first build
+# needs PKG_CONFIG_PATH=$HOME/opt/ipopt/lib/pkgconfig and
+# LDFLAGS="-Wl,-rpath,$HOME/opt/ipopt/lib").
 qoc-direct = [
     "cyipopt>=1.4",
 ]
 ```
 
-Verify the environment resolves:
-`ssh chance@100.106.69.117 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run --extra dev --extra qoc-direct python -c "import cyipopt; print(cyipopt.__version__)"'`
+Verify the environment resolves and the module imports WITHOUT the build
+env vars (rpath check):
+`ssh chance@100.106.69.117 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && PKG_CONFIG_PATH=$HOME/opt/ipopt/lib/pkgconfig LDFLAGS="-Wl,-rpath,$HOME/opt/ipopt/lib" uv sync --extra dev --extra qoc-direct && uv run --extra dev --extra qoc-direct python -c "import cyipopt; print(cyipopt.__version__)"'`
 Expected: a version >= 1.4 prints.
 
 - [ ] **Step 2: Write the failing solver tests**
