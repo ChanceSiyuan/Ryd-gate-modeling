@@ -199,6 +199,9 @@ def test_known_synthesis_converges():
         assert result.controls[name].shape == (9,)
         assert result.du[name].shape == (9,)
         assert result.ddu[name].shape == (8,)
+    assert result.ipopt_status in (0, 1)
+    assert result.n_iter > 0
+    assert result.ipopt_message != ""
 
 
 def test_infeasible_identity_start_converges():
@@ -228,3 +231,22 @@ def test_bounds_and_endpoints_respected():
 def test_unconverged_run_reports_not_accepted():
     result = _solve(maxiter=1)
     assert not result.accepted
+
+
+def test_converged_but_infeasible_is_not_accepted():
+    result = _solve(
+        feasibility_tol=1e-16,
+        ipopt_options={"constr_viol_tol": 1e-8},
+        initial_controls={"x": 1.3 * np.sin(np.linspace(0.0, np.pi, 9)), "y": np.zeros(9)},
+    )
+    assert result.ipopt_status in (0, 1)
+    assert result.max_defect > 1e-16
+    assert not result.accepted
+
+
+def test_missing_cyipopt_raises_actionable_import_error(monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "cyipopt", None)
+    with pytest.raises(ImportError, match="qoc-direct"):
+        _solve()

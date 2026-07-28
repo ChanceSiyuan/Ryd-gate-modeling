@@ -172,7 +172,8 @@ result with `accepted=False` (no raise); a missing `cyipopt` raises
 ## 2. Dependency
 
 New optional extra `qoc-direct = ["cyipopt>=1.4"]` in `pyproject.toml`
-(manylinux wheels bundle IPOPT+MUMPS), also appended to the `dev` extra so the
+(no PyPI wheels — the sdist links against a system IPOPT via pkg-config; on the
+DGX: conda-forge ipopt=3.14.11 at ~/opt/ipopt), also appended to the `dev` extra so the
 remote test suite exercises the engine unconditionally (no skip markers).
 Installed on the DGX via the usual `uv run --extra dev ...` flow.
 

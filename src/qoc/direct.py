@@ -338,6 +338,14 @@ class _DirectNLP:
     # ── initial point ────────────────────────────────────────────────────
 
     def initial_point(self, initial_controls, initial_unitaries):
+        """Assemble a starting flat point from initial controls/unitaries.
+
+        The forward rollout uses the given controls as-is, and the assembled
+        point is clipped to the variable bounds afterwards. Bound-violating or
+        nonzero-endpoint initial controls therefore yield a start that is
+        bound-feasible but dynamics-inconsistent — an infeasible start, which
+        the direct method accepts.
+        """
         if initial_controls is not None:
             extra = set(initial_controls.keys()) - set(self.channels)
             if extra:
@@ -399,7 +407,9 @@ class DirectResult:
 
     ``accepted`` requires both a converged IPOPT status and a recomputed
     maximum defect residual within ``feasibility_tol``; a converged-but-
-    infeasible run never reports ``accepted=True``. ``objective`` is the
+    infeasible run never reports ``accepted=True``. ``max_defect`` covers the
+    dynamics defect rows only; the linear control-chain constraint residuals
+    are enforced by IPOPT's own ``constr_viol_tol``. ``objective`` is the
     terminal value only (regularizers excluded); ``controls``/``du``/``ddu``
     are per-channel knot arrays in physical units.
     """
