@@ -12,7 +12,10 @@ to results/zxz_direct_qoc/ as npz so plotting replays without recompute.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 from itertools import product
 from pathlib import Path
 
@@ -111,10 +114,104 @@ def cmd_model_check(args):
     print(f"channels: {list(model['controls'])}, dim = {model['h0'].shape[0]}")
 
 
+def _smooth_random_knots(rng, k, lo, hi):
+    u = rng.uniform(lo, hi, k + 1)
+    u[0] = u[-1] = 0.0
+    u = np.convolve(u, np.ones(3) / 3.0, mode="same")
+    u[0] = u[-1] = 0.0
+    return np.clip(u, lo, hi)
+
+
+def run_direct_seed(seed, tag, duration_us, maxiter, model_arrays):
+    """One IPOPT solve from one smooth random start. Top-level: picklable."""
+    from qoc import direct
+
+    h0, ops_om, ops_de, target = model_arrays
+    controls = {CH_OM: ops_om, CH_DE: ops_de}
+    k = int(round(duration_us / DT_US))
+    rng = np.random.default_rng(seed)
+    initial = {
+        CH_OM: _smooth_random_knots(rng, k, 0.0, U_OMEGA_MAX),
+        CH_DE: _smooth_random_knots(rng, k, -DELTA_MAX, DELTA_MAX),
+    }
+    result = direct.optimize(
+        h0,
+        controls,
+        n_slices=k,
+        dt=DT_US,
+        terminal_objective=partial(unitary_infidelity, target=target),
+        u_bounds=U_BOUNDS,
+        du_bounds=DU_BOUNDS,
+        ddu_bounds=DDU_BOUNDS,
+        initial_controls=initial,
+        maxiter=maxiter,
+    )
+    out = RESULTS_DIR / f"direct_{tag}_seed{seed}.npz"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        out,
+        u_omega=result.controls[CH_OM],
+        u_delta=result.controls[CH_DE],
+        du_omega=result.du[CH_OM],
+        du_delta=result.du[CH_DE],
+        ddu_omega=result.ddu[CH_OM],
+        ddu_delta=result.ddu[CH_DE],
+        fidelity=1.0 - result.objective,
+        objective=result.objective,
+        max_defect=result.max_defect,
+        accepted=result.accepted,
+        ipopt_status=result.ipopt_status,
+        n_iter=result.n_iter,
+        seed=seed,
+        K=k,
+        dt_us=DT_US,
+        duration_us=duration_us,
+    )
+    return {
+        "seed": seed,
+        "fidelity": 1.0 - result.objective,
+        "accepted": bool(result.accepted),
+        "ipopt_status": int(result.ipopt_status),
+        "n_iter": int(result.n_iter),
+    }
+
+
+def cmd_direct(args):
+    model = build_model()
+    target = build_target(model["index"])
+    model_arrays = (model["h0"], model["controls"][CH_OM], model["controls"][CH_DE], target)
+    tags = list(DURATIONS) if args.tag == "all" else [args.tag]
+    for tag in tags:
+        duration = DURATIONS[tag]
+        rows = []
+        with ProcessPoolExecutor(max_workers=args.workers) as pool:
+            futures = [
+                pool.submit(run_direct_seed, seed, tag, duration, args.maxiter, model_arrays)
+                for seed in range(args.seeds)
+            ]
+            for fut in futures:
+                row = fut.result()
+                rows.append(row)
+                print(f"[{tag}] seed {row['seed']}: F={row['fidelity']:.4f} "
+                      f"accepted={row['accepted']} status={row['ipopt_status']} it={row['n_iter']}")
+        accepted = [r for r in rows if r["accepted"]]
+        best = max(accepted or rows, key=lambda r: r["fidelity"])
+        summary = {"tag": tag, "duration_us": duration, "runs": rows, "best": best}
+        (RESULTS_DIR / f"direct_{tag}_summary.json").write_text(json.dumps(summary, indent=2))
+        print(f"[{tag}] best: seed {best['seed']} F={best['fidelity']:.4f} "
+              f"({len(accepted)}/{len(rows)} accepted)")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("model-check").set_defaults(func=cmd_model_check)
+    p = sub.add_parser("direct")
+    p.add_argument("--tag", default="all")
+    p.add_argument("--seeds", type=int, default=8)
+    p.add_argument("--workers", type=int, default=8)
+    p.add_argument("--maxiter", type=int, default=4000)
+    p.set_defaults(func=cmd_direct)
     args = parser.parse_args()
     args.func(args)
 
