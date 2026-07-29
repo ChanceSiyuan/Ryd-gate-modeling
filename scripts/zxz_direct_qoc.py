@@ -366,6 +366,124 @@ def cmd_grape(args):
     )
 
 
+def _replay_unitary(model, u_om_knots, u_de_knots, k, mode):
+    """Exact-ODE propagator of the knot waveform (mode: 'zoh'|'linear')."""
+    from ryd_gate import Register, RydbergSystem, level_structure, simulate
+    from ryd_gate.protocols import SweepProtocol
+
+    t_total_us = k * DT_US
+    knots_t = np.arange(k + 1) * DT_US
+    mid_om = 0.5 * (u_om_knots[:-1] + u_om_knots[1:])
+    mid_de = 0.5 * (u_de_knots[:-1] + u_de_knots[1:])
+
+    def value_at(t_s, knots, mids):
+        t_us = min(max(t_s * 1e6, 0.0), t_total_us - 1e-12)
+        if mode == "zoh":
+            return float(mids[int(t_us / DT_US)])
+        return float(np.interp(t_us, knots_t, knots))
+
+    protocol = SweepProtocol(
+        t_gate_s=t_total_us * 1e-6,
+        omega_half_rad_s=lambda t: value_at(t, u_om_knots, mid_om) * 1e6,
+        detuning_rad_s=lambda t: -value_at(t, u_de_knots, mid_de) * 1e6,
+    )
+    system = RydbergSystem(
+        level_structure=level_structure("1r", ryd_level=RYD_LEVEL),
+        register=Register.chain(N_ATOMS, spacing_um=SPACING_UM),
+        protocol=protocol,
+    )
+    index = model["index"]
+    ordered = [lab for lab, _ in sorted(index.items(), key=lambda kv: kv[1])]
+    results = simulate(system, [list(lab) for lab in ordered], backend="exact_ode")
+    u_ode = np.zeros((8, 8), dtype=complex)
+    for j, res in enumerate(results):
+        for i, lab in enumerate(ordered):
+            u_ode[i, j] = res.amplitude(list(lab))
+    return u_ode
+
+
+def cmd_validate(args):
+    model = build_model()
+    target = build_target(model["index"])
+    if args.seed is None:
+        summary = json.loads((RESULTS_DIR / f"direct_{args.tag}_summary.json").read_text())
+        args.seed = int(summary["best"]["seed"])
+    data = np.load(RESULTS_DIR / f"direct_{args.tag}_seed{args.seed}.npz")
+    k = int(data["K"])
+    f_disc = float(data["fidelity"])
+    u_zoh = _replay_unitary(model, data["u_omega"], data["u_delta"], k, "zoh")
+    u_lin = _replay_unitary(model, data["u_omega"], data["u_delta"], k, "linear")
+    f_zoh = fidelity(u_zoh, target)
+    f_lin = fidelity(u_lin, target)
+    gate_pass = bool(abs(f_zoh - f_disc) < 1e-3)
+    np.savez(
+        RESULTS_DIR / f"validate_{args.tag}.npz",
+        f_discrete=f_disc, f_ode_zoh=f_zoh, f_ode_linear=f_lin,
+        gate_pass=gate_pass, seed=args.seed,
+    )
+    print(f"[{args.tag} seed {args.seed}] F_discrete={f_disc:.5f} "
+          f"F_ode_zoh={f_zoh:.5f} (gate {'PASS' if gate_pass else 'FAIL'}) "
+          f"F_ode_linear={f_lin:.5f}")
+
+
+def cmd_plot(args):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    plots = RESULTS_DIR / "plots"
+    plots.mkdir(parents=True, exist_ok=True)
+    g = np.load(RESULTS_DIR / f"grape_T{args.duration_us}.npz")
+    fids, r_values = g["fidelities"], g["r_values"]
+
+    fig, ax = plt.subplots(figsize=(6.0, 4.0))
+    ax.violinplot([fids[i] for i in range(len(r_values))],
+                  positions=np.arange(len(r_values)), showmedians=True)
+    ax.set_xticks(np.arange(len(r_values)))
+    ax.set_xticklabels([f"r={v:g}" for v in r_values])
+    colors = {"pulse1": "tab:red", "pulse2": "tab:purple"}
+    for tag, color in colors.items():
+        path = RESULTS_DIR / f"direct_{tag}_summary.json"
+        if path.exists():
+            best = json.loads(path.read_text())["best"]
+            ax.axhline(best["fidelity"], color=color, ls="--", lw=1.2,
+                       label=f"direct {tag} (T={DURATIONS[tag]} us): F={best['fidelity']:.3f}")
+    ax.set_ylabel("unitary fidelity")
+    ax.set_xlabel(f"GRAPE regularization (T={args.duration_us} us, "
+                  f"{fids.shape[1]} seeds)")
+    ax.legend(loc="lower right", fontsize=8)
+    ax.set_title("ZXZ synthesis: direct method vs GRAPE (Fig. 3b style)")
+    fig.tight_layout()
+    for ext in ("png", "pdf"):
+        fig.savefig(plots / f"fig3b_violin.{ext}", dpi=200)
+    plt.close(fig)
+
+    fig, axes = plt.subplots(2, 1, figsize=(6.0, 4.5), sharex=True)
+    best1 = json.loads((RESULTS_DIR / "direct_pulse1_summary.json").read_text())["best"]
+    d = np.load(RESULTS_DIR / f"direct_pulse1_seed{best1['seed']}.npz")
+    t = np.arange(int(d["K"]) + 1) * DT_US
+    axes[0].plot(t, 2.0 * d["u_omega"] / TAU, label="direct pulse1")
+    axes[1].plot(t, -d["u_delta"] / TAU, label="direct pulse1")
+    i_best = np.unravel_index(np.argmax(fids), fids.shape)
+    tg = np.arange(int(g["K"]) + 1) * DT_US
+    axes[0].plot(tg, 2.0 * g["u_omega"][i_best] / TAU, alpha=0.7,
+                 label=f"best GRAPE (r={r_values[i_best[0]]:g})")
+    axes[1].plot(tg, -g["u_delta"][i_best] / TAU, alpha=0.7,
+                 label=f"best GRAPE (r={r_values[i_best[0]]:g})")
+    axes[0].set_ylabel("Omega/2pi (MHz)")
+    axes[1].set_ylabel("Delta/2pi (MHz)")
+    axes[1].set_xlabel("t (us)")
+    for ax in axes:
+        ax.legend(fontsize=8)
+    fig.suptitle("Optimized pulses (Fig. 3c style)")
+    fig.tight_layout()
+    for ext in ("png", "pdf"):
+        fig.savefig(plots / f"fig3c_pulses.{ext}", dpi=200)
+    plt.close(fig)
+    print(f"wrote {plots}/fig3b_violin.png|pdf and fig3c_pulses.png|pdf")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -383,6 +501,13 @@ def main():
     p.add_argument("--maxiter", type=int, default=1500)
     p.add_argument("--r-values", default="0,1e-8,1e-7,1e-6")
     p.set_defaults(func=cmd_grape)
+    p = sub.add_parser("validate")
+    p.add_argument("--tag", required=True)
+    p.add_argument("--seed", type=int, default=None)
+    p.set_defaults(func=cmd_validate)
+    p = sub.add_parser("plot")
+    p.add_argument("--duration-us", type=float, default=1.2)
+    p.set_defaults(func=cmd_plot)
     args = parser.parse_args()
     args.func(args)
 
