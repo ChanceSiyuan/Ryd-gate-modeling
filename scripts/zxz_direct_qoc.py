@@ -35,6 +35,7 @@ DELTA_MAX = TAU * 20.0               # |channel value| = |Delta|    (rad/us)
 SLEW_U_OMEGA = 250.0 / 2.0           # Omega slew 250 rad/us^2 -> channel
 SLEW_U_DELTA = 2500.0
 TAU_JEFF = 0.8
+LAMBDA_PENALTY = 100.0
 DURATIONS = {"pulse1": 1.2, "pulse2": 3.6}
 CH_OM = "E[r,1]:x"
 CH_DE = "E[r,r]"
@@ -69,7 +70,6 @@ def build_model():
         "h0": np.asarray(h0_si, dtype=complex) * 1e-6,   # rad/s -> rad/us
         "controls": {CH_OM: np.asarray(channels[CH_OM]), CH_DE: np.asarray(channels[CH_DE])},
         "index": index,
-        "labels": LABELS,
     }
 
 
@@ -122,18 +122,23 @@ def _smooth_random_knots(rng, k, lo, hi):
     return np.clip(u, lo, hi)
 
 
-def run_direct_seed(seed, tag, duration_us, maxiter, model_arrays):
-    """One IPOPT solve from one smooth random start. Top-level: picklable."""
+def run_direct_seed(seed, tag, duration_us, maxiter, model_arrays, warm):
+    """One IPOPT solve from one smooth random (or warm) start. Top-level: picklable."""
     from qoc import direct
 
     h0, ops_om, ops_de, target = model_arrays
     controls = {CH_OM: ops_om, CH_DE: ops_de}
     k = int(round(duration_us / DT_US))
-    rng = np.random.default_rng(seed)
-    initial = {
-        CH_OM: _smooth_random_knots(rng, k, 0.0, U_OMEGA_MAX),
-        CH_DE: _smooth_random_knots(rng, k, -DELTA_MAX, DELTA_MAX),
-    }
+    out = RESULTS_DIR / f"direct_{tag}_seed{seed}.npz"
+    if warm and out.exists():
+        prev = np.load(out)
+        initial = {CH_OM: prev["u_omega"], CH_DE: prev["u_delta"]}
+    else:
+        rng = np.random.default_rng(seed)
+        initial = {
+            CH_OM: _smooth_random_knots(rng, k, 0.0, U_OMEGA_MAX),
+            CH_DE: _smooth_random_knots(rng, k, -DELTA_MAX, DELTA_MAX),
+        }
     result = direct.optimize(
         h0,
         controls,
@@ -146,7 +151,13 @@ def run_direct_seed(seed, tag, duration_us, maxiter, model_arrays):
         initial_controls=initial,
         maxiter=maxiter,
     )
-    out = RESULTS_DIR / f"direct_{tag}_seed{seed}.npz"
+    u_om = result.controls[CH_OM]
+    u_de = result.controls[CH_DE]
+    u_chain = np.eye(8, dtype=complex)
+    for kk in range(k):
+        h_k = h0 + 0.5 * (u_om[kk] + u_om[kk + 1]) * ops_om + 0.5 * (u_de[kk] + u_de[kk + 1]) * ops_de
+        u_chain = expm(-1j * DT_US * h_k) @ u_chain
+    fidelity_rollout = fidelity(u_chain, target)
     out.parent.mkdir(parents=True, exist_ok=True)
     np.savez(
         out,
@@ -157,6 +168,7 @@ def run_direct_seed(seed, tag, duration_us, maxiter, model_arrays):
         ddu_omega=result.ddu[CH_OM],
         ddu_delta=result.ddu[CH_DE],
         fidelity=1.0 - result.objective,
+        fidelity_rollout=fidelity_rollout,
         objective=result.objective,
         max_defect=result.max_defect,
         accepted=result.accepted,
@@ -170,6 +182,7 @@ def run_direct_seed(seed, tag, duration_us, maxiter, model_arrays):
     return {
         "seed": seed,
         "fidelity": 1.0 - result.objective,
+        "fidelity_rollout": fidelity_rollout,
         "accepted": bool(result.accepted),
         "ipopt_status": int(result.ipopt_status),
         "n_iter": int(result.n_iter),
@@ -186,23 +199,25 @@ def cmd_direct(args):
         rows = []
         with ProcessPoolExecutor(max_workers=args.workers) as pool:
             futures = [
-                pool.submit(run_direct_seed, seed, tag, duration, args.maxiter, model_arrays)
+                pool.submit(run_direct_seed, seed, tag, duration, args.maxiter,
+                            model_arrays, args.warm_start)
                 for seed in range(args.seeds)
             ]
             for fut in futures:
                 row = fut.result()
                 rows.append(row)
-                print(f"[{tag}] seed {row['seed']}: F={row['fidelity']:.4f} "
+                print(f"[{tag}] seed {row['seed']}: F_var={row['fidelity']:.4f} "
+                      f"F_roll={row['fidelity_rollout']:.4f} "
                       f"accepted={row['accepted']} status={row['ipopt_status']} it={row['n_iter']}")
         accepted = [r for r in rows if r["accepted"]]
-        best = max(accepted or rows, key=lambda r: r["fidelity"])
+        best = max(accepted or rows, key=lambda r: r["fidelity_rollout"])
         summary = {"tag": tag, "duration_us": duration, "runs": rows, "best": best}
         (RESULTS_DIR / f"direct_{tag}_summary.json").write_text(json.dumps(summary, indent=2))
-        print(f"[{tag}] best: seed {best['seed']} F={best['fidelity']:.4f} "
-              f"({len(accepted)}/{len(rows)} accepted)")
+        print(f"[{tag}] best: seed {best['seed']} F_var={best['fidelity']:.4f} "
+              f"F_roll={best['fidelity_rollout']:.4f} ({len(accepted)}/{len(rows)} accepted)")
 
 
-def _knots_from_params(named, k):
+def _knots_from_params(named):
     om = np.concatenate([[0.0], np.asarray(named["omega"], dtype=float), [0.0]])
     de = np.concatenate([[0.0], np.asarray(named["delta"], dtype=float), [0.0]])
     return om, de
@@ -226,7 +241,7 @@ def _penalty_and_grad(knots, lo, hi, slew_max):
 
 
 def _smoothness_and_grad(knots):
-    """mean of squared second differences (rad/us^3 units)."""
+    """mean of squared second differences (units (rad/us^3)^2)."""
     d2 = (knots[:-2] - 2.0 * knots[1:-1] + knots[2:]) / DT_US**2
     n = max(d2.size, 1)
     value = float(d2 @ d2) / n
@@ -247,7 +262,7 @@ def run_grape_seed(seed, r_weight, k, model_arrays, maxiter):
     controls = {CH_OM: ops_om, CH_DE: ops_de}
     time_grid = np.linspace(0.0, k * DT_US, k + 1)
     basis_states = [np.eye(8, dtype=complex)[:, j] for j in range(8)]
-    lam = 100.0
+    lam = LAMBDA_PENALTY
 
     def terminal_objective(final_states):
         u = np.column_stack(final_states)
@@ -255,7 +270,7 @@ def run_grape_seed(seed, r_weight, k, model_arrays, maxiter):
         return value, [np.array(g[:, j]) for j in range(8)]
 
     def control_map(named):
-        om, de = _knots_from_params(named, k)
+        om, de = _knots_from_params(named)
         return {CH_OM: 0.5 * (om[:-1] + om[1:]), CH_DE: 0.5 * (de[:-1] + de[1:])}
 
     def control_pullback(named, channel_gradients):
@@ -276,7 +291,7 @@ def run_grape_seed(seed, r_weight, k, model_arrays, maxiter):
         )
         value = fid_value
         grads = {key: np.asarray(fid_grad[key], dtype=float).copy() for key in ("omega", "delta")}
-        om, de = _knots_from_params(named, k)
+        om, de = _knots_from_params(named)
         for knots, key, lo, hi, slew in (
             (om, "omega", 0.0, U_OMEGA_MAX, SLEW_U_OMEGA),
             (de, "delta", -DELTA_MAX, DELTA_MAX, SLEW_U_DELTA),
@@ -311,7 +326,7 @@ def run_grape_seed(seed, r_weight, k, model_arrays, maxiter):
         scales={"omega": U_OMEGA_MAX, "delta": DELTA_MAX},
         options={"gradient": gradient, "maxiter": maxiter},
     )
-    om, de = _knots_from_params(result.best_parameters, k)
+    om, de = _knots_from_params(result.best_parameters)
     fid_value = grape.value(
         result.best_parameters, h0=h0, controls=controls, initial_states=basis_states,
         time_grid=time_grid, control_map=control_map, terminal_objective=terminal_objective,
@@ -358,11 +373,11 @@ def cmd_grape(args):
               f"best F={np.max(fids[i]):.4f} max_viol={np.max(viols[i]):.3g}")
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     np.savez(
-        RESULTS_DIR / f"grape_T{args.duration_us}.npz",
+        RESULTS_DIR / f"grape_T{args.duration_us:g}.npz",
         fidelities=fids, final_losses=losses, max_violation=viols,
         u_omega=om_all, u_delta=de_all, r_values=np.asarray(r_values),
         seeds=np.asarray(seeds), K=k, dt_us=DT_US, duration_us=args.duration_us,
-        lambda_penalty=100.0,
+        lambda_penalty=LAMBDA_PENALTY,
     )
 
 
@@ -405,12 +420,34 @@ def _replay_unitary(model, u_om_knots, u_de_knots, k, mode):
 def cmd_validate(args):
     model = build_model()
     target = build_target(model["index"])
+    if args.grape:
+        g = np.load(RESULTS_DIR / f"grape_T{args.duration_us:g}.npz")
+        fids = g["fidelities"]
+        i_best = np.unravel_index(np.argmax(fids), fids.shape)
+        r_value = float(g["r_values"][i_best[0]])
+        seed = int(g["seeds"][i_best[1]])
+        k = int(g["K"])
+        f_disc = float(fids[i_best])
+        u_zoh = _replay_unitary(model, g["u_omega"][i_best], g["u_delta"][i_best], k, "zoh")
+        u_lin = _replay_unitary(model, g["u_omega"][i_best], g["u_delta"][i_best], k, "linear")
+        f_zoh = fidelity(u_zoh, target)
+        f_lin = fidelity(u_lin, target)
+        np.savez(
+            RESULTS_DIR / f"validate_grape_T{args.duration_us:g}.npz",
+            f_discrete=f_disc, f_ode_zoh=f_zoh, f_ode_linear=f_lin,
+            r_value=r_value, seed=seed,
+        )
+        print(f"[grape T={args.duration_us:g} r={r_value:g} seed={seed}] "
+              f"F_discrete={f_disc:.5f} F_ode_zoh={f_zoh:.5f} F_ode_linear={f_lin:.5f}")
+        return
+    if args.tag is None:
+        raise ValueError("validate requires --tag (direct path) or --grape")
     if args.seed is None:
         summary = json.loads((RESULTS_DIR / f"direct_{args.tag}_summary.json").read_text())
         args.seed = int(summary["best"]["seed"])
     data = np.load(RESULTS_DIR / f"direct_{args.tag}_seed{args.seed}.npz")
     k = int(data["K"])
-    f_disc = float(data["fidelity"])
+    f_disc = float(data["fidelity_rollout"]) if "fidelity_rollout" in data.files else float(data["fidelity"])
     u_zoh = _replay_unitary(model, data["u_omega"], data["u_delta"], k, "zoh")
     u_lin = _replay_unitary(model, data["u_omega"], data["u_delta"], k, "linear")
     f_zoh = fidelity(u_zoh, target)
@@ -434,7 +471,7 @@ def cmd_plot(args):
 
     plots = RESULTS_DIR / "plots"
     plots.mkdir(parents=True, exist_ok=True)
-    g = np.load(RESULTS_DIR / f"grape_T{args.duration_us}.npz")
+    g = np.load(RESULTS_DIR / f"grape_T{args.duration_us:g}.npz")
     fids, r_values = g["fidelities"], g["r_values"]
 
     fig, ax = plt.subplots(figsize=(6.0, 4.0))
@@ -447,9 +484,10 @@ def cmd_plot(args):
         path = RESULTS_DIR / f"direct_{tag}_summary.json"
         if path.exists():
             best = json.loads(path.read_text())["best"]
-            ax.axhline(best["fidelity"], color=color, ls="--", lw=1.2,
-                       label=f"direct {tag} (T={DURATIONS[tag]} us): F={best['fidelity']:.3f}")
-    ax.set_ylabel("unitary fidelity")
+            f_best = best.get("fidelity_rollout", best["fidelity"])
+            ax.axhline(f_best, color=color, ls="--", lw=1.2,
+                       label=f"direct {tag} (T={DURATIONS[tag]} us): F={f_best:.3f}")
+    ax.set_ylabel("unitary fidelity (discrete knot model)")
     ax.set_xlabel(f"GRAPE regularization (T={args.duration_us} us, "
                   f"{fids.shape[1]} seeds)")
     ax.legend(loc="lower right", fontsize=8)
@@ -459,18 +497,22 @@ def cmd_plot(args):
         fig.savefig(plots / f"fig3b_violin.{ext}", dpi=200)
     plt.close(fig)
 
+    pulse1_summary = RESULTS_DIR / "direct_pulse1_summary.json"
+    if not pulse1_summary.exists():
+        print(f"note: {pulse1_summary.name} missing; wrote fig3b, skipping fig3c pulse figure")
+        return
     fig, axes = plt.subplots(2, 1, figsize=(6.0, 4.5), sharex=True)
-    best1 = json.loads((RESULTS_DIR / "direct_pulse1_summary.json").read_text())["best"]
+    best1 = json.loads(pulse1_summary.read_text())["best"]
     d = np.load(RESULTS_DIR / f"direct_pulse1_seed{best1['seed']}.npz")
     t = np.arange(int(d["K"]) + 1) * DT_US
     axes[0].plot(t, 2.0 * d["u_omega"] / TAU, label="direct pulse1")
     axes[1].plot(t, -d["u_delta"] / TAU, label="direct pulse1")
     i_best = np.unravel_index(np.argmax(fids), fids.shape)
+    viol = float(g["max_violation"][i_best])
     tg = np.arange(int(g["K"]) + 1) * DT_US
-    axes[0].plot(tg, 2.0 * g["u_omega"][i_best] / TAU, alpha=0.7,
-                 label=f"best GRAPE (r={r_values[i_best[0]]:g})")
-    axes[1].plot(tg, -g["u_delta"][i_best] / TAU, alpha=0.7,
-                 label=f"best GRAPE (r={r_values[i_best[0]]:g})")
+    grape_label = f"best GRAPE (r={r_values[i_best[0]]:g}, viol={viol:.1e})"
+    axes[0].plot(tg, 2.0 * g["u_omega"][i_best] / TAU, alpha=0.7, label=grape_label)
+    axes[1].plot(tg, -g["u_delta"][i_best] / TAU, alpha=0.7, label=grape_label)
     axes[0].set_ylabel("Omega/2pi (MHz)")
     axes[1].set_ylabel("Delta/2pi (MHz)")
     axes[1].set_xlabel("t (us)")
@@ -493,6 +535,7 @@ def main():
     p.add_argument("--seeds", type=int, default=8)
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--maxiter", type=int, default=4000)
+    p.add_argument("--warm-start", action="store_true")
     p.set_defaults(func=cmd_direct)
     p = sub.add_parser("grape")
     p.add_argument("--duration-us", type=float, default=1.2)
@@ -502,8 +545,10 @@ def main():
     p.add_argument("--r-values", default="0,1e-8,1e-7,1e-6")
     p.set_defaults(func=cmd_grape)
     p = sub.add_parser("validate")
-    p.add_argument("--tag", required=True)
+    p.add_argument("--tag", default=None)
     p.add_argument("--seed", type=int, default=None)
+    p.add_argument("--grape", action="store_true")
+    p.add_argument("--duration-us", type=float, default=1.2)
     p.set_defaults(func=cmd_validate)
     p = sub.add_parser("plot")
     p.add_argument("--duration-us", type=float, default=1.2)
