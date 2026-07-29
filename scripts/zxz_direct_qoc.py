@@ -130,7 +130,8 @@ def run_direct_seed(seed, tag, duration_us, maxiter, model_arrays, warm):
     controls = {CH_OM: ops_om, CH_DE: ops_de}
     k = int(round(duration_us / DT_US))
     out = RESULTS_DIR / f"direct_{tag}_seed{seed}.npz"
-    if warm and out.exists():
+    warm_started = bool(warm and out.exists())
+    if warm_started:
         prev = np.load(out)
         initial = {CH_OM: prev["u_omega"], CH_DE: prev["u_delta"]}
     else:
@@ -158,6 +159,22 @@ def run_direct_seed(seed, tag, duration_us, maxiter, model_arrays, warm):
         h_k = h0 + 0.5 * (u_om[kk] + u_om[kk + 1]) * ops_om + 0.5 * (u_de[kk] + u_de[kk + 1]) * ops_de
         u_chain = expm(-1j * DT_US * h_k) @ u_chain
     fidelity_rollout = fidelity(u_chain, target)
+    if warm_started:
+        old_rollout = (
+            float(prev["fidelity_rollout"])
+            if "fidelity_rollout" in prev.files
+            else float(prev["fidelity"])
+        )
+        if (bool(prev["accepted"]), old_rollout) > (bool(result.accepted), fidelity_rollout):
+            return {
+                "seed": int(prev["seed"]),
+                "fidelity": float(prev["fidelity"]),
+                "fidelity_rollout": old_rollout,
+                "accepted": bool(prev["accepted"]),
+                "ipopt_status": int(prev["ipopt_status"]),
+                "n_iter": int(prev["n_iter"]),
+                "kept_previous": True,
+            }
     out.parent.mkdir(parents=True, exist_ok=True)
     np.savez(
         out,
@@ -178,6 +195,7 @@ def run_direct_seed(seed, tag, duration_us, maxiter, model_arrays, warm):
         K=k,
         dt_us=DT_US,
         duration_us=duration_us,
+        warm_started=warm_started,
     )
     return {
         "seed": seed,
@@ -432,16 +450,17 @@ def cmd_validate(args):
         u_lin = _replay_unitary(model, g["u_omega"][i_best], g["u_delta"][i_best], k, "linear")
         f_zoh = fidelity(u_zoh, target)
         f_lin = fidelity(u_lin, target)
+        gate_pass = bool(abs(f_zoh - f_disc) < 1e-3)
         np.savez(
             RESULTS_DIR / f"validate_grape_T{args.duration_us:g}.npz",
             f_discrete=f_disc, f_ode_zoh=f_zoh, f_ode_linear=f_lin,
-            r_value=r_value, seed=seed,
+            gate_pass=gate_pass, r_value=r_value, seed=seed,
         )
         print(f"[grape T={args.duration_us:g} r={r_value:g} seed={seed}] "
               f"F_discrete={f_disc:.5f} F_ode_zoh={f_zoh:.5f} F_ode_linear={f_lin:.5f}")
         return
     if args.tag is None:
-        raise ValueError("validate requires --tag (direct path) or --grape")
+        sys.exit("validate: pass --tag <pulse1|pulse2> or --grape")
     if args.seed is None:
         summary = json.loads((RESULTS_DIR / f"direct_{args.tag}_summary.json").read_text())
         args.seed = int(summary["best"]["seed"])
