@@ -202,6 +202,170 @@ def cmd_direct(args):
               f"({len(accepted)}/{len(rows)} accepted)")
 
 
+def _knots_from_params(named, k):
+    om = np.concatenate([[0.0], np.asarray(named["omega"], dtype=float), [0.0]])
+    de = np.concatenate([[0.0], np.asarray(named["delta"], dtype=float), [0.0]])
+    return om, de
+
+
+def _penalty_and_grad(knots, lo, hi, slew_max):
+    """lambda-weighted quadratic penalties on values and knot slopes."""
+    value = 0.0
+    grad = np.zeros_like(knots)
+    over = np.maximum(0.0, knots - hi)
+    under = np.maximum(0.0, lo - knots)
+    value += float(over @ over + under @ under)
+    grad += 2.0 * over - 2.0 * under
+    slopes = np.diff(knots) / DT_US
+    excess = np.maximum(0.0, np.abs(slopes) - slew_max)
+    value += float(excess @ excess)
+    d_slope = 2.0 * excess * np.sign(slopes) / DT_US
+    grad[1:] += d_slope
+    grad[:-1] -= d_slope
+    return value, grad
+
+
+def _smoothness_and_grad(knots):
+    """mean of squared second differences (rad/us^3 units)."""
+    d2 = (knots[:-2] - 2.0 * knots[1:-1] + knots[2:]) / DT_US**2
+    n = max(d2.size, 1)
+    value = float(d2 @ d2) / n
+    grad = np.zeros_like(knots)
+    coeff = 2.0 * d2 / (n * DT_US**2)
+    grad[:-2] += coeff
+    grad[1:-1] += -2.0 * coeff
+    grad[2:] += coeff
+    return value, grad
+
+
+def run_grape_seed(seed, r_weight, k, model_arrays, maxiter):
+    """One penalized L-BFGS-B GRAPE run. Top-level: picklable."""
+    import qoc
+    from qoc import grape
+
+    h0, ops_om, ops_de, target = model_arrays
+    controls = {CH_OM: ops_om, CH_DE: ops_de}
+    time_grid = np.linspace(0.0, k * DT_US, k + 1)
+    basis_states = [np.eye(8, dtype=complex)[:, j] for j in range(8)]
+    lam = 100.0
+
+    def terminal_objective(final_states):
+        u = np.column_stack(final_states)
+        value, g = unitary_infidelity(u, target)
+        return value, [np.array(g[:, j]) for j in range(8)]
+
+    def control_map(named):
+        om, de = _knots_from_params(named, k)
+        return {CH_OM: 0.5 * (om[:-1] + om[1:]), CH_DE: 0.5 * (de[:-1] + de[1:])}
+
+    def control_pullback(named, channel_gradients):
+        out = {}
+        for name, key in ((CH_OM, "omega"), (CH_DE, "delta")):
+            g = np.asarray(channel_gradients[name], dtype=float)
+            knots = np.zeros(k + 1)
+            knots[:-1] += 0.5 * g
+            knots[1:] += 0.5 * g
+            out[key] = knots[1:-1]
+        return out
+
+    def full_loss_and_grad(named):
+        fid_value, fid_grad = grape.value_and_grad(
+            named, h0=h0, controls=controls, initial_states=basis_states,
+            time_grid=time_grid, control_map=control_map,
+            control_pullback=control_pullback, terminal_objective=terminal_objective,
+        )
+        value = fid_value
+        grads = {key: np.asarray(fid_grad[key], dtype=float).copy() for key in ("omega", "delta")}
+        om, de = _knots_from_params(named, k)
+        for knots, key, lo, hi, slew in (
+            (om, "omega", 0.0, U_OMEGA_MAX, SLEW_U_OMEGA),
+            (de, "delta", -DELTA_MAX, DELTA_MAX, SLEW_U_DELTA),
+        ):
+            p_val, p_grad = _penalty_and_grad(knots, lo, hi, slew)
+            s_val, s_grad = _smoothness_and_grad(knots)
+            value += lam * p_val + r_weight * s_val
+            grads[key] += lam * p_grad[1:-1] + r_weight * s_grad[1:-1]
+        return value, grads
+
+    cache = {}
+
+    def loss(named):
+        key = (np.asarray(named["omega"]).tobytes(), np.asarray(named["delta"]).tobytes())
+        if key not in cache:
+            cache.clear()
+            cache[key] = full_loss_and_grad(named)
+        return cache[key][0]
+
+    def gradient(named):
+        loss(named)
+        key = (np.asarray(named["omega"]).tobytes(), np.asarray(named["delta"]).tobytes())
+        return cache[key][1]
+
+    rng = np.random.default_rng(seed)
+    x0 = {
+        "omega": rng.uniform(0.0, U_OMEGA_MAX, k - 1),
+        "delta": rng.uniform(-TAU * 5.0, TAU * 5.0, k - 1),
+    }
+    result = qoc.minimize(
+        loss, x0, method="l-bfgs-b",
+        scales={"omega": U_OMEGA_MAX, "delta": DELTA_MAX},
+        options={"gradient": gradient, "maxiter": maxiter},
+    )
+    om, de = _knots_from_params(result.best_parameters, k)
+    fid_value = grape.value(
+        result.best_parameters, h0=h0, controls=controls, initial_states=basis_states,
+        time_grid=time_grid, control_map=control_map, terminal_objective=terminal_objective,
+    )
+    viol = max(
+        float(np.max(np.maximum(0.0, om - U_OMEGA_MAX))),
+        float(np.max(np.maximum(0.0, -om))),
+        float(np.max(np.maximum(0.0, np.abs(de) - DELTA_MAX))),
+        float(np.max(np.maximum(0.0, np.abs(np.diff(om)) / DT_US - SLEW_U_OMEGA))),
+        float(np.max(np.maximum(0.0, np.abs(np.diff(de)) / DT_US - SLEW_U_DELTA))),
+    )
+    return {
+        "seed": seed, "fidelity": 1.0 - fid_value, "final_loss": result.best_loss,
+        "max_violation": viol, "u_omega": om, "u_delta": de,
+    }
+
+
+def cmd_grape(args):
+    model = build_model()
+    target = build_target(model["index"])
+    model_arrays = (model["h0"], model["controls"][CH_OM], model["controls"][CH_DE], target)
+    k = int(round(args.duration_us / DT_US))
+    r_values = [float(v) for v in args.r_values.split(",")]
+    seeds = list(range(args.seeds))
+    fids = np.zeros((len(r_values), len(seeds)))
+    losses = np.zeros_like(fids)
+    viols = np.zeros_like(fids)
+    om_all = np.zeros((len(r_values), len(seeds), k + 1))
+    de_all = np.zeros_like(om_all)
+    for i, r_weight in enumerate(r_values):
+        with ProcessPoolExecutor(max_workers=args.workers) as pool:
+            futures = [
+                pool.submit(run_grape_seed, seed, r_weight, k, model_arrays, args.maxiter)
+                for seed in seeds
+            ]
+            for j, fut in enumerate(futures):
+                row = fut.result()
+                fids[i, j] = row["fidelity"]
+                losses[i, j] = row["final_loss"]
+                viols[i, j] = row["max_violation"]
+                om_all[i, j] = row["u_omega"]
+                de_all[i, j] = row["u_delta"]
+        print(f"[grape r={r_weight:g}] median F={np.median(fids[i]):.4f} "
+              f"best F={np.max(fids[i]):.4f} max_viol={np.max(viols[i]):.3g}")
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        RESULTS_DIR / f"grape_T{args.duration_us}.npz",
+        fidelities=fids, final_losses=losses, max_violation=viols,
+        u_omega=om_all, u_delta=de_all, r_values=np.asarray(r_values),
+        seeds=np.asarray(seeds), K=k, dt_us=DT_US, duration_us=args.duration_us,
+        lambda_penalty=100.0,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -212,6 +376,13 @@ def main():
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--maxiter", type=int, default=4000)
     p.set_defaults(func=cmd_direct)
+    p = sub.add_parser("grape")
+    p.add_argument("--duration-us", type=float, default=1.2)
+    p.add_argument("--seeds", type=int, default=100)
+    p.add_argument("--workers", type=int, default=16)
+    p.add_argument("--maxiter", type=int, default=1500)
+    p.add_argument("--r-values", default="0,1e-8,1e-7,1e-6")
+    p.set_defaults(func=cmd_grape)
     args = parser.parse_args()
     args.func(args)
 
