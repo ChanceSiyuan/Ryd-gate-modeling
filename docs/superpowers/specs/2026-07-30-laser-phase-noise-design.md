@@ -122,21 +122,35 @@ state correction `chi_1(T) = -2*pi*i * int_0^T dnu(t) A(t) dt` with
 validates against direct simulation in its Figs. 6–9 for exactly this weak-noise
 regime (`2*pi*dnu / Omega ~ 0.01` here).
 
-**Evaluation.** The two-atom model is 16-dimensional, so one batched solve of the
-full `16 x 16` propagator `U(t)` with `t_eval` on a uniform grid yields everything:
-`A(t_k) = U(T) U(t_k)^dag N_r psi_0(t_k)`. `G` is then evaluated by direct
-quadrature on a **logarithmic** frequency grid — 60 points per decade over
-`[f_min, f_max]` with `f_min = 1 Hz` and `f_max = 4 * Omega/2pi` as above, denser
-than the trace grid because it is stored once and reused — not by FFT: the FFT grid
-spacing `1/T ~ 1 MHz` cannot represent the low-frequency band at all, and the direct
-sum is a trivial matmul.
+**Evaluation.** Only the projected components of `G` are needed, so the propagator
+is never formed. Writing `Q = sum_q |q><q|` over the 12 nonlogical basis states,
 
-The sampled integrand carries no GHz content even though the Rydberg pair
-interaction is GHz-scale at high `n`: `A(t)` enters only through products
-`chi_i(t)* N_{r,i} psi_i(t)` on the *same* basis index `i`, and `N_r` and the pair
-interaction are both diagonal, so the fast diagonal phases cancel pointwise. The
-integrator is therefore untouched and `n_t = 4096` samples suffice; a `dt`-halving
-convergence check enforces this rather than assuming it.
+```
+<q|A_s(t)> = <phi_q(t)| N_r |psi_s(t)> ,     |phi_q(t)> = U_0(t,T)|q>
+```
+
+so the run needs one **backward** solve of the 12 `|q>` from `T` to `0` and one
+forward solve of the logical inputs — 15 columns against the current 3, i.e. ~5x
+the per-point cost. The backward leg is the same RHS evaluated at `T - tau` with a
+flipped sign, integrated forward in `tau`; the envelope breakpoints are symmetric,
+so the segment structure is unchanged.
+
+This formulation is also what keeps the sampled integrand free of GHz content, even
+though the Rydberg pair interaction and the `|0>` hyperfine offset are GHz-scale:
+`phi_q` and `psi_s` obey the *same* equation, `N_r` is diagonal, and the product
+runs over a single basis index `i`, so the `exp(-i D_i t)` factors cancel pointwise
+and only drive-scale (<~50 MHz) structure survives. Forming `A(t)` from a
+propagator instead would reintroduce `exp(i (D_j - D_s) t)` cross terms and demand
+~70 ps sampling. The integrator itself is untouched; `n_t = 4096` samples suffice,
+enforced by a `dt`-halving convergence check rather than assumed.
+
+`G` is then evaluated by direct quadrature on a **logarithmic** frequency grid over
+`[f_min, f_max] = [1 Hz, 200 MHz]` — not by FFT: the FFT grid spacing `1/T ~ 1 MHz`
+cannot represent the low-frequency band at all, and the direct sum is one BLAS
+matmul. `K(f)` carries fringe structure on the `1/T` scale, so it is evaluated at
+200 points per decade and **integrated** into 30-points-per-decade storage bins,
+`K_b = int_bin (||Q G(f)||**2 + ||Q G(-f)||**2) df`; the smooth `S_dnu` is then
+sampled at bin centres.
 
 **Reusability.** `||Q G(f)||**2` does not depend on the PSD. It is binned in
 frequency and stored once; all four (laser × extrapolation) models are then a
@@ -159,7 +173,10 @@ not an extension of `NoiseModel`/`simulate_ensemble`.
   grid above; returns a `PhaseTrace` exposing `__call__(t)`, its `times`/`values`
   arrays, and the drawn `dnu_0`.
 
-Exported from `ryd_gate` alongside the existing public names.
+Reached as `ryd_gate.phase_noise`, an expert module in the same position as
+`ryd_gate.physics` — deliberately **not** a top-level export, because
+`src/ryd_gate/__init__.py` documents its namespace as "exactly the seven names
+below" and that contract is not worth breaking for this.
 
 ### 2. `scripts/laser_noise_psd.py` (exists; extended)
 
@@ -190,7 +207,11 @@ Scope: the `filter` fast path is 297-specific (one laser, one phase generator).
 - **Literature check (unit).** Two-level resonant Rabi with white noise: Monte Carlo
   via `phase_trace`, the filter function, and the paper's closed form
   `eps = pi**3 * h0 * N / Omega_0` (Eq. 79) must agree. This validates the whole
-  chain against a published result.
+  chain against a published result. Note the paper's `h0` is **two-sided**
+  (its Sec. II C says so explicitly), so against this repository's one-sided
+  densities the target is `pi**3 * (h0_onesided / 2) * N / Omega_0`. This test is
+  what pins that factor; the order-of-magnitude figures quoted while scoping the
+  campaign did not apply it and are correspondingly a factor 2 high.
 - **Trace statistics (unit).** Welch PSD of many generated traces recovers the input
   `S_dnu`; `var(phi)` matches `int S_phi df` over the resolved band.
 - **Grid check (slow, deselected).** ~20 grid points, 200 shots each, direct Monte
@@ -220,7 +241,7 @@ never touches ARC.
 
 | stage | estimate |
 |---|---|
-| `filter` pass, full 13x13 grid | ~5.3x the existing per-point cost (16 propagator columns vs 3 state columns) -> ~6 h at 20 workers, **once** |
+| `filter` pass, full 13x13 grid | ~5x the existing per-point cost (12 backward adjoint + 3 forward columns vs 3) -> ~6 h at 20 workers, **once** |
 | all four noise models from the stored kernels | seconds |
 | Monte Carlo validation, 20 points x 200 shots | ~1 h |
 
