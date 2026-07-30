@@ -231,6 +231,23 @@ def main() -> None:
         print(f"[{laser}] {len(d)} samples, f = {d[0, 0]:.3g}..{d[-1, 0]:.4g} Hz -> "
               f"{write_csv(laser, d)}")
 
+    import json
+    model = {
+        laser: {
+            "csv": f"psd_{laser}.csv",
+            "harmonic": HARMONIC,
+            "power_law_exponent": power_law_exponent(d),
+            "s_dnu_edge_297": HARMONIC ** 2 * float(d[-1, 1]) ** 2,
+            "f_edge_hz": float(d[-1, 0]),
+        }
+        for laser, d in datasets.items()
+    }
+    path = os.path.join(NOISE_DIR, "psd_model.json")
+    with open(path + ".tmp", "w") as fh:
+        json.dump(model, fh, indent=2, sort_keys=True)
+    os.replace(path + ".tmp", path)
+    print(f"wrote {path}")
+
     print(f"\n{'laser':6s} {'p (ASD~f^-p)':>13s} {'S_dnu(1MHz,297)':>17s} "
           f"{'S_dnu(13.5MHz) flat':>20s} {'power':>10s} {'sigma_nu(<1MHz)':>17s}")
     f13 = np.asarray([13.5e6])
