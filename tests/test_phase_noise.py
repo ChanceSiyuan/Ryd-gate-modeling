@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ryd_gate.phase_noise import PhaseNoisePSD, phase_trace
+from ryd_gate.phase_noise import PhaseNoisePSD, log_frequency_bins, phase_trace
 
 NOISE_DIR = Path(__file__).resolve().parents[1] / "results" / "297_laser_noise"
 
@@ -111,8 +111,50 @@ def test_trace_callable_matches_its_samples():
     tr = phase_trace(psd, 1e-6, seed=3, f_max=1e8)
     mid = 0.5 * (tr.times[:-1] + tr.times[1:])
     # the spline reproduces its own nodes exactly and stays close between them
-    assert np.allclose(tr(tr.times), tr.values, atol=1e-12)
+    assert np.max(np.abs(tr(tr.times) - tr.values)) < 1e-12
     assert np.max(np.abs(tr(mid) - np.interp(mid, tr.times, tr.values))) < 1e-3
+
+
+def test_trace_rejects_times_outside_the_gate():
+    # clipping an arbitrary overshoot would freeze the 2 pi dnu_0 t ramp at its final
+    # value, i.e. hand a solver a plausible trace and a silently optimistic error.
+    tr = phase_trace(PhaseNoisePSD.white(1e4), 1e-6, seed=5, f_max=1e8)
+    with pytest.raises(ValueError, match="must lie in"):
+        tr(1.1e-6)
+    with pytest.raises(ValueError, match="must lie in"):
+        tr(np.array([0.0, -1e-9]))
+    # but a rounding-level overshoot, which solver times do produce, is still the endpoint
+    over = np.nextafter(np.nextafter(tr.times[-1], np.inf), np.inf)
+    assert tr(over) == pytest.approx(tr.values[-1], abs=1e-12)
+
+
+def test_f_min_is_forwarded_to_the_quasi_static_band():
+    # ASD ~ 1/f, so S_dnu ~ f^-2 and the frozen band is dominated by its lower edge:
+    # moving f_min from 1 Hz to 100 Hz must shrink dnu_0 about tenfold.
+    psd = PhaseNoisePSD(np.array([1e0, 1e6]), np.array([1e6, 1e0]) ** 2)
+    t_gate, f_split = 1e-6, 1e6
+    wide = phase_trace(psd, t_gate, seed=11, f_max=1e8)
+    narrow = phase_trace(psd, t_gate, seed=11, f_max=1e8, f_min=100.0)
+    # one seed draws one standard normal, so the ratio is exactly the band sigma ratio
+    assert narrow.dnu_0 / wide.dnu_0 == pytest.approx(
+        psd.sigma_nu(100.0, f_split) / psd.sigma_nu(1.0, f_split), rel=1e-12)
+    assert narrow.dnu_0 / wide.dnu_0 == pytest.approx(0.1, rel=0.02)
+
+
+def test_log_frequency_bins_tile_the_span_with_interior_centres():
+    f_lo, f_hi = 1e3, 1e6
+    f, df = log_frequency_bins(f_lo, f_hi, 40)
+    assert f.size == 120                                    # 3 decades x 40 points
+    assert float(np.sum(df)) == pytest.approx(f_hi - f_lo, rel=1e-12)
+    edges = np.concatenate(([f_lo], f_lo + np.cumsum(df)))
+    assert np.all(edges[:-1] < f) and np.all(f < edges[1:])
+
+
+def test_log_frequency_bins_reject_a_non_increasing_span():
+    # f_max below 1/t_gate would otherwise give descending edges, negative widths and
+    # sqrt of a negative amplitude: an all-NaN trace with no exception anywhere.
+    with pytest.raises(ValueError, match="0 < f_lo < f_hi"):
+        log_frequency_bins(1e6, 1e3, 40)
 
 
 def test_resolved_band_variance_matches_the_psd_integral():

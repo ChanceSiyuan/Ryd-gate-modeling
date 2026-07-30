@@ -24,6 +24,7 @@ multiplies the optical phase by ``harmonic`` and hence ``S_dnu`` by
 from __future__ import annotations
 
 import numpy as np
+from scipy.interpolate import CubicSpline
 
 __all__ = [
     "PhaseNoisePSD",
@@ -145,7 +146,13 @@ def log_frequency_bins(f_lo: float, f_hi: float, points_per_decade: int):
 
     Edges are equally spaced in log10 so every bin's width is proportional to its
     centre; the centres are the geometric bin midpoints.
+
+    An inverted span (``f_max`` below ``1/t_gate``, say) would otherwise return
+    descending edges and negative widths, and ``sqrt`` of a negative amplitude turns
+    the whole trace into NaN with nothing raised anywhere.
     """
+    if not 0.0 < f_lo < f_hi:
+        raise ValueError(f"need 0 < f_lo < f_hi; got f_lo={f_lo!r}, f_hi={f_hi!r}")
     n = max(1, int(round(np.log10(f_hi / f_lo) * points_per_decade)))
     edges = np.logspace(np.log10(f_lo), np.log10(f_hi), n + 1)
     return np.sqrt(edges[:-1] * edges[1:]), np.diff(edges)
@@ -162,8 +169,6 @@ class PhaseTrace:
     __slots__ = ("times", "values", "dnu_0", "f_grid", "df_grid", "_spline")
 
     def __init__(self, times, values, dnu_0, f_grid, df_grid):
-        from scipy.interpolate import CubicSpline
-
         self.times = times
         self.values = values
         self.dnu_0 = float(dnu_0)
@@ -172,7 +177,20 @@ class PhaseTrace:
         self._spline = CubicSpline(times, values)
 
     def __call__(self, t):
-        return self._spline(np.clip(t, self.times[0], self.times[-1]))
+        """Phase (rad) at ``t``, which must lie within ``[0, t_gate]``.
+
+        Solver times reach the endpoint through accumulated arithmetic and can sit a
+        rounding error outside it, so an excursion of a few ulp is clipped. A larger
+        one is an error: clipping it would freeze the dominant ``2 pi dnu_0 t`` ramp
+        at its final value instead of accumulating, which reads downstream as a
+        plausible trace and a silently optimistic infidelity.
+        """
+        t = np.asarray(t, dtype=float)
+        lo, hi = self.times[0], self.times[-1]
+        tol = 4.0 * np.spacing(hi)
+        if np.any(t < lo - tol) or np.any(t > hi + tol):
+            raise ValueError(f"t must lie in [{lo}, {hi}]; got {t.min()} .. {t.max()}")
+        return self._spline(np.clip(t, lo, hi))
 
 
 def phase_trace(psd: PhaseNoisePSD, t_gate: float, *, seed: int,
@@ -189,6 +207,14 @@ def phase_trace(psd: PhaseNoisePSD, t_gate: float, *, seed: int,
         phi(t) = 2 pi dnu_0 t + sum_j sqrt(2 S_phi(f_j) df_j) cos(2 pi f_j t + psi_j)
 
     which is the paper's ``2 sqrt(S^2s df)`` rewritten for one-sided densities.
+
+    Only the phases ``psi_j`` are random, the amplitudes being fixed, so the ensemble
+    reproduces the correct second moments but not full Gaussian marginals. The bin
+    variances ``2 S_phi df`` fall as ``1/f`` for a white ``S_dnu``, so the
+    participation ratio ``(sum a**2)**2 / sum a**4`` saturates near 35 tones however
+    wide the band, and fewer for a steeper measured spectrum: near-Gaussian in the
+    bulk, thinner in the tails. Averages of quantities nonlinear in the phase,
+    infidelity among them, inherit that.
     """
     rng = np.random.default_rng(seed)
     f_split = 1.0 / t_gate
