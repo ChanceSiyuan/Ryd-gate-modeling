@@ -89,11 +89,21 @@ S_phi(f) = S_dnu(f) / f**2 ,     psi_j ~ U[0, 2*pi)
 The frequency grid is **hybrid**, because a uniform grid from 1 Hz to 72 MHz needs
 1e8 terms:
 
-- **below `1/t_gate`** the noise is frozen over the gate. Its whole effect is one
-  quasi-static frequency offset `dnu_0 ~ N(0, sigma**2)` with
-  `sigma**2 = int_{f_min}^{1/t_gate} S_dnu df`, contributing the linear term above.
-- **above `1/t_gate`** a logarithmic grid, default 40 points per decade up to
-  `f_max = 4 * Omega/2pi`, with `df_j` the bin width. About 350 terms.
+- **below `f_split = 0.01 / t_gate`** the noise is frozen over the gate. Its whole
+  effect is one quasi-static frequency offset `dnu_0 ~ N(0, sigma**2)` with
+  `sigma**2 = int_{f_min}^{f_split} S_dnu df`, contributing the linear term above.
+- **above `f_split`** a logarithmic grid, default 40 points per decade up to
+  `f_max = 4 * Omega/2pi`, with `df_j` the bin width. About 430 terms.
+
+The split sits two decades **below** `1/t_gate`, not at it. Collapsing a band into a
+static offset substitutes `|G(0)|**2` for the true `|G(f)|**2` across it, and `G` is
+the transform of a function supported on `[0, T]`, so it varies on the `1/T` scale —
+the substitution is wrong by O(1) at the top of a band whose edge is `1/T`. Putting
+the boundary at `1/t_gate` (this spec's first version) made the generated traces
+mismodel their own band by +65% at a half rotation and -63% at a full one, the sign
+flipping because `|G(0)|**2 = 0` whenever `1 - cos(2 pi N) = 0`. At `0.01 / t_gate`
+the collapse costs 0.02%. Only trace generation was ever affected; the filter kernel
+integrates the true response over the whole band and never collapses anything.
 
 `f_min` is an explicit modelling parameter, default **1 Hz** (the measurement
 edge). It is not cosmetic: `S_dnu` rises as `f^-2.5` at the low end while the gate's

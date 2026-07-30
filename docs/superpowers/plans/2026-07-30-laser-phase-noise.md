@@ -360,7 +360,7 @@ def test_quasi_static_offset_matches_the_unresolved_band():
     t_gate = 1e-6
     offsets = np.asarray([phase_trace(psd, t_gate, seed=s, f_max=1e8).dnu_0
                           for s in range(2000)])
-    expected = psd.sigma_nu(1.0, 1.0 / t_gate)
+    expected = psd.sigma_nu(1.0, 0.01 / t_gate)
     assert np.std(offsets) == pytest.approx(expected, rel=0.1)
 
 
@@ -418,7 +418,7 @@ def phase_trace(psd: PhaseNoisePSD, t_gate: float, *, seed: int,
     """A random phase realization for ``psd`` over ``[0, t_gate]`` (paper Eq. 104).
 
     The frequency axis is hybrid because a uniform grid from ``f_min`` to ``f_max``
-    would need ~1e8 terms. Below ``1/t_gate`` the noise is frozen over the gate and
+    would need ~1e8 terms. Below ``0.01/t_gate`` the noise is frozen over the gate and
     is collapsed into one Gaussian quasi-static offset ``dnu_0`` of the correct
     band variance; above it a logarithmic grid is summed explicitly as
 
@@ -427,7 +427,10 @@ def phase_trace(psd: PhaseNoisePSD, t_gate: float, *, seed: int,
     which is the paper's ``2 sqrt(S^2s df)`` rewritten for one-sided densities.
     """
     rng = np.random.default_rng(seed)
-    f_split = 1.0 / t_gate
+    # two decades below 1/t_gate: collapsing a band substitutes |G(0)|^2 for the
+    # true |G(f)|^2, which only holds for f << 1/t_gate.  At the boundary itself
+    # this mismodels the band by +65% / -63% depending on rotation count.
+    f_split = 0.01 / t_gate
     f_grid, df_grid = log_frequency_bins(f_split, f_max, points_per_decade)
     psi = rng.uniform(0.0, 2.0 * np.pi, size=f_grid.size)
     amp = np.sqrt(2.0 * psd.s_phi(f_grid) * df_grid)
