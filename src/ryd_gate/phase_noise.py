@@ -174,7 +174,8 @@ class PhaseTrace:
     ``f_grid``/``df_grid`` the explicitly summed band and its bin widths.
     """
 
-    __slots__ = ("times", "values", "dnu_0", "f_grid", "df_grid", "_spline")
+    __slots__ = ("times", "values", "dnu_0", "f_grid", "df_grid", "_spline",
+                 "_dspline")
 
     def __init__(self, times, values, dnu_0, f_grid, df_grid):
         self.times = times
@@ -183,9 +184,10 @@ class PhaseTrace:
         self.f_grid = f_grid
         self.df_grid = df_grid
         self._spline = CubicSpline(times, values)
+        self._dspline = self._spline.derivative()
 
-    def __call__(self, t):
-        """Phase (rad) at ``t``, which must lie within ``[0, t_gate]``.
+    def _in_gate(self, t) -> np.ndarray:
+        """``t`` clipped to ``[0, t_gate]``, raising on more than a rounding excursion.
 
         Solver times reach the endpoint through accumulated arithmetic and can sit a
         rounding error outside it, so an excursion of a few ulp is clipped. A larger
@@ -198,7 +200,22 @@ class PhaseTrace:
         tol = 4.0 * np.spacing(hi)
         if np.any(t < lo - tol) or np.any(t > hi + tol):
             raise ValueError(f"t must lie in [{lo}, {hi}]; got {t.min()} .. {t.max()}")
-        return self._spline(np.clip(t, lo, hi))
+        return np.clip(t, lo, hi)
+
+    def __call__(self, t):
+        """Phase (rad) at ``t``, which must lie within ``[0, t_gate]``."""
+        return self._spline(self._in_gate(t))
+
+    def derivative(self, t):
+        """``d(phi)/dt = 2 pi dnu(t)`` (rad/s) at ``t``, under the same guard.
+
+        A time-domain solver puts the noise on the Hamiltonian as an added
+        ``2 pi dnu(t) N_r``, so this is what it needs rather than the phase itself.
+        Exposed because ``CubicSpline.derivative()`` inherits ``extrapolate=True``:
+        reaching for the spline directly would silently continue a quadratic past
+        ``t_gate`` where :meth:`__call__` raises.
+        """
+        return self._dspline(self._in_gate(t))
 
 
 def phase_trace(psd: PhaseNoisePSD, t_gate: float, *, seed: int,

@@ -25,6 +25,14 @@ mls297 = importlib.util.module_from_spec(_spec)
 sys.modules["max_leakage_297_sweep"] = mls297
 _spec.loader.exec_module(mls297)
 
+# The Monte Carlo cross-check lives in its own script; load it the same way (and
+# under its own name, so the fork pool's workers can unpickle its entry point).
+_mc_spec = importlib.util.spec_from_file_location(
+    "phase_noise_mc_check", ROOT / "scripts" / "phase_noise_mc_check.py")
+mc_check = importlib.util.module_from_spec(_mc_spec)
+sys.modules["phase_noise_mc_check"] = mc_check
+_mc_spec.loader.exec_module(mc_check)
+
 
 # ── nested axes and canonical keys (locked 297 axis values; generic axis/key
 # machinery is covered in tests/test_sweeplib.py) ─────────────────────────────
@@ -527,6 +535,125 @@ def test_filter_subcommand_writes_a_resumable_series(tmp_path):
 
     mls297.main(argv)                                  # resume: nothing new
     assert len(store.load_filter_records(manifest)) == 16
+
+
+# ── Monte Carlo cross-check of the filter kernels (scripts/phase_noise_mc_check.py)
+
+
+def test_noisy_rhs_adds_two_pi_dnu_times_the_rydberg_number():
+    """The Monte Carlo leg's only new physics is H -> H_0 + 2 pi dnu(t) N_r.
+
+    Both the sign and the 2 pi are conventions that would survive an ensemble mean
+    (which is even in dnu) without a trace, so pin them against the RHS the sweep
+    already uses rather than against a solved trajectory.
+    """
+    ops = _toy_sym_ops()
+    n_r = mls297._rydberg_number_diag(16)
+    cols = {"omega_297": _TOY_OM, "d_sweep": _TOY_DW,
+            "shift": np.array([ops.h_static_diag[1]])}
+    dnu = 3.7e5
+
+    class _ConstOffset:
+        """A trace whose phase ramps at exactly 2 pi dnu, i.e. dnu(t) = dnu."""
+
+        def derivative(self, t):
+            return 2 * np.pi * dnu
+
+    base = mls297._297_rhs_factory(ops, cols, _TOY_T, 0.15)
+    noisy = mc_check._noisy_rhs_factory(_ConstOffset(), n_r)(ops, cols, _TOY_T, 0.15)
+    rng = np.random.default_rng(0)
+    y = rng.standard_normal(16) + 1j * rng.standard_normal(16)
+    for t in (0.0, 0.31 * _TOY_T, _TOY_T):
+        added = noisy(t, y) - base(t, y)
+        assert np.allclose(added, -1j * (2 * np.pi * dnu) * n_r * y, rtol=1e-12)
+
+
+def test_adjoint_integral_is_the_gates_first_order_response_to_a_detuning():
+    """``int_0^T A(t) dt`` is d(psi)/d(delta) for ``H -> H_0 + 2 pi delta N_r``.
+
+    The kernel's entire content is ``G(f) = int A(t) exp(-2 pi i f t) dt``, and at
+    ``f = 0`` that is the gate's exact linear response to a static frequency offset
+    -- which a central difference of two solved trajectories measures directly, with
+    no statistics.  This is the deterministic half of the Monte Carlo check: it pins
+    ``G`` itself, separately from ``<Delta L> = 2 pi^2 int S ||Q G||^2 df``, whose
+    second-order expansion of the leakage additionally drops ``2 Re <Q psi_0|Q
+    chi_2>`` -- a term of the same order in the noise that is *not* negligible when
+    the noiseless gate already leaks (see ``reports/phase_noise_mc.json``).
+    """
+    import sweeplib
+
+    cfg = mls297.ScanConfig()
+    ops = mls297.aggregate_operators(mls297.build_system(cfg, 53), 53)
+    t_gate, omega, dsw = 1e-6, 2 * np.pi * 13.5e6, 2 * np.pi * 15e6
+
+    out = mls297.integrate_adjoint_batch(
+        ops, t_gate, np.array([omega]), np.array([dsw]),
+        rtol=1e-11, atol=1e-14, ramp=cfg.ramp_frac, n_t=mls297.KERNEL_N_T)
+    weights = np.gradient(out["times"])
+    weights[[0, -1]] *= 0.5
+    g0 = np.einsum("t,stq->sq", weights, out["components"][0])     # (4, 12)
+
+    class _Static:
+        """A trace whose dnu(t) is the constant ``delta``."""
+
+        def __init__(self, delta):
+            self.delta = 2 * np.pi * delta
+
+        def derivative(self, t):
+            return self.delta
+
+    delta = 1.0
+    nonlogical = np.setdiff1d(np.arange(16), ops.logical_indices)
+
+    def terminal(d):
+        return sweeplib.integrate_batch(
+            ops, t_gate, {"omega_297": np.array([omega]), "d_sweep": np.array([dsw])},
+            mls297.LOGICAL_INPUTS,
+            rhs_factory=mc_check._noisy_rhs_factory(
+                _Static(d), mls297._rydberg_number_diag(16)),
+            dim=16, rtol=1e-11, atol=1e-14, ramp=cfg.ramp_frac).psi_final[0]
+
+    measured = (terminal(delta) - terminal(-delta))[:, nonlogical] / (2 * delta)
+    assert np.linalg.norm(g0[1]) > 0.0                             # not trivially zero
+    assert np.max(np.abs(measured + 2j * np.pi * g0)) < 1e-4 * np.max(np.abs(g0))
+
+
+def test_filter_prediction_matches_monte_carlo_on_one_point():
+    """One n=53, T=1 us point, 60 shots: the kernel prediction is inside 4 sigma.
+
+    The kernel is validated against theory on a two-level pulse in
+    tests/test_phase_noise.py; this is the same claim against direct simulation of
+    the real two-atom gate, with the noise back on the Hamiltonian.  |00> is
+    excluded: |0> carries no 297 leg, so N_r psi_00 = 0 and both legs are exactly
+    zero.  The full 20-point campaign is scripts/phase_noise_mc_check.py itself.
+
+    30 pairs is a wide band (~4 sigma = 50% of the prediction here), and it is meant
+    to be: the campaign found a *systematic* offset between the two legs that this
+    point happens to carry at the 10-15% level while other points carry it at
+    several hundred percent.  What this pins is the pipeline, not the size of that
+    offset; ``reports/phase_noise_mc.json`` carries the latter.
+    """
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor
+
+    cfg = mls297.ScanConfig()
+    key = mls297.make_key(*mc_check.MC_POINTS[0])
+    assert (cfg.ryd_n[key.n_idx], cfg.t_gate_us[key.t_idx]) == (53, 1.0)
+    ops = mls297.aggregate_operators(mls297.build_system(cfg, 53), 53)
+    psd = mc_check.lnp.load_psds(
+        os.path.join(mc_check.lnp.NOISE_DIR, "psd_ECDL.csv"))["flat"]
+
+    with ProcessPoolExecutor(max_workers=8, mp_context=mp.get_context("fork")) as pool:
+        rec = mc_check.check_point(ops, cfg, key, psd, shots=60, seed=1,
+                                   rtol=1e-9, atol=1e-12, pool=pool)
+
+    assert rec["filter_prediction"][0] == 0.0 and rec["mc_mean"][0] == 0.0
+    for i in (1, 2, 3):
+        pred = rec["filter_prediction"][i]
+        assert pred > 0.0
+        assert abs(rec["mc_mean"][i] - pred) <= max(
+            mc_check.SIGMA_TOL * rec["mc_stderr"][i], mc_check.REL_TOL * pred)
+    assert rec["passed"] and rec["n_pairs"] == 30
 
 
 # ── real rb87_297_clock_4 model (ARC required) ───────────────────────────────

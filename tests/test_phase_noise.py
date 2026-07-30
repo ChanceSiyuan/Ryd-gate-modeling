@@ -134,6 +134,23 @@ def test_trace_rejects_times_outside_the_gate():
     assert tr(over) == pytest.approx(tr.values[-1], abs=1e-12)
 
 
+def test_trace_derivative_is_the_instantaneous_frequency_and_is_guarded():
+    # A time-domain solver needs d(phi)/dt = 2 pi dnu(t), not phi. CubicSpline's own
+    # derivative inherits extrapolate=True, so reaching for it privately would
+    # silently continue a quadratic past t_gate instead of raising -- exactly what
+    # __call__'s guard exists to prevent.
+    tr = phase_trace(PhaseNoisePSD.white(1e4), 1e-6, seed=5, f_max=1e8)
+    mid = 0.5 * (tr.times[:-1] + tr.times[1:])
+    fd = np.diff(tr.values) / np.diff(tr.times)
+    assert np.max(np.abs(tr.derivative(mid) - fd)) < 1e-3 * np.max(np.abs(fd))
+    with pytest.raises(ValueError, match="must lie in"):
+        tr.derivative(1.1e-6)
+    with pytest.raises(ValueError, match="must lie in"):
+        tr.derivative(np.array([0.0, -1e-9]))
+    over = np.nextafter(np.nextafter(tr.times[-1], np.inf), np.inf)
+    assert tr.derivative(over) == pytest.approx(tr.derivative(tr.times[-1]), abs=1e-6)
+
+
 def test_f_min_is_forwarded_to_the_quasi_static_band():
     # ASD ~ 1/f, so S_dnu ~ f^-2 and the frozen band is dominated by its lower edge:
     # moving f_min from 1 Hz to 100 Hz must shrink dnu_0 about tenfold.
