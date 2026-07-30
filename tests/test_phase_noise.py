@@ -138,7 +138,7 @@ def test_f_min_is_forwarded_to_the_quasi_static_band():
     # ASD ~ 1/f, so S_dnu ~ f^-2 and the frozen band is dominated by its lower edge:
     # moving f_min from 1 Hz to 100 Hz must shrink dnu_0 about tenfold.
     psd = PhaseNoisePSD(np.array([1e0, 1e6]), np.array([1e6, 1e0]) ** 2)
-    t_gate, f_split = 1e-6, 1e6
+    t_gate, f_split = 1e-6, 1e4                     # the collapse sits at 0.01/t_gate
     wide = phase_trace(psd, t_gate, seed=11, f_max=1e8)
     narrow = phase_trace(psd, t_gate, seed=11, f_max=1e8, f_min=100.0)
     # one seed draws one standard normal, so the ratio is exactly the band sigma ratio
@@ -179,7 +179,7 @@ def test_quasi_static_offset_matches_the_unresolved_band():
     t_gate = 1e-6
     offsets = np.asarray([phase_trace(psd, t_gate, seed=s, f_max=1e8).dnu_0
                           for s in range(2000)])
-    expected = psd.sigma_nu(1.0, 1.0 / t_gate)
+    expected = psd.sigma_nu(1.0, 0.01 / t_gate)
     assert np.std(offsets) == pytest.approx(expected, rel=0.1)
 
 
@@ -238,7 +238,7 @@ def test_filter_kernel_reproduces_the_paper_white_noise_gate_error():
     omega0 = 2 * np.pi * 1e6
     h0_onesided = 200.0
     for n_rot in (0.5, 1.0):
-        t, comp, t_gate = _rabi_pi_pulse_components(omega0, n_rot, 200001)
+        t, comp, t_gate = _rabi_pi_pulse_components(omega0, n_rot, 16385)
         f_bins, df_bins = log_frequency_bins(1e2, 1e9, 60)
         kernel = filter_kernel(t, comp, f_bins, df_bins)
         eps = error_from_kernel(PhaseNoisePSD.white(h0_onesided), f_bins, kernel)
@@ -282,9 +282,27 @@ def test_filter_kernel_agrees_with_direct_monte_carlo():
         errs.append(1.0 - abs(np.vdot(ideal, psi)) ** 2)
     mc = float(np.mean(errs))
 
-    t, comp, _ = _rabi_pi_pulse_components(omega0, n_rot, 200001)
+    t, comp, _ = _rabi_pi_pulse_components(omega0, n_rot, 16385)
     f_bins, df_bins = log_frequency_bins(1e2, 1e9, 60)
     predicted = error_from_kernel(psd, f_bins,
                                   filter_kernel(t, comp, f_bins, df_bins))
     stderr = float(np.std(errs) / np.sqrt(len(errs)))
     assert abs(mc - predicted) < 4 * stderr + 0.05 * predicted
+
+
+def test_filter_kernel_counts_both_signs_of_the_frequency_axis():
+    """``K_b`` integrates ``||G(f)||**2 + ||G(-f)||**2``, not twice ``||G(f)||**2``.
+
+    The Rabi components above are ``i`` times a real function, so ``|G(-f)| = |G(f)|``
+    identically and the two readings coincide to the last bit -- neither test above
+    would notice a kernel that dropped one sign and doubled the other. A pure
+    ``exp(+2j pi f0 t)`` breaks the symmetry: all its weight sits at ``+f0``, so
+    Parseval puts ``sum_b K_b`` at ``T`` while doubling the positive branch alone
+    gives ``2T``.
+    """
+    t_gate, f0 = 5e-7, 4e6
+    t = np.linspace(0.0, t_gate, 16385)
+    comp = np.exp(2j * np.pi * f0 * t)[:, None]
+    f_bins, df_bins = log_frequency_bins(1e2, 1e9, 60)
+    total = float(np.sum(filter_kernel(t, comp, f_bins, df_bins)))
+    assert total == pytest.approx(t_gate, rel=0.01)

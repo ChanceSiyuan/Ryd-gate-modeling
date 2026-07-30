@@ -208,13 +208,24 @@ def phase_trace(psd: PhaseNoisePSD, t_gate: float, *, seed: int,
     """A random phase realization for ``psd`` over ``[0, t_gate]`` (paper Eq. 104).
 
     The frequency axis is hybrid because a uniform grid from ``f_min`` to ``f_max``
-    would need ~1e8 terms. Below ``1/t_gate`` the noise is frozen over the gate and
-    is collapsed into one Gaussian quasi-static offset ``dnu_0`` of the correct
-    band variance; above it a logarithmic grid is summed explicitly as
+    would need ~1e8 terms. Below ``f_split = 0.01 / t_gate`` the noise is frozen over
+    the gate and is collapsed into one Gaussian quasi-static offset ``dnu_0`` of the
+    correct band variance; above it a logarithmic grid is summed explicitly as
 
         phi(t) = 2 pi dnu_0 t + sum_j sqrt(2 S_phi(f_j) df_j) cos(2 pi f_j t + psi_j)
 
     which is the paper's ``2 sqrt(S^2s df)`` rewritten for one-sided densities.
+
+    The split sits two decades below ``1/t_gate``, not at it. Collapsing a band into a
+    static offset substitutes ``|G(f)|**2 -> |G(0)|**2`` in the gate's response (the
+    ``G`` of :func:`filter_kernel`), which holds only for ``f << 1/t_gate``: a gate of
+    duration ``t_gate`` responds over a bandwidth of order ``1/t_gate``, so splitting
+    at ``1/t_gate`` would freeze precisely the frequencies at which that response
+    varies fastest. Measured against :func:`filter_kernel` on a resonant two-level
+    pulse, a split at ``1/t_gate`` mismodels the collapsed band by tens of percent in
+    either direction -- ``|G(0)|`` vanishes at every whole number of Rabi rotations,
+    so the sign flips with the rotation count -- while at ``0.01/t_gate`` the collapsed
+    band is genuinely flat. The ~80 extra tones this costs are negligible.
 
     Only the phases ``psi_j`` are random, the amplitudes being fixed, so the ensemble
     reproduces the correct second moments but not full Gaussian marginals. The per-tone
@@ -225,7 +236,7 @@ def phase_trace(psd: PhaseNoisePSD, t_gate: float, *, seed: int,
     infidelity among them, inherit that.
     """
     rng = np.random.default_rng(seed)
-    f_split = 1.0 / t_gate
+    f_split = 0.01 / t_gate
     f_grid, df_grid = log_frequency_bins(f_split, f_max, points_per_decade)
     psi = rng.uniform(0.0, 2.0 * np.pi, size=f_grid.size)
     amp = np.sqrt(2.0 * psd.s_phi(f_grid) * df_grid)
@@ -258,8 +269,15 @@ def filter_kernel(times, components, f_bins, df_bins, *,
     fine, dfine = log_frequency_bins(max(edges[0], 1e-12), edges[-1],
                                      fine_per_decade)
 
-    # quadrature weights ride on the components, not on the (n_fine, n_t) transform
-    weighted = comp * np.gradient(times)[:, None]
+    # Trapezoid weights, and they ride on the components rather than on the
+    # (n_fine, n_t) transform. np.gradient alone is a rectangle rule -- it returns the
+    # full step at both ends where the trapezoid rule wants half of it, an O(dt) bias
+    # whenever A does not vanish there. A(T) = N_r psi(T) is nonzero for any gate
+    # leaving residual Rydberg population, and an O(dt) bias would also mask the
+    # dt-halving convergence check.
+    weights = np.gradient(times)
+    weights[[0, -1]] *= 0.5
+    weighted = comp * weights[:, None]
     kern = np.zeros(fine.size)
     # (n_fine, n_t) @ (n_t, n_comp) -> (n_fine, n_comp), one BLAS call per sign.
     for sign in (-1.0, +1.0):
