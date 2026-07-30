@@ -15,8 +15,14 @@ This module produces, from the PNGs alone:
 
   * ``psd_<laser>.csv``   digitized (f, ASD_mean, ASD_lo, ASD_hi) at the fundamental,
     where lo/hi are the envelope of the individual (blue) traces around the (red) mean
+  * ``psd_model.json``    the ``PhaseNoisePSD`` construction parameters (fitted power-law
+    exponent, and the 297 nm density and frequency at the measurement edge)
   * ``psd_model.png/pdf`` the model figure: measurement, the 297 nm conversion, the
     two extrapolations above the 1 MHz measurement edge, and the cumulative sigma_nu
+
+The spectrum model itself is :class:`ryd_gate.phase_noise.PhaseNoisePSD`; this script
+only digitizes, then reads its own CSVs back through that class, so the figure, the
+console table and the JSON cannot drift from the library the sweep uses.
 
 Conventions
 -----------
@@ -37,12 +43,19 @@ Usage
 """
 from __future__ import annotations
 
+import json
 import os
+import sys
 
 import numpy as np
 
-NOISE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                         "results", "297_laser_noise")
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if os.path.join(REPO_ROOT, "src") not in sys.path:
+    sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+
+from ryd_gate.phase_noise import PhaseNoisePSD  # noqa: E402
+
+NOISE_DIR = os.path.join(REPO_ROOT, "results", "297_laser_noise")
 
 HARMONIC = 4                     # 1188 nm -> 297 nm; S_dnu scales as HARMONIC**2
 OMEGA_BAND_MHZ = (9.0, 18.0)     # the sweep's Omega_297/2pi axis
@@ -111,45 +124,30 @@ def write_csv(laser: str, data: np.ndarray) -> str:
 # ── PSD model ────────────────────────────────────────────────────────────────
 
 
-def power_law_exponent(data: np.ndarray) -> float:
-    """Least-squares slope p of ASD ~ f**(-p) over the last measured decade."""
-    f, a = data[:, 0], data[:, 1]
-    m = (f >= FIT_DECADE_HZ[0]) & (f <= FIT_DECADE_HZ[1])
-    return -float(np.polyfit(np.log10(f[m]), np.log10(a[m]), 1)[0])
+def load_psds(csv_path: str) -> dict[str, PhaseNoisePSD]:
+    """The 297 nm ``PhaseNoisePSD`` of one digitized CSV, under both extrapolations.
 
-
-def s_dnu_297(laser: str, data: np.ndarray, f: np.ndarray, mode: str) -> np.ndarray:
-    """One-sided S_dnu (Hz^2/Hz) at 297 nm, log-log interpolated and extrapolated.
-
-    ``mode`` is ``"flat"`` (hold the 1 MHz value) or ``"power"`` (continue the
-    fitted power law) above the measurement edge.  Below the 1 Hz edge the lowest
-    measured slope is continued; those frequencies are frozen over a microsecond
-    gate and only enter the quasi-static offset.
+    Below the 1 Hz edge ``PhaseNoisePSD`` continues the lowest measured slope; those
+    frequencies are frozen over a microsecond gate and only enter the quasi-static
+    offset.
     """
-    fm, am = data[:, 0], data[:, 1]
-    f = np.asarray(f, dtype=float)
-    asd = 10.0 ** np.interp(np.log10(f), np.log10(fm), np.log10(am))
-
-    hi = f > fm[-1]
-    if mode == "flat":
-        asd[hi] = am[-1]
-    elif mode == "power":
-        asd[hi] = am[-1] * (f[hi] / fm[-1]) ** (-power_law_exponent(data))
-    else:
-        raise ValueError(f"mode must be 'flat' or 'power'; got {mode!r}")
-    return HARMONIC ** 2 * asd ** 2
+    return {mode: PhaseNoisePSD.from_csv(csv_path, harmonic=HARMONIC,
+                                         extrapolation=mode,
+                                         power_law_fit_hz=FIT_DECADE_HZ)
+            for mode in ("flat", "power")}
 
 
-def sigma_nu_cumulative(laser: str, data: np.ndarray, f: np.ndarray) -> np.ndarray:
+def sigma_nu_cumulative(psd: PhaseNoisePSD, f: np.ndarray) -> np.ndarray:
     """sqrt of the running integral of S_dnu at 297 nm, from f[0] up to each f."""
-    s = s_dnu_297(laser, data, f, "flat")
+    s = psd.s_dnu(f)
     return np.sqrt(np.concatenate([[0.0], np.cumsum(np.diff(f) * 0.5 * (s[1:] + s[:-1]))]))
 
 
 # ── figure ───────────────────────────────────────────────────────────────────
 
 
-def render(datasets: dict[str, np.ndarray]) -> tuple[str, str]:
+def render(datasets: dict[str, np.ndarray],
+           psds: dict[str, dict[str, PhaseNoisePSD]]) -> tuple[str, str]:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -173,14 +171,12 @@ def render(datasets: dict[str, np.ndarray]) -> tuple[str, str]:
     ax.text(np.sqrt(np.prod(OMEGA_BAND_MHZ)) * 1e6, 3e10,
             r"$\Omega_{297}/2\pi$" + "\nswept", ha="center", va="top",
             fontsize=8, color="0.35")
-    for laser, d in datasets.items():
-        ax.plot(f_meas, s_dnu_297(laser, d, f_meas, "flat"),
+    for laser, p in psds.items():
+        ax.plot(f_meas, p["flat"].s_dnu(f_meas),
                 color=COLOR[laser], lw=2.0, label=LABEL[laser])
-        ext = f_ext[f_ext > d[-1, 0]]
-        ax.plot(ext, s_dnu_297(laser, d, ext, "flat"),
-                color=COLOR[laser], lw=1.6, ls="--")
-        ax.plot(ext, s_dnu_297(laser, d, ext, "power"),
-                color=COLOR[laser], lw=1.6, ls=":")
+        ext = f_ext[f_ext > p["flat"].f_hz[-1]]
+        ax.plot(ext, p["flat"].s_dnu(ext), color=COLOR[laser], lw=1.6, ls="--")
+        ax.plot(ext, p["power"].s_dnu(ext), color=COLOR[laser], lw=1.6, ls=":")
     ax.axvline(1e6, color="0.55", lw=1.0)
     ax.text(8e5, 3e0, "measurement edge", fontsize=8, color="0.4",
             ha="right", va="bottom")
@@ -192,8 +188,8 @@ def render(datasets: dict[str, np.ndarray]) -> tuple[str, str]:
     ax.legend(fontsize=8, loc="upper right", frameon=False)
 
     ax = axes[2]
-    for laser, d in datasets.items():
-        ax.plot(f_meas, sigma_nu_cumulative(laser, d, f_meas) / 1e3,
+    for laser, p in psds.items():
+        ax.plot(f_meas, sigma_nu_cumulative(p["flat"], f_meas) / 1e3,
                 color=COLOR[laser], lw=2.0, label=LABEL[laser])
     ax.set_title(r"cumulative $\sigma_\nu(<f)$ at 297 nm", fontsize=10)
     ax.set_ylabel(r"$\sigma_\nu$  (kHz)")
@@ -224,43 +220,43 @@ def render(datasets: dict[str, np.ndarray]) -> tuple[str, str]:
 
 
 def main() -> None:
-    datasets = {}
+    datasets, psds = {}, {}
     for laser in AXES:
         d = digitize(laser)
         datasets[laser] = d
+        csv_path = write_csv(laser, d)
+        psds[laser] = load_psds(csv_path)
         print(f"[{laser}] {len(d)} samples, f = {d[0, 0]:.3g}..{d[-1, 0]:.4g} Hz -> "
-              f"{write_csv(laser, d)}")
+              f"{csv_path}")
 
-    import json
     model = {
         laser: {
             "csv": f"psd_{laser}.csv",
             "harmonic": HARMONIC,
-            "power_law_exponent": power_law_exponent(d),
-            "s_dnu_edge_297": HARMONIC ** 2 * float(d[-1, 1]) ** 2,
-            "f_edge_hz": float(d[-1, 0]),
+            "power_law_exponent": p["flat"].power_law_exponent,
+            "s_dnu_edge_297": float(p["flat"].s_dnu(p["flat"].f_hz[-1:])[0]),
+            "f_edge_hz": float(p["flat"].f_hz[-1]),
         }
-        for laser, d in datasets.items()
+        for laser, p in psds.items()
     }
     path = os.path.join(NOISE_DIR, "psd_model.json")
     with open(path + ".tmp", "w") as fh:
         json.dump(model, fh, indent=2, sort_keys=True)
+        fh.write("\n")
     os.replace(path + ".tmp", path)
     print(f"wrote {path}")
 
     print(f"\n{'laser':6s} {'p (ASD~f^-p)':>13s} {'S_dnu(1MHz,297)':>17s} "
           f"{'S_dnu(13.5MHz) flat':>20s} {'power':>10s} {'sigma_nu(<1MHz)':>17s}")
     f13 = np.asarray([13.5e6])
-    for laser, d in datasets.items():
-        p = power_law_exponent(d)
-        s1 = HARMONIC ** 2 * d[-1, 1] ** 2
-        sf = s_dnu_297(laser, d, f13, "flat")[0]
-        sp = s_dnu_297(laser, d, f13, "power")[0]
-        sig = sigma_nu_cumulative(laser, d, np.logspace(0, 6, 4000))[-1]
-        print(f"{laser:6s} {p:13.3f} {s1:17.1f} {sf:20.1f} {sp:10.1f} "
-              f"{sig / 1e3:14.1f} kHz")
+    for laser, p in psds.items():
+        flat, power = p["flat"], p["power"]
+        print(f"{laser:6s} {flat.power_law_exponent:13.3f} "
+              f"{flat.s_dnu(flat.f_hz[-1:])[0]:17.1f} {flat.s_dnu(f13)[0]:20.1f} "
+              f"{power.s_dnu(f13)[0]:10.1f} "
+              f"{flat.sigma_nu(1.0, 1e6) / 1e3:14.1f} kHz")
 
-    png, pdf = render(datasets)
+    png, pdf = render(datasets, psds)
     print(f"\nwrote {png}\n      {pdf}")
 
 

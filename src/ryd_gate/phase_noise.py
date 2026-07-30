@@ -1,11 +1,10 @@
 """Laser phase noise from a measured frequency-noise PSD (expert module).
 
-Implements the noise model of X. Jiang, J. Scott, M. Friesen and M. Saffman,
-*Sensitivity of quantum gate fidelity to laser phase and intensity noise*,
-Phys. Rev. A **107**, 042611 (2023) (arXiv:2210.11007): a frequency-noise power
-spectral density is turned either into random phase traces (their Eq. 104), which
-plug straight into a protocol's ``phase_*_rad`` callback, or into a reusable filter
-kernel whose reweighting by any PSD gives the ensemble-mean error to second order.
+The spectrum side of the noise model of X. Jiang, J. Scott, M. Friesen and
+M. Saffman, *Sensitivity of quantum gate fidelity to laser phase and intensity
+noise*, Phys. Rev. A **107**, 042611 (2023) (arXiv:2210.11007): a measured or
+analytic frequency-noise power spectral density, in the form the rest of that
+formalism consumes.
 
 Like :mod:`ryd_gate.physics` this is an expert module, not a top-level export.
 
@@ -109,15 +108,14 @@ class PhaseNoisePSD:
 
     def _interpolated(self, f: np.ndarray) -> np.ndarray:
         safe = np.clip(f, self.f_hz[0] * 1e-12, None)
+        # np.interp holds the edge sample outside the measured range, which is already
+        # the "flat" policy above the top sample; only "power" needs an override.
         s = 10.0 ** np.interp(np.log10(safe), np.log10(self.f_hz),
                               np.log10(self.s_meas))
         hi = f > self.f_hz[-1]
-        if np.any(hi):
-            if self.extrapolation == "flat":
-                s = np.where(hi, self.s_meas[-1], s)
-            else:
-                s = np.where(hi, self.s_meas[-1]
-                             * (safe / self.f_hz[-1]) ** (-2.0 * self.power_law_exponent), s)
+        if self.extrapolation == "power" and np.any(hi):
+            s = np.where(hi, self.s_meas[-1]
+                         * (safe / self.f_hz[-1]) ** (-2.0 * self.power_law_exponent), s)
         lo = f < self.f_hz[0]
         if np.any(lo):
             slope = (np.log10(self.s_meas[1] / self.s_meas[0])
@@ -126,7 +124,14 @@ class PhaseNoisePSD:
         return s
 
     def sigma_nu(self, f_lo: float, f_hi: float, n: int = 20001) -> float:
-        """RMS frequency deviation from the band ``[f_lo, f_hi]`` (Hz)."""
-        lo = max(float(f_lo), 1e-12)
-        f = np.logspace(np.log10(lo), np.log10(float(f_hi)), n)
+        """RMS frequency deviation from the band ``[f_lo, f_hi]`` (Hz).
+
+        ``f_lo`` is the modelling parameter ``f_min``, physically the inverse of the
+        calibration/relock timescale, and has no default: a measured ``S_dnu`` rises
+        steeply towards DC and is extrapolated below the measurement edge, so an
+        unbounded band would fabricate power rather than report it.
+        """
+        if float(f_lo) <= 0.0:
+            raise ValueError(f"f_lo must be positive; got {f_lo!r}")
+        f = np.logspace(np.log10(float(f_lo)), np.log10(float(f_hi)), n)
         return float(np.sqrt(np.trapezoid(self.s_dnu(f), f)))
