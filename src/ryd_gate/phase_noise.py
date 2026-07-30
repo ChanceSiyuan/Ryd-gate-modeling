@@ -6,6 +6,12 @@ quantum gate fidelity to laser phase and intensity noise*, Phys. Rev. A **107**,
 spectral density, and the random realizations of the phase process ``phi_n(t)``
 it generates (the paper's Eq. 104) for a time-domain solver to put on the drive.
 
+Sampling those realizations is only one of the two routes to an error. The other is
+:func:`filter_kernel`, the first-order response of a gate to frequency noise: it
+costs one pass over the noiseless trajectory, carries no statistical noise, and is
+independent of the spectrum, so a single kernel priced once serves every candidate
+PSD. Monte Carlo is then the validator rather than the workhorse.
+
 Like :mod:`ryd_gate.physics` this is an expert module, not a top-level export.
 
 Conventions
@@ -31,6 +37,8 @@ __all__ = [
     "PhaseTrace",
     "phase_trace",
     "log_frequency_bins",
+    "filter_kernel",
+    "error_from_kernel",
 ]
 
 
@@ -209,8 +217,8 @@ def phase_trace(psd: PhaseNoisePSD, t_gate: float, *, seed: int,
     which is the paper's ``2 sqrt(S^2s df)`` rewritten for one-sided densities.
 
     Only the phases ``psi_j`` are random, the amplitudes being fixed, so the ensemble
-    reproduces the correct second moments but not full Gaussian marginals. The bin
-    variances ``2 S_phi df`` fall as ``1/f`` for a white ``S_dnu``, so the
+    reproduces the correct second moments but not full Gaussian marginals. The per-tone
+    variances ``S_phi df`` fall as ``1/f`` for a white ``S_dnu``, so the
     participation ratio ``(sum a**2)**2 / sum a**4`` saturates near 35 tones however
     wide the band, and fewer for a steeper measured spectrum: near-Gaussian in the
     bulk, thinner in the tails. Averages of quantities nonlinear in the phase,
@@ -228,3 +236,43 @@ def phase_trace(psd: PhaseNoisePSD, t_gate: float, *, seed: int,
         amp[None, :] * np.cos(2.0 * np.pi * np.outer(times, f_grid) + psi[None, :])
     ).sum(axis=1)
     return PhaseTrace(times, values, dnu_0, f_grid, df_grid)
+
+
+def filter_kernel(times, components, f_bins, df_bins, *,
+                  fine_per_decade: int = 200) -> np.ndarray:
+    """Bin-integrated response ``K_b`` of a gate to frequency noise.
+
+    ``components`` is the ``(n_t, n_comp)`` array of ``<q|A(t)>`` with
+    ``A(t) = U(T,t) N_r psi(t)``; ``<Delta L> = 2 pi**2 sum_b S_dnu(f_b) K_b`` with
+
+        K_b = int_bin ( ||G(f)||**2 + ||G(-f)||**2 ) df ,
+        G(f) = int_0^T A(t) exp(-2 pi i f t) dt .
+
+    ``K`` carries fringe structure on the ``1/T`` scale, far finer than the storage
+    bins, so it is evaluated on a ``fine_per_decade`` grid and integrated into the
+    bins rather than point-sampled at their centres.
+    """
+    times = np.asarray(times, dtype=float)
+    comp = np.asarray(components, dtype=np.complex128)
+    edges = np.concatenate([f_bins - 0.5 * df_bins, [f_bins[-1] + 0.5 * df_bins[-1]]])
+    fine, dfine = log_frequency_bins(max(edges[0], 1e-12), edges[-1],
+                                     fine_per_decade)
+
+    # quadrature weights ride on the components, not on the (n_fine, n_t) transform
+    weighted = comp * np.gradient(times)[:, None]
+    kern = np.zeros(fine.size)
+    # (n_fine, n_t) @ (n_t, n_comp) -> (n_fine, n_comp), one BLAS call per sign.
+    for sign in (-1.0, +1.0):
+        g = np.exp(-2j * np.pi * sign * np.outer(fine, times)) @ weighted
+        kern += np.einsum("fc,fc->f", g.conj(), g).real
+
+    idx = np.clip(np.searchsorted(edges, fine) - 1, 0, f_bins.size - 1)
+    out = np.zeros(f_bins.size)
+    np.add.at(out, idx, kern * dfine)
+    return out
+
+
+def error_from_kernel(psd: PhaseNoisePSD, f_bins, kernel) -> float:
+    """``<Delta L> = 2 pi**2 sum_b S_dnu(f_b) K_b`` (K_b already carries its df)."""
+    return float(2.0 * np.pi**2 * np.sum(psd.s_dnu(np.asarray(f_bins))
+                                         * np.asarray(kernel)))

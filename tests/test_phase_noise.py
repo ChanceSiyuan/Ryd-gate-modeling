@@ -10,7 +10,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ryd_gate.phase_noise import PhaseNoisePSD, log_frequency_bins, phase_trace
+from ryd_gate.phase_noise import (
+    PhaseNoisePSD,
+    error_from_kernel,
+    filter_kernel,
+    log_frequency_bins,
+    phase_trace,
+)
 
 NOISE_DIR = Path(__file__).resolve().parents[1] / "results" / "297_laser_noise"
 
@@ -188,3 +194,97 @@ def test_generated_traces_reproduce_the_input_spectrum():
     f, pxx = welch(dnu, fs=1.0 / dt, nperseg=n // 8, axis=1)
     band = (f > 5e6) & (f < 5e7)
     assert np.median(pxx.mean(axis=0)[band]) == pytest.approx(1e4, rel=0.35)
+
+
+def _rabi_pi_pulse_components(omega0, n_rot, n_t):
+    """<perp|A(t)> for a resonant two-level Rabi drive of N rotations.
+
+    A(t) = U(T,t) N_e psi(t) with N_e = |e><e|; the metric projects onto the
+    single direction orthogonal to the ideal final state, so there is one
+    component. Everything is available in closed form for a constant drive:
+    U(t) = cos(omega0 t/2) I - i sin(omega0 t/2) sigma_x.
+    """
+    t_gate = 2.0 * np.pi * n_rot / omega0
+    t = np.linspace(0.0, t_gate, n_t)
+
+    def u(tau):
+        c, s = np.cos(0.5 * omega0 * tau), np.sin(0.5 * omega0 * tau)
+        return np.array([[c, -1j * s], [-1j * s, c]])
+
+    psi0 = np.array([1.0, 0.0], dtype=complex)
+    psi_T = u(t_gate) @ psi0
+    perp = np.array([-np.conj(psi_T[1]), np.conj(psi_T[0])])
+    comp = np.empty((n_t, 1), dtype=complex)
+    for k, tk in enumerate(t):
+        psi_k = u(tk) @ psi0
+        a_k = u(t_gate - tk) @ (np.array([0.0, 1.0]) * psi_k)   # N_e psi
+        comp[k, 0] = np.vdot(perp, a_k)
+    return t, comp, t_gate
+
+
+class _ZERO_TRACE:
+    """Noiseless stand-in with the PhaseTrace call signature."""
+
+    def __init__(self, t_gate):
+        self.t_gate = t_gate
+
+    def __call__(self, t):
+        return 0.0 * np.asarray(t, dtype=float)
+
+
+def test_filter_kernel_reproduces_the_paper_white_noise_gate_error():
+    # Paper Eq. 79 (initial state |0>): eps = pi**3 h0 N / Omega_0, with h0
+    # TWO-SIDED. Against our one-sided h0 the target is half that.
+    omega0 = 2 * np.pi * 1e6
+    h0_onesided = 200.0
+    for n_rot in (0.5, 1.0):
+        t, comp, t_gate = _rabi_pi_pulse_components(omega0, n_rot, 200001)
+        f_bins, df_bins = log_frequency_bins(1e2, 1e9, 60)
+        kernel = filter_kernel(t, comp, f_bins, df_bins)
+        eps = error_from_kernel(PhaseNoisePSD.white(h0_onesided), f_bins, kernel)
+        expected = np.pi**3 * (h0_onesided / 2) * n_rot / omega0
+        assert eps == pytest.approx(expected, rel=0.05)
+
+
+def test_filter_kernel_agrees_with_direct_monte_carlo():
+    """Same two-level pi pulse, integrated with real phase traces.
+
+    ``n_rot`` is 4, not the 0.5 of the closed-form test above, because the two legs
+    are limited by different things. ``phase_trace`` collapses everything below
+    ``1/t_gate`` into one static offset, which reproduces the gate's response there
+    only while that response is still flat -- and a T-long gate's response varies on
+    exactly the ``1/T`` scale. At half a rotation 97% of ``int ||G||**2 df`` sits
+    below ``1/t_gate`` and the collapse mismodels it by 65%; by four rotations the
+    response has moved out to the Rabi peak ``Omega_0/2pi = n_rot/T`` and only 1.3%
+    is left in the collapsed band. ``f_max`` is 10x that peak, above which the
+    response is nil, so the traces carry a decade of out-of-band noise for the
+    kernel to reject.
+    """
+    from scipy.integrate import solve_ivp
+
+    omega0, h0 = 2 * np.pi * 1e6, 200.0
+    n_rot = 4.0
+    t_gate = 2.0 * np.pi * n_rot / omega0
+    psd = PhaseNoisePSD.white(h0)
+
+    def run(trace):
+        def rhs(tt, y):
+            c = 0.5 * omega0 * np.exp(-1j * trace(tt))
+            return -1j * np.array([c * y[1], np.conj(c) * y[0]])
+        sol = solve_ivp(rhs, (0.0, t_gate), np.array([1.0, 0.0], dtype=complex),
+                        method="DOP853", rtol=1e-10, atol=1e-13)
+        return sol.y[:, -1]
+
+    ideal = run(_ZERO_TRACE(t_gate))
+    errs = []
+    for s in range(300):
+        psi = run(phase_trace(psd, t_gate, seed=s, f_max=1e7, n_samples=8192))
+        errs.append(1.0 - abs(np.vdot(ideal, psi)) ** 2)
+    mc = float(np.mean(errs))
+
+    t, comp, _ = _rabi_pi_pulse_components(omega0, n_rot, 200001)
+    f_bins, df_bins = log_frequency_bins(1e2, 1e9, 60)
+    predicted = error_from_kernel(psd, f_bins,
+                                  filter_kernel(t, comp, f_bins, df_bins))
+    stderr = float(np.std(errs) / np.sqrt(len(errs)))
+    assert abs(mc - predicted) < 4 * stderr + 0.05 * predicted
