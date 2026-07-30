@@ -42,10 +42,13 @@ Hz/sqrt(Hz) over 1 Hz – 1 MHz, measured on the **1180/1187 nm fundamental**.
    over all 32832 grid points costs weeks per noise model; the filter function
    costs one pass, carries no statistical noise, and is reusable across all four
    (laser × extrapolation) combinations. Monte Carlo is the *validator*.
-5. **Metric.** The phase-noise channel is the ensemble-mean *increase* in the same
-   terminal nonlogical leakage the existing maps already report, so the new map
-   composes with the existing family:
-   `eps_phase = max_s <Delta L_s>`, `s` over the logical inputs 00/01/10/11.
+5. **Metric.** The phase-noise channel is the ensemble-mean noise-induced fidelity
+   loss against the noiseless final state:
+   `eps_phase = max_s [1 - |<psi_0^s(T)|psi^s(T)>|**2]`, `s` over the logical inputs
+   00/01/10/11. It is non-negative, second-order exact, and is the error the noise
+   *adds*, so it sums with the noiseless `max_leakage` and the scattering
+   probabilities. (The first version of this spec used the increase in terminal
+   nonlogical leakage; see "Why not the leakage increase" below.)
 6. **Store era.** A new sibling series inside the existing
    `results/max_leakage_297/a3.0` store. The coherent and scatter chunks are not
    recomputed and not touched.
@@ -120,17 +123,44 @@ Independent `psi_j` are drawn per laser group.
 
 First-order perturbation in `dnu` on the noiseless trajectory gives the terminal
 state correction `chi_1(T) = -2*pi*i * int_0^T dnu(t) A(t) dt` with
-`A(t) = U_0(T,t) N_r psi_0(t)`. The term linear in `dnu` averages to zero, so with
-`G(f) = int_0^T A(t) exp(-2*pi*i*f*t) dt`:
+`A(t) = U_0(T,t) N_r psi_0(t)`. With
+`G(f) = int_0^T A(t) exp(-2*pi*i*f*t) dt`, the metric is the **noise-induced
+fidelity loss against the noiseless final state**:
 
 ```
-<Delta L> = 2*pi**2 * int_{-inf}^{inf} S_dnu(|f|) * ||Q G(f)||**2 df
+eps_phase = max_s [ 1 - |<psi_0^s(T) | psi^s(T)>|**2 ]
+          = 2*pi**2 * int_{-inf}^{inf} S_dnu(|f|) * [ ||G(f)||**2 - |<psi_0(T)|G(f)>|**2 ] df
 ```
 
-`Q` projects onto the nonlogical subspace — the same projector the existing
-`max_leakage` uses. This is exact to second order in the noise, which the paper
-validates against direct simulation in its Figs. 6–9 for exactly this weak-noise
-regime (`2*pi*dnu / Omega ~ 0.01` here).
+`||G(f)||**2` runs over the **complete** basis, so the backward leg propagates all
+16 basis states, not only the 12 nonlogical ones. The projection term is free: since
+`<psi_0(T)|A(t)> = <psi_0(t)| N_r |psi_0(t)>`, it is the Rydberg population
+expectation along the noiseless trajectory, available from the forward leg alone.
+
+**Why not the leakage increase.** This spec's first version defined `eps_phase` as
+the increase in the terminal nonlogical leakage, `<Delta L> = 2 pi**2 int S_dnu
+||Q G(f)||**2 df` with `Q` the fixed nonlogical projector. That formula is wrong: it
+keeps `<||Q chi_1||**2>` and drops `2 Re <Q psi_0(T) | Q <chi_2>>`, which is the same
+order in `S_dnu` because `<chi_1> = 0` but `<chi_2> != 0`. The dropped term scales as
+`sqrt(L_0) * O(dnu**2)` and dominates wherever the noiseless gate already leaks — the
+whole populated region of this map. Setting `Q = 1` refutes it without any simulation:
+norm conservation makes the true change identically zero while the formula returns a
+positive number. Direct Monte Carlo on the real gate confirmed it, at 7/20 points
+passing and a worst ratio of `-0.116`.
+
+The fidelity-loss metric is exact to second order *by construction*, since
+`Q = 1 - |psi_0(T)><psi_0(T)|` makes `Q psi_0 = 0` kill the cross term identically,
+and it needs no second-order machinery at all: unitarity supplies
+`2 Re <psi_0|chi_2> = -||chi_1||**2` exactly, which is what collapses the expansion
+onto first-order data. It is also non-negative and is "the error the noise adds", so
+it is the only candidate that can legitimately be summed with the noiseless
+`max_leakage` and the scattering probabilities. The paper validates this same
+quantity against direct simulation in its Figs. 6–9.
+
+**Regime.** The weak-noise assumption is tighter than first assumed: the measured
+`sigma_nu(1 Hz, 200 MHz) = 718 kHz` against a 13.5 MHz drive is `0.053`, not the
+`0.01` this spec originally claimed. Predictions above ~0.1 are out of the
+perturbative regime and must be flagged rather than quoted.
 
 **Evaluation.** Only the projected components of `G` are needed, so the propagator
 is never formed. Writing `Q = sum_q |q><q|` over the 12 nonlogical basis states,
@@ -205,9 +235,10 @@ results/max_leakage_297/a3.0/filter/filter_NNNNNN.npz
 ```
 
 Each record holds, per point and per logical input, the binned kernel
-`K_b = sum_{f in bin b} ||Q G(f)||**2 df` on a fixed logarithmic frequency grid,
-plus the grid itself and the convergence-check residual. `eps_phase` for any PSD is
-then `2*pi**2 * sum_b S_dnu(f_b) K_b`.
+`K_b = int_bin [ ||G(f)||**2 - |<psi_0(T)|G(f)>|**2 + (f -> -f) ] df` on a fixed
+logarithmic grid, plus the grid itself and the convergence-check residual.
+`eps_phase` for any PSD is then `2*pi**2 * sum_b S_dnu(f_b) K_b`, and the
+PSD-linearity that makes one stored pass serve all four noise models is unchanged.
 
 Scope: the `filter` fast path is 297-specific (one laser, one phase generator).
 420/1013 are covered by the general Monte Carlo path through `phase_noise.py`.
@@ -251,7 +282,7 @@ never touches ARC.
 
 | stage | estimate |
 |---|---|
-| `filter` pass, full 13x13 grid | ~5x the existing per-point cost (12 backward adjoint + 3 forward columns vs 3) -> ~6 h at 20 workers, **once** |
+| `filter` pass, full 13x13 grid | 16 backward adjoint + 3 forward columns vs the coherent pass's 3. Measured at ~2.5-3x the coherent solve plus a flat ~2.3 s/point of quadrature: ~50 min at 40 workers with `--batch-size 15`, **once** |
 | all four noise models from the stored kernels | seconds |
 | Monte Carlo validation, 20 points x 200 shots | ~1 h |
 
