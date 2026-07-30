@@ -401,7 +401,9 @@ def test_adjoint_leg_reproduces_the_forward_propagator():
     """<phi_q(t)|psi_s(t)> must equal <q|U(T,0)|s>, independent of t.
 
     The backward-integrated adjoints are the only new solver leg; this pins them
-    against the existing, already-validated forward kernel.
+    against the existing, already-validated forward kernel.  ``q`` now runs over the
+    complete basis, not the 12 nonlogical states: the fidelity-loss metric projects
+    with Q = 1 - |psi_0(T)><psi_0(T)|, so ||G||^2 needs every component.
     """
     cfg = mls297.ScanConfig()
     ops = mls297.aggregate_operators(mls297.build_system(cfg, 53), 53)
@@ -414,12 +416,42 @@ def test_adjoint_leg_reproduces_the_forward_propagator():
         ops, t_gate, np.array([omega]), np.array([dsw]),
         rtol=1e-10, atol=1e-13, ramp=cfg.ramp_frac, n_t=257, with_overlaps=True)
 
-    nonlogical = np.setdiff1d(np.arange(16), ops.logical_indices)
+    assert out["components"].shape == (1, 4, 257, 16)
     for si in range(4):
-        target = fwd.psi_final[0, si][nonlogical]
+        target = fwd.psi_final[0, si]           # all 16 components
         # overlaps <phi_q(t)|psi_s(t)> are t-independent and equal <q|psi_s(T)>
-        got = out["overlaps"][0, si]            # (n_t, 12)
+        got = out["overlaps"][0, si]            # (n_t, 16)
         assert np.allclose(got, target[None, :], atol=1e-8)
+
+
+def test_kernel_projection_is_the_rydberg_population_of_the_noiseless_run():
+    """``<psi_0(T)|A(t)> = <psi_0(t)|N_r|psi_0(t)>``, the term the kernel subtracts.
+
+    The projection is contracted out of the adjoint components so that
+    Cauchy-Schwarz survives in floating point, but it also has a closed form on the
+    forward leg alone — real, non-negative, and needing no backward solve.  Checking
+    the two against each other pins the enlarged backward leg *and* the contraction.
+    """
+    cfg = mls297.ScanConfig()
+    ops = mls297.aggregate_operators(mls297.build_system(cfg, 53), 53)
+    t_gate, omega, dsw = 1e-6, 2 * np.pi * 13.5e6, 2 * np.pi * 15e6
+    n_t = 257
+
+    out = mls297.integrate_adjoint_batch(
+        ops, t_gate, np.array([omega]), np.array([dsw]),
+        rtol=1e-10, atol=1e-13, ramp=cfg.ramp_frac, n_t=n_t)
+    fwd = mls297.integrate_batch(
+        ops, t_gate, np.array([omega]), np.array([dsw]), rtol=1e-10, atol=1e-13,
+        use_swap=False, t_eval=out["times"])
+
+    n_r = mls297._rydberg_number_diag(16)
+    expected = np.einsum("tpsi,i,tpsi->pst", fwd.states.conj(), n_r,
+                         fwd.states).real
+    got = out["projection"]
+    assert got.shape == (1, 4, n_t)
+    assert expected.max() > 0.1                              # not trivially zero
+    assert np.allclose(got, expected, atol=1e-8)
+    assert np.max(np.abs(got.imag)) < 1e-8                   # real, as the identity says
 
 
 def test_filter_kernel_is_converged_at_the_production_sampling():
@@ -449,6 +481,24 @@ def test_filter_kernel_is_converged_at_the_production_sampling():
         # N_r psi_00 = 0 and its kernel vanishes identically at any sampling.
         assert eps1[0] == eps2[0] == 0.0
         assert max(abs(a - b) / b for a, b in zip(eps1[1:], eps2[1:])) < 0.01
+
+
+def test_kernel_fine_grid_resolves_the_fringes_over_the_whole_t_axis():
+    """The evaluation grid must give ``f_max ln10 / p <= 1/T`` at every panel column.
+
+    ``tests/test_phase_noise.py`` shows what happens when it does not; this pins that
+    the rule actually covers the locked T axis, and that it never drops below the
+    library floor at the short end.
+    """
+    cfg = mls297.ScanConfig()
+    for t_us in cfg.t_gate_us:
+        t_gate = t_us * 1e-6
+        p = mls297.kernel_fine_per_decade(t_gate)
+        assert p >= mls297.KERNEL_FINE_MIN
+        spacing = mls297.KERNEL_F_MAX_HZ * np.log(10.0) / p
+        assert spacing <= 1.0 / t_gate
+    assert mls297.kernel_fine_per_decade(1e-6) == 461
+    assert mls297.kernel_fine_per_decade(4.5e-6) == 2073
 
 
 def test_rydberg_number_counts_both_297_legs():
@@ -575,10 +625,9 @@ def test_adjoint_integral_is_the_gates_first_order_response_to_a_detuning():
     ``f = 0`` that is the gate's exact linear response to a static frequency offset
     -- which a central difference of two solved trajectories measures directly, with
     no statistics.  This is the deterministic half of the Monte Carlo check: it pins
-    ``G`` itself, separately from ``<Delta L> = 2 pi^2 int S ||Q G||^2 df``, whose
-    second-order expansion of the leakage additionally drops ``2 Re <Q psi_0|Q
-    chi_2>`` -- a term of the same order in the noise that is *not* negligible when
-    the noiseless gate already leaks (see ``reports/phase_noise_mc.json``).
+    ``G`` itself, separately from the error formula built on it -- and it is what
+    established, when the first version of that formula failed at 13 of 20 points,
+    that the defect was the metric and not the kernel.
     """
     import sweeplib
 
@@ -591,7 +640,7 @@ def test_adjoint_integral_is_the_gates_first_order_response_to_a_detuning():
         rtol=1e-11, atol=1e-14, ramp=cfg.ramp_frac, n_t=mls297.KERNEL_N_T)
     weights = np.gradient(out["times"])
     weights[[0, -1]] *= 0.5
-    g0 = np.einsum("t,stq->sq", weights, out["components"][0])     # (4, 12)
+    g0 = np.einsum("t,stq->sq", weights, out["components"][0])     # (4, 16)
 
     class _Static:
         """A trace whose dnu(t) is the constant ``delta``."""
@@ -603,7 +652,6 @@ def test_adjoint_integral_is_the_gates_first_order_response_to_a_detuning():
             return self.delta
 
     delta = 1.0
-    nonlogical = np.setdiff1d(np.arange(16), ops.logical_indices)
 
     def terminal(d):
         return sweeplib.integrate_batch(
@@ -613,25 +661,24 @@ def test_adjoint_integral_is_the_gates_first_order_response_to_a_detuning():
                 _Static(d), mls297._rydberg_number_diag(16)),
             dim=16, rtol=1e-11, atol=1e-14, ramp=cfg.ramp_frac).psi_final[0]
 
-    measured = (terminal(delta) - terminal(-delta))[:, nonlogical] / (2 * delta)
+    measured = (terminal(delta) - terminal(-delta)) / (2 * delta)   # (4, 16)
     assert np.linalg.norm(g0[1]) > 0.0                             # not trivially zero
     assert np.max(np.abs(measured + 2j * np.pi * g0)) < 1e-4 * np.max(np.abs(g0))
 
 
-def test_filter_prediction_matches_monte_carlo_on_one_point():
-    """One n=53, T=1 us point, 60 shots: the kernel prediction is inside 4 sigma.
+def test_monte_carlo_check_point_runs_end_to_end_on_one_point():
+    """Pipeline smoke test for ``check_point``: n=53, T=1 us, 60 shots.
 
-    The kernel is validated against theory on a two-level pulse in
-    tests/test_phase_noise.py; this is the same claim against direct simulation of
-    the real two-atom gate, with the noise back on the Hamiltonian.  |00> is
-    excluded: |0> carries no 297 leg, so N_r psi_00 = 0 and both legs are exactly
-    zero.  The full 20-point campaign is scripts/phase_noise_mc_check.py itself.
+    Deliberately *not* an agreement test.  60 shots put four sigma at tens of percent
+    of the prediction, so an assertion on ``passed`` would hold whether the error
+    formula were right or wrong — which is exactly how the first version of that
+    formula survived a test of this shape.  The agreement claim lives in the 20-point
+    campaign (``reports/phase_noise_mc.json``, 200 shots); what this pins is that the
+    two legs run, agree on shape, and produce finite non-negative numbers.
 
-    30 pairs is a wide band (~4 sigma = 50% of the prediction here), and it is meant
-    to be: the campaign found a *systematic* offset between the two legs that this
-    point happens to carry at the 10-15% level while other points carry it at
-    several hundred percent.  What this pins is the pipeline, not the size of that
-    offset; ``reports/phase_noise_mc.json`` carries the latter.
+    ``|00>`` is the one exact statement available here: ``|0>`` carries no 297 leg,
+    so ``N_r psi_00 = 0``, ``A(t)`` vanishes and the kernel is identically zero
+    (the Monte Carlo leg only to solver tolerance, both runs stepping differently).
     """
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor
@@ -647,13 +694,13 @@ def test_filter_prediction_matches_monte_carlo_on_one_point():
         rec = mc_check.check_point(ops, cfg, key, psd, shots=60, seed=1,
                                    rtol=1e-9, atol=1e-12, pool=pool)
 
-    assert rec["filter_prediction"][0] == 0.0 and rec["mc_mean"][0] == 0.0
+    assert rec["n_shots"] == 60 and rec["point_id"] == key.id()
+    assert rec["filter_prediction"][0] == 0.0 and abs(rec["mc_mean"][0]) < 1e-9
     for i in (1, 2, 3):
-        pred = rec["filter_prediction"][i]
-        assert pred > 0.0
-        assert abs(rec["mc_mean"][i] - pred) <= max(
-            mc_check.SIGMA_TOL * rec["mc_stderr"][i], mc_check.REL_TOL * pred)
-    assert rec["passed"] and rec["n_pairs"] == 30
+        assert rec["filter_prediction"][i] > 0.0
+        assert np.isfinite(rec["mc_mean"][i]) and rec["mc_mean"][i] > 0.0
+        assert np.isfinite(rec["mc_stderr"][i]) and rec["mc_stderr"][i] > 0.0
+    assert isinstance(rec["passed"], bool)
 
 
 # ── real rb87_297_clock_4 model (ARC required) ───────────────────────────────

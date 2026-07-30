@@ -267,14 +267,27 @@ def phase_trace(psd: PhaseNoisePSD, t_gate: float, *, seed: int,
 
 
 def filter_kernel(times, components, f_bins, df_bins, *,
-                  fine_per_decade: int = 200) -> np.ndarray:
+                  fine_per_decade: int = 200, subtract=None) -> np.ndarray:
     """Bin-integrated response ``K_b`` of a gate to frequency noise.
 
     ``components`` is the ``(n_t, n_comp)`` array of ``<q|A(t)>`` with
-    ``A(t) = U(T,t) N_r psi(t)``; ``<Delta L> = 2 pi**2 sum_b S_dnu(f_b) K_b`` with
+    ``A(t) = U(T,t) N_r psi_0(t)``; ``eps = 2 pi**2 sum_b S_dnu(f_b) K_b`` with
 
-        K_b = int_bin ( ||G(f)||**2 + ||G(-f)||**2 ) df ,
+        K_b = int_bin ( ||Q G(f)||**2 + ||Q G(-f)||**2 ) df ,
         G(f) = int_0^T A(t) exp(-2 pi i f t) dt .
+
+    ``subtract``, when given, is the ``(n_t,)`` array ``<psi_0(T)|A(t)>``, and its
+    ``|G|**2`` is removed from the total: with ``components`` spanning the *complete*
+    basis that makes ``Q = 1 - |psi_0(T)><psi_0(T)|`` and ``eps`` the noise-induced
+    fidelity loss ``1 - |<psi_0(T)|psi(T)>|**2``.
+
+    That projector is the only one for which this expression is second-order exact.
+    A fixed ``Q`` that does not annihilate ``psi_0(T)`` leaves an uncancelled
+    ``2 Re <Q psi_0(T) | Q chi_2>`` of the *same* order in ``S_dnu``, since
+    ``<chi_1> = 0`` but ``<chi_2> != 0``; ``Q = 1`` makes that plain, norm
+    conservation forcing the true answer to zero while the unsubtracted sum stays
+    positive. With ``Q psi_0 = 0`` no second-order machinery is needed at all,
+    because unitarity supplies ``2 Re <psi_0|chi_2> = -||chi_1||**2`` exactly.
 
     ``K`` carries fringe structure on the ``1/T`` scale, far finer than the storage
     bins, so it is evaluated on a ``fine_per_decade`` grid and integrated into the
@@ -295,11 +308,20 @@ def filter_kernel(times, components, f_bins, df_bins, *,
     weights = np.gradient(times)
     weights[[0, -1]] *= 0.5
     weighted = comp * weights[:, None]
+    # The projection rides on the same weights and the same transform, so
+    # Cauchy-Schwarz survives in floating point and K_b cannot come out negative.
+    sub = (None if subtract is None
+           else np.asarray(subtract, dtype=np.complex128) * weights)
     kern = np.zeros(fine.size)
     # (n_fine, n_t) @ (n_t, n_comp) -> (n_fine, n_comp), one BLAS call per sign.
     for sign in (-1.0, +1.0):
-        g = np.exp(-2j * np.pi * sign * np.outer(fine, times)) @ weighted
-        kern += np.einsum("fc,fc->f", g.conj(), g).real
+        transform = np.exp(-2j * np.pi * sign * np.outer(fine, times))
+        g = transform @ weighted
+        contrib = np.einsum("fc,fc->f", g.conj(), g).real
+        if sub is not None:
+            g_sub = transform @ sub
+            contrib -= (g_sub.conj() * g_sub).real
+        kern += contrib
 
     idx = np.clip(np.searchsorted(edges, fine) - 1, 0, f_bins.size - 1)
     out = np.zeros(f_bins.size)
@@ -308,6 +330,6 @@ def filter_kernel(times, components, f_bins, df_bins, *,
 
 
 def error_from_kernel(psd: PhaseNoisePSD, f_bins, kernel) -> float:
-    """``<Delta L> = 2 pi**2 sum_b S_dnu(f_b) K_b`` (K_b already carries its df)."""
+    """``eps = 2 pi**2 sum_b S_dnu(f_b) K_b`` (K_b already carries its df)."""
     return float(2.0 * np.pi**2 * np.sum(psd.s_dnu(np.asarray(f_bins))
                                          * np.asarray(kernel)))

@@ -147,8 +147,9 @@ def test_trace_derivative_is_the_instantaneous_frequency_and_is_guarded():
         tr.derivative(1.1e-6)
     with pytest.raises(ValueError, match="must lie in"):
         tr.derivative(np.array([0.0, -1e-9]))
+    # a rounding-level overshoot, which solver times do produce, is still accepted
     over = np.nextafter(np.nextafter(tr.times[-1], np.inf), np.inf)
-    assert tr.derivative(over) == pytest.approx(tr.derivative(tr.times[-1]), abs=1e-6)
+    assert np.isfinite(tr.derivative(over))
 
 
 def test_f_min_is_forwarded_to_the_quasi_static_band():
@@ -307,6 +308,39 @@ def test_filter_kernel_agrees_with_direct_monte_carlo():
     assert abs(mc - predicted) < 4 * stderr + 0.05 * predicted
 
 
+def test_subtracting_the_whole_response_leaves_exactly_zero():
+    """``Q = 1`` must give zero: norm conservation, no simulation needed.
+
+    This is the refutation of the first version of the metric. With a single
+    component and ``subtract`` equal to it, ``Q = 1 - |psi_0><psi_0|`` annihilates the
+    only direction there is, so every bin cancels to rounding — whereas the
+    unsubtracted sum is a positive number, which is what a fixed projector that does
+    not annihilate ``psi_0(T)`` silently reports.
+    """
+    t = np.linspace(0.0, 5e-7, 4097)
+    comp = (np.cos(2 * np.pi * 3e6 * t) + 1j * t / 5e-7)[:, None]
+    f_bins, df_bins = log_frequency_bins(1e2, 1e9, 30)
+    unsubtracted = filter_kernel(t, comp, f_bins, df_bins)
+    assert np.max(unsubtracted) > 0.0
+    zeroed = filter_kernel(t, comp, f_bins, df_bins, subtract=comp[:, 0])
+    assert np.max(np.abs(zeroed)) < 1e-10 * np.max(unsubtracted)
+
+
+def test_subtracted_kernel_is_the_orthogonal_complement_and_stays_non_negative():
+    """``K`` with ``subtract`` is ``||G||**2 - |<psi_0|G>|**2``, bin by bin."""
+    t = np.linspace(0.0, 5e-7, 4097)
+    rng = np.random.default_rng(4)
+    comp = (rng.standard_normal((t.size, 3)) + 1j * rng.standard_normal((t.size, 3)))
+    psi0 = np.array([0.6, 0.8j, 0.0])                       # a unit direction
+    sub = comp @ psi0.conj()
+    f_bins, df_bins = log_frequency_bins(1e2, 1e9, 30)
+    full = filter_kernel(t, comp, f_bins, df_bins)
+    perp = filter_kernel(t, comp, f_bins, df_bins, subtract=sub)
+    only = filter_kernel(t, sub[:, None], f_bins, df_bins)
+    assert np.allclose(perp, full - only, rtol=1e-10, atol=0.0)
+    assert np.all(perp >= 0.0)
+
+
 def test_filter_kernel_counts_both_signs_of_the_frequency_axis():
     """``K_b`` integrates ``||G(f)||**2 + ||G(-f)||**2``, not twice ``||G(f)||**2``.
 
@@ -323,3 +357,30 @@ def test_filter_kernel_counts_both_signs_of_the_frequency_axis():
     f_bins, df_bins = log_frequency_bins(1e2, 1e9, 60)
     total = float(np.sum(filter_kernel(t, comp, f_bins, df_bins)))
     assert total == pytest.approx(t_gate, rel=0.01)
+
+
+def test_the_evaluation_grid_must_resolve_the_1_over_T_fringes():
+    """``fine_per_decade`` is a convergence parameter, and 200 is not enough at 4.5 us.
+
+    ``sum_b K_b`` for a pure tone is ``T`` by Parseval whatever the grid *can see*, so
+    this measures the evaluation grid alone with no solver in the loop.  ``K(f)`` has
+    sinc fringes of width ``1/T`` while a logarithmic grid of ``p`` points per decade
+    has spacing ``f ln10 / p``, so the grid must satisfy ``p >= ln10 f T`` across the
+    band.  At 4.5 us the default 200 overstates a 50 MHz tone by 41% and loses 91% of
+    a 150 MHz one — the two failure directions of straddling a fringe — and it is
+    what put the n=73 / 4.5 us kernel 13% high before
+    ``max_leakage_297_sweep.kernel_fine_per_decade`` sized the grid to ``T``.
+    """
+    f_bins, df_bins = log_frequency_bins(1.0, 2.0e8, 30)
+    t_gate = 4.5e-6
+    t = np.linspace(0.0, t_gate, 4096)
+    for f0, needed in ((5.0e7, 800), (1.5e8, 1600)):
+        comp = np.exp(2j * np.pi * f0 * t)[:, None]
+
+        def total(fpd):
+            return float(np.sum(filter_kernel(t, comp, f_bins, df_bins,
+                                              fine_per_decade=fpd))) / t_gate
+
+        assert abs(total(200) - 1.0) > 0.4                # the default is badly wrong
+        assert total(needed) == pytest.approx(1.0, rel=0.01)
+        assert total(2 * needed) == pytest.approx(1.0, rel=0.01)

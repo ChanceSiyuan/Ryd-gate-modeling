@@ -12,45 +12,42 @@ This script closes that gap the only way that does not reuse the kernel: it puts
 noise back on the Hamiltonian as ``H -> H_0 + 2 pi dnu(t) N_r`` (``N_r`` counting
 atoms in ``r`` and ``r_garb`` -- one laser drives both 297 legs) and integrates real
 ``phase_trace`` realizations through the same block-max DOP853 kernel the sweep
-uses.  The measured quantity is the ensemble-mean *increase* in terminal nonlogical
-leakage over the noise-free run, per logical input; the prediction is
-``error_from_kernel`` on a kernel computed here, point by point, by the same
-``filter_kernels`` the ``filter`` subcommand calls.  Nothing is read from the store
-and the only file written under it is ``reports/phase_noise_mc.json``.
+uses.  The measured quantity is the noise-induced fidelity loss against the
+noiseless final state, ``1 - |<psi_0^s(T)|psi^s(T)>|^2``, per logical input; the
+prediction is ``error_from_kernel`` on a kernel computed here, point by point, by
+the same ``filter_kernels`` the ``filter`` subcommand calls.  Nothing is read from
+the store and the only file written under it is ``reports/phase_noise_mc.json``.
+
+Its first campaign is why that metric is the fidelity loss.  The original
+``<Delta L> = 2 pi^2 int S ||Q G||^2 df`` over the fixed nonlogical projector passed
+7 of 20 points, worst ratio ``-0.116``; the kernel object was exact (its ``G(0)``
+reproduces the gate's measured static-detuning response to seven digits) but the
+metric dropped ``2 Re <Q psi_0 | Q chi_2>``, the same order in the noise whenever
+the noiseless gate already leaks.  ``Q = 1 - |psi_0(T)><psi_0(T)|`` annihilates
+``psi_0`` and kills that term identically.  See the design doc's "Why not the
+leakage increase".
 
 Estimator
 ---------
-Realizations are drawn in antithetic ``+/- dnu`` pairs and each *pair mean* is one
-sample.  ``L(dnu) = L_0 + L_1[dnu] + L_2[dnu, dnu] + ...``, so a pair mean cancels
-every odd order exactly and leaves ``L_0 + L_2 + O(dnu^4)``: the same expectation as
-plain sampling (``<L_1> = 0`` already), with the term that dominates the *variance*
-removed.  The first-order term fluctuates by ``~2 sqrt(L_0 <Delta L>)`` per shot, so
-on a point whose coherent leakage exceeds its noise increase it would swamp the
-signal and leave an acceptance band wide enough to accept anything.  The pair mean
-over ``shots/2`` pairs is exactly the plain mean over all ``shots`` solves; only the
-standard error differs, and the pairs are mutually independent, so it is the honest
-one for this design.
+Plain sampling: ``shots`` independent realizations, mean and standard error over
+them.  Unlike the leakage increase, this metric has **no first-order term at all** --
+``<psi_0(T)|chi_1> = -i int <psi_0(t)|V(t)|psi_0(t)> dt`` is purely imaginary because
+``V`` is Hermitian, so the real part that would enter at first order vanishes for
+*every* realization, not merely in the mean.  Antithetic ``+/-`` pairs therefore buy
+nothing here -- they would only cancel the O(dnu^3) term, ~``||chi_1||`` of the
+signal -- while halving the number of independent samples, so they are not used.
+Every sample is non-negative by construction.
 
 Acceptance, per point and per logical input with a nonzero prediction: the Monte
 Carlo mean is within four Monte Carlo standard errors *or* 10% of the prediction,
 whichever is looser.  ``|00>`` is excluded throughout -- ``|0>`` is a dark spectator
-carrying no 297 leg, so ``N_r psi_00 = 0``, the kernel is identically zero and there
-is nothing to compare.
+carrying no 297 leg, so ``N_r psi_00 = 0``, ``A(t)`` vanishes and the kernel is
+identically zero.
 
-What the first campaign found
------------------------------
-The kernel's ``G`` is exact -- its ``f = 0`` value reproduces the gate's measured
-first-order response to a static detuning to seven digits
-(``tests/test_max_leakage_297_sweep.py``).  The *error formula* built on it is not.
-``<Delta L> = 2 pi^2 int S ||Q G||^2 df`` keeps ``<||Q chi_1||^2>`` and drops the
-second-order term ``2 Re <Q psi_0 | Q chi_2>``, which vanishes only when the
-noiseless gate does not leak -- the setting of both literature checks, whose metric
-is infidelity against the *noiseless* final state.  Here ``L_0 != 0`` and the
-dropped term is the same order in the noise: against a deterministic single tone it
-cancels ~99% of the quasi-static response and moves the drive-scale response by a
-few percent.  So the ``mc / kernel`` ratio is independent of the noise amplitude
-(checked over four decades of ``--psd-scale``) and lands anywhere from -0.1 to 1.4,
-tracking how much of a point's prediction sits below ~1 MHz.
+Predictions above ``REGIME_MAX`` are flagged: they are outside the weak-noise regime
+the perturbative expansion assumes.  The measured ``sigma_nu(1 Hz, 200 MHz)`` of
+718 kHz against a 13.5 MHz drive is ``2 pi dnu / Omega = 0.053``, five times the 0.01
+the design originally assumed.
 
 Usage
 -----
@@ -66,6 +63,7 @@ for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
     os.environ.setdefault(_v, "1")
 
 import argparse
+import hashlib
 import json
 import multiprocessing as mp
 import sys
@@ -83,13 +81,24 @@ import laser_noise_psd as lnp  # noqa: E402
 import max_leakage_297_sweep as mls  # noqa: E402
 import sweeplib  # noqa: E402
 from ryd_gate.phase_noise import (  # noqa: E402
-    PhaseNoisePSD, PhaseTrace, error_from_kernel, phase_trace)
+    PhaseNoisePSD, error_from_kernel, phase_trace)
 
 # The traces must carry exactly the band the stored kernel integrates, or the two
 # legs are pricing different noise.
 TRACE_F_MIN_HZ = mls.KERNEL_F_MIN_HZ
 TRACE_F_MAX_HZ = mls.KERNEL_F_MAX_HZ
 TRACE_SAMPLES_PER_PERIOD = 80
+
+# ``phase_trace`` sums tones on a logarithmic grid, so the Monte Carlo ensemble mean
+# is a Riemann sum of ``S_dnu(f) W(f)`` on that grid where the kernel integrates it.
+# ``W`` carries sinc fringes of width ``1/T``, and the library default of 40 tones
+# per decade under-resolves them from ``f ~ 17/T`` upwards -- straddling the drive
+# scale for most of this grid.  Measured deterministically (grid sum vs the kernel's
+# integral) over the 20 checked points, 40 is off by up to 67% and tracks the Monte
+# Carlo's own error cell for cell, while 320 is converged: every in-regime cell is
+# within 0.5% of its 2560-tone limit.  This is a property of the *validator*, not of
+# the stored kernel.
+TRACE_POINTS_PER_DECADE = 320
 
 # Checked points, spread over the panel family rather than clustered: both ends of
 # the n axis, both ends of the T axis, and every node of the level-1 Omega and
@@ -121,12 +130,19 @@ MC_POINTS = (
 
 SIGMA_TOL = 4.0        # accept within four Monte Carlo standard errors ...
 REL_TOL = 0.10         # ... or 10% of the prediction, whichever is looser
+REGIME_MAX = 0.1       # above this the perturbative expansion is out of range
+
+
+def _script_sha256() -> str:
+    """Fingerprint of this file, recorded in the report so a record cannot drift."""
+    with open(os.path.abspath(__file__), "rb") as fh:
+        return hashlib.sha256(fh.read()).hexdigest()
 
 
 def trace_samples(t_gate: float) -> int:
     """Phase samples per trace: ~80 per period at ``TRACE_F_MAX_HZ``.
 
-    A cost knob, not an accuracy one.  The terminal leakage is already converged to
+    A cost knob, not an accuracy one.  The terminal state is already converged to
     ~1e-6 relative at 20 samples per period, but an under-resolved cubic spline
     hands DOP853 knot-scale structure that it then chases: over a 1 us gate, 4096
     samples cost 3.7x the function evaluations of 16384 for the same answer to eight
@@ -157,8 +173,9 @@ def _noisy_rhs_factory(trace, n_r_diag):
     return make
 
 
-def _leakage(ops, t_gate, omega_297, d_sweep, trace, ramp, rtol, atol) -> np.ndarray:
-    """(4,) terminal nonlogical population per logical input under one trace."""
+def _infidelity(ops, t_gate, omega_297, d_sweep, trace, ramp, rtol, atol,
+                psi_ref) -> np.ndarray:
+    """(4,) ``1 - |<psi_0(T)|psi(T)>|^2`` per logical input, under one trace."""
     dim = ops.h_static_diag.size
     labels = ("00", "01", "11") if ops.swap_symmetric else mls.LOGICAL_INPUTS
     res = sweeplib.integrate_batch(
@@ -167,31 +184,31 @@ def _leakage(ops, t_gate, omega_297, d_sweep, trace, ramp, rtol, atol) -> np.nda
         labels,
         rhs_factory=_noisy_rhs_factory(trace, mls._rydberg_number_diag(dim)),
         dim=dim, rtol=rtol, atol=atol, ramp=ramp)
-    return res.leakage[0]
+    overlap = np.einsum("si,si->s", psi_ref.conj(), res.psi_final[0])
+    return 1.0 - np.abs(overlap) ** 2
 
 
-def _pair(args) -> np.ndarray:
-    """One antithetic realization pair (pool entry): (2, 4) leakages, ``+`` then ``-``."""
-    ops, t_gate, omega_297, d_sweep, ramp, rtol, atol, psd, seed = args
-    tr = phase_trace(psd, t_gate, seed=seed, f_min=TRACE_F_MIN_HZ,
-                     f_max=TRACE_F_MAX_HZ, n_samples=trace_samples(t_gate))
-    anti = PhaseTrace(tr.times, -tr.values, -tr.dnu_0, tr.f_grid, tr.df_grid)
-    return np.stack([_leakage(ops, t_gate, omega_297, d_sweep, t, ramp, rtol, atol)
-                     for t in (tr, anti)])
+def _shot(args) -> np.ndarray:
+    """One noise realization (pool entry): the (4,) fidelity loss it causes."""
+    ops, t_gate, omega_297, d_sweep, ramp, rtol, atol, psd, psi_ref, seed = args
+    trace = phase_trace(psd, t_gate, seed=seed, f_min=TRACE_F_MIN_HZ,
+                        f_max=TRACE_F_MAX_HZ, n_samples=trace_samples(t_gate),
+                        points_per_decade=TRACE_POINTS_PER_DECADE)
+    return _infidelity(ops, t_gate, omega_297, d_sweep, trace, ramp, rtol, atol,
+                       psi_ref)
 
 
 def check_point(ops, cfg, key, psd, *, shots: int, seed: int,
                 rtol: float, atol: float, pool=None) -> dict:
     """Monte Carlo vs filter-kernel prediction for one grid point.
 
-    Returns the record written to ``reports/phase_noise_mc.json``: the noise-free
-    leakage, the antithetic-pair mean increase and its standard error, and the
-    kernel prediction, each a length-4 vector over the logical inputs 00/01/10/11.
+    Returns the record written to ``reports/phase_noise_mc.json``: the noiseless
+    leakage (context only), the mean noise-induced fidelity loss and its standard
+    error, and the kernel prediction, each a length-4 vector over the logical inputs
+    00/01/10/11.
     """
-    # Two pairs is the minimum that has a standard error at all; one would make the
-    # ddof=1 sample deviation NaN and quietly report an unfalsifiable point.
-    if shots < 4 or shots % 2:
-        raise ValueError(f"shots must be an even number >= 4; got {shots}")
+    if shots < 2:
+        raise ValueError(f"shots must be at least 2 for a standard error; got {shots}")
     t0 = time.time()
     t_gate = cfg.t_gate_us[key.t_idx] * 1e-6
     omega_297 = float(key.omega_mhz()) * 1e6 * mls.TAU
@@ -212,15 +229,13 @@ def check_point(ops, cfg, key, psd, *, shots: int, seed: int,
     prediction = np.asarray([error_from_kernel(psd, f_bins, kernels[s])
                              for s in range(4)])
 
-    n_pairs = shots // 2
     tasks = [(ops, t_gate, omega_297, d_sweep, cfg.ramp_frac, rtol, atol, psd,
-              seed + i) for i in range(n_pairs)]
+              base.psi_final[0], seed + i) for i in range(shots)]
     runner = map if pool is None else pool.map
-    pairs = np.stack(list(runner(_pair, tasks)))            # (n_pairs, 2, 4)
-    increase = pairs.mean(axis=1) - base.leakage[0]         # (n_pairs, 4)
+    eps = np.stack(list(runner(_shot, tasks)))              # (shots, 4)
 
-    mc_mean = increase.mean(axis=0)
-    mc_stderr = increase.std(axis=0, ddof=1) / np.sqrt(n_pairs)
+    mc_mean = eps.mean(axis=0)
+    mc_stderr = eps.std(axis=0, ddof=1) / np.sqrt(shots)
     tested = prediction > 0.0
     passed = bool(np.all(np.abs(mc_mean - prediction)[tested]
                          <= np.maximum(SIGMA_TOL * mc_stderr,
@@ -237,7 +252,8 @@ def check_point(ops, cfg, key, psd, *, shots: int, seed: int,
         "mc_stderr": mc_stderr.tolist(),
         "filter_prediction": prediction.tolist(),
         "passed": passed,
-        "n_pairs": n_pairs,
+        "out_of_regime": bool(np.any(prediction > REGIME_MAX)),
+        "n_shots": int(shots),
         "trace_samples": trace_samples(t_gate),
         "runtime_s": time.time() - t0,
     }
@@ -251,22 +267,25 @@ def _format(rec: dict) -> str:
         if pred <= 0.0:
             continue
         parts.append(f"{s}: mc {rec['mc_mean'][i]:.3e}+-{rec['mc_stderr'][i]:.1e} "
-                     f"kern {pred:.3e} r={rec['mc_mean'][i] / pred:5.2f}")
+                     f"kern {pred:.3e} r={rec['mc_mean'][i] / pred:5.2f}"
+                     f"{'!' if pred > REGIME_MAX else ' '}")
     return (f"{rec['point_id']:<22s} n={rec['ryd_n']:<3d} T={rec['t_gate_us']:.1f}us "
             f"Om={rec['omega297_mhz']:<5.1f} D={rec['dsweep_mhz']:<4.1f} | "
-            + "  ".join(parts) + f"  {'PASS' if rec['passed'] else 'FAIL'}")
+            + "  ".join(parts) + f" {'PASS' if rec['passed'] else 'FAIL'}")
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="phase_noise_mc_check",
                                 description=__doc__.split("\n\n")[0])
-    p.add_argument("--output", default=mls._default_output(3.0),
+    p.add_argument("--output", default=None,
                    help="scan store whose reports/ receives phase_noise_mc.json "
-                        "(nothing else under it is read or written)")
+                        "(nothing else under it is read or written); defaults to "
+                        f"{mls._default_output(3.0)}, which a partial or rescaled "
+                        "run must not claim -- such a run has to name its own")
     p.add_argument("--n-points", type=int, default=len(MC_POINTS),
                    help=f"how many of the {len(MC_POINTS)} checked points to run")
     p.add_argument("--shots", type=int, default=200,
-                   help="realizations per point; halved into antithetic pairs")
+                   help="independent noise realizations per point")
     p.add_argument("--laser", default="ECDL", choices=sorted(lnp.AXES))
     p.add_argument("--extrapolation", default="flat", choices=["flat", "power"],
                    help="S_dnu above the 1 MHz measurement edge")
@@ -283,17 +302,60 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _resolve_output(args) -> str:
+    """The store to write into, refusing to let a probe clobber the deliverable."""
+    if args.output is not None:
+        return args.output
+    if args.n_points < len(MC_POINTS) or args.psd_scale != 1.0:
+        raise SystemExit(
+            f"refusing the default store: --n-points {args.n_points} of "
+            f"{len(MC_POINTS)} / --psd-scale {args.psd_scale:g} is a diagnostic run, "
+            "and its record would replace the full unit-scale deliverable.  Pass "
+            "--output <dir> to say where it should go.")
+    return mls._default_output(3.0)
+
+
+def _load_psd(args) -> PhaseNoisePSD:
+    psd = lnp.load_psds(os.path.join(lnp.NOISE_DIR,
+                                     f"psd_{args.laser}.csv"))[args.extrapolation]
+    if args.psd_scale == 1.0:
+        return psd
+    # Rebuilding from the measured samples alone would silently drop an analytic
+    # white floor or servo bump.  load_psds sets neither; this is what says so.
+    if psd.white_h0 or psd.servo_bump is not None:
+        raise SystemExit("--psd-scale cannot rescale an analytic white/servo-bump "
+                         "term; scale the construction parameters instead")
+    return PhaseNoisePSD(psd.f_hz, psd.s_meas * args.psd_scale,
+                         harmonic=psd.harmonic, extrapolation=psd.extrapolation,
+                         power_law_fit_hz=psd.power_law_fit_hz)
+
+
+def _write_report(output: str, report: dict) -> str:
+    """Atomically place ``phase_noise_mc.json``, leaving no debris behind on a kill."""
+    reports_dir = os.path.join(output, "reports")
+    os.makedirs(reports_dir, exist_ok=True)
+    path = os.path.join(reports_dir, "phase_noise_mc.json")
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as fh:
+            json.dump(report, fh, indent=2)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    return path
+
+
 def main(argv=None) -> None:
     args = build_parser().parse_args(argv)
     if not 0 < args.n_points <= len(MC_POINTS):
         raise SystemExit(f"--n-points must be in 1..{len(MC_POINTS)}")
+    output = _resolve_output(args)
+    psd = _load_psd(args)
     specs = MC_POINTS[:args.n_points]
-    psd = lnp.load_psds(os.path.join(lnp.NOISE_DIR,
-                                     f"psd_{args.laser}.csv"))[args.extrapolation]
-    if args.psd_scale != 1.0:
-        psd = PhaseNoisePSD(psd.f_hz, psd.s_meas * args.psd_scale,
-                            harmonic=psd.harmonic, extrapolation=psd.extrapolation,
-                            power_law_fit_hz=psd.power_law_fit_hz)
 
     cfg = mls.ScanConfig()
     keys = [mls.make_key(*spec) for spec in specs]
@@ -319,6 +381,9 @@ def main(argv=None) -> None:
 
     report = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "script_sha256": _script_sha256(),
+        "metric": "1 - |<psi_0(T)|psi(T)>|^2, the noise-induced fidelity loss "
+                  "against the noiseless final state, per logical input",
         "laser": args.laser,
         "extrapolation": args.extrapolation,
         "psd_scale": args.psd_scale,
@@ -329,26 +394,21 @@ def main(argv=None) -> None:
         "atol": args.atol,
         "trace_f_min_hz": TRACE_F_MIN_HZ,
         "trace_f_max_hz": TRACE_F_MAX_HZ,
-        "estimator": "mean over antithetic +/- trace pairs of the terminal "
-                     "nonlogical-leakage increase over the noise-free run",
+        "estimator": "mean over independent realizations; this metric has no "
+                     "first-order term, so no antithetic pairing is used",
         "acceptance": f"|mc_mean - prediction| <= max({SIGMA_TOL:g} * mc_stderr, "
                       f"{REL_TOL:g} * prediction), over the logical inputs with a "
                       f"nonzero prediction",
+        "regime_max": REGIME_MAX,
         "n_points": len(records),
         "n_passed": sum(r["passed"] for r in records),
+        "n_out_of_regime": sum(r["out_of_regime"] for r in records),
         "wall_seconds": time.time() - t0,
         "points": records,
     }
-    reports_dir = os.path.join(args.output, "reports")
-    os.makedirs(reports_dir, exist_ok=True)
-    path = os.path.join(reports_dir, "phase_noise_mc.json")
-    with open(path + ".tmp", "w") as fh:
-        json.dump(report, fh, indent=2)
-        fh.write("\n")
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(path + ".tmp", path)
-    print(f"passed: {report['n_passed']}/{report['n_points']}\nwrote {path}")
+    path = _write_report(output, report)
+    print(f"passed: {report['n_passed']}/{report['n_points']}  "
+          f"(out of perturbative regime: {report['n_out_of_regime']})\nwrote {path}")
 
 
 if __name__ == "__main__":

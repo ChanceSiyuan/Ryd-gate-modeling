@@ -499,20 +499,47 @@ def integrate_batch(
 # ── Filter-function pass: adjoint states and the frequency kernel ────────────
 #
 # The phase noise enters exactly as H -> H_0 + 2 pi dnu(t) N_r (V = exp(+i phi N_r)
-# removes it from the drive), so first-order perturbation gives
-#     <Delta L> = 2 pi^2 int S_dnu(|f|) ||Q G(f)||^2 df,
+# removes it from the drive), so first-order perturbation gives the noise-induced
+# fidelity loss against the noiseless final state,
+#     eps = 1 - |<psi_0(T)|psi(T)>|^2
+#         = 2 pi^2 int S_dnu(|f|) [ ||G(f)||^2 - |<psi_0(T)|G(f)>|^2 ] df,
 #     G(f) = int_0^T <q|U(T,t) N_r psi_s(t)> e^{-2 pi i f t} dt.
-# Only the projected components are needed, so the propagator is never formed:
+# ||G||^2 runs over the COMPLETE basis, so the backward leg propagates all 16 basis
+# states, not only the 12 nonlogical ones: the projector is Q = 1 - |psi_0><psi_0|,
+# the only one that annihilates psi_0(T) and hence the only one for which this
+# expression is second-order exact (see the design doc's "Why not the leakage
+# increase").  The propagator is still never formed:
 #     <q|A_s(t)> = <phi_q(t)| N_r |psi_s(t)>,   |phi_q(t)> = U(t,T)|q>.
 # phi_q and psi_s obey the same equation and N_r is diagonal, so the exp(-i D_i t)
 # factors cancel in the pointwise product and the sampled integrand carries only
 # drive-scale structure — which is what makes n_t = 4096 enough despite the GHz
 # pair interaction and the 6.8 GHz |0> hyperfine offset.
+#
+# The projection term costs nothing: <psi_s(T)|A_s(t)> = <psi_s(t)|N_r|psi_s(t)>,
+# the Rydberg population along the noiseless trajectory.  It is contracted out of
+# the same ``components`` array rather than computed from the forward leg alone, so
+# Cauchy-Schwarz holds in floating point and the stored K_b cannot go negative.
 
 KERNEL_F_MIN_HZ = 1.0
 KERNEL_F_MAX_HZ = 2.0e8
 KERNEL_BINS_PER_DECADE = 30
 KERNEL_N_T = 4096
+KERNEL_FINE_MIN = 200          # floor on filter_kernel's evaluation grid
+
+
+def kernel_fine_per_decade(t_gate: float) -> int:
+    """Evaluation points per decade for :func:`filter_kernel`, sized to ``t_gate``.
+
+    ``||Q G(f)||^2`` carries sinc fringes of width ``1/T``, and a logarithmic grid of
+    ``p`` points per decade has spacing ``f ln10 / p``, so resolving them across the
+    whole band needs ``p >= ln10 * f_max * T``.  This is not a formality: at
+    ``T = 4.5 us`` the library default of 200 misprices a pure tone at 50 MHz by +41%
+    and one at 150 MHz by -91% (Parseval, ``tests/test_phase_noise.py``), and on the
+    real gate it put the n=73 / 4.5 us corner 13% high.  The rule costs 2.3x the
+    default quadrature at 1 us and 10x at 4.5 us; the solve is untouched.
+    """
+    return max(KERNEL_FINE_MIN,
+               int(math.ceil(math.log(10.0) * KERNEL_F_MAX_HZ * float(t_gate))))
 
 
 def kernel_frequency_bins():
@@ -536,13 +563,16 @@ def _297_adjoint_rhs_factory(ops, cols, t_gate, ramp):
 def integrate_adjoint_batch(ops, t_gate, omega_297, d_sweep, *,
                             rtol, atol, ramp=0.15, n_t=KERNEL_N_T,
                             with_overlaps=False):
-    """Forward logical states + backward nonlogical adjoints, sampled together.
+    """Forward logical states + the backward adjoint of every basis state.
 
-    Returns ``{"times": (n_t,), "components": (n_points, 4, n_t, 12),
-    "nfev": int}`` where ``components`` are ``<phi_q(t)|N_r|psi_s(t)>``.
-    ``with_overlaps`` adds ``"overlaps"`` of the same shape, the conserved
-    ``<phi_q(t)|psi_s(t)>`` used as the correctness check — it costs a second
-    einsum and array of the size of ``components``, so production leaves it off.
+    Returns ``{"times": (n_t,), "components": (n_points, 4, n_t, dim),
+    "projection": (n_points, 4, n_t), "nfev": int}`` where ``components`` are
+    ``<phi_q(t)|N_r|psi_s(t)>`` over the complete basis and ``projection`` is
+    ``<psi_s(T)|A_s(t)>``, the piece :func:`ryd_gate.phase_noise.filter_kernel`
+    subtracts.  ``with_overlaps`` adds ``"overlaps"`` of the shape of
+    ``components``, the conserved ``<phi_q(t)|psi_s(t)>`` used as the correctness
+    check — it costs a second einsum and array that size, so production leaves it
+    off.
     """
     omega_297 = np.asarray(omega_297, dtype=float)
     d_sweep = np.asarray(d_sweep, dtype=float)
@@ -554,13 +584,13 @@ def integrate_adjoint_batch(ops, t_gate, omega_297, d_sweep, *,
         LOGICAL_INPUTS, rhs_factory=_297_rhs_factory, dim=dim,
         rtol=rtol, atol=atol, ramp=ramp, t_eval=times)
 
-    nonlogical = np.setdiff1d(np.arange(dim), ops.logical_indices)
+    basis = np.arange(dim)
     adj = sweeplib.integrate_batch(
         ops, t_gate, {"omega_297": omega_297, "d_sweep": d_sweep},
-        tuple(str(i) for i in nonlogical),
+        tuple(str(i) for i in basis),
         rhs_factory=_297_adjoint_rhs_factory, dim=dim,
         rtol=rtol, atol=atol, ramp=ramp, t_eval=times,
-        initial_indices=nonlogical, reverse_time=True)
+        initial_indices=basis, reverse_time=True)
 
     # The tau -> t flip below is only the array reversal because ``times`` is a
     # symmetric linspace and both legs were sampled on exactly it; a segmented
@@ -570,11 +600,13 @@ def integrate_adjoint_batch(ops, t_gate, omega_297, d_sweep, *,
                            "the tau = T - t reversal would misalign the two legs")
 
     # adj sampled in tau = T - t; flip back onto the forward time axis
-    phi = adj.states[::-1]                       # (n_t, n_points, 12, dim)
+    phi = adj.states[::-1]                       # (n_t, n_points, dim, dim)
     psi = fwd.states                             # (n_t, n_points, 4, dim)
     n_r = _rydberg_number_diag(dim)
+    components = np.einsum("tpqi,i,tpsi->pstq", phi.conj(), n_r, psi)
     out = {"times": times,
-           "components": np.einsum("tpqi,i,tpsi->pstq", phi.conj(), n_r, psi),
+           "components": components,
+           "projection": np.einsum("psq,pstq->pst", fwd.psi_final.conj(), components),
            "nfev": fwd.nfev + adj.nfev}
     if with_overlaps:
         out["overlaps"] = np.einsum("tpqi,tpsi->pstq", phi.conj(), psi)
@@ -603,11 +635,13 @@ def filter_kernels(ops, t_gate, omega_297, d_sweep, *,
     out = integrate_adjoint_batch(ops, t_gate, omega_297, d_sweep,
                                   rtol=rtol, atol=atol, ramp=ramp, n_t=n_t)
     f_bins, df_bins = kernel_frequency_bins()
-    comp = out["components"]
+    comp, proj = out["components"], out["projection"]
+    fine = kernel_fine_per_decade(t_gate)
     kernels = np.empty((comp.shape[0], 4, f_bins.size))
     for p in range(comp.shape[0]):
         for s in range(4):
-            kernels[p, s] = filter_kernel(out["times"], comp[p, s], f_bins, df_bins)
+            kernels[p, s] = filter_kernel(out["times"], comp[p, s], f_bins, df_bins,
+                                          subtract=proj[p, s], fine_per_decade=fine)
     return kernels
 
 
