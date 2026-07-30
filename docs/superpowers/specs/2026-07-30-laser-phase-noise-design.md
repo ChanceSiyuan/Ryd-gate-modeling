@@ -125,9 +125,11 @@ regime (`2*pi*dnu / Omega ~ 0.01` here).
 **Evaluation.** The two-atom model is 16-dimensional, so one batched solve of the
 full `16 x 16` propagator `U(t)` with `t_eval` on a uniform grid yields everything:
 `A(t_k) = U(T) U(t_k)^dag N_r psi_0(t_k)`. `G` is then evaluated by direct
-quadrature on a **logarithmic** frequency grid (~60 points per decade over
-`[f_min, f_max]`), not by FFT — the FFT grid spacing `1/T ~ 1 MHz` cannot represent
-the low-frequency band at all, and the direct sum is a trivial matmul.
+quadrature on a **logarithmic** frequency grid — 60 points per decade over
+`[f_min, f_max]` with `f_min = 1 Hz` and `f_max = 4 * Omega/2pi` as above, denser
+than the trace grid because it is stored once and reused — not by FFT: the FFT grid
+spacing `1/T ~ 1 MHz` cannot represent the low-frequency band at all, and the direct
+sum is a trivial matmul.
 
 The sampled integrand carries no GHz content even though the Rydberg pair
 interaction is GHz-scale at high `n`: `A(t)` enters only through products
