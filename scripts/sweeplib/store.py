@@ -476,6 +476,12 @@ class Store:
         """
         n = len(keys)
         statuses = list(statuses) if statuses is not None else ["ok"] * n
+        f_bins = np.asarray(f_bins, dtype=float)
+        kernels = np.asarray(kernels, dtype=float)
+        if kernels.shape != (n, 4, f_bins.size):
+            raise ValueError(
+                f"kernels must have shape ({n}, 4, {f_bins.size}) for {n} keys on "
+                f"this frequency grid; got {kernels.shape}")
         payload = dict(
             schema_version=np.int64(self.provenance.schema_version),
             scan_uuid=str(manifest["scan_uuid"]),
@@ -484,8 +490,8 @@ class Store:
             pulse_hash=str(manifest["pulse_hash"]),
             **self.keys_to_arrays(keys),
             **self.provenance.descriptor(cfg, keys),
-            kernel=np.asarray(kernels, dtype=float).reshape(n, 4, -1),
-            f_bins=np.asarray(f_bins, dtype=float),
+            kernel=kernels,
+            f_bins=f_bins,
             n_t=np.full(n, n_t, dtype=np.int32),
             rtol=np.full(n, rtol),
             atol=np.full(n, atol),
@@ -500,12 +506,19 @@ class Store:
         return path
 
     def load_filter_records(self, manifest: dict | None = None) -> list[dict]:
-        """Per-point filter kernels from every filter chunk (hash-validated)."""
+        """Per-point filter kernels from every filter chunk (hash-validated).
+
+        The frequency grid is global to the store: kernels binned on different
+        grids are not comparable and cannot be summed against one PSD, and none of
+        the three provenance hashes covers the binning constants, so the grid is
+        checked directly here.
+        """
         if manifest is None:
             manifest = self.load_manifest()
         rows: list[dict] = []
         if not os.path.isdir(self.filter_dir):
             return rows
+        f_bins = None
         for name in sorted(os.listdir(self.filter_dir)):
             if not (name.startswith("filter_") and name.endswith(".npz")):
                 continue
@@ -518,6 +531,13 @@ class Store:
                         raise RuntimeError(
                             f"filter chunk {name} has a different {fieldname}; "
                             "refusing to merge data from different model/pulse code")
+            if f_bins is None:
+                f_bins = np.array(d["f_bins"])
+            elif not np.array_equal(d["f_bins"], f_bins):
+                raise RuntimeError(
+                    f"filter chunk {name} is binned on a different frequency grid "
+                    "than the earlier chunks; refusing to merge kernels that cannot "
+                    "be weighted by one PSD")
             for i, key in enumerate(self.arrays_to_keys(d)):
                 rows.append({
                     "key": key,

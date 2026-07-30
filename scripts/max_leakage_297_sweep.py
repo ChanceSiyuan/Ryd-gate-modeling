@@ -534,13 +534,15 @@ def _297_adjoint_rhs_factory(ops, cols, t_gate, ramp):
 
 
 def integrate_adjoint_batch(ops, t_gate, omega_297, d_sweep, *,
-                            rtol, atol, ramp=0.15, n_t=KERNEL_N_T):
+                            rtol, atol, ramp=0.15, n_t=KERNEL_N_T,
+                            with_overlaps=False):
     """Forward logical states + backward nonlogical adjoints, sampled together.
 
     Returns ``{"times": (n_t,), "components": (n_points, 4, n_t, 12),
-    "overlaps": (n_points, 4, n_t, 12), "nfev": int}`` where ``components`` are
-    ``<phi_q(t)|N_r|psi_s(t)>`` and ``overlaps`` are ``<phi_q(t)|psi_s(t)>`` (a
-    conserved quantity, used as the correctness check).
+    "nfev": int}`` where ``components`` are ``<phi_q(t)|N_r|psi_s(t)>``.
+    ``with_overlaps`` adds ``"overlaps"`` of the same shape, the conserved
+    ``<phi_q(t)|psi_s(t)>`` used as the correctness check — it costs a second
+    einsum and array of the size of ``components``, so production leaves it off.
     """
     omega_297 = np.asarray(omega_297, dtype=float)
     d_sweep = np.asarray(d_sweep, dtype=float)
@@ -560,22 +562,34 @@ def integrate_adjoint_batch(ops, t_gate, omega_297, d_sweep, *,
         rtol=rtol, atol=atol, ramp=ramp, t_eval=times,
         initial_indices=nonlogical, reverse_time=True)
 
+    # The tau -> t flip below is only the array reversal because ``times`` is a
+    # symmetric linspace and both legs were sampled on exactly it; a segmented
+    # solve that returned anything else would silently misalign the two legs.
+    if not (np.array_equal(fwd.times, times) and np.array_equal(adj.times, times)):
+        raise RuntimeError("integrate_batch did not sample the requested t_eval grid; "
+                           "the tau = T - t reversal would misalign the two legs")
+
     # adj sampled in tau = T - t; flip back onto the forward time axis
     phi = adj.states[::-1]                       # (n_t, n_points, 12, dim)
     psi = fwd.states                             # (n_t, n_points, 4, dim)
     n_r = _rydberg_number_diag(dim)
-    comp = np.einsum("tpqi,i,tpsi->pstq", phi.conj(), n_r, psi)
-    over = np.einsum("tpqi,tpsi->pstq", phi.conj(), psi)
-    return {"times": times, "components": comp, "overlaps": over,
-            "nfev": fwd.nfev + adj.nfev}
+    out = {"times": times,
+           "components": np.einsum("tpqi,i,tpsi->pstq", phi.conj(), n_r, psi),
+           "nfev": fwd.nfev + adj.nfev}
+    if with_overlaps:
+        out["overlaps"] = np.einsum("tpqi,tpsi->pstq", phi.conj(), psi)
+    return out
 
 
-def _rydberg_number_diag(dim: int, local_dim: int = 4) -> np.ndarray:
+def _rydberg_number_diag(dim: int) -> np.ndarray:
     """Diagonal of N_r: atoms in the Rydberg manifold (levels r and r_garb).
 
     One laser drives both 297 legs, so the noise operator counts both — the sum of
-    the two scattering-channel weight vectors.
+    the two scattering-channel weight vectors, and the local dimension is derived
+    from ``dim`` exactly as :func:`scattering_integrals` derives it, so the two can
+    never disagree about what a Rydberg atom is.
     """
+    local_dim = int(round(math.sqrt(dim)))
     idx = np.arange(dim)
     a, b = np.divmod(idx, local_dim)
     return (np.isin(a, (2, 3)).astype(float) + np.isin(b, (2, 3)).astype(float))

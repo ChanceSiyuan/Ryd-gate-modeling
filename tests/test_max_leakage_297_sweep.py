@@ -404,7 +404,7 @@ def test_adjoint_leg_reproduces_the_forward_propagator():
         rtol=1e-10, atol=1e-13, use_swap=False)
     out = mls297.integrate_adjoint_batch(
         ops, t_gate, np.array([omega]), np.array([dsw]),
-        rtol=1e-10, atol=1e-13, ramp=cfg.ramp_frac, n_t=257)
+        rtol=1e-10, atol=1e-13, ramp=cfg.ramp_frac, n_t=257, with_overlaps=True)
 
     nonlogical = np.setdiff1d(np.arange(16), ops.logical_indices)
     for si in range(4):
@@ -415,18 +415,32 @@ def test_adjoint_leg_reproduces_the_forward_propagator():
 
 
 def test_filter_kernel_is_converged_at_the_production_sampling():
-    """Halving dt must not move the kernel by more than 1% in any populated bin."""
+    """Halving dt must not move eps by more than 1%, at both ends of the T axis.
+
+    Gate the quantity that is actually consumed — ``error_from_kernel`` under the
+    flat (white) extrapolation, the model that weights the high-frequency end most —
+    rather than ``K_b / K_max``: a per-bin mask is set by where the kernel peaks
+    (~20 MHz, the drive scale) and can hide the decade where the trapezoid transform
+    is marginal.  T = 4.5 us is the worst case on the grid: dt = 1.1 ns leaves only
+    4.5 samples per period at f_max = 200 MHz.
+    """
+    from ryd_gate.phase_noise import PhaseNoisePSD, error_from_kernel
+
     cfg = mls297.ScanConfig()
     ops = mls297.aggregate_operators(mls297.build_system(cfg, 53), 53)
+    psd = PhaseNoisePSD.white(1e4)
+    f_bins, _df = mls297.kernel_frequency_bins()
     args = dict(rtol=1e-9, atol=1e-12, ramp=cfg.ramp_frac)
-    k1 = mls297.filter_kernels(ops, 1e-6, np.array([2 * np.pi * 13.5e6]),
-                               np.array([2 * np.pi * 15e6]),
-                               n_t=mls297.KERNEL_N_T, **args)
-    k2 = mls297.filter_kernels(ops, 1e-6, np.array([2 * np.pi * 13.5e6]),
-                               np.array([2 * np.pi * 15e6]),
-                               n_t=2 * mls297.KERNEL_N_T, **args)
-    big = k2 > 1e-3 * k2.max()
-    assert np.max(np.abs(k1[big] - k2[big]) / k2[big]) < 0.01
+    for t_gate in (1e-6, 4.5e-6):
+        k1, k2 = (mls297.filter_kernels(ops, t_gate, np.array([2 * np.pi * 13.5e6]),
+                                        np.array([2 * np.pi * 15e6]), n_t=n, **args)
+                  for n in (mls297.KERNEL_N_T, 2 * mls297.KERNEL_N_T))
+        eps1, eps2 = ([error_from_kernel(psd, f_bins, k[0, s]) for s in range(4)]
+                      for k in (k1, k2))
+        # |00> never reaches the Rydberg manifold (|0> is a dark spectator), so
+        # N_r psi_00 = 0 and its kernel vanishes identically at any sampling.
+        assert eps1[0] == eps2[0] == 0.0
+        assert max(abs(a - b) / b for a, b in zip(eps1[1:], eps2[1:])) < 0.01
 
 
 def test_rydberg_number_counts_both_297_legs():
@@ -466,6 +480,32 @@ def test_filter_chunk_roundtrip_and_failure_rows(tmp_path):
     assert len(bad) == 1 and np.all(np.isnan(bad[0]["kernel"]))
     assert store.load_records(manifest) == []
     assert store.load_scatter_records(manifest) == []
+
+
+def test_filter_chunk_refuses_a_wrong_shape_and_a_mixed_frequency_grid(tmp_path):
+    """The (n, 4, n_bins) shape and the store-global frequency grid are enforced.
+
+    Neither is covered by the three provenance hashes, so a changed
+    KERNEL_BINS_PER_DECADE/KERNEL_F_* would otherwise leave a silently mixed store
+    whose rows cannot be summed against one PSD — and cmd_filter's resume set would
+    never recompute them.
+    """
+    store, manifest = _mini_store(tmp_path)
+    keys = mls297.panel_keys(0, 0, 0)[:2]
+    f_bins, _df = mls297.kernel_frequency_bins()
+    with pytest.raises(ValueError, match="kernels must have shape"):
+        store.write_filter_chunk(1, manifest, keys, _mini_cfg(), 1e-9, 1e-12,
+                                 mls297.KERNEL_N_T, "b", np.zeros((2, 4, 7)),
+                                 f_bins, 1.0)
+
+    store.write_filter_chunk(1, manifest, keys, _mini_cfg(), 1e-9, 1e-12,
+                             mls297.KERNEL_N_T, "b1",
+                             np.zeros((2, 4, f_bins.size)), f_bins, 1.0)
+    store.write_filter_chunk(2, manifest, keys, _mini_cfg(), 1e-9, 1e-12,
+                             mls297.KERNEL_N_T, "b2",
+                             np.zeros((2, 4, f_bins.size - 1)), f_bins[:-1], 1.0)
+    with pytest.raises(RuntimeError, match="different frequency grid"):
+        store.load_filter_records(manifest)
 
 
 def test_filter_subcommand_writes_a_resumable_series(tmp_path):
