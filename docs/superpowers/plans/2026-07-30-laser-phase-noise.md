@@ -804,6 +804,15 @@ def filter_kernels(ops, t_gate, omega_297, d_sweep, *,
     return kernels
 ```
 
+**CORRECTION (found during implementation, verified twice):** the backward leg also
+needs the **conjugate** phase restoration. `integrate_batch` solves each column with its
+bare diagonal energy subtracted and restores `exp(-i c t)`; running the same machinery in
+`tau = T - t` with a sign-flipped RHS gives `chi(tau) = exp(-i c tau) phi(T - tau)`, so the
+restoration is `exp(+i c tau)`. Implemented as a `reverse_time` flag on `integrate_batch`
+(forward path bit-identical). Without it the adjoint-overlap invariant misses by 2.5e-5
+instead of 2.4e-11. The `use_swap=False` kwarg in the sketch below is also wrong —
+`integrate_batch` has no such parameter; `initial_indices` is what bypasses the swap.
+
 `sweeplib.integrate_batch` currently derives its initial conditions from
 `ops.logical_indices`. Add an `initial_indices=None` keyword to
 `scripts/sweeplib/solver.py:206` that overrides them, used only by the adjoint leg:
