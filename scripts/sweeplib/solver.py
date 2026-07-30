@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as np
 import scipy.integrate
@@ -217,6 +217,8 @@ def integrate_batch(
     use_shifts: bool = True,
     segmented: bool = True,
     t_eval: np.ndarray | None = None,
+    initial_indices: Sequence[int] | None = None,
+    reverse_time: bool = False,
 ) -> BatchResult:
     """Propagate all logical inputs of the batch's panel points together.
 
@@ -227,6 +229,17 @@ def integrate_batch(
     ``state_labels`` — when it omits "10" that column is reconstructed by the
     atom-swap permutation.  Each column is solved with its bare logical diagonal
     energy subtracted (H - c_s I) and the exact global phase exp(-i c_s T) restored.
+
+    ``initial_indices`` overrides the initial basis state of each column (one index
+    per state label), bypassing the atom-swap reconstruction: the returned columns
+    are then exactly ``state_labels``, and the leakage/return_prob/worst_input
+    diagnostics are taken over those columns.  ``reverse_time`` marks a leg
+    integrated in tau = T - t, whose solved variable is chi(tau) = exp(-i c tau)
+    psi(T - tau) — the same shift subtraction, but the global phase is restored
+    with the conjugate factor.  Both exist for the backward adjoint leg of the
+    297 filter-function pass, which propagates the nonlogical basis states from T
+    back to 0; leaving the shift in place is what keeps that leg as cheap as the
+    forward one (its dominant component is the static one).
     """
     point_params = {k: np.asarray(v, dtype=float) for k, v in point_params.items()}
     shapes = {v.shape for v in point_params.values()}
@@ -242,7 +255,11 @@ def integrate_batch(
     col_of_point = np.repeat(np.arange(n_points), n_states)
     cols = {name: arr[col_of_point] for name, arr in point_params.items()}
 
-    logical_of_state = {s: ops.logical_indices[LOGICAL_INPUTS.index(s)] for s in state_labels}
+    logical_of_state = (
+        {s: int(i) for s, i in zip(state_labels, initial_indices)}
+        if initial_indices is not None
+        else {s: ops.logical_indices[LOGICAL_INPUTS.index(s)] for s in state_labels}
+    )
     col_logical_idx = np.asarray([logical_of_state[s] for s in state_labels] * n_points)
     shifts = ops.h_static_diag[col_logical_idx] if use_shifts else np.zeros(n_cols)
     cols["shift"] = shifts
@@ -266,9 +283,13 @@ def integrate_batch(
             raise RuntimeError("DOP853 failed (unsegmented)")
         y_fin, nfev, times, traj = solver.y, solver.nfev, None, None
 
+    phase = 1j if reverse_time else -1j
+
     def assemble(y_flat: np.ndarray, t_at: float) -> np.ndarray:
-        """(n_cols*dim,) chi at time ``t_at`` -> (n_points, 4, dim) restored psi."""
-        chi = y_flat.reshape(n_cols, dim) * np.exp(-1j * shifts * t_at)[:, None]
+        """(n_cols*dim,) chi at ``t_at`` -> (n_points, 4 | n_states, dim) restored psi."""
+        chi = y_flat.reshape(n_cols, dim) * np.exp(phase * shifts * t_at)[:, None]
+        if initial_indices is not None:   # columns are the given states, as given
+            return chi.reshape(n_points, n_states, dim)
         psi = np.empty((n_points, 4, dim), dtype=np.complex128)
         for p in range(n_points):
             for j, s in enumerate(LOGICAL_INPUTS):
@@ -284,9 +305,12 @@ def integrate_batch(
     pops = np.abs(psi_final) ** 2
     leakage = pops[:, :, nonlogical].sum(axis=2)
     max_leakage = leakage.max(axis=1)
-    worst_input = [LOGICAL_INPUTS[int(np.argmax(leakage[p]))] for p in range(n_points)]
+    out_labels = tuple(state_labels) if initial_indices is not None else LOGICAL_INPUTS
+    out_indices = ([logical_of_state[s] for s in out_labels]
+                   if initial_indices is not None else ops.logical_indices)
+    worst_input = [out_labels[int(np.argmax(leakage[p]))] for p in range(n_points)]
     return_prob = np.stack(
-        [pops[:, j, ops.logical_indices[j]] for j in range(4)], axis=1)
+        [pops[:, j, out_indices[j]] for j in range(len(out_labels))], axis=1)
     norm_err = np.abs(pops.sum(axis=2) - 1.0)
 
     states = None

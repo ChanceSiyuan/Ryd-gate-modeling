@@ -386,6 +386,109 @@ def test_cli_parser_covers_subcommands_and_locked_invocation():
             parser.parse_args(gone)
 
 
+# ── filter-function pass (real rb87_297_clock_4 model; ARC required) ─────────
+
+
+def test_adjoint_leg_reproduces_the_forward_propagator():
+    """<phi_q(t)|psi_s(t)> must equal <q|U(T,0)|s>, independent of t.
+
+    The backward-integrated adjoints are the only new solver leg; this pins them
+    against the existing, already-validated forward kernel.
+    """
+    cfg = mls297.ScanConfig()
+    ops = mls297.aggregate_operators(mls297.build_system(cfg, 53), 53)
+    t_gate, omega, dsw = 1e-6, 2 * np.pi * 13.5e6, 2 * np.pi * 15e6
+
+    fwd = mls297.integrate_batch(
+        ops, t_gate, np.array([omega]), np.array([dsw]),
+        rtol=1e-10, atol=1e-13, use_swap=False)
+    out = mls297.integrate_adjoint_batch(
+        ops, t_gate, np.array([omega]), np.array([dsw]),
+        rtol=1e-10, atol=1e-13, ramp=cfg.ramp_frac, n_t=257)
+
+    nonlogical = np.setdiff1d(np.arange(16), ops.logical_indices)
+    for si in range(4):
+        target = fwd.psi_final[0, si][nonlogical]
+        # overlaps <phi_q(t)|psi_s(t)> are t-independent and equal <q|psi_s(T)>
+        got = out["overlaps"][0, si]            # (n_t, 12)
+        assert np.allclose(got, target[None, :], atol=1e-8)
+
+
+def test_filter_kernel_is_converged_at_the_production_sampling():
+    """Halving dt must not move the kernel by more than 1% in any populated bin."""
+    cfg = mls297.ScanConfig()
+    ops = mls297.aggregate_operators(mls297.build_system(cfg, 53), 53)
+    args = dict(rtol=1e-9, atol=1e-12, ramp=cfg.ramp_frac)
+    k1 = mls297.filter_kernels(ops, 1e-6, np.array([2 * np.pi * 13.5e6]),
+                               np.array([2 * np.pi * 15e6]),
+                               n_t=mls297.KERNEL_N_T, **args)
+    k2 = mls297.filter_kernels(ops, 1e-6, np.array([2 * np.pi * 13.5e6]),
+                               np.array([2 * np.pi * 15e6]),
+                               n_t=2 * mls297.KERNEL_N_T, **args)
+    big = k2 > 1e-3 * k2.max()
+    assert np.max(np.abs(k1[big] - k2[big]) / k2[big]) < 0.01
+
+
+def test_rydberg_number_counts_both_297_legs():
+    """N_r counts atoms in r AND r_garb: one laser drives both 297 legs, so the
+    noise operator is exactly the sum of the two scattering-channel weights."""
+    n_r = mls297._rydberg_number_diag(16)
+    w = mls297._scatter_weight_vectors(4)
+    assert np.array_equal(n_r, w["p_ryd"] + w["p_r_garb"])
+    assert n_r[2 * 4 + 3] == 2.0        # |r, r_garb>: both atoms Rydberg
+    assert n_r[1 * 4 + 2] == 1.0        # |1, r>
+    assert n_r[0] == 0.0                # |0, 0>
+
+
+def test_filter_chunk_roundtrip_and_failure_rows(tmp_path):
+    """The filter series round-trips one (4, n_bins) kernel per point and records a
+    failed batch as NaN rows, without touching the coherent or scatter series."""
+    store, manifest = _mini_store(tmp_path)
+    keys = mls297.panel_keys(0, 0, 0)[:3]
+    f_bins, _df = mls297.kernel_frequency_bins()
+    kernels = np.arange(3 * 4 * f_bins.size, dtype=float).reshape(3, 4, f_bins.size)
+    store.write_filter_chunk(1, manifest, keys, _mini_cfg(), 1e-9, 1e-12,
+                             mls297.KERNEL_N_T, "b1", kernels, f_bins, 30.0)
+    store.write_filter_chunk(2, manifest, keys[:1], _mini_cfg(), 1e-9, 1e-12,
+                             mls297.KERNEL_N_T, "b2",
+                             np.full((1, 4, f_bins.size), np.nan), f_bins, 1.0,
+                             statuses=["timeout"], message="slow")
+
+    rows = store.load_filter_records(manifest)
+    assert len(rows) == 4
+    ok = [r for r in rows if r["status"] == "ok"]
+    assert [r["key"] for r in ok] == list(keys)
+    assert ok[0]["kernel"].shape == (4, f_bins.size)
+    assert np.array_equal(ok[0]["kernel"], kernels[0])
+    assert np.array_equal(ok[0]["f_bins"], f_bins)
+    assert ok[0]["runtime_s"] == 10.0 and ok[0]["rtol"] == 1e-9
+    bad = [r for r in rows if r["status"] == "timeout"]
+    assert len(bad) == 1 and np.all(np.isnan(bad[0]["kernel"]))
+    assert store.load_records(manifest) == []
+    assert store.load_scatter_records(manifest) == []
+
+
+def test_filter_subcommand_writes_a_resumable_series(tmp_path):
+    """One panel, level 4: the filter series appears and resumes."""
+    out = str(tmp_path / "store")
+    argv = ["filter", "--output", out, "--level", "4", "--panels", "1,0",
+            "--workers", "2", "--batch-size", "4"]
+    mls297.main(argv)
+    store = mls297.Store(out)
+    manifest = store.load_manifest()
+    rows = store.load_filter_records(manifest)
+    assert len(rows) == 16 and all(r["status"] == "ok" for r in rows)
+    assert rows[0]["kernel"].shape == (4, mls297.kernel_frequency_bins()[0].size)
+    assert all(np.all(np.isfinite(r["kernel"])) and r["kernel"].min() >= 0.0
+               for r in rows)
+    # additive only: the coherent and scatter series stay untouched
+    assert store.load_records(manifest) == []
+    assert store.load_scatter_records(manifest) == []
+
+    mls297.main(argv)                                  # resume: nothing new
+    assert len(store.load_filter_records(manifest)) == 16
+
+
 # ── real rb87_297_clock_4 model (ARC required) ───────────────────────────────
 
 

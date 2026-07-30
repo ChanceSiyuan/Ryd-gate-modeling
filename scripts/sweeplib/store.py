@@ -117,6 +117,7 @@ class Store:
         self.chunks_dir = os.path.join(output_dir, "chunks")
         self.traj_dir = os.path.join(output_dir, "trajectories")
         self.scatter_dir = os.path.join(output_dir, "scatter")
+        self.filter_dir = os.path.join(output_dir, "filter")
         self.logs_dir = os.path.join(output_dir, "logs")
         self.reports_dir = os.path.join(output_dir, "reports")
         self.exports_dir = os.path.join(output_dir, "exports")
@@ -132,8 +133,8 @@ class Store:
 
     def ensure_dirs(self) -> None:
         for d in (self.root, self.chunks_dir, self.traj_dir, self.scatter_dir,
-                  self.logs_dir, self.reports_dir, self.exports_dir,
-                  self.plots_dir):
+                  self.filter_dir, self.logs_dir, self.reports_dir,
+                  self.exports_dir, self.plots_dir):
             os.makedirs(d, exist_ok=True)
 
     # -- key <-> array serialization --------------------------------------
@@ -434,6 +435,96 @@ class Store:
                     "rtol": float(d["rtol"][i]),
                     **{ch: np.array(d[ch][i]) for ch in channels},
                     "max_leakage_check": float(d["max_leakage_check"][i]),
+                    "runtime_s": float(d["runtime_s"][i]),
+                })
+        return rows
+
+    # -- filter-function supplement (separate append-only series) ----------
+
+    def next_filter_seq(self) -> int:
+        seqs = [0]
+        if os.path.isdir(self.filter_dir):
+            for name in os.listdir(self.filter_dir):
+                if name.startswith("filter_") and name.endswith(".npz"):
+                    try:
+                        seqs.append(int(name[len("filter_"):-len(".npz")]))
+                    except ValueError:
+                        pass
+        return max(seqs) + 1
+
+    def write_filter_chunk(
+        self,
+        seq: int,
+        manifest: dict,
+        keys: Sequence,
+        cfg,
+        rtol: float,
+        atol: float,
+        n_t: int,
+        batch_id: str,
+        kernels: np.ndarray,
+        f_bins: np.ndarray,
+        runtime_s: float,
+        statuses: Sequence[str] | None = None,
+        message: str = "",
+    ) -> str:
+        """Persist one filter-function batch; never touches other series.
+
+        ``kernels`` is (n, 4, n_bins) — the bin-integrated response of each logical
+        input to frequency noise — on the ``f_bins`` grid, which is fixed across the
+        whole store and stored alongside so a reweighting never has to reconstruct it.
+        """
+        n = len(keys)
+        statuses = list(statuses) if statuses is not None else ["ok"] * n
+        payload = dict(
+            schema_version=np.int64(self.provenance.schema_version),
+            scan_uuid=str(manifest["scan_uuid"]),
+            physics_hash=str(manifest["physics_hash"]),
+            model_hash=str(manifest["model_hash"]),
+            pulse_hash=str(manifest["pulse_hash"]),
+            **self.keys_to_arrays(keys),
+            **self.provenance.descriptor(cfg, keys),
+            kernel=np.asarray(kernels, dtype=float).reshape(n, 4, -1),
+            f_bins=np.asarray(f_bins, dtype=float),
+            n_t=np.full(n, n_t, dtype=np.int32),
+            rtol=np.full(n, rtol),
+            atol=np.full(n, atol),
+            batch_id=np.asarray([batch_id] * n, dtype="U40"),
+            batch_size=np.full(n, n, dtype=np.int32),
+            status=np.asarray(statuses, dtype="U16"),
+            message=np.asarray([message] * n, dtype="U240"),
+            runtime_s=np.full(n, runtime_s / max(n, 1)),
+        )
+        path = os.path.join(self.filter_dir, f"filter_{seq:06d}.npz")
+        _atomic_savez(path, **payload)
+        return path
+
+    def load_filter_records(self, manifest: dict | None = None) -> list[dict]:
+        """Per-point filter kernels from every filter chunk (hash-validated)."""
+        if manifest is None:
+            manifest = self.load_manifest()
+        rows: list[dict] = []
+        if not os.path.isdir(self.filter_dir):
+            return rows
+        for name in sorted(os.listdir(self.filter_dir)):
+            if not (name.startswith("filter_") and name.endswith(".npz")):
+                continue
+            with np.load(os.path.join(self.filter_dir, name),
+                         allow_pickle=False) as npz:
+                d = {f: npz[f] for f in npz.files}
+            if manifest is not None:
+                for fieldname in ("physics_hash", "model_hash", "pulse_hash"):
+                    if str(d[fieldname]) != manifest[fieldname]:
+                        raise RuntimeError(
+                            f"filter chunk {name} has a different {fieldname}; "
+                            "refusing to merge data from different model/pulse code")
+            for i, key in enumerate(self.arrays_to_keys(d)):
+                rows.append({
+                    "key": key,
+                    "status": str(d["status"][i]),
+                    "kernel": np.array(d["kernel"][i]),
+                    "f_bins": np.array(d["f_bins"]),
+                    "rtol": float(d["rtol"][i]),
                     "runtime_s": float(d["runtime_s"][i]),
                 })
         return rows

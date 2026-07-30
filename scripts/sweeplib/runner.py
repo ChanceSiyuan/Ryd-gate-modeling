@@ -43,17 +43,21 @@ def _worker_process_init() -> None:
 
 
 def set_worker_context(cfg, panel_ops: dict, use_swap: bool, gammas: dict | None,
-                       *, key_type, solve, scattering_integrals) -> None:
+                       *, key_type, solve, scattering_integrals,
+                       filter_solve=None) -> None:
     """Populate the fork-inherited worker context (parent process, pre-fork).
 
     ``solve(ops, t_gate, omega, d_sweep, *, rtol, atol, ramp, use_swap, t_eval)``
     and ``scattering_integrals(times, states, gammas)`` are the script's injected
     model layer; ``gammas`` is ``dict[panel_row -> dict[channel -> rate]]``.
+    ``filter_solve(ops, t_gate, omega, d_sweep, *, rtol, atol, ramp)`` is the
+    optional filter-function leg (only scripts with a ``filter`` pass supply it).
     """
     _WORKER_CTX.clear()
     _WORKER_CTX.update(
         cfg=cfg, panel_ops=panel_ops, use_swap=use_swap, gammas=gammas,
-        key_type=key_type, solve=solve, scattering_integrals=scattering_integrals)
+        key_type=key_type, solve=solve, scattering_integrals=scattering_integrals,
+        filter_solve=filter_solve)
 
 
 def _worker_run_batch(spec: dict) -> dict:
@@ -73,6 +77,16 @@ def _worker_run_batch(spec: dict) -> dict:
         t_gate = cfg.t_gate_us[spec["t_idx"]] * 1e-6
         omega = np.asarray([float(k.omega_mhz()) for k in keys]) * 1e6 * TAU
         d_sweep = np.asarray([float(k.dsweep_mhz()) for k in keys]) * 1e6 * TAU
+        if spec.get("filter"):
+            # ``filter`` -> filter/ series only: its own (forward + adjoint) legs
+            # with their own trajectory sampling, no BatchResult.
+            kernels = ctx["filter_solve"](
+                ops, t_gate, omega, d_sweep, rtol=spec["rtol"],
+                atol=spec["atol"], ramp=cfg.ramp_frac)
+            if not np.all(np.isfinite(kernels)):
+                raise FloatingPointError("non-finite filter kernel")
+            return {"ok": True, "kernels": kernels,
+                    "runtime_s": time.time() - start}
         # ``scatter`` -> scatter/ series only; ``both`` -> the merged single-pass
         # run (coherent chunk AND scatter records from the one solve).  Either one
         # needs the trajectory sampled at ``n_eval_trajectory`` points.
@@ -119,6 +133,7 @@ class Batch:
     tier: str = "production"
     save_traj: bool = False
     scatter: bool = False       # scattering-supplement solve -> scatter/ series
+    filter_pass: bool = False   # filter-function solve -> filter/ series
     retry_count: int = 0        # failure-split escalations (this batch's points)
     pool_retries: int = 0       # innocent requeues after pool crashes (separate budget)
     priority_scores: list | None = None
@@ -211,7 +226,10 @@ class Runner:
         self._acquire_store_lock()
         self.seq = store.next_seq()
         self.scatter_seq = store.next_scatter_seq()
+        self.filter_seq = store.next_filter_seq()
         self.gammas: dict | None = None   # dict[panel_row -> dict] set for scatter runs
+        self.filter_bins: np.ndarray | None = None   # storage bins, set for filter runs
+        self.filter_n_t: int = 0                     # samples per solve, set for filter runs
         self.write_both_series = False    # merged single-pass: coherent + scatter in one step
         self.scatter_done: set = set()    # keys already in the scatter series (write-time dedup)
         self.stop_requested = False
@@ -327,6 +345,7 @@ class Runner:
             tier=batch.tier, rtol=rtol, atol=atol,
             save_traj=batch.save_traj,
             scatter=batch.scatter,
+            filter=batch.filter_pass,
             both=(self.write_both_series and batch.tier == "production"
                   and not batch.scatter),
             timeout_s=self.point_timeout_s * len(batch.keys),
@@ -334,6 +353,18 @@ class Runner:
 
     def _write_success(self, batch: Batch, out: dict) -> None:
         rtol, atol = self._tier_tols(batch.tier)
+        if batch.filter_pass:
+            # Supplemental data: its own append-only series; a filter batch carries
+            # no BatchResult and never touches the coherent or scatter series.
+            self.store.write_filter_chunk(
+                self.filter_seq, self.manifest, batch.keys, self.cfg, rtol, atol,
+                self.filter_n_t, batch.batch_id, out["kernels"], self.filter_bins,
+                out["runtime_s"])
+            self.filter_seq += 1
+            self.cost.observe((batch.panel_idx, batch.t_idx),
+                              out["runtime_s"] / len(batch.keys))
+            self.completed_points += len(batch.keys)
+            return
         result = out["result"]
         if batch.scatter:
             # Supplemental data: its own append-only series; the coherent-leakage
@@ -389,7 +420,17 @@ class Runner:
 
     def _write_failure(self, batch: Batch, out: dict) -> None:
         rtol, atol = self._tier_tols(batch.tier)
-        if batch.scatter:
+        if batch.filter_pass:
+            n = len(batch.keys)
+            self.store.write_filter_chunk(
+                self.filter_seq, self.manifest, batch.keys, self.cfg, rtol, atol,
+                self.filter_n_t, batch.batch_id,
+                np.full((n, 4, self.filter_bins.size), np.nan), self.filter_bins,
+                out.get("runtime_s", 0.0),
+                statuses=[out.get("reason", "failed")] * n,
+                message=out.get("message", ""))
+            self.filter_seq += 1
+        elif batch.scatter:
             n = len(batch.keys)
             self.store.write_scatter_chunk(
                 self.scatter_seq, self.manifest, batch.keys, self.cfg,
@@ -423,7 +464,7 @@ class Runner:
             if keys:
                 parts.append(Batch(
                     keys=keys, tier=batch.tier, save_traj=batch.save_traj,
-                    scatter=batch.scatter,
+                    scatter=batch.scatter, filter_pass=batch.filter_pass,
                     retry_count=batch.retry_count + 1,
                     priority_scores=(batch.priority_scores[sl]
                                      if batch.priority_scores else None)))
@@ -483,6 +524,7 @@ class Runner:
                         requeued = Batch(
                             keys=batch.keys, tier=batch.tier,
                             save_traj=batch.save_traj, scatter=batch.scatter,
+                            filter_pass=batch.filter_pass,
                             retry_count=batch.retry_count,
                             pool_retries=batch.pool_retries + 1,
                             priority_scores=batch.priority_scores)

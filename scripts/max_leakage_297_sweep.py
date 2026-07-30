@@ -47,6 +47,7 @@ Usage
     python scripts/max_leakage_297_sweep.py run    --spacing-um 5 --target-level 13
     python scripts/max_leakage_297_sweep.py run    --spacing-um 5 --dry-run
     python scripts/max_leakage_297_sweep.py scatter --spacing-um 5 --level 13
+    python scripts/max_leakage_297_sweep.py filter  --spacing-um 5 --level 13
     python scripts/max_leakage_297_sweep.py audit  --spacing-um 5
     python scripts/max_leakage_297_sweep.py export --spacing-um 5
     python scripts/max_leakage_297_sweep.py plot   --spacing-um 5
@@ -495,6 +496,107 @@ def integrate_batch(
     )
 
 
+# ── Filter-function pass: adjoint states and the frequency kernel ────────────
+#
+# The phase noise enters exactly as H -> H_0 + 2 pi dnu(t) N_r (V = exp(+i phi N_r)
+# removes it from the drive), so first-order perturbation gives
+#     <Delta L> = 2 pi^2 int S_dnu(|f|) ||Q G(f)||^2 df,
+#     G(f) = int_0^T <q|U(T,t) N_r psi_s(t)> e^{-2 pi i f t} dt.
+# Only the projected components are needed, so the propagator is never formed:
+#     <q|A_s(t)> = <phi_q(t)| N_r |psi_s(t)>,   |phi_q(t)> = U(t,T)|q>.
+# phi_q and psi_s obey the same equation and N_r is diagonal, so the exp(-i D_i t)
+# factors cancel in the pointwise product and the sampled integrand carries only
+# drive-scale structure — which is what makes n_t = 4096 enough despite the GHz
+# pair interaction and the 6.8 GHz |0> hyperfine offset.
+
+KERNEL_F_MIN_HZ = 1.0
+KERNEL_F_MAX_HZ = 2.0e8
+KERNEL_BINS_PER_DECADE = 30
+KERNEL_N_T = 4096
+
+
+def kernel_frequency_bins():
+    """The fixed global storage bins shared by every point of the store."""
+    from ryd_gate.phase_noise import log_frequency_bins
+
+    return log_frequency_bins(KERNEL_F_MIN_HZ, KERNEL_F_MAX_HZ,
+                              KERNEL_BINS_PER_DECADE)
+
+
+def _297_adjoint_rhs_factory(ops, cols, t_gate, ramp):
+    """Time-reversed RHS: dy/dtau = +i H(T - tau) y, same drive as the forward leg."""
+    forward = _297_rhs_factory(ops, cols, t_gate, ramp)
+
+    def rhs(tau, y):
+        return -forward(t_gate - tau, y)
+
+    return rhs
+
+
+def integrate_adjoint_batch(ops, t_gate, omega_297, d_sweep, *,
+                            rtol, atol, ramp=0.15, n_t=KERNEL_N_T):
+    """Forward logical states + backward nonlogical adjoints, sampled together.
+
+    Returns ``{"times": (n_t,), "components": (n_points, 4, n_t, 12),
+    "overlaps": (n_points, 4, n_t, 12), "nfev": int}`` where ``components`` are
+    ``<phi_q(t)|N_r|psi_s(t)>`` and ``overlaps`` are ``<phi_q(t)|psi_s(t)>`` (a
+    conserved quantity, used as the correctness check).
+    """
+    omega_297 = np.asarray(omega_297, dtype=float)
+    d_sweep = np.asarray(d_sweep, dtype=float)
+    dim = ops.h_static_diag.size
+    times = np.linspace(0.0, t_gate, n_t)
+
+    fwd = sweeplib.integrate_batch(
+        ops, t_gate, {"omega_297": omega_297, "d_sweep": d_sweep},
+        LOGICAL_INPUTS, rhs_factory=_297_rhs_factory, dim=dim,
+        rtol=rtol, atol=atol, ramp=ramp, t_eval=times)
+
+    nonlogical = np.setdiff1d(np.arange(dim), ops.logical_indices)
+    adj = sweeplib.integrate_batch(
+        ops, t_gate, {"omega_297": omega_297, "d_sweep": d_sweep},
+        tuple(str(i) for i in nonlogical),
+        rhs_factory=_297_adjoint_rhs_factory, dim=dim,
+        rtol=rtol, atol=atol, ramp=ramp, t_eval=times,
+        initial_indices=nonlogical, reverse_time=True)
+
+    # adj sampled in tau = T - t; flip back onto the forward time axis
+    phi = adj.states[::-1]                       # (n_t, n_points, 12, dim)
+    psi = fwd.states                             # (n_t, n_points, 4, dim)
+    n_r = _rydberg_number_diag(dim)
+    comp = np.einsum("tpqi,i,tpsi->pstq", phi.conj(), n_r, psi)
+    over = np.einsum("tpqi,tpsi->pstq", phi.conj(), psi)
+    return {"times": times, "components": comp, "overlaps": over,
+            "nfev": fwd.nfev + adj.nfev}
+
+
+def _rydberg_number_diag(dim: int, local_dim: int = 4) -> np.ndarray:
+    """Diagonal of N_r: atoms in the Rydberg manifold (levels r and r_garb).
+
+    One laser drives both 297 legs, so the noise operator counts both — the sum of
+    the two scattering-channel weight vectors.
+    """
+    idx = np.arange(dim)
+    a, b = np.divmod(idx, local_dim)
+    return (np.isin(a, (2, 3)).astype(float) + np.isin(b, (2, 3)).astype(float))
+
+
+def filter_kernels(ops, t_gate, omega_297, d_sweep, *,
+                   rtol, atol, ramp=0.15, n_t=KERNEL_N_T) -> np.ndarray:
+    """(n_points, 4, n_bins) binned filter kernels for one batch."""
+    from ryd_gate.phase_noise import filter_kernel
+
+    out = integrate_adjoint_batch(ops, t_gate, omega_297, d_sweep,
+                                  rtol=rtol, atol=atol, ramp=ramp, n_t=n_t)
+    f_bins, df_bins = kernel_frequency_bins()
+    comp = out["components"]
+    kernels = np.empty((comp.shape[0], 4, f_bins.size))
+    for p in range(comp.shape[0]):
+        for s in range(4):
+            kernels[p, s] = filter_kernel(out["times"], comp[p, s], f_bins, df_bins)
+    return kernels
+
+
 # ── Append-only NPZ persistence ──────────────────────────────────────────────
 #
 # Layout (all under --output):
@@ -785,10 +887,15 @@ def setup_run(args) -> tuple[Store, dict, ScanConfig, dict[int, PanelOperators],
                                rtol=rtol, atol=atol, ramp=ramp, use_swap=use_swap,
                                t_eval=t_eval)
 
+    def _filter_solve(ops, t_gate, omega_297, d_sweep, *, rtol, atol, ramp):
+        return filter_kernels(ops, t_gate, omega_297, d_sweep,
+                              rtol=rtol, atol=atol, ramp=ramp)
+
     set_worker_context(
         cfg, ops, use_swap=checks["swap_symmetric"],
         gammas=checks["decay_rates_rad_s"],
-        key_type=PointKey, solve=_solve, scattering_integrals=scattering_integrals)
+        key_type=PointKey, solve=_solve, scattering_integrals=scattering_integrals,
+        filter_solve=_filter_solve)
     print(f"[setup] panels(n) = {len(cfg.ryd_n)} | "
           f"H equivalence rel dev {checks['hamiltonian_equivalence_rel_dev']:.2e} | "
           f"error-norm dev {checks['error_norm_max_dev']:.2e} | "
@@ -1276,6 +1383,37 @@ def cmd_scatter(args) -> None:
         runner.shutdown()
 
 
+def cmd_filter(args) -> None:
+    """Filter-function pass: additive only (writes the filter/ series)."""
+    store, manifest, cfg, ops, checks = setup_run(args)
+    level = LEVEL_FROM_SIZE[int(args.level)]
+    panels = _parse_panels(args)
+    done = {r["key"] for r in store.load_filter_records(manifest)
+            if r["status"] == "ok"}
+    missing = [k for k in _filter_panels(all_keys(level), panels) if k not in done]
+    print(f"[filter] level {args.level}: {len(missing)} points to compute "
+          f"({len(done)} already stored)", flush=True)
+    if not missing:
+        return
+    cost = CostModel(cfg)
+    _feed_cost_model(cost, store.load_records(manifest, include_states=False))
+    runner = Runner(store, manifest, cfg, args, cost)
+    runner.filter_bins = kernel_frequency_bins()[0]
+    runner.filter_n_t = KERNEL_N_T
+    try:
+        batches = group_batches(missing, _effective_batch_size(store, args))
+        for b in batches:
+            b.filter_pass = True
+        runner.run_batches(batches, f"filter-{args.level}")
+    except KeyboardInterrupt:
+        print("[filter] hard abort", flush=True)
+    finally:
+        runner.write_failure_report()
+        runner.write_status(f"filter-{args.level}-aborted" if runner.aborted
+                            else f"filter-{args.level}-done")
+        runner.shutdown()
+
+
 def write_summary_reports(store: Store) -> None:
     """Regenerate reports/audit_summary.json and reports/candidates.json."""
     manifest = store.load_manifest()
@@ -1445,6 +1583,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="grid level to cover (scattering maps are smooth; "
                          "7x7 is usually sufficient)")
     sp.set_defaults(func=cmd_scatter)
+
+    sp = sub.add_parser("filter",
+                        help="filter-function pass (additive: writes only the "
+                             "filter/ series; reusable across every PSD)")
+    common(sp, compute=True)
+    sp.add_argument("--level", default="13", choices=["4", "7", "13", "25"])
+    sp.set_defaults(func=cmd_filter)
 
     sp = sub.add_parser("export", help="regenerate merged NPZ + CSV + reports")
     common(sp)
