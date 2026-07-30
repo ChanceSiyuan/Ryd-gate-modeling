@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ryd_gate.phase_noise import PhaseNoisePSD
+from ryd_gate.phase_noise import PhaseNoisePSD, phase_trace
 
 NOISE_DIR = Path(__file__).resolve().parents[1] / "results" / "297_laser_noise"
 
@@ -95,3 +95,54 @@ def test_from_csv_reproduces_the_committed_digitizer_model():
         assert psd.power_law_exponent == pytest.approx(entry["power_law_exponent"], rel=1e-9)
         assert psd.s_dnu(np.array([entry["f_edge_hz"]]))[0] == pytest.approx(
             entry["s_dnu_edge_297"], rel=1e-9)
+
+
+def test_trace_is_reproducible_and_seed_dependent():
+    psd = PhaseNoisePSD.white(1e4)
+    a = phase_trace(psd, 1e-6, seed=7, f_max=1e8)
+    b = phase_trace(psd, 1e-6, seed=7, f_max=1e8)
+    c = phase_trace(psd, 1e-6, seed=8, f_max=1e8)
+    assert np.array_equal(a.values, b.values)
+    assert not np.allclose(a.values, c.values)
+
+
+def test_trace_callable_matches_its_samples():
+    psd = PhaseNoisePSD.white(1e4)
+    tr = phase_trace(psd, 1e-6, seed=3, f_max=1e8)
+    mid = 0.5 * (tr.times[:-1] + tr.times[1:])
+    # the spline reproduces its own nodes exactly and stays close between them
+    assert np.allclose(tr(tr.times), tr.values, atol=1e-12)
+    assert np.max(np.abs(tr(mid) - np.interp(mid, tr.times, tr.values))) < 1e-3
+
+
+def test_resolved_band_variance_matches_the_psd_integral():
+    # var(phi) over the explicitly summed band equals int 2 S_phi df, since each
+    # term sqrt(2 S_phi df) cos(...) contributes half its squared amplitude.
+    psd = PhaseNoisePSD.white(1e6)
+    t_gate, f_max = 1e-6, 1e8
+    traces = [phase_trace(psd, t_gate, seed=s, f_max=f_max) for s in range(400)]
+    resolved = np.asarray([tr.values - 2 * np.pi * tr.dnu_0 * tr.times for tr in traces])
+    expected = float(np.sum(psd.s_phi(traces[0].f_grid) * traces[0].df_grid))
+    assert np.var(resolved) == pytest.approx(expected, rel=0.15)
+
+
+def test_quasi_static_offset_matches_the_unresolved_band():
+    psd = PhaseNoisePSD.white(1e6)
+    t_gate = 1e-6
+    offsets = np.asarray([phase_trace(psd, t_gate, seed=s, f_max=1e8).dnu_0
+                          for s in range(2000)])
+    expected = psd.sigma_nu(1.0, 1.0 / t_gate)
+    assert np.std(offsets) == pytest.approx(expected, rel=0.1)
+
+
+def test_generated_traces_reproduce_the_input_spectrum():
+    from scipy.signal import welch
+    psd = PhaseNoisePSD.white(1e4)
+    t_gate, n = 4e-6, 16384
+    traces = [phase_trace(psd, t_gate, seed=s, f_max=2e8, n_samples=n)
+              for s in range(60)]
+    dt = traces[0].times[1] - traces[0].times[0]
+    dnu = np.gradient(np.asarray([tr.values for tr in traces]), dt, axis=1) / (2 * np.pi)
+    f, pxx = welch(dnu, fs=1.0 / dt, nperseg=n // 8, axis=1)
+    band = (f > 5e6) & (f < 5e7)
+    assert np.median(pxx.mean(axis=0)[band]) == pytest.approx(1e4, rel=0.35)

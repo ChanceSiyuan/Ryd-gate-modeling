@@ -1,10 +1,10 @@
 """Laser phase noise from a measured frequency-noise PSD (expert module).
 
-The spectrum side of the noise model of X. Jiang, J. Scott, M. Friesen and
-M. Saffman, *Sensitivity of quantum gate fidelity to laser phase and intensity
-noise*, Phys. Rev. A **107**, 042611 (2023) (arXiv:2210.11007): a measured or
-analytic frequency-noise power spectral density, in the form the rest of that
-formalism consumes.
+The noise model of X. Jiang, J. Scott, M. Friesen and M. Saffman, *Sensitivity of
+quantum gate fidelity to laser phase and intensity noise*, Phys. Rev. A **107**,
+042611 (2023) (arXiv:2210.11007): a measured or analytic frequency-noise power
+spectral density, and the random realizations of the phase process ``phi_n(t)``
+it generates (the paper's Eq. 104) for a time-domain solver to put on the drive.
 
 Like :mod:`ryd_gate.physics` this is an expert module, not a top-level export.
 
@@ -27,6 +27,9 @@ import numpy as np
 
 __all__ = [
     "PhaseNoisePSD",
+    "PhaseTrace",
+    "phase_trace",
+    "log_frequency_bins",
 ]
 
 
@@ -135,3 +138,67 @@ class PhaseNoisePSD:
             raise ValueError(f"f_lo must be positive; got {f_lo!r}")
         f = np.logspace(np.log10(float(f_lo)), np.log10(float(f_hi)), n)
         return float(np.sqrt(np.trapezoid(self.s_dnu(f), f)))
+
+
+def log_frequency_bins(f_lo: float, f_hi: float, points_per_decade: int):
+    """Logarithmic bin centres and widths spanning ``[f_lo, f_hi]``.
+
+    Edges are equally spaced in log10 so every bin's width is proportional to its
+    centre; the centres are the geometric bin midpoints.
+    """
+    n = max(1, int(round(np.log10(f_hi / f_lo) * points_per_decade)))
+    edges = np.logspace(np.log10(f_lo), np.log10(f_hi), n + 1)
+    return np.sqrt(edges[:-1] * edges[1:]), np.diff(edges)
+
+
+class PhaseTrace:
+    """One realization of ``phi_n(t)`` on ``[0, t_gate]`` (radians).
+
+    ``values`` are the sampled phase, ``dnu_0`` the drawn quasi-static frequency
+    offset (Hz) whose ``2 pi dnu_0 t`` ramp is already included, and
+    ``f_grid``/``df_grid`` the explicitly summed band and its bin widths.
+    """
+
+    __slots__ = ("times", "values", "dnu_0", "f_grid", "df_grid", "_spline")
+
+    def __init__(self, times, values, dnu_0, f_grid, df_grid):
+        from scipy.interpolate import CubicSpline
+
+        self.times = times
+        self.values = values
+        self.dnu_0 = float(dnu_0)
+        self.f_grid = f_grid
+        self.df_grid = df_grid
+        self._spline = CubicSpline(times, values)
+
+    def __call__(self, t):
+        return self._spline(np.clip(t, self.times[0], self.times[-1]))
+
+
+def phase_trace(psd: PhaseNoisePSD, t_gate: float, *, seed: int,
+                f_max: float, f_min: float = 1.0,
+                points_per_decade: int = 40,
+                n_samples: int = 4096) -> PhaseTrace:
+    """A random phase realization for ``psd`` over ``[0, t_gate]`` (paper Eq. 104).
+
+    The frequency axis is hybrid because a uniform grid from ``f_min`` to ``f_max``
+    would need ~1e8 terms. Below ``1/t_gate`` the noise is frozen over the gate and
+    is collapsed into one Gaussian quasi-static offset ``dnu_0`` of the correct
+    band variance; above it a logarithmic grid is summed explicitly as
+
+        phi(t) = 2 pi dnu_0 t + sum_j sqrt(2 S_phi(f_j) df_j) cos(2 pi f_j t + psi_j)
+
+    which is the paper's ``2 sqrt(S^2s df)`` rewritten for one-sided densities.
+    """
+    rng = np.random.default_rng(seed)
+    f_split = 1.0 / t_gate
+    f_grid, df_grid = log_frequency_bins(f_split, f_max, points_per_decade)
+    psi = rng.uniform(0.0, 2.0 * np.pi, size=f_grid.size)
+    amp = np.sqrt(2.0 * psd.s_phi(f_grid) * df_grid)
+    dnu_0 = psd.sigma_nu(f_min, f_split) * float(rng.standard_normal())
+
+    times = np.linspace(0.0, t_gate, n_samples)
+    values = (2.0 * np.pi * dnu_0) * times + (
+        amp[None, :] * np.cos(2.0 * np.pi * np.outer(times, f_grid) + psi[None, :])
+    ).sum(axis=1)
+    return PhaseTrace(times, values, dnu_0, f_grid, df_grid)
