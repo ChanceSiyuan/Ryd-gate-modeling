@@ -1629,7 +1629,8 @@ EPS_PHASE_REGIME_MAX = 0.1
 
 
 def phase_noise_values(store: Store, manifest: dict, laser: str,
-                       extrapolation: str) -> dict:
+                       extrapolation: str,
+                       f_min: float = KERNEL_F_MIN_HZ) -> dict:
     """Per-point ``(4,)`` eps_phase from the stored kernels and one measured PSD.
 
     Each entry is the noise-induced fidelity loss of one logical input; ``|00>`` is
@@ -1637,16 +1638,41 @@ def phase_noise_values(store: Store, manifest: dict, laser: str,
     zero.  The bins come from the record rather than from the module constants: the
     store is what the kernel was integrated against, and it is the store's grid the
     spectrum has to be sampled on.
+
+    ``f_min`` re-cuts the low-frequency edge of the integral.  It is a real modelling
+    parameter, not a nicety: ``S_dnu`` rises as ``f**-2.5`` while the gate's response
+    to a static detuning is finite, so the integral is infrared divergent and the
+    cutoff is physically the inverse relock/calibration timescale.  Because the
+    stored kernel is already bin-*integrated*, raising it is a pure reweighting of
+    stored bins and needs no re-solve: bins whose **centre** falls below ``f_min``
+    are dropped whole.  At 30 bins/decade a whole-bin decision places the true edge
+    within 10**(1/60) = 3.9% of the requested one, and the default keeps every stored
+    bin (the lowest centre is 1.039 Hz, above ``KERNEL_F_MIN_HZ``).
+
+    One key can carry more than one record — a ``filter`` pass resumed or retried at
+    a different ``--rtol`` writes a second chunk — so the tightest-``rtol`` row wins,
+    exactly as the scatter path selects in ``sweeplib.plotting``.  Left to dict
+    insertion order the deliverable would quote whichever tolerance sorted last.
     """
     from ryd_gate.phase_noise import PhaseNoisePSD, error_from_kernel
 
     psd = PhaseNoisePSD.from_csv(
         os.path.join(_LASER_NOISE_DIR, f"psd_{laser}.csv"),
         harmonic=PSD_HARMONIC, extrapolation=extrapolation)
-    return {r["key"]: np.asarray(
-                [error_from_kernel(psd, r["f_bins"], r["kernel"][s])
-                 for s in range(len(LOGICAL_INPUTS))])
-            for r in store.load_filter_records(manifest) if r["status"] == "ok"}
+    best: dict = {}
+    for r in store.load_filter_records(manifest):
+        if r["status"] != "ok":
+            continue
+        cur = best.get(r["key"])
+        if cur is None or r["rtol"] < cur["rtol"]:
+            best[r["key"]] = r
+    values = {}
+    for key, r in best.items():
+        band = r["f_bins"] >= f_min
+        values[key] = np.asarray(
+            [error_from_kernel(psd, r["f_bins"][band], r["kernel"][s][band])
+             for s in range(len(LOGICAL_INPUTS))])
+    return values
 
 
 def _flag_out_of_regime(values: dict) -> str:
@@ -1685,8 +1711,20 @@ def _phase_noise_caption(args, values: dict) -> str:
         f"{1.0 - POWER_OPTICS_LOSS:g}."
         f"\neps_phase: {args.laser} PSD x harmonic {PSD_HARMONIC}, "
         f"'{args.extrapolation}' extrapolation above the 1 MHz measurement edge, "
-        f"f_min = {KERNEL_F_MIN_HZ:g} Hz."
+        f"f_min = {args.f_min:g} Hz."
         + _flag_out_of_regime(values))
+
+
+def _phase_title_note(args) -> str:
+    """Second suptitle line naming the noise model this figure was rendered under.
+
+    The deliverable is a two-laser x two-extrapolation comparison read side by side
+    and shared as detached pages, so the model may not live only in the filename and
+    the table caption: a page has to say which laser and which extrapolation it is.
+    """
+    return (f"laser-phase-noise model: {args.laser} PSD, '{args.extrapolation}' "
+            f"extrapolation above the 1 MHz measurement edge, "
+            f"f_min = {args.f_min:g} Hz")
 
 
 def cmd_plot(args) -> None:
@@ -1695,17 +1733,25 @@ def cmd_plot(args) -> None:
     if manifest is None:
         raise SystemExit(f"no manifest under {store.root}")
     records = store.load_records(manifest, include_states=False)
-    spec, extra, suffix, subdir = _PLOT_SPEC, None, "", ""
+    spec, extra, suffix, subdir, title_note = _PLOT_SPEC, None, "", "", ""
     if args.metric in PHASE_METRICS:
-        extra = phase_noise_values(store, manifest, args.laser, args.extrapolation)
+        extra = phase_noise_values(store, manifest, args.laser, args.extrapolation,
+                                   args.f_min)
         cfg = ScanConfig(ryd_n=tuple(manifest["axes"]["ryd_n"]))
         spec = replace(_PLOT_SPEC,
                        table=_power_table(cfg, _phase_noise_caption(args, extra)))
+        title_note = _phase_title_note(args)
+        # A non-default cutoff must reach the filename, or the f_min sensitivity
+        # render lands on top of the headline one -- the same collision the
+        # laser/extrapolation suffix exists to prevent.
         suffix = f"{args.laser}_{args.extrapolation}"
+        if args.f_min != KERNEL_F_MIN_HZ:
+            suffix += f"_fmin{args.f_min:g}Hz"
         subdir = os.path.join("phase_noise", args.laser)
     png, pdf = render_panel_grid(store, manifest, records, args.metric, spec,
                                  veil=args.veil, dpi=args.dpi,
-                                 extra_values=extra, suffix=suffix, subdir=subdir)
+                                 extra_values=extra, suffix=suffix, subdir=subdir,
+                                 title_note=title_note)
     print(f"plots: {png}\n       {pdf}")
 
 
@@ -1802,6 +1848,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="S_dnu above the 1 MHz measurement edge: flat holds the "
                          "edge value (conservative), power continues the fitted "
                          "last-decade slope (optimistic).  Both bracket the answer")
+    sp.add_argument("--f-min", type=float, default=KERNEL_F_MIN_HZ,
+                    help="low-frequency cutoff (Hz) of the eps_phase integral; "
+                         "stored bins whose centre falls below it are dropped, so "
+                         "this is a reweighting and needs no re-solve.  The default "
+                         "is the stored kernels' own edge; raising it models a lock "
+                         "that removes the slow drift")
     sp.set_defaults(func=cmd_plot)
     return p
 

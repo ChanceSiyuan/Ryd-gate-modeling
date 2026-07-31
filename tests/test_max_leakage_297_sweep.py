@@ -369,6 +369,11 @@ def test_plot_metric_choices_are_the_297_metrics_and_the_noise_model_flags():
     with pytest.raises(SystemExit):
         parser.parse_args(["plot", "--extrapolation", "servo"])
 
+    # --f-min defaults to the stored kernels' own edge, so it cannot change any
+    # render that does not ask for it.
+    assert args.f_min == mls297.KERNEL_F_MIN_HZ
+    assert parser.parse_args(["plot", "--f-min", "10"]).f_min == 10.0
+
 
 def test_cli_parser_covers_subcommands_and_locked_invocation():
     parser = mls297.build_parser()
@@ -740,6 +745,75 @@ def test_phase_noise_values_reweight_the_stored_kernels_per_laser_model(tmp_path
     assert power[key][0] == 0.0
 
 
+def test_phase_noise_f_min_recuts_the_integral_by_dropping_whole_stored_bins(tmp_path):
+    """Raising f_min drops stored bins from the sum and does nothing else.
+
+    ``S_dnu`` rises as ``f**-2.5`` while the gate's response to a static detuning is
+    finite, so the error integral is infrared divergent and ``f_min`` is a modelling
+    parameter (physically the inverse relock timescale) the campaign has to report a
+    sensitivity for.  The kernel is stored bin-integrated, so this must be a pure
+    reweighting: the dropped band has to account for the whole difference.
+    """
+    from ryd_gate.phase_noise import PhaseNoisePSD, error_from_kernel
+
+    store, manifest = _phase_mini_store(tmp_path)
+    rows = {r["key"]: r for r in store.load_filter_records(manifest)}
+    base = mls297.phase_noise_values(store, manifest, "ECDL", "flat")
+    cut = mls297.phase_noise_values(store, manifest, "ECDL", "flat", 10.0)
+
+    key = next(iter(rows))
+    r = rows[key]
+    assert np.all(cut[key][1:] < base[key][1:])      # there IS weight below 10 Hz
+    assert cut[key][0] == base[key][0] == 0.0        # |00> is dark either way
+
+    # The difference is exactly the dropped band: nothing double-counted, and no df
+    # re-applied on top of the already-integrated bins.
+    psd = PhaseNoisePSD.from_csv(_PSD_PATH, harmonic=4, extrapolation="flat")
+    below = r["f_bins"] < 10.0
+    assert base[key] - cut[key] == pytest.approx(
+        [error_from_kernel(psd, r["f_bins"][below], r["kernel"][s][below])
+         for s in range(4)])
+
+    # Bins are dropped whole, on their centre.  The lowest stored centre is above
+    # KERNEL_F_MIN_HZ, so the default keeps every bin and a cutoff below it is a
+    # no-op — the new parameter cannot perturb the headline figures.
+    assert r["f_bins"][0] > mls297.KERNEL_F_MIN_HZ
+    assert mls297.phase_noise_values(
+        store, manifest, "ECDL", "flat", 0.5)[key] == pytest.approx(base[key])
+
+
+def test_phase_noise_values_keep_the_tightest_rtol_record_per_key(tmp_path):
+    """A key present in two filter chunks resolves to the tighter-rtol kernel.
+
+    A ``filter`` pass resumed or retried at a different ``--rtol`` is exactly how one
+    key ends up with two records, and the campaign is where that happens.  The
+    scatter path already selects on rtol; file order must not decide which tolerance
+    the deliverable quotes, so both orders are checked.
+    """
+    from ryd_gate.phase_noise import PhaseNoisePSD, error_from_kernel
+
+    f_bins, _df = mls297.kernel_frequency_bins()
+    loose = np.full((2, 4, f_bins.size), 1e-3)
+    tight = 2.0 * loose
+    psd = PhaseNoisePSD.from_csv(_PSD_PATH, harmonic=4, extrapolation="flat")
+    expected = np.full(4, 2.0 * error_from_kernel(psd, f_bins, loose[0][0]))
+
+    for tight_first in (False, True):
+        store, manifest = _mini_store(tmp_path / f"tight_first_{tight_first}")
+        keys = mls297.panel_keys(0, 0, 0)[:2]
+        chunks = [(1e-11, tight), (1e-9, loose)]
+        if not tight_first:
+            chunks.reverse()
+        for seq, (rtol, kernels) in enumerate(chunks, start=1):
+            store.write_filter_chunk(seq, manifest, keys, _mini_cfg(), rtol, 1e-12,
+                                     mls297.KERNEL_N_T, f"b{seq}", kernels,
+                                     f_bins, 30.0)
+        values = mls297.phase_noise_values(store, manifest, "ECDL", "flat")
+        assert set(values) == set(keys)
+        for v in values.values():
+            assert v == pytest.approx(expected)
+
+
 def test_eps_phase_and_total_error_phase_compose_per_logical_input(tmp_path):
     """eps_phase is the worst-input loss; total_error_phase adds it to the
     coherent leakage and the scattering channels BEFORE the worst input is taken.
@@ -774,30 +848,53 @@ def test_eps_phase_and_total_error_phase_compose_per_logical_input(tmp_path):
     assert totals[k] < max_then_sum
 
 
-def test_phase_noise_plot_emits_the_map_and_the_power_table(tmp_path, capsys):
+def test_phase_noise_plot_emits_the_map_and_the_power_table(tmp_path, capsys,
+                                                            monkeypatch):
     """A synthetic mini-store renders eps_phase with a table strip and a suffix.
 
-    The suffix and the phase_noise/<laser>/ subdirectory exist so a phase-noise
-    render can never land on a noise-free figure; plots/ is hashed to prove it.
+    Every element of the noise model — laser, extrapolation and a non-default f_min —
+    reaches BOTH the filename and the suptitle, so no two models of the same metric
+    can collide on disk and no detached page is ambiguous about which it shows;
+    plots/ is hashed before and after to prove nothing is ever overwritten.
     """
+    import matplotlib.figure
+
+    suptitles: list[str] = []
+    real_suptitle = matplotlib.figure.Figure.suptitle
+
+    def _record_suptitle(self, text, **kwargs):
+        suptitles.append(text)
+        return real_suptitle(self, text, **kwargs)
+
+    monkeypatch.setattr(matplotlib.figure.Figure, "suptitle", _record_suptitle)
+
     store, manifest = _phase_mini_store(tmp_path, boost=(0, 5))
     plots = Path(store.plots_dir)
     mls297.cmd_plot(Namespace(output=store.root, dpi=60, veil=True,
                               metric="max_leakage"))
     before = _tree_digest(plots)
     assert before and "max_leakage_8x9.png" in before
+    assert "laser-phase-noise model" not in suptitles[0]   # model-free render
+    suptitles.clear()
 
-    for metric, extrap in (("eps_phase", "flat"), ("eps_phase", "power"),
-                           ("total_error_phase", "flat")):
+    renders = {("eps_phase", "flat", 1.0): "eps_phase_8x9_ECDL_flat",
+               ("eps_phase", "power", 1.0): "eps_phase_8x9_ECDL_power",
+               ("total_error_phase", "flat", 1.0):
+                   "total_error_phase_8x9_ECDL_flat",
+               ("eps_phase", "flat", 10.0): "eps_phase_8x9_ECDL_flat_fmin10Hz"}
+    for (metric, extrap, f_min), name in renders.items():
         mls297.cmd_plot(Namespace(output=store.root, dpi=60, veil=True,
                                   metric=metric, laser="ECDL",
-                                  extrapolation=extrap))
-        stem = plots / "phase_noise" / "ECDL" / f"{metric}_8x9_ECDL_{extrap}"
+                                  extrapolation=extrap, f_min=f_min))
+        stem = plots / "phase_noise" / "ECDL" / name
         assert stem.with_suffix(".png").exists()
         assert stem.with_suffix(".pdf").exists()
+        assert suptitles[-1].endswith(
+            f"\nlaser-phase-noise model: ECDL PSD, '{extrap}' extrapolation above "
+            f"the 1 MHz measurement edge, f_min = {f_min:g} Hz")
     after = _tree_digest(plots)
     assert {k: after[k] for k in before} == before      # nothing overwritten
-    assert len(after) == len(before) + 6
+    assert len(after) == len(before) + 2 * len(renders)
 
     # The boosted nodes are out of the perturbative regime and must be named, not
     # silently plotted (measured sigma_nu/Omega = 0.053; predictions above ~0.1 are

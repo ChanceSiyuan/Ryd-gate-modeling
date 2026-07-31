@@ -257,8 +257,8 @@ def _draw_table_strip(subfig, table: tuple) -> None:
 
 def render_panel_grid(store: Store, manifest: dict, records, metric: str,
                       spec: PlotSpec, *, veil: bool = True, dpi: int = 170,
-                      extra_values: dict | None = None,
-                      suffix: str = "", subdir: str = "") -> tuple[str, str]:
+                      extra_values: dict | None = None, suffix: str = "",
+                      subdir: str = "", title_note: str = "") -> tuple[str, str]:
     """Render the 8x9 map family for ``metric`` into plots/; return (png, pdf).
 
     ``store`` must already resolve its manifest; ``records`` are the coherent
@@ -267,7 +267,11 @@ def render_panel_grid(store: Store, manifest: dict, records, metric: str,
     ``extra_values`` supplies the metrics the store cannot derive on its own (see
     the module docstring).  ``subdir``/``suffix`` place such a render at
     ``plots/<subdir>/<metric>_8x9_<suffix>.png``, which is what keeps a
-    noise-model-dependent figure off the model-free ``plots/<metric>_8x9.png``.
+    noise-model-dependent figure off the model-free ``plots/<metric>_8x9.png``, and
+    ``title_note`` becomes a second suptitle line naming that model — the same
+    figure rendered under two noise models is otherwise indistinguishable once a
+    page is detached from its filename.  It is a second line, not a longer first
+    one, because the suptitle already fills the figure width.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -344,7 +348,8 @@ def render_panel_grid(store: Store, manifest: dict, records, metric: str,
         "exact nodes — dots"
         + ("; white veil: interpolation untrusted, LOO residual > "
            f"{PLOT_LOO_MASK_DEX} dex)" if veil else
-           "; NO uncertainty veil — raster is visualization only)"), fontsize=11)
+           "; NO uncertainty veil — raster is visualization only)")
+        + (f"\n{title_note}" if title_note else ""), fontsize=11)
 
     outdir = os.path.join(store.plots_dir, subdir) if subdir else store.plots_dir
     os.makedirs(outdir, exist_ok=True)
