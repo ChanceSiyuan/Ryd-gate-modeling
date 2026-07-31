@@ -51,6 +51,7 @@ Usage
     python scripts/max_leakage_297_sweep.py audit  --spacing-um 5
     python scripts/max_leakage_297_sweep.py export --spacing-um 5
     python scripts/max_leakage_297_sweep.py plot   --spacing-um 5
+    python scripts/max_leakage_297_sweep.py plot   --metric eps_phase --laser ECDL
 """
 from __future__ import annotations
 
@@ -66,7 +67,7 @@ import json
 import math
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from fractions import Fraction
 from typing import Iterable, Sequence
 
@@ -1559,14 +1560,152 @@ _PLOT_SPEC = PlotSpec(
 )
 
 
+# ── power <-> Rabi table ─────────────────────────────────────────────────────
+#
+# Omega ~ sqrt(P / A) for a top-hat beam, so one ARC evaluation per n (the Rabi at
+# 1 W over the nominal area) inverts to the power any Omega on the x axis costs.
+# ARC is slow and is not needed to draw a figure, so the eight numbers are cached
+# to npz; the cache is keyed on the n axis it was built for.
+
+POWER_BEAM_AREA_UM2 = 420.0     # notebook nominal: 20 x spacing by 7 um top-hat
+POWER_OPTICS_LOSS = 0.8         # 80% of the nominal power is lost before the atoms
+POWER_TABLE_OMEGA_MHZ = (9.0, 11.0, 13.5, 15.0, 16.5, 18.0)
+_LASER_NOISE_DIR = os.path.join("results", "297_laser_noise")
+_POWER_CACHE = os.path.join(_LASER_NOISE_DIR, "omega_per_watt.npz")
+
+
+def power_table_rows(cfg: "ScanConfig") -> dict:
+    """Per-n target-leg Rabi at 1 W over POWER_BEAM_AREA_UM2 (cached; ARC once)."""
+    if os.path.exists(_POWER_CACHE):
+        with np.load(_POWER_CACHE, allow_pickle=False) as d:
+            if list(d["ryd_n"]) == list(cfg.ryd_n):
+                return {"ryd_n": d["ryd_n"], "omega_mhz_at_1w": d["omega_mhz_at_1w"]}
+    import ryd_gate.physics as physics
+
+    vals = np.asarray([
+        physics.rb87_297_clock_rabi_frequencies(
+            1.0, POWER_BEAM_AREA_UM2, ryd_level=int(n))[0] / (TAU * 1e6)
+        for n in cfg.ryd_n])
+    rows = {"ryd_n": np.asarray(cfg.ryd_n), "omega_mhz_at_1w": vals}
+    _atomic_savez(_POWER_CACHE, **rows)
+    return rows
+
+
+def power_at_atoms_w(rows: dict, ryd_n: int, omega_mhz: float) -> float:
+    """Power at the atoms (W) for ``omega_mhz`` at ``ryd_n``; Omega ~ sqrt(P/A)."""
+    i = list(rows["ryd_n"]).index(int(ryd_n))
+    return float((omega_mhz / rows["omega_mhz_at_1w"][i]) ** 2)
+
+
+def _power_table(cfg: ScanConfig, caption: str) -> tuple:
+    """(col_labels, row_labels, cells, caption) for PlotSpec.table."""
+    rows = power_table_rows(cfg)
+    cells = [[f"{power_at_atoms_w(rows, n, om):.2f} / "
+              f"{power_at_atoms_w(rows, n, om) / (1.0 - POWER_OPTICS_LOSS):.2f}"
+              for om in POWER_TABLE_OMEGA_MHZ] for n in rows["ryd_n"]]
+    return ([f"{om:g} MHz" for om in POWER_TABLE_OMEGA_MHZ],
+            [f"n = {n:g}" for n in rows["ryd_n"]], cells, caption)
+
+
+# ── laser phase noise: the stored kernels reweighted by one measured PSD ─────
+#
+# The filter kernels do not depend on the spectrum, so each (laser x extrapolation)
+# model is a reweighted sum over the stored bins and costs no solver time.  Both
+# digitized spectra stop at 1 MHz while the gate is most sensitive at
+# Omega/2pi = 9-18 MHz, so the extrapolation is an explicit bracket that both
+# figures must carry, never a silent default: "flat" (hold the 1 MHz value) is the
+# conservative headline and "power" (continue the fitted last-decade slope) the
+# optimistic bound, and they differ by more than an order of magnitude.
+
+PSD_HARMONIC = 4                 # 297 nm is the 4th harmonic of the measured 1180/1187
+PHASE_NOISE_LASERS = ("ECDL", "seed")
+PHASE_NOISE_EXTRAPOLATIONS = ("flat", "power")
+PHASE_METRICS = ("eps_phase", "total_error_phase")
+
+# The measured sigma_nu(1 Hz, 200 MHz)/Omega is 0.053, so the first-order filter
+# function is a percent-level expansion parameter, not a part-per-thousand one:
+# above this the prediction is outside its own regime and must be flagged.
+EPS_PHASE_REGIME_MAX = 0.1
+
+
+def phase_noise_values(store: Store, manifest: dict, laser: str,
+                       extrapolation: str) -> dict:
+    """Per-point ``(4,)`` eps_phase from the stored kernels and one measured PSD.
+
+    Each entry is the noise-induced fidelity loss of one logical input; ``|00>`` is
+    dark and carries no 297 leg, so its kernel — and hence its loss — is exactly
+    zero.  The bins come from the record rather than from the module constants: the
+    store is what the kernel was integrated against, and it is the store's grid the
+    spectrum has to be sampled on.
+    """
+    from ryd_gate.phase_noise import PhaseNoisePSD, error_from_kernel
+
+    psd = PhaseNoisePSD.from_csv(
+        os.path.join(_LASER_NOISE_DIR, f"psd_{laser}.csv"),
+        harmonic=PSD_HARMONIC, extrapolation=extrapolation)
+    return {r["key"]: np.asarray(
+                [error_from_kernel(psd, r["f_bins"], r["kernel"][s])
+                 for s in range(len(LOGICAL_INPUTS))])
+            for r in store.load_filter_records(manifest) if r["status"] == "ok"}
+
+
+def _flag_out_of_regime(values: dict) -> str:
+    """Name the nodes whose eps_phase leaves the perturbative regime.
+
+    Prints them (so the campaign log names the cells) and returns a caption clause
+    (so the figure carries the flag on its own).  A single top-decade *bin* is never
+    quoted anywhere: only the integrated eps_phase is meaningful, since everything
+    above 1 MHz is extrapolated.
+    """
+    bad = sorted(((float(np.max(v)), k) for k, v in values.items()
+                  if float(np.max(v)) > EPS_PHASE_REGIME_MAX), reverse=True)
+    if not bad:
+        return ""
+    shown = ", ".join(k.id() for _v, k in bad[:10])
+    more = f" (+{len(bad) - 10} more)" if len(bad) > 10 else ""
+    print(f"[plot] WARNING: {len(bad)}/{len(values)} nodes have "
+          f"eps_phase > {EPS_PHASE_REGIME_MAX} and are out of the perturbative "
+          f"regime: {shown}{more}", flush=True)
+    return (f"\nWARNING: {len(bad)} of {len(values)} nodes exceed "
+            f"eps_phase = {EPS_PHASE_REGIME_MAX} (worst {bad[0][0]:.2f}) and are "
+            "OUT OF THE PERTURBATIVE REGIME -- the first-order filter function "
+            "does not apply there.")
+
+
+def _phase_noise_caption(args, values: dict) -> str:
+    """Table caption: the power conversion, the noise model, and the regime flag.
+
+    Hard-wrapped: the strip's ``supxlabel`` does not reflow, and a single line of
+    this length runs off both edges of the figure.
+    """
+    return (
+        "Cell: 297 nm power at the atoms / nominal power (W) at the column's "
+        f"Omega_297/2pi.  Beam area {POWER_BEAM_AREA_UM2:g} um^2 (P ~ A); "
+        f"optics loss {POWER_OPTICS_LOSS:g}, so nominal = at-atoms / "
+        f"{1.0 - POWER_OPTICS_LOSS:g}."
+        f"\neps_phase: {args.laser} PSD x harmonic {PSD_HARMONIC}, "
+        f"'{args.extrapolation}' extrapolation above the 1 MHz measurement edge, "
+        f"f_min = {KERNEL_F_MIN_HZ:g} Hz."
+        + _flag_out_of_regime(values))
+
+
 def cmd_plot(args) -> None:
     store = Store(args.output)
     manifest = store.load_manifest()
     if manifest is None:
         raise SystemExit(f"no manifest under {store.root}")
     records = store.load_records(manifest, include_states=False)
-    png, pdf = render_panel_grid(store, manifest, records, args.metric,
-                                 _PLOT_SPEC, veil=args.veil, dpi=args.dpi)
+    spec, extra, suffix, subdir = _PLOT_SPEC, None, "", ""
+    if args.metric in PHASE_METRICS:
+        extra = phase_noise_values(store, manifest, args.laser, args.extrapolation)
+        cfg = ScanConfig(ryd_n=tuple(manifest["axes"]["ryd_n"]))
+        spec = replace(_PLOT_SPEC,
+                       table=_power_table(cfg, _phase_noise_caption(args, extra)))
+        suffix = f"{args.laser}_{args.extrapolation}"
+        subdir = os.path.join("phase_noise", args.laser)
+    png, pdf = render_panel_grid(store, manifest, records, args.metric, spec,
+                                 veil=args.veil, dpi=args.dpi,
+                                 extra_values=extra, suffix=suffix, subdir=subdir)
     print(f"plots: {png}\n       {pdf}")
 
 
@@ -1650,9 +1789,19 @@ def build_parser() -> argparse.ArgumentParser:
                     help="omit the uncertainty veil (raster is visualization only)")
     sp.add_argument("--metric", default="max_leakage",
                     choices=["max_leakage", "p_ryd", "p_r_garb",
-                             "p_loss_total", "total_error"],
+                             "p_loss_total", "total_error",
+                             "eps_phase", "total_error_phase"],
                     help="max_leakage from the main scan; p_* from the "
-                         "supplemental scatter series; total_error combines both")
+                         "supplemental scatter series; total_error combines both; "
+                         "eps_phase reweights the filter series by --laser/"
+                         "--extrapolation and total_error_phase adds it in")
+    sp.add_argument("--laser", default="ECDL", choices=list(PHASE_NOISE_LASERS),
+                    help="measured 297 nm phase-noise spectrum (eps_phase metrics)")
+    sp.add_argument("--extrapolation", default="flat",
+                    choices=list(PHASE_NOISE_EXTRAPOLATIONS),
+                    help="S_dnu above the 1 MHz measurement edge: flat holds the "
+                         "edge value (conservative), power continues the fitted "
+                         "last-decade slope (optimistic).  Both bracket the answer")
     sp.set_defaults(func=cmd_plot)
     return p
 

@@ -7,6 +7,7 @@ Store/Runner/CostModel/kernel machinery is exercised (parameterized over key
 configs, including an n_idx/n layout) in tests/test_sweeplib.py.
 """
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -348,12 +349,25 @@ def test_default_output_derivation():
         "results", "max_leakage_297", "a7.0")
 
 
-def test_plot_metric_choices_are_the_five_297_metrics():
+def test_plot_metric_choices_are_the_297_metrics_and_the_noise_model_flags():
     parser = mls297.build_parser()
-    for m in ("max_leakage", "p_ryd", "p_r_garb", "p_loss_total", "total_error"):
+    for m in ("max_leakage", "p_ryd", "p_r_garb", "p_loss_total", "total_error",
+              "eps_phase", "total_error_phase"):
         assert parser.parse_args(["plot", "--metric", m]).metric == m
     with pytest.raises(SystemExit):
         parser.parse_args(["plot", "--metric", "p_mid"])
+
+    # The extrapolation above the 1 MHz measurement edge is a bracket, so both
+    # policies must be selectable and the conservative one is the default.
+    args = parser.parse_args(["plot", "--metric", "eps_phase"])
+    assert args.laser == "ECDL" and args.extrapolation == "flat"
+    args = parser.parse_args(["plot", "--metric", "eps_phase", "--laser", "seed",
+                              "--extrapolation", "power"])
+    assert args.laser == "seed" and args.extrapolation == "power"
+    with pytest.raises(SystemExit):
+        parser.parse_args(["plot", "--laser", "1013"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["plot", "--extrapolation", "servo"])
 
 
 def test_cli_parser_covers_subcommands_and_locked_invocation():
@@ -585,6 +599,212 @@ def test_filter_subcommand_writes_a_resumable_series(tmp_path):
 
     mls297.main(argv)                                  # resume: nothing new
     assert len(store.load_filter_records(manifest)) == 16
+
+
+# ── power<->Rabi table (ARC once, then cached) ───────────────────────────────
+
+
+def test_power_table_matches_arc_and_scales_as_one_over_rabi_squared():
+    """The cached per-n table is the ARC target-leg Rabi at 1 W, and the lookup
+    inverts Omega ~ sqrt(P/A)."""
+    from ryd_gate.physics import rb87_297_clock_rabi_frequencies
+
+    rows = mls297.power_table_rows(mls297.ScanConfig())
+    i = list(rows["ryd_n"]).index(53)
+    omega, _garb = rb87_297_clock_rabi_frequencies(
+        1.0, mls297.POWER_BEAM_AREA_UM2, ryd_level=53)
+    assert rows["omega_mhz_at_1w"][i] == pytest.approx(
+        omega / (2 * np.pi * 1e6), rel=1e-9)
+    # 18 MHz needs (18 / omega_at_1W)**2 watts at the atoms
+    assert mls297.power_at_atoms_w(rows, 53, 18.0) == pytest.approx(
+        (18.0 / rows["omega_mhz_at_1w"][i]) ** 2, rel=1e-9)
+
+    # POWER_OPTICS_LOSS is a LOSS fraction, not a transmission (the convention
+    # scripts/max_leakage_ode_sweep.py already uses), so nominal power is
+    # at-atoms / (1 - loss).  Only the rendered cell applies that factor, and the
+    # figures are read off it, so pin it against the independent record in
+    # docs/superpowers/specs/2026-07-24-max-leakage-297-sweep-design.md: 1-3 W
+    # nominal at this 0.8-loss / 420 um^2 optics is ~9.6-16.6 MHz on 53P.
+    assert rows["omega_mhz_at_1w"][i] * np.sqrt(
+        1.0 - mls297.POWER_OPTICS_LOSS) == pytest.approx(9.6, abs=0.1)
+    cells = mls297._power_table(mls297.ScanConfig(), "caption")[2]
+    at_atoms, nominal = (float(x) for x in cells[i][-1].split(" / "))
+    assert (at_atoms, nominal) == pytest.approx((0.70, 3.52), abs=5e-3)
+
+
+def test_power_table_cache_is_keyed_on_the_n_axis(tmp_path, monkeypatch):
+    """The npz cache is reused only for the n axis it was written for.
+
+    Nothing in the file records the axis but the ``ryd_n`` array itself, so a
+    ScanConfig with a different ``ryd_n`` must re-enter ARC rather than silently
+    return a table whose rows do not line up with the store's panels.
+    """
+    import ryd_gate.physics as physics
+
+    monkeypatch.setattr(mls297, "_POWER_CACHE", str(tmp_path / "omega.npz"))
+    calls = []
+
+    def fake_rabi(power_w, area_um2, *, ryd_level):
+        calls.append((power_w, area_um2, ryd_level))
+        return float(ryd_level) * mls297.TAU * 1e6, 0.0
+
+    monkeypatch.setattr(physics, "rb87_297_clock_rabi_frequencies", fake_rabi)
+
+    rows = mls297.power_table_rows(mls297.ScanConfig(ryd_n=(50, 53)))
+    assert rows["omega_mhz_at_1w"] == pytest.approx([50.0, 53.0])
+    assert calls == [(1.0, mls297.POWER_BEAM_AREA_UM2, 50),
+                     (1.0, mls297.POWER_BEAM_AREA_UM2, 53)]
+
+    mls297.power_table_rows(mls297.ScanConfig(ryd_n=(50, 53)))     # cache hit
+    assert len(calls) == 2
+
+    rows = mls297.power_table_rows(mls297.ScanConfig(ryd_n=(60,)))  # axis changed
+    assert len(calls) == 3 and list(rows["ryd_n"]) == [60]
+
+
+# ── phase-noise plot metrics (synthetic filter store; no solver) ─────────────
+#
+# The kernels are synthetic, but the PSD, the reweighting and the plot plumbing are
+# the production ones: what is under test is that a stored kernel plus one measured
+# spectrum becomes an eps_phase map, that eps_phase composes with the coherent and
+# scattering budgets per logical input, and that a phase-noise render can never
+# land on top of a noise-free figure.
+
+_PSD_PATH = os.path.join("results", "297_laser_noise", "psd_ECDL.csv")
+
+
+def _phase_mini_store(tmp_path, boost=()):
+    """Mini store with coherent + scatter + filter records over two full panels.
+
+    Kernels are scaled so a typical point lands at eps_phase ~ 1e-3; ``boost``
+    names key indices whose kernel is multiplied by 500 to push them past the 0.1
+    perturbative ceiling.  ``|00>`` is dark and carries no 297 leg, so its kernel is
+    exactly zero — the real store's kernels have that property too.
+    """
+    from ryd_gate.phase_noise import PhaseNoisePSD, error_from_kernel
+
+    store, manifest = _mini_store(tmp_path)
+    psd = PhaseNoisePSD.from_csv(_PSD_PATH, harmonic=4, extrapolation="flat")
+    f_bins, _df = mls297.kernel_frequency_bins()
+    scale = 1e-3 / error_from_kernel(psd, f_bins, np.ones(f_bins.size))
+    rng = np.random.default_rng(7)
+    gammas = {ni: {"p_ryd": 6.6e3, "p_r_garb": 6.6e3} for ni in (0, 3)}
+    for seq, panel in enumerate([(0, 0), (3, 4)], start=1):
+        keys = mls297.panel_keys(panel[0], panel[1], 1)          # full 7x7 grid
+        res = _fake_result(len(keys), seed=seq)
+        res.leakage = rng.uniform(1e-5, 1e-3, size=(len(keys), 4))
+        res.max_leakage = res.leakage.max(axis=1)
+        store.write_result_chunk(seq, manifest, keys, _mini_cfg(), "production",
+                                 1e-9, 1e-12, f"b{seq}", res, 60.0)
+        scatter = {ch: rng.uniform(1e-6, 1e-4, size=(len(keys), 4))
+                   for ch in mls297.SCATTER_CHANNELS}
+        store.write_scatter_chunk(seq, manifest, keys, _mini_cfg(), gammas, 1e-9,
+                                  1e-12, f"s{seq}", scatter, res.max_leakage, 60.0)
+        kernels = scale * rng.uniform(0.5, 1.5, size=(len(keys), 4, f_bins.size))
+        kernels[:, 0, :] = 0.0
+        if seq == 1:
+            for i in boost:
+                kernels[i] *= 500.0
+        store.write_filter_chunk(seq, manifest, keys, _mini_cfg(), 1e-9, 1e-12,
+                                 mls297.KERNEL_N_T, f"f{seq}", kernels, f_bins, 60.0)
+    return store, manifest
+
+
+def _tree_digest(root: Path) -> dict:
+    return {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+def test_phase_noise_values_reweight_the_stored_kernels_per_laser_model(tmp_path):
+    """eps_phase per logical input is the PSD-weighted stored kernel, and the
+    extrapolation above the 1 MHz measurement edge is a real bracket."""
+    from ryd_gate.phase_noise import PhaseNoisePSD, error_from_kernel
+
+    store, manifest = _phase_mini_store(tmp_path)
+    rows = {r["key"]: r for r in store.load_filter_records(manifest)}
+    flat = mls297.phase_noise_values(store, manifest, "ECDL", "flat")
+    assert set(flat) == set(rows)
+
+    psd = PhaseNoisePSD.from_csv(_PSD_PATH, harmonic=4, extrapolation="flat")
+    key = next(iter(rows))
+    r = rows[key]
+    assert flat[key] == pytest.approx(
+        [error_from_kernel(psd, r["f_bins"], r["kernel"][s]) for s in range(4)])
+    assert flat[key][0] == 0.0                     # |00> is dark: exactly zero
+
+    # ECDL's ASD falls as f^-0.46, so continuing that power law above 1 MHz is
+    # strictly optimistic against holding the edge value flat.  The gate is most
+    # sensitive near Omega/2pi = 9-18 MHz, all of it extrapolated.
+    power = mls297.phase_noise_values(store, manifest, "ECDL", "power")
+    assert np.all(power[key][1:] < flat[key][1:])
+    assert power[key][0] == 0.0
+
+
+def test_eps_phase_and_total_error_phase_compose_per_logical_input(tmp_path):
+    """eps_phase is the worst-input loss; total_error_phase adds it to the
+    coherent leakage and the scattering channels BEFORE the worst input is taken.
+
+    Summing after the maximum would pair three unrelated maxima and over-count, so
+    the check uses a node whose worst total input is not its worst leakage input.
+    """
+    store, manifest = _phase_mini_store(tmp_path)
+    records = store.load_records(manifest, include_states=False)
+    extra = mls297.phase_noise_values(store, manifest, "ECDL", "flat")
+    scatter = {r["key"]: sum(r[ch] for ch in mls297.SCATTER_CHANNELS)
+               for r in store.load_scatter_records(manifest)}
+    leakage = {k: r.leakage for k, r in mls297.best_records(records).items()}
+
+    values, vmin, vmax, label = mls297.sweeplib.plot_metric_values(
+        store, manifest, records, "eps_phase",
+        scatter_channels=mls297.SCATTER_CHANNELS, extra_values=extra)
+    assert values == pytest.approx({k: float(v.max()) for k, v in extra.items()})
+    assert 0.0 < vmin <= vmax and "eps_phase" in label
+
+    totals, *_ = mls297.sweeplib.plot_metric_values(
+        store, manifest, records, "total_error_phase",
+        scatter_channels=mls297.SCATTER_CHANNELS, extra_values=extra)
+    per_input = {k: leakage[k] + scatter[k] + extra[k] for k in extra}
+    assert totals == pytest.approx({k: float(v.max()) for k, v in per_input.items()})
+
+    discriminating = [k for k in extra
+                      if np.argmax(per_input[k]) != np.argmax(leakage[k])]
+    assert discriminating, "fixture no longer discriminates sum-then-max"
+    k = discriminating[0]
+    max_then_sum = (leakage[k].max() + scatter[k].max() + extra[k].max())
+    assert totals[k] < max_then_sum
+
+
+def test_phase_noise_plot_emits_the_map_and_the_power_table(tmp_path, capsys):
+    """A synthetic mini-store renders eps_phase with a table strip and a suffix.
+
+    The suffix and the phase_noise/<laser>/ subdirectory exist so a phase-noise
+    render can never land on a noise-free figure; plots/ is hashed to prove it.
+    """
+    store, manifest = _phase_mini_store(tmp_path, boost=(0, 5))
+    plots = Path(store.plots_dir)
+    mls297.cmd_plot(Namespace(output=store.root, dpi=60, veil=True,
+                              metric="max_leakage"))
+    before = _tree_digest(plots)
+    assert before and "max_leakage_8x9.png" in before
+
+    for metric, extrap in (("eps_phase", "flat"), ("eps_phase", "power"),
+                           ("total_error_phase", "flat")):
+        mls297.cmd_plot(Namespace(output=store.root, dpi=60, veil=True,
+                                  metric=metric, laser="ECDL",
+                                  extrapolation=extrap))
+        stem = plots / "phase_noise" / "ECDL" / f"{metric}_8x9_ECDL_{extrap}"
+        assert stem.with_suffix(".png").exists()
+        assert stem.with_suffix(".pdf").exists()
+    after = _tree_digest(plots)
+    assert {k: after[k] for k in before} == before      # nothing overwritten
+    assert len(after) == len(before) + 6
+
+    # The boosted nodes are out of the perturbative regime and must be named, not
+    # silently plotted (measured sigma_nu/Omega = 0.053; predictions above ~0.1 are
+    # outside first-order perturbation theory).
+    out = capsys.readouterr().out
+    assert "out of the perturbative regime" in out
+    assert "eps_phase > 0.1" in out and "n0_t0_" in out
 
 
 # ── Monte Carlo cross-check of the filter kernels (scripts/phase_noise_mc_check.py)

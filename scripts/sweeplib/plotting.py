@@ -7,6 +7,13 @@ edge-labeling (top row carries the gate-time titles; the left column carries the
 row-variable ylabel).  Each script supplies its scatter-channel table, the manifest
 axis key + labeller for the row variable, the x-axis label and the system
 description via ``PlotSpec``; everything else is byte-identical between the scripts.
+
+Metrics that are not derivable from the store alone -- the laser-phase-noise
+``eps_phase``, and ``total_error_phase`` which adds it to the coherent and
+scattering budgets -- arrive through ``extra_values``: one ``(4,)`` array of
+per-logical-input error per point, computed by the caller from whatever noise model
+it holds.  Such a render also carries a ``suffix``/``subdir`` so a model-dependent
+figure can never land on the model-free one it re-renders.
 """
 from __future__ import annotations
 
@@ -20,6 +27,7 @@ from .store import Store, audit_pairs, best_records
 
 PLOT_LOO_MASK_DEX = 0.2
 PLOT_RASTER_N = 81
+PLOT_TABLE_STRIP_FRAC = 0.12    # figure height reserved for spec.table, if given
 
 
 @dataclass(frozen=True)
@@ -32,7 +40,9 @@ class PlotSpec:
     and ``row_label`` maps one row value to its ylabel head (e.g. ``$\\Delta_e/2\\pi$
     = 20 GHz`` or ``$n$ = 70``); ``xlabel`` and ``system_desc`` are the fixed
     x-axis label and the suptitle system string.  ``hw_limit_mhz`` is the
-    horizontal reference line drawn in every panel.
+    horizontal reference line drawn in every panel.  ``table``, when given, is a
+    ``(col_labels, row_labels, cells, caption)`` bundle drawn as a strip under the
+    grid — the power<->Rabi conversion the phase-noise figures are read against.
     """
 
     scatter_channels: tuple[str, ...]
@@ -41,6 +51,7 @@ class PlotSpec:
     xlabel: str
     system_desc: str
     hw_limit_mhz: float = 20.0
+    table: tuple | None = None
 
 
 def credibility_floor(records, floor_min: float = 1e-12) -> tuple[float, dict]:
@@ -72,8 +83,16 @@ def _panel_plot_data(values: dict, panel: tuple[int, int], vmin: float):
     return x, y, z
 
 
+def _positive_range(values: dict) -> tuple[float, float]:
+    """(vmin, vmax) for a LogNorm over ``values``, ignoring exact zeros."""
+    pos = [v for v in values.values() if v > 0]
+    vmin = max(1e-12, min(pos)) if pos else 1e-12
+    return vmin, max(max(values.values()), vmin * 10)
+
+
 def plot_metric_values(store: Store, manifest: dict, records, metric: str,
-                       *, scatter_channels: tuple[str, ...]):
+                       *, scatter_channels: tuple[str, ...],
+                       extra_values: dict | None = None):
     """(values, vmin, vmax, colorbar_label) for a plot metric.
 
     ``max_leakage`` reads the coherent-leakage records (audit-derived floor);
@@ -81,7 +100,23 @@ def plot_metric_values(store: Store, manifest: dict, records, metric: str,
     adds coherent leakage and every scattering contribution per logical input
     before selecting the worst input.  The scattering budget sums exactly the
     per-script ``scatter_channels``.
+
+    ``eps_phase`` is not in the store at all: it is the caller's per-point ``(4,)``
+    ``extra_values`` array of noise-induced fidelity loss, reported as its worst
+    logical input.  ``total_error_phase`` is ``total_error`` with that array added
+    to the same per-input sum, so all three budgets are combined input by input and
+    only then maximized — the three worst inputs are generally different points of
+    the map and pairing their maxima would over-count.
     """
+    if metric == "eps_phase":
+        if not extra_values:
+            raise SystemExit("no filter records for --metric eps_phase; "
+                             "run the `filter` subcommand first")
+        values = {k: float(np.max(v)) for k, v in extra_values.items()}
+        vmin, vmax = _positive_range(values)
+        return values, vmin, vmax, (
+            "worst-input eps_phase  (laser-phase-noise fidelity loss, "
+            "filter function on the stored kernels)")
     if metric == "max_leakage":
         best = best_records(records)
         values = {k: r.max_leakage for k, r in best.items()}
@@ -91,7 +126,11 @@ def plot_metric_values(store: Store, manifest: dict, records, metric: str,
                  f"{'audit-derived' if not floor_info['fallback'] else 'fallback'};"
                  " values at floor are below the numerical credibility floor)")
         return values, vmin, 1.0, label
-    coherent = best_records(records) if metric == "total_error" else {}
+    totals = metric in ("total_error", "total_error_phase")
+    if metric == "total_error_phase" and not extra_values:
+        raise SystemExit("no filter records for --metric total_error_phase; "
+                         "run the `filter` subcommand first")
+    coherent = best_records(records) if totals else {}
     rows = [r for r in store.load_scatter_records(manifest) if r["status"] == "ok"]
     if not rows:
         raise SystemExit(f"no scatter records for --metric {metric}; "
@@ -99,10 +138,15 @@ def plot_metric_values(store: Store, manifest: dict, records, metric: str,
     per_key: dict = {}
     for r in rows:
         scattering = sum(r[ch] for ch in scatter_channels)
-        if metric == "total_error":
+        if totals:
             if r["key"] not in coherent:
                 continue
-            v = float(np.max(coherent[r["key"]].leakage + scattering))
+            budget = coherent[r["key"]].leakage + scattering
+            if metric == "total_error_phase":
+                if r["key"] not in extra_values:
+                    continue
+                budget = budget + extra_values[r["key"]]
+            v = float(np.max(budget))
         elif metric == "p_loss_total":
             v = float(np.max(scattering))
         else:
@@ -112,13 +156,14 @@ def plot_metric_values(store: Store, manifest: dict, records, metric: str,
             per_key[r["key"]] = (v, r["rtol"])
     values = {k: v for k, (v, _) in per_key.items()}
     if not values:
-        raise SystemExit(f"no overlapping coherent and scatter records for --metric {metric}")
-    pos = [v for v in values.values() if v > 0]
-    vmin = max(1e-12, min(pos)) if pos else 1e-12
-    vmax = max(max(values.values()), vmin * 10)
+        raise SystemExit(f"no overlapping records for --metric {metric}")
+    vmin, vmax = _positive_range(values)
     if metric == "total_error":
         label = ("worst-input total error budget (terminal coherent leakage + "
                  "first-order scattering)")
+    elif metric == "total_error_phase":
+        label = ("worst-input total error budget (terminal coherent leakage + "
+                 "first-order scattering + laser phase noise)")
     else:
         label = (f"worst-input {metric} (scattering-rate integral, "
                  "trapezoid over 301 samples)")
@@ -198,13 +243,31 @@ def _draw_panel(ax, x, y, z, vmin, vmax, cmap, hw_limit_mhz, veil: bool = True):
     return mesh
 
 
+def _draw_table_strip(subfig, table: tuple) -> None:
+    """The (col_labels, row_labels, cells, caption) strip under the panel grid."""
+    col_labels, row_labels, cells, caption = table
+    ax = subfig.subplots()
+    ax.axis("off")
+    tbl = ax.table(cellText=cells, colLabels=col_labels, rowLabels=row_labels,
+                   cellLoc="center", rowLoc="center", bbox=[0.06, 0.0, 0.9, 1.0])
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(7)
+    subfig.supxlabel(caption, fontsize=7)
+
+
 def render_panel_grid(store: Store, manifest: dict, records, metric: str,
-                      spec: PlotSpec, *, veil: bool = True,
-                      dpi: int = 170) -> tuple[str, str]:
+                      spec: PlotSpec, *, veil: bool = True, dpi: int = 170,
+                      extra_values: dict | None = None,
+                      suffix: str = "", subdir: str = "") -> tuple[str, str]:
     """Render the 8x9 map family for ``metric`` into plots/; return (png, pdf).
 
     ``store`` must already resolve its manifest; ``records`` are the coherent
     records (states-skipped is fine).  No per-panel PNGs are emitted.
+
+    ``extra_values`` supplies the metrics the store cannot derive on its own (see
+    the module docstring).  ``subdir``/``suffix`` place such a render at
+    ``plots/<subdir>/<metric>_8x9_<suffix>.png``, which is what keeps a
+    noise-model-dependent figure off the model-free ``plots/<metric>_8x9.png``.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -212,7 +275,8 @@ def render_panel_grid(store: Store, manifest: dict, records, metric: str,
 
     store.ensure_dirs()
     values, vmin, vmax, cb_label = plot_metric_values(
-        store, manifest, records, metric, scatter_channels=spec.scatter_channels)
+        store, manifest, records, metric, scatter_channels=spec.scatter_channels,
+        extra_values=extra_values)
     if not values:
         raise SystemExit("no successful records to plot")
     cmap = "magma_r"
@@ -220,9 +284,17 @@ def render_panel_grid(store: Store, manifest: dict, records, metric: str,
     tg = manifest["axes"]["t_gate_us"]
 
     n_rows, n_cols = len(row_axis), len(tg)
-    fig, axes = plt.subplots(n_rows, n_cols,
-                             figsize=(2.1 * n_cols + 1.6, 1.9 * n_rows + 1.2),
-                             sharex=True, sharey=True, constrained_layout=True)
+    grid_h = 1.9 * n_rows + 1.2
+    strip_h = grid_h * PLOT_TABLE_STRIP_FRAC / (1.0 - PLOT_TABLE_STRIP_FRAC)
+    has_table = spec.table is not None
+    fig = plt.figure(figsize=(2.1 * n_cols + 1.6,
+                              grid_h + (strip_h if has_table else 0.0)),
+                     constrained_layout=True)
+    if has_table:
+        grid_fig, strip_fig = fig.subfigures(2, 1, height_ratios=[grid_h, strip_h])
+    else:
+        grid_fig, strip_fig = fig, None
+    axes = grid_fig.subplots(n_rows, n_cols, sharex=True, sharey=True)
     mesh = None
     for ri in range(n_rows):
         for ti in range(n_cols):
@@ -244,17 +316,28 @@ def render_panel_grid(store: Store, manifest: dict, records, metric: str,
                               r"$D_{\rm sweep}/2\pi$ (MHz)", fontsize=8)
             ax.tick_params(labelsize=7)
     if mesh is not None:
-        cb = fig.colorbar(mesh, ax=axes, shrink=0.5, pad=0.01)
+        cb = grid_fig.colorbar(mesh, ax=axes, shrink=0.5, pad=0.01)
         cb.solids.set_rasterized(True)  # same PDF hairline-seam fix as the panels
         cb.set_label(cb_label, fontsize=9)
+    if strip_fig is not None:
+        _draw_table_strip(strip_fig, spec.table)
     if metric == "max_leakage":
         metric_title = "Coherent terminal leakage"
-    elif metric == "total_error":
+    elif metric == "eps_phase":
+        metric_title = "Laser-phase-noise fidelity loss (worst input)"
+    elif metric in ("total_error", "total_error_phase"):
         metric_title = "Total first-order error budget (worst input)"
     else:
         metric_title = f"Scattering budget: {metric} (worst input)"
-    dynamics_note = ("closed-dynamics trajectory + first-order scattering"
-                     if metric == "total_error" else "closed dynamics")
+    if metric == "eps_phase":
+        dynamics_note = "closed-dynamics trajectory + first-order phase noise"
+    elif metric == "total_error":
+        dynamics_note = "closed-dynamics trajectory + first-order scattering"
+    elif metric == "total_error_phase":
+        dynamics_note = ("closed-dynamics trajectory + first-order scattering "
+                         "and phase noise")
+    else:
+        dynamics_note = "closed dynamics"
     fig.suptitle(
         f"{metric_title}, {spec.system_desc} ({dynamics_note}, "
         "original-frame DOP853; rasters are log-linear interpolation between "
@@ -263,8 +346,10 @@ def render_panel_grid(store: Store, manifest: dict, records, metric: str,
            f"{PLOT_LOO_MASK_DEX} dex)" if veil else
            "; NO uncertainty veil — raster is visualization only)"), fontsize=11)
 
-    png = os.path.join(store.plots_dir, f"{metric}_8x9.png")
-    pdf = os.path.join(store.plots_dir, f"{metric}_8x9.pdf")
+    outdir = os.path.join(store.plots_dir, subdir) if subdir else store.plots_dir
+    os.makedirs(outdir, exist_ok=True)
+    stem = os.path.join(outdir, f"{metric}_8x9" + (f"_{suffix}" if suffix else ""))
+    png, pdf = f"{stem}.png", f"{stem}.pdf"
     fig.savefig(png, dpi=dpi)
     fig.savefig(pdf, dpi=dpi)  # dpi applies to the rasterized mesh layers
     plt.close(fig)
