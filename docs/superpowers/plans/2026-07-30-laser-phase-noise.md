@@ -1191,9 +1191,13 @@ that, chunk the fine grid inside `filter_kernel` before launching the full pass.
 
 Run in the background: `ssh chance@172.20.4.137 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && nohup uv run python scripts/max_leakage_297_sweep.py filter --level 13 --workers 20 --batch-size 15 > filter.log 2>&1 &'`
 
-Expected: ~6-7 h (~134 core-h at the corrected cost). Resumable, so a stop is harmless.
-Stay at 20 workers rather than 40: it roughly halves peak memory for ~2x the wall clock,
-and the memory figure above is an estimate, not a measurement.
+Expected: **~3 h** (~60 core-h). MEASURED in Step 1, not estimated: 7.2 s/pt at `T = 1.0 us`
+and 31 s/pt at 4.5 us, interpolating to 17.9 s/pt over the 9-point T axis, times
+13x13x72 = 12168 points. Resumable, so a stop is harmless.
+
+Stay at 20 workers rather than 40. Measured peak is **3.58 GB per worker** at `T = 4.5 us`
+(1.3x above the pre-pilot estimate), so 20 workers is ~72 GB of the 244 GB available while
+40 would be ~143 GB.
 
 - [ ] **Step 3: Render all 14 figures**
 
