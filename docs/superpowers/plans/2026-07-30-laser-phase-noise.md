@@ -1207,12 +1207,22 @@ for laser in ECDL seed; do
     uv run python scripts/max_leakage_297_sweep.py plot --metric $metric \
         --laser $laser --extrapolation power
   done
+  # Step-4 f_min sensitivity: a pure reweighting of the stored bins, no re-solve.
+  # A non-default cutoff appends `_fmin10Hz` to the stem, so these cannot collide
+  # with the headline figures above.
+  uv run python scripts/max_leakage_297_sweep.py plot --metric eps_phase \
+      --laser $laser --extrapolation flat --f-min 10
 done
 ```
 
 - [ ] **Step 4: Write the results note**
 
-Record, per laser and extrapolation: where `total_error_phase` is minimized on the `(n, T, Omega, D_sweep)` grid, the minimum required nominal power there, and how the optimum moved relative to the noise-free maps. State the `f_min = 1 Hz` sensitivity by re-rendering `eps_phase` once with `f_min = 10 Hz` and reporting the shift.
+Record, per laser and extrapolation: where `total_error_phase` is minimized on the `(n, T, Omega, D_sweep)` grid, the minimum required nominal power there, and how the optimum moved relative to the noise-free maps. State the `f_min = 1 Hz` sensitivity from the `--f-min 10` renders in Step 3 and report the shift.
+
+Two things the note must say plainly, because they decide how much the maps are worth:
+
+- **How much of `eps_phase` is measured and how much is assumed.** Both PSDs stop at ~1 Hz–1 MHz, while Task 4 measured on the real kernels that 98.2–99.9% of `sum K_b` lives in 1e7–1e8 Hz, peaking at ~2e7 Hz. The filter weight sits almost entirely *above* the measurement edge, so the headline number is a statement about the extrapolation. Quote the `flat`/`power` bracket, never a single figure.
+- **Whether the out-of-regime region is large.** If it is, add the deferred per-cell `0.1` contour before the note is final — a caption count does not tell a reader *which* cells are invalid.
 
 - [ ] **Step 5: Commit**
 
