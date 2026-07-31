@@ -1173,13 +1173,27 @@ git commit -m "Render eps_phase and total_error_phase maps with a power-Rabi tab
 
 - [ ] **Step 1: Pilot the filter pass on one panel and check the ETA**
 
-Run: `ssh chance@172.20.4.137 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run python scripts/max_leakage_297_sweep.py filter --level 4 --panels 3,0 --workers 20'`
-Expected: 16 points; note the per-point runtime and confirm it is within ~2x of 5x the coherent pass.
+Run: `ssh chance@172.20.4.137 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run python scripts/max_leakage_297_sweep.py filter --level 4 --panels 3,0 --workers 20 --batch-size 15'`
+
+Expected: 16 points. **The Task-4 acceptance check "within ~2x of 5x the coherent pass" is
+superseded** — quadrature now scales with `kernel_fine_per_decade(T)`, so the multiplier is
+T-dependent: ~2.3x the old flat-200 quadrature at `T = 1 us` rising to ~10.4x at 4.5 us,
+plus 1.25x on the solve (16+4 columns vs 12+4). Check instead that the per-point runtime is
+within ~2x of `0.38 * 1.25 + 0.62 * (kernel_fine_per_decade(T) / 200)` times the Task-4
+measurement at the same T (2.96 s/pt at 1 us, 4.91 s/pt at 4.5 us).
+
+**Also watch RSS.** `np.exp(np.outer(fine, times))` is 1.13 GB at `T = 4.5 us` with
+`n_t = 4096`, and the sign loop holds the previous matrix while building the next, so expect
+~2.8 GB/worker peak — ~56 GB at 20 workers against 244 GB available. If it runs hotter than
+that, chunk the fine grid inside `filter_kernel` before launching the full pass.
 
 - [ ] **Step 2: Run the full level-13 filter pass**
 
-Run in the background: `ssh chance@172.20.4.137 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && nohup uv run python scripts/max_leakage_297_sweep.py filter --level 13 --workers 20 > filter.log 2>&1 &'`
-Expected: ~6 h; resumable, so a stop is harmless.
+Run in the background: `ssh chance@172.20.4.137 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && nohup uv run python scripts/max_leakage_297_sweep.py filter --level 13 --workers 20 --batch-size 15 > filter.log 2>&1 &'`
+
+Expected: ~6-7 h (~134 core-h at the corrected cost). Resumable, so a stop is harmless.
+Stay at 20 workers rather than 40: it roughly halves peak memory for ~2x the wall clock,
+and the memory figure above is an estimate, not a measurement.
 
 - [ ] **Step 3: Render all 14 figures**
 
