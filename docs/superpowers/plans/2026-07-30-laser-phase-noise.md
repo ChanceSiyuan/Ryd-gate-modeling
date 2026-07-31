@@ -1202,12 +1202,12 @@ Stay at 20 workers rather than 40. Measured peak is **3.58 GB per worker** at `T
 - [ ] **Step 3: Render all 14 figures**
 
 ```bash
+# `power` only — the human ruled 2026-07-31 that continuing the fitted slope is the
+# realistic out-of-band assumption. Note this saves NO compute: the stored kernels are
+# independent of laser and extrapolation, so `flat` remains a seconds-long reweighting
+# of the same kernels if it is ever wanted back.
 for laser in ECDL seed; do
   for metric in max_leakage p_ryd p_r_garb eps_phase total_error_phase; do
-    uv run python scripts/max_leakage_297_sweep.py plot --metric $metric \
-        --laser $laser --extrapolation flat
-  done
-  for metric in eps_phase total_error_phase; do
     uv run python scripts/max_leakage_297_sweep.py plot --metric $metric \
         --laser $laser --extrapolation power
   done
@@ -1215,18 +1215,20 @@ for laser in ECDL seed; do
   # A non-default cutoff appends `_fmin10Hz` to the stem, so these cannot collide
   # with the headline figures above.
   uv run python scripts/max_leakage_297_sweep.py plot --metric eps_phase \
-      --laser $laser --extrapolation flat --f-min 10
+      --laser $laser --extrapolation power --f-min 10
 done
 ```
 
+12 figures: 2 lasers x (5 metrics + 1 `f_min` sensitivity).
+
 - [ ] **Step 4: Write the results note**
 
-Record, per laser and extrapolation: where `total_error_phase` is minimized on the `(n, T, Omega, D_sweep)` grid, the minimum required nominal power there, and how the optimum moved relative to the noise-free maps. State the `f_min = 1 Hz` sensitivity from the `--f-min 10` renders in Step 3 and report the shift.
+Record, per laser: where `total_error_phase` is minimized on the `(n, T, Omega, D_sweep)` grid, the minimum required nominal power there, and how the optimum moved relative to the noise-free maps. State the `f_min = 1 Hz` sensitivity from the `--f-min 10` renders in Step 3 and report the shift.
 
 Two things the note must say plainly, because they decide how much the maps are worth:
 
-- **How much of `eps_phase` is measured and how much is assumed.** Both PSDs stop at ~1 Hz–1 MHz, while Task 4 measured on the real kernels that 98.2–99.9% of `sum K_b` lives in 1e7–1e8 Hz, peaking at ~2e7 Hz. The filter weight sits almost entirely *above* the measurement edge, so the headline number is a statement about the extrapolation. Quote the `flat`/`power` bracket, never a single figure.
-- **Whether the out-of-regime region is large.** If it is, add the deferred per-cell `0.1` contour before the note is final — a caption count does not tell a reader *which* cells are invalid.
+- **`power` is an assumption, and it is the optimistic side of one.** The gate's filter weight peaks near `2e7 Hz`, an order of magnitude above the 1 MHz measurement edge, so the headline number is largely a statement about out-of-band spectrum. Continuing the fitted slope to 200 MHz ignores the white floor a real laser approaches at large offset. Say so; do not present the number as measured. Only a direct measurement above 1 MHz narrows this.
+- **Whether the out-of-regime region is large.** If it is, add the deferred per-cell `0.1` contour before the note is final — a caption count does not tell a reader *which* cells are invalid. Under `power` the predictions are far smaller than under `flat`, so this may now be empty; check rather than assume.
 
 - [ ] **Step 5: Commit**
 
