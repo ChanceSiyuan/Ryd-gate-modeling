@@ -162,18 +162,22 @@ quantity against direct simulation in its Figs. 6–9.
 `0.01` this spec originally claimed. Predictions above ~0.1 are out of the
 perturbative regime and must be flagged rather than quoted.
 
-**Evaluation.** Only the projected components of `G` are needed, so the propagator
-is never formed. Writing `Q = sum_q |q><q|` over the 12 nonlogical basis states,
+**Evaluation.** Only the components of `G` are needed, so the propagator is never
+formed. With `Q = 1 - |psi_0(T)><psi_0(T)|` the integrand is
+`||Q G||**2 = ||G||**2 - |<psi_0(T)|G>|**2`, and
 
 ```
 <q|A_s(t)> = <phi_q(t)| N_r |psi_s(t)> ,     |phi_q(t)> = U_0(t,T)|q>
 ```
 
-so the run needs one **backward** solve of the 12 `|q>` from `T` to `0` and one
-forward solve of the logical inputs — 15 columns against the current 3, i.e. ~5x
-the per-point cost. The backward leg is the same RHS evaluated at `T - tau` with a
-flipped sign, integrated forward in `tau`; the envelope breakpoints are symmetric,
-so the segment structure is unchanged.
+so `||G||**2` needs the **complete** 16-state basis: one **backward** solve of all
+16 `|q>` from `T` to `0` plus one forward solve of the 4 logical inputs — 20 columns
+against the current 3, i.e. ~7x the per-point solve cost. The projection term is
+free: `<psi_0(T)|A_s(t)> = <psi_0(t)|N_r|psi_0(t)>` is already a by-product of the
+forward leg. The backward leg is the same RHS evaluated at `T - tau` with a flipped
+sign **and the conjugate phase restoration** (`e^{+i c tau}` where the forward leg
+restores `e^{-i c t}`); the envelope breakpoints are symmetric, so the segment
+structure is unchanged.
 
 This formulation is also what keeps the sampled integrand free of GHz content, even
 though the Rydberg pair interaction and the `|0>` hyperfine offset are GHz-scale:
@@ -187,8 +191,14 @@ enforced by a `dt`-halving convergence check rather than assumed.
 `G` is then evaluated by direct quadrature on a **logarithmic** frequency grid over
 `[f_min, f_max] = [1 Hz, 200 MHz]` — not by FFT: the FFT grid spacing `1/T ~ 1 MHz`
 cannot represent the low-frequency band at all, and the direct sum is one BLAS
-matmul. `K(f)` carries fringe structure on the `1/T` scale, so it is evaluated at
-200 points per decade and **integrated** into 30-points-per-decade storage bins,
+matmul. `K(f)` carries fringe structure on the `1/T` scale, and a log grid of `p`
+points per decade has spacing `f ln10 / p`, so resolving those fringes at the top of
+the band needs `p >= ln10 * f_max * T` — 461 points per decade at `T = 1 us` rising
+to 2073 at `T = 4.5 us`, **not** the flat 200 this spec originally specified (at
+4.5 us a flat 200 puts the kernel ~13% high). That rule is `kernel_fine_per_decade`
+in the sweep script, gated by an ODE-free Parseval check: for a pure tone
+`sum_b K_b` must equal `T`. The fine grid is then **integrated** into
+30-points-per-decade storage bins,
 `K_b = int_bin (||Q G(f)||**2 + ||Q G(-f)||**2) df`; the smooth `S_dnu` is then
 sampled at bin centres.
 
@@ -282,7 +292,7 @@ never touches ARC.
 
 | stage | estimate |
 |---|---|
-| `filter` pass, full 13x13 grid | 16 backward adjoint + 3 forward columns vs the coherent pass's 3. Measured at ~2.5-3x the coherent solve plus a flat ~2.3 s/point of quadrature: ~50 min at 40 workers with `--batch-size 15`, **once** |
+| `filter` pass, full 13x13 grid | 16 backward adjoint + 4 forward columns vs the coherent pass's 3. Quadrature scales with `kernel_fine_per_decade(T)`, so the flat ~2.3 s/point first estimated here becomes 2.3x that at `T = 1 us` rising to 10.4x at 4.5 us (~5.9x averaged over the T axis). With the ~38/62 solve/quadrature split that is ~4x the original figure: **~3.5 h at 40 workers** with `--batch-size 15`, **once**. Peak memory ~2.8 GB/worker at 4.5 us (the `exp(outer(f, t))` transform alone is 1.13 GB and the sign loop holds two) — ~115 GB at 40 workers against 244 GB available |
 | all four noise models from the stored kernels | seconds |
 | Monte Carlo validation, 20 points x 200 shots | ~1 h |
 

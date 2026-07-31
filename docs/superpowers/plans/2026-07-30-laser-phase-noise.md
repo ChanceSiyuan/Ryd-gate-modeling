@@ -488,6 +488,25 @@ git commit -m "Generate random phase traces from a PSD (PRA 107.042611 Eq. 104)"
 Note the kernel already carries the `df` integration, so `error_from_kernel` must
 NOT multiply by `df_bins` again.
 
+> **Superseded by Task 5 — the code below this line is a historical record, not
+> the shipped interface.** Two changes landed in `d06e002`:
+>
+> 1. **The metric.** `<Delta L>` (the second-order increase of the *leakage*
+>    observable) is provably wrong — it keeps `<||Q chi_1||**2>` but drops
+>    `2 Re <Q psi_0 | Q chi_2>` of the same order; setting `Q = 1` makes the true
+>    change identically zero while the formula returns a positive number. The
+>    shipped metric is the noise-induced **fidelity loss**
+>    `eps_phase = max_s [1 - |<psi_0^s(T)|psi^s(T)>|**2]`, second-order exact by
+>    construction. `filter_kernel` therefore takes a `subtract` argument carrying
+>    `<psi_0(T)|A(t)>`, and `||G||**2` runs over the **complete** 16-state basis
+>    (not the 12 nonlogical ones).
+> 2. **`fine_per_decade`.** The flat `200` under-resolves the `1/T` fringes: a log
+>    grid of `p` per decade has spacing `f ln10 / p`, so `p >= ln10 * f_max * T` is
+>    required (461 at `T = 1 us`, 2073 at 4.5 us; a flat 200 puts the 4.5 us kernel
+>    ~13% high). The sizing rule is `kernel_fine_per_decade` in the sweep script.
+>    The library default is still `200` — **callers at `T > ~0.43 us` must pass an
+>    explicit value.**
+
 - [ ] **Step 1: Write the failing tests**
 
 Append to `tests/test_phase_noise.py`:
@@ -1134,8 +1153,14 @@ Expected: PASS
 - [ ] **Step 9: Commit**
 
 ```bash
-git add scripts/ tests/ results/297_laser_noise/omega_per_watt.npz
-git commit -m "Render eps_phase and total_error_phase maps with a power-Rabi table"
+# This checkout is SHARED and carries ~2460 unrelated staged deletions from
+# another actor. `git add` only the exact paths you touched, and commit with an
+# EXPLICIT pathspec so a bare `git commit` cannot sweep those deletions in.
+git add scripts/max_leakage_297_sweep.py scripts/sweeplib/plotting.py \
+        tests/test_max_leakage_297_sweep.py results/297_laser_noise/omega_per_watt.npz
+git commit -m "Render eps_phase and total_error_phase maps with a power-Rabi table" -- \
+        scripts/max_leakage_297_sweep.py scripts/sweeplib/plotting.py \
+        tests/test_max_leakage_297_sweep.py results/297_laser_noise/omega_per_watt.npz
 ```
 
 ---
@@ -1178,8 +1203,12 @@ Record, per laser and extrapolation: where `total_error_phase` is minimized on t
 - [ ] **Step 5: Commit**
 
 ```bash
-git add results/max_leakage_297/a3.0/plots/phase_noise docs/superpowers/plans/2026-07-30-laser-phase-noise-results.md
-git commit -m "Render the phase-noise map family for both measured 297 nm lasers"
+# Explicit pathspec — see the Task 6 note about this checkout's staged deletions.
+git add results/max_leakage_297/a3.0/plots/phase_noise \
+        docs/superpowers/plans/2026-07-30-laser-phase-noise-results.md
+git commit -m "Render the phase-noise map family for both measured 297 nm lasers" -- \
+        results/max_leakage_297/a3.0/plots/phase_noise \
+        docs/superpowers/plans/2026-07-30-laser-phase-noise-results.md
 ```
 
 ---
