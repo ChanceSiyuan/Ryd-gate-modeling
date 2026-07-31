@@ -18,7 +18,7 @@
 - Filter-kernel frequency grid, fixed and global: `f_min = 1.0` Hz, `f_max = 2.0e8` Hz, 200 fine points per decade integrated into 30 storage bins per decade.
 - `ryd_gate.phase_noise` is an **expert module like `ryd_gate.physics`** — do NOT add it to `src/ryd_gate/__init__.py`'s `__all__`; that file documents its namespace as "exactly the seven names below".
 - Existing code is not modified except where a task says so. The coherent (`chunks/`) and scatter (`scatter/`) series of the live store are never rewritten.
-- Run tests on the DGX: `ssh chance@100.106.69.117 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run --extra dev pytest -q <paths>'`. Pure-NumPy tests also run locally with `PYTHONPATH=src python3 -m pytest`.
+- Run tests on the DGX: `ssh chance@172.20.4.137 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run --extra dev pytest -q <paths>'`. Pure-NumPy tests also run locally with `PYTHONPATH=src python3 -m pytest`.
 - Match the surrounding style: module docstrings explaining *why*, no speculative configurability, no defensive handling of impossible states.
 
 ## File Structure
@@ -717,7 +717,7 @@ def test_adjoint_leg_reproduces_the_forward_propagator(mls297):
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `ssh chance@100.106.69.117 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run --extra dev pytest tests/test_max_leakage_297_sweep.py -q -k adjoint'`
+Run: `ssh chance@172.20.4.137 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run --extra dev pytest tests/test_max_leakage_297_sweep.py -q -k adjoint'`
 Expected: FAIL — `AttributeError: module has no attribute 'integrate_adjoint_batch'`
 
 - [ ] **Step 3: Implement the backward leg and the components**
@@ -850,7 +850,7 @@ and guard the atom-swap reconstruction in `assemble` with
 
 - [ ] **Step 4: Run the adjoint test to verify it passes**
 
-Run: `ssh chance@100.106.69.117 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run --extra dev pytest tests/test_max_leakage_297_sweep.py -q -k adjoint'`
+Run: `ssh chance@172.20.4.137 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run --extra dev pytest tests/test_max_leakage_297_sweep.py -q -k adjoint'`
 Expected: PASS
 
 - [ ] **Step 5: Write the failing test for the convergence check**
@@ -875,7 +875,7 @@ def test_filter_kernel_is_converged_at_the_production_sampling(mls297):
 
 - [ ] **Step 6: Run it**
 
-Run: `ssh chance@100.106.69.117 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run --extra dev pytest tests/test_max_leakage_297_sweep.py -q -k converged'`
+Run: `ssh chance@172.20.4.137 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run --extra dev pytest tests/test_max_leakage_297_sweep.py -q -k converged'`
 Expected: PASS. If it fails, raise `KERNEL_N_T` to the smallest power of two that passes and re-run — do not loosen the tolerance.
 
 - [ ] **Step 7: Add the `filter/` store series**
@@ -962,7 +962,7 @@ def test_filter_subcommand_writes_a_resumable_series(mls297, tmp_path):
 
 - [ ] **Step 11: Run the full sweep test file**
 
-Run: `ssh chance@100.106.69.117 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run --extra dev pytest tests/test_max_leakage_297_sweep.py tests/test_sweeplib.py tests/test_sweep_compat_locks.py -q'`
+Run: `ssh chance@172.20.4.137 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run --extra dev pytest tests/test_max_leakage_297_sweep.py tests/test_sweeplib.py tests/test_sweep_compat_locks.py -q'`
 Expected: PASS, including the pre-existing compat-lock tests — **the stored chunk/scatter formats must not have moved.**
 
 - [ ] **Step 12: Commit**
@@ -1017,7 +1017,7 @@ def _noisy_rhs_factory(trace, n_r_diag):
 
 - [ ] **Step 2: Run it on 20 points**
 
-Run: `ssh chance@100.106.69.117 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run python scripts/phase_noise_mc_check.py --n-points 20 --shots 200 --laser ECDL --extrapolation flat'`
+Run: `ssh chance@172.20.4.137 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run python scripts/phase_noise_mc_check.py --n-points 20 --shots 200 --laser ECDL --extrapolation flat'`
 Expected: `passed: 20/20`. If points fail, the discrepancy is real — check the sign and factor conventions in `_noisy_rhs_factory` against the `H_0 + 2 pi dnu N_r` statement before touching the kernel.
 
 - [ ] **Step 3: Pin one cheap point as a test**
@@ -1031,7 +1031,7 @@ def test_filter_prediction_matches_monte_carlo_on_one_point(mls297):
 
 - [ ] **Step 4: Run the test**
 
-Run: `ssh chance@100.106.69.117 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run --extra dev pytest tests/test_max_leakage_297_sweep.py -q -k monte_carlo'`
+Run: `ssh chance@172.20.4.137 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run --extra dev pytest tests/test_max_leakage_297_sweep.py -q -k monte_carlo'`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -1075,7 +1075,7 @@ def test_power_table_matches_arc_and_scales_as_one_over_rabi_squared(mls297):
 
 - [ ] **Step 2: Run it**
 
-Run: `ssh chance@100.106.69.117 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run --extra dev pytest tests/test_max_leakage_297_sweep.py -q -k power_table'`
+Run: `ssh chance@172.20.4.137 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run --extra dev pytest tests/test_max_leakage_297_sweep.py -q -k power_table'`
 Expected: FAIL — `AttributeError: power_table_rows`
 
 - [ ] **Step 3: Implement the cache and the lookup**
@@ -1147,7 +1147,7 @@ Build on the existing synthetic mini-store fixture in the file; assert that `plo
 
 - [ ] **Step 8: Run the tests**
 
-Run: `ssh chance@100.106.69.117 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run --extra dev pytest tests/test_max_leakage_297_sweep.py tests/test_sweeplib.py -q'`
+Run: `ssh chance@172.20.4.137 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run --extra dev pytest tests/test_max_leakage_297_sweep.py tests/test_sweeplib.py -q'`
 Expected: PASS
 
 - [ ] **Step 9: Commit**
@@ -1173,12 +1173,12 @@ git commit -m "Render eps_phase and total_error_phase maps with a power-Rabi tab
 
 - [ ] **Step 1: Pilot the filter pass on one panel and check the ETA**
 
-Run: `ssh chance@100.106.69.117 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run python scripts/max_leakage_297_sweep.py filter --level 4 --panels 3,0 --workers 20'`
+Run: `ssh chance@172.20.4.137 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && uv run python scripts/max_leakage_297_sweep.py filter --level 4 --panels 3,0 --workers 20'`
 Expected: 16 points; note the per-point runtime and confirm it is within ~2x of 5x the coherent pass.
 
 - [ ] **Step 2: Run the full level-13 filter pass**
 
-Run in the background: `ssh chance@100.106.69.117 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && nohup uv run python scripts/max_leakage_297_sweep.py filter --level 13 --workers 20 > filter.log 2>&1 &'`
+Run in the background: `ssh chance@172.20.4.137 'cd ~/Ryd-gate-modeling && export PATH=$HOME/.local/bin:$PATH && nohup uv run python scripts/max_leakage_297_sweep.py filter --level 13 --workers 20 > filter.log 2>&1 &'`
 Expected: ~6 h; resumable, so a stop is harmless.
 
 - [ ] **Step 3: Render all 14 figures**
