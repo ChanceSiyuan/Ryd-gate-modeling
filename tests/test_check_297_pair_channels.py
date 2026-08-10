@@ -120,3 +120,83 @@ def test_summarize_eigenpairs_uses_channel_reference_and_overlap_weights():
     assert summary["captured_overlap"] == pytest.approx(1.0)
     assert summary["states"][0]["overlap"] == pytest.approx(0.75)
     assert summary["states"][0]["shift_mhz"] == pytest.approx(20.0)
+
+
+def test_build_output_separates_authoritative_and_comparison_models(monkeypatch):
+    """Catch putting hand-Zeeman C6 spectra back in the authoritative slot."""
+    monkeypatch.setattr(
+        pair,
+        "calculate_full_pair_field",
+        lambda atom, b: {"b_gauss": b},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        pair,
+        "calculate_effective_c6_comparison",
+        lambda atom: {"model": "effective"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        pair,
+        "radial_defect_ranking",
+        lambda atom: [],
+        raising=False,
+    )
+
+    output = pair.build_output(object())
+
+    assert set(output) == {
+        "schema_version",
+        "params",
+        "full_pair",
+        "effective_c6_comparison",
+        "radial_defect_ranking",
+    }
+    assert output["full_pair"]["authoritative"] is True
+    assert set(output["full_pair"]["fields"]) == {"20.0", "160.0"}
+    assert output["effective_c6_comparison"]["authoritative"] is False
+
+
+@pytest.mark.slow
+def test_arc_bz_changes_intermediate_pair_state_references():
+    """Characterize the ARC Bz behavior the authoritative path depends on."""
+    from arc import PairStateInteractions, Rubidium87
+
+    calculations = []
+    for b_tesla in (0.0, 20e-4):
+        calc = PairStateInteractions(
+            Rubidium87(),
+            53,
+            1,
+            1.5,
+            53,
+            1,
+            1.5,
+            -1.5,
+            -1.5,
+            interactionsUpTo=1,
+        )
+        calc.defineBasis(np.pi / 2, 0.0, 1, 2, 1e9, Bz=b_tesla)
+        calculations.append(calc)
+
+    zero, field = calculations
+    assert zero.basisStates == field.basisStates
+    rr = pair.find_basis_state_index(
+        zero.basisStates, (53, 1, 1.5, -1.5, 53, 1, 1.5, -1.5)
+    )
+    intermediate = [
+        i
+        for i, state in enumerate(zero.basisStates)
+        if not (
+            state[0:3] == [53, 1, 1.5]
+            and state[4:7] == [53, 1, 1.5]
+        )
+    ]
+    relative_change_mhz = (
+        field.matDiagonal.diagonal()
+        - zero.matDiagonal.diagonal()
+        - (field.matDiagonal[rr, rr] - zero.matDiagonal[rr, rr])
+    ) * 1e3
+
+    assert intermediate
+    assert np.max(np.abs(relative_change_mhz[intermediate])) > 1.0
