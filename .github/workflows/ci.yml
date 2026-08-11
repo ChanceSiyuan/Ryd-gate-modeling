@@ -14,12 +14,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install IPOPT build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y coinor-libipopt-dev pkg-config
       - name: Install dependencies
         run: pip install -e ".[dev]" pytest-cov
       - name: Lint with ruff
-        run: ruff check src/
+        run: ruff check src tests examples
       - name: Run tests with coverage
-        run: pytest tests/ -v --cov=src/ryd_gate --cov-report=xml --cov-report=term-missing
+        run: pytest tests/ -v --cov=src/ryd_gate --cov=src/qoc --cov-report=xml --cov-report=term-missing
+      - name: Validate result reports
+        run: python .agents/skills/results-report/validate.py --allow-missing-local-artifacts
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
