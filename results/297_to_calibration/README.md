@@ -156,7 +156,8 @@ Blackman 包络（20 ns 沿）+ 双周期余弦相位调制；瞬时扫频 $\dot
 | `traces_297.npz` | `t (301,)`、`pops (4,4,301)`（[输入态 00/01/10/11, 能级 0/1/r/r_garb, 时间]，两原子求和）、`amps (4,4) complex`（[输入态, 基态]）、`x (6,)`、`fixed (7,)`（`sorted(fixed)` 键序）、`spacing_um`、`rtol=1e-10` |
 | `garb_leg_check.json` | 稳健性检查记录：`scan`（冻结 x\* 的 4 点 B 扫描，紧容差 1−F 与逐态泄漏）、`repolish`（B=160 G 同族 NM 重抛光，nfev 341 → 紧容差 2.369e-6）；由 `scripts/check_297_garb_leg.py` 生成，2026-08-05，全流程确定性（无 RNG） |
 | `pair_channels.json` | schema 2 对相互作用审计：`full_pair.fields.{20,160}.channels.{rr,r_rgarb}` 是显式 pair-basis 局域谱、弱移权重与捕获权重；`effective_c6_comparison` 是旧二阶 $C_6$ + PP-Zeeman 对照；`radial_defect_ranking` 仅按径向矩阵元和 $|\delta|$ 排序；ARC 3.10.2，由 `scripts/check_297_pair_channels.py` 生成，2026-08-09，确定性复跑一致 |
-| `*.png` | 三张图（未入 git） |
+| `pair_potential_curves.json` | schema 1 的 Zeeman-resolved pair-potential sidecar：四个 $53P_{3/2}$ doorway（$m_j=-3/2,-1/2,+1/2,+3/2$）及 70S benchmark；`manifolds.<state>.fields.<B>.angles.<theta>.curves` 保存 41 个 $R$ 点的完整亮谱、$W_{\rm weak}$、至多五条连续 branch、$rr$ overlap 与 $R=3\ \mu$m 的本征态主成分；`params.completed_cases=105`、`status=complete`，ARC 3.10.2；由同一脚本生成，2026-08-10 |
+| `*.png` | 三张门标定图与十五张方案 1 pair-potential 图（均未入 git，可由脚本回放） |
 
 生成脚本 `scripts/calibrate_to_297.py`（分支 `laser-phase-noise`，本次运行时
 尚未提交）；2026-08-04 在 DGX（40 核）上运行，标定段 5219 s
@@ -166,10 +167,17 @@ DGX `/tmp/to297_run.log`，临时文件）。双光子对照数字取自
 notebook 01 cell 11 表（SE、t_gate、blockade）。
 
 对相互作用审计由 `scripts/check_297_pair_channels.py` 在提交 `7634116` 的实现生成；
-设计依据见 `docs/superpowers/specs/2026-08-09-full-pair-channel-diagonalization-design.md`
+设计依据见 `docs/designs/2026-08-09-full-pair-channel-diagonalization-design.md`
 （提交 `b1aa67d`），执行步骤见
-`docs/superpowers/plans/2026-08-09-full-pair-channel-diagonalization.md`。最终生产运行耗时
+`docs/work/2026-08-09-full-pair-channel-diagonalization.md`。最终生产运行耗时
 220.6 s；连续两次运行删除耗时字段后 JSON 逐字一致。
+
+新增 $R$–方向扫描由同一脚本在当前工作树提交 `f3f51b7` 之上的未提交实现生成，
+2026-08-10；Zeeman 扩展设计与执行计划分别见提交 `1f553cb`、`2ac06ba2`。因此计算
+provenance 是“基准提交 + 本 README 所述工作树修改”，尚无可引用的最终实现提交。
+最终 105 例全量运行的
+`pair_potential_curves.json:params.elapsed_s=503.872` s、`wall_s_this_run=523.652` s、
+`completed_cases_this_run=105`。完整对角化要求单线程 BLAS 才有合理的小矩阵性能。
 
 ## 复现
 
@@ -183,21 +191,23 @@ uv run python scripts/calibrate_to_297.py --force --workers 32
 # 稳健性检查：冻结脉冲 B 扫描 + B=160 G 重抛光（确定性，~80 分钟）
 uv run python scripts/check_297_garb_leg.py
 
-# 显式 pair-basis 相互作用审计（确定性，pair_channels.json:params.elapsed_s = 220.6 s）
-HOME=/tmp/arc297home MPLCONFIGDIR=/tmp/mpl297 uv run python scripts/check_297_pair_channels.py
+# 最便宜：只从 sidecar 重画十五张方案 1 pair-potential 图（已验证不会改写 JSON）
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MPLCONFIGDIR=/tmp/mpl297 \
+  .venv/bin/python scripts/check_297_pair_channels.py --plot-only
+
+# 断点续算/重算缺失的 R–方向案例并作图；去掉 --resume 可从头覆盖（本次约 8.7 分钟）
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MPLCONFIGDIR=/tmp/mpl297 \
+  .venv/bin/python scripts/check_297_pair_channels.py --pair-potentials --resume
+
+# 原 30 GHz、R=3 μm 的显式 pair-basis 审计（pair_channels.json，约 221 秒）
+MPLCONFIGDIR=/tmp/mpl297 .venv/bin/python scripts/check_297_pair_channels.py
 ```
 
 ## 附录：显式 pair-basis 对角化与二阶 C6 对照
 
 ### 最终审计对角化的矩阵
 
-本次不再把中间 Förster 对态二阶消去。ARC 先在裸 pair states
-
-$$
-|\nu\rangle=|n_1l_1j_1m_{j1};n_2l_2j_2m_{j2}\rangle
-$$
-
-上建立有限维哈密顿量，再直接对角化
+本次不再把中间 Förster 对态二阶消去。ARC 先在裸 pair states $|\nu\rangle=|n_1l_1j_1m_{j1};n_2l_2j_2m_{j2}\rangle$ 上建立有限维哈密顿量，再直接对角化
 
 $$
 H_{\rm pair}(B,R,\theta)
@@ -205,28 +215,19 @@ H_{\rm pair}(B,R,\theta)
 +V_{dd}(R,\theta).
 $$
 
-代码中它就是 ARC 的 `matDiagonal + matR[0] / (R*1e-6)^3`；前者已把线性
-Zeeman 位移加到**所有保留的 pair states**，包括 S、P、D sectors，后者是完整角动量
-矩阵的 dipole-dipole coupling。计算参数为 $n_i=48\ldots58$、$l_i\le2$、零场
-pair defect 小于 30 GHz、`interactionsUpTo=1`、$R=3\ \mu$m、
-$\theta=\pi/2$、$\phi=0$。20 G 与 160 G 的基维数均为 2276，矩阵均有
-114932 个非零元（`pair_channels.json:full_pair.fields`）。因此这里的“全 pair”是指
-**在上述截断内显式对角化**，不是无截断的严格原子哈密顿量。
 
 对裸通道 $|c\rangle$，代码用其对角裸能 $\epsilon_c(B)$ 作参考，并定义频率位移与
 可达权重
 
 $$
-\bar\Delta_k=\frac{E_k-\epsilon_c}{h},\qquad
-p_k=|\langle\Psi_k|c\rangle|^2,qquad
+\bar\Delta_k=\frac{E_k-\epsilon_c}{h},\quad
+p_k=|\langle\Psi_k|c\rangle|^2,\qquad
 W_{\rm weak}=\sum_{|\bar\Delta_k|<83.07\,{\rm MHz}}p_k.
 $$
 
-83.07 MHz 是 $5\times16.614$ MHz；所有表中能量均以 $E/h$ 的 MHz 表示。
-程序用确定初始向量的 shift-invert sparse eigensolver 在每个裸能附近取局域谱，并自动
-把本征对数从 32 加倍，直到弱移窗口两侧都被包围且捕获权重至少 0.99。
-四个结果都满足 `window_bracketed=true`、`capture_converged=true`；捕获权重为
-0.9969–0.9996，故表中的弱移权重不是任取若干谱线所得。
+其中 $83.07\ {\rm MHz}=5\times16.614\ {\rm MHz}$ 只定义一个与最大 Rabi
+频率相关的**诊断窗口**，不是 ARC 基组能窗，也不是只对角化这段能量。谱线在窗口内
+只表示它相对裸通道位移较弱、可能削弱 blockade；$W_{\rm weak}$ 不是门错误率。
 
 ### 显式基结果
 
@@ -234,12 +235,17 @@ $$
 $W_{\rm weak}$ 的谱线及紧邻阈值的主谱线。完整成分在
 `pair_channels.json:full_pair.fields.{20.0,160.0}.channels`。
 
-| B | 裸通道 | 弱窗主谱线 | $W_{\rm weak}$ | 捕获权重 |
+各列物理含义如下：`B` 是量子化轴方向的磁场；“裸通道”是激光 doorway state；
+“弱窗主谱线”给本征位移及其 doorway overlap；$W_{\rm weak}$ 是所有弱窗谱线的
+overlap 总和；“捕获权重”是局域稀疏求解得到的全部本征态对该裸通道 overlap 之和，
+越接近 1 表示未显示在局域谱外的权重越小。
+
+| B/G | 裸通道 | 弱窗主谱线 | $W_{\rm weak}$ | 捕获权重 |
 |---:|---|---|---:|---:|
-| 20 G | $|{-3/2},{-3/2}\rangle$ (`rr`) | −84.873 (0.733，刚在阈值外); +45.792 (0.131); +79.058 (0.009) | **0.139987** | 0.996906 |
-| 160 G | `rr` | −54.543 (0.614); −8.893 (0.304) | **0.918024** | 0.998374 |
-| 20 G | $|{-3/2},{-1/2}\rangle$ (`r_rgarb`) | −27.993 (0.416); −35.748 (0.374); +51.953 (0.100); +65.417 (0.054) | 0.944124 | 0.998528 |
-| 160 G | `r_rgarb` | −13.127 (0.374); +2.928 (0.274); −22.061 (0.215); −0.315 (0.115) | 0.978549 | 0.999592 |
+| 20 | `rr` | −84.873 (0.733，刚在阈值外); +45.792 (0.131); +79.058 (0.009) | **0.139987** | 0.996906 |
+| 160 | `rr` | −54.543 (0.614); −8.893 (0.304) | **0.918024** | 0.998374 |
+| 20 | `rr_garb`（JSON: `r_rgarb`） | −27.993 (0.416); −35.748 (0.374); +51.953 (0.100); +65.417 (0.054) | 0.944124 | 0.998528 |
+| 160 | `rr_garb`（JSON: `r_rgarb`） | −13.127 (0.374); +2.928 (0.274); −22.061 (0.215); −0.315 (0.115) | 0.978549 | 0.999592 |
 
 决定性结论是：**160 G 没有恢复单一 scalar blockade channel。** `rr` 的 91.8%
 可达谱权重仍在 $\pm83.07$ MHz 内，其中 30.4% 位于 −8.89 MHz。对应本征矢也显示
@@ -248,57 +254,190 @@ $W_{\rm weak}$ 的谱线及紧邻阈值的主谱线。完整成分在
 34.4%。这是显式 $V_{dd}$ 混合产生的成分；当前模型并未加入磁场算符自身在不同
 $j$ manifolds 间的非对角混合。
 
-### 旧二阶 C6 模型为何给出相反结论
+### $R$–方向 pair-potential curves：53P 与 70S benchmark
 
-`effective_c6_comparison` 保留了旧算法作为非权威对照。它先在 $B=0$ 将中间对态消去，
-只在 16 维 $53P_{3/2}+53P_{3/2}$ 流形中形成
-
-$$
-H_{\rm eff}^{(2)}(0)=-\sum_\lambda
-\frac{P V_{dd}|\lambda\rangle\langle\lambda|V_{dd}P}{\delta_\lambda},
-$$
-
-随后仅在这个 PP 流形内手工加线性 Zeeman 项。它既不让中间态 defect 随 $B$ 变化，
-也不能保留对准共振 pair sectors 的非微扰杂化。
-
-| B | 模型 | `rr` 主谱线：位移 MHz（重叠） | $W_{\rm weak}$ |
-|---:|---|---|---:|
-| 20 G | 二阶 C6 + PP Zeeman | −158.860 (0.803); +7.085 (0.150); +77.527 (0.026) | 0.175648 |
-| 20 G | 显式 2276 维 | −84.873 (0.733); +45.792 (0.131); +79.058 (0.009) | 0.139987 |
-| 160 G | 二阶 C6 + PP Zeeman | −129.555 (0.989) | **0.000000** |
-| 160 G | 显式 2276 维 | −54.543 (0.614); −8.893 (0.304) | **0.918024** |
-
-160 G 行的定性翻转说明“初始 PP manifold 的 Zeeman splitting 大于零场 C6 谱宽”
-不是自洽性判据：磁场也移动其它保留 pair states，而显式对角化还能产生旧模型没有的
-跨 sector 杂化。零场二阶对照本身也不是 scalar：`rr` 最大本征通道重叠仅 0.463，
-另有 0.187 权重落在 +3.89 MHz 通道；裸态期望值为 −121.61 MHz。
-
-### Förster channel 排名只用于筛查
-
-`radial_defect_ranking` 另列
+为展示完整 pair spectrum 随距离与方向的演化，脚本另行扫描并在每个网格点**精确
+对角化截断基内的完整矩阵**
 
 $$
-w_\lambda\propto\frac{(R_1R_2)^2}{|\delta_\lambda|}
+H_{\rm pair}(B,R,\theta,\phi)
+=H_A(B)+H_B(B)+V_{dd}(R,\theta,\phi),\qquad
+H_{\rm pair}|\Psi_k\rangle=E_k|\Psi_k\rangle.
 $$
 
-的归一化排序。它省略角 CG/Wigner 因子，并丢掉分母符号，因而**不是**实际 $C_6$
-分解，也不能证明某通道支配相互作用。
+图中纵轴不是绝对能量，而是相对于同一磁场下裸 $|rr\rangle$ 对角能的位移
 
-| 候选虚 pair channel | defect (GHz) | 径向/失谐权重 |
-|---|---:|---:|
-| $53S_{1/2}+54S_{1/2}$ | +0.3188 | 1.000 |
-| $53S_{1/2}+52D_{5/2}$ / $52D_{3/2}$ | −10.50 / −10.58 | 0.0481 / 0.0478 |
-| $54S_{1/2}+51D_{5/2}$ / $51D_{3/2}$ | −11.16 / −11.25 | 0.0131 / 0.0129 |
-| $51D+52D$（四种 $j$ 组合） | −21.98 至 −22.14 | 0.0104–0.0105 |
+$$
+\Delta_k/h=\frac{E_k-\epsilon_{rr}(B)}{h},\qquad
+p_k=|\langle rr|\Psi_k\rangle|^2.
+$$
+
+这也给出门动力学中 pair eigenstate 的光学可达性：若第二个原子的驱动项为
+$H_L=(\Omega/2)|r\rangle\langle1|+\mathrm{h.c.}$，则
+
+$$
+\langle\Psi_k|H_L|1r\rangle
+=\frac{\Omega}{2}\langle\Psi_k|rr\rangle.
+$$
+
+因此“前五条”按 $R_0=3\ \mu$m 处的 $p_k$ 排名，**不是按 $E_k$ 的代数大小
+排名**。从锚点向较大、较小 $R$ 两侧，代码用相邻本征矢重叠
+$|\langle\Psi_a(R_i)|\Psi_b(R_{i+1})\rangle|^2$ 的 Hungarian 全局匹配连续追踪；
+不会在每个 $R$ 重新排名而把不同分支拼成一条线。只保留锚点
+$p_k\ge10^{-6}$ 的亮支，所以 $53P_{3/2}$ 的 $\theta=0^\circ$ 只有一条可见分支，
+没有人为补入暗态。
+
+扫描参数来自 `pair_potential_curves.json:params`：$B=20,40,60$ G，
+$\theta=0^\circ,15^\circ,\ldots,90^\circ$，$\phi=0$，以及
+$R=2.5\text{--}8.0\ \mu$m 的 41 点非均匀网格（含精确的 $R_0=3\ \mu$m）。
+量子化轴取 $\mathbf B\parallel\hat z$；当前只有轴向磁场、没有横向外场，故绕
+$\hat z$ 的旋转对称性使谱与 $\phi$ 无关，$\phi=0$ 是一般代表。doorway 包括
+$53P_{3/2}$ 的全部四个 Zeeman 能级 $m_j=-3/2,-1/2,+1/2,+3/2$，以及 benchmark
+$70S_{1/2},m_j=-1/2$。其中只有 $m_j=-3/2$ 是当前 $\sigma^-$ 297 nm 门模型的目标
+Rydberg 态；其余三个 53P 图是平行的 pair-spectrum 对照，不是新增的门性能预测。
+可视化基组取 $n\pm3$、$l_{\max}=2$、$|\delta|<10$ GHz、只保留 $V_{dd}$；一般方向
+维数为 53P 的 164 与 70S 的 544。$\theta=0^\circ$ 时 ARC 利用投影量子数守恒，
+$m_j=\pm3/2$ 的 53P 基降为 5 维、$m_j=\pm1/2$ 降为 36 维，70S 降为 111 维。
+ARC 3.10.2 会在每个简并 channel 内给对角元加入从 $10^{-8}$ GHz 起递增的数值
+tie-breaker；新扫描在对角化前按 ARC 的 channel index 逐项扣除它，以恢复物理裸能
+和交换简并。105 例中扣除的最大单态偏置为 $3.60\times10^{-4}$ MHz
+（`removed_arc_degeneracy_offset_max_mhz`）。
+
+在 $R=3\ \mu$m 的代表性方向，锚点亮谱如下；每项写为“位移 MHz（$p_k$）”，
+完整七角度、41 距离点数据在
+`pair_potential_curves.json:manifolds.<state>.fields.<B>.angles.<theta>.curves`。
+
+| 态 | B/G | $\theta$ | $R=3\ \mu$m 的至多五条 $rr$ 亮谱线 | $W_{\rm weak}$ |
+|---|---:|---:|---|---:|
+| 53P ($m_j=-3/2$) | 20 | 0° | +0.000 (1.000) | 1.000000 |
+| 53P ($m_j=-3/2$) | 20 | 45° | −5.346 (0.472); −66.734 (0.276); +25.115 (0.207); +537.356 (0.028); +97.179 (0.010) | 0.959852 |
+| 53P ($m_j=-3/2$) | 20 | 90° | −88.379 (0.737); +41.745 (0.125); +537.908 (0.111); +72.468 (0.012); +173.083 (0.006) | 0.136756 |
+| 53P ($m_j=-3/2$) | 40 | 0° | +0.000 (1.000) | 1.000000 |
+| 53P ($m_j=-3/2$) | 40 | 45° | −37.842 (0.627); +27.141 (0.337); +595.357 (0.023); +183.124 (0.008); +100.561 (0.003) | 0.963697 |
+| 53P ($m_j=-3/2$) | 40 | 90° | −73.101 (0.831); +593.919 (0.091); +122.123 (0.061); +257.870 (0.004); −424.406 (0.004) | 0.830566 |
+| 53P ($m_j=-3/2$) | 60 | 0° | +0.000 (1.000) | 1.000000 |
+| 53P ($m_j=-3/2$) | 60 | 45° | −24.823 (0.839); +61.575 (0.133); +656.127 (0.012); +652.217 (0.006); +292.162 (0.005) | 0.972193 |
+| 53P ($m_j=-3/2$) | 60 | 90° | −61.754 (0.863); +654.311 (0.071); +196.408 (0.035); −289.457 (0.013); +407.240 (0.007) | 0.862629 |
+| 70S | 20 | 0° | +852.940 (0.532); −499.362 (0.223); −1722.574 (0.173); −378.893 (0.063); −2602.217 (0.002) | 0.000000 |
+| 70S | 20 | 45° | +851.378 (0.533); −1730.923 (0.153); −516.426 (0.113); −477.199 (0.102); −426.960 (0.021) | 0.000000 |
+| 70S | 20 | 90° | +849.805 (0.534); −1735.188 (0.161); −521.714 (0.122); −453.521 (0.096); −464.848 (0.028) | 0.000000 |
+| 70S | 40 | 0° | +861.293 (0.528); −493.130 (0.234); −1709.681 (0.174); −361.911 (0.054); −2586.038 (0.002) | 0.000000 |
+| 70S | 40 | 45° | +857.474 (0.530); −1713.523 (0.172); −491.937 (0.079); −491.551 (0.055); −516.945 (0.051) | 0.000000 |
+| 70S | 40 | 90° | +853.869 (0.533); −1716.887 (0.171); −502.804 (0.153); −421.248 (0.073); −494.131 (0.022) | 0.000000 |
+| 70S | 60 | 0° | +869.768 (0.523); −487.014 (0.244); −1696.897 (0.176); −344.595 (0.048); −2569.875 (0.002) | 0.000000 |
+| 70S | 60 | 45° | +864.488 (0.526); −1700.008 (0.175); −502.887 (0.160); −445.784 (0.049); −380.815 (0.034) | 0.000021 |
+| 70S | 60 | 90° | +859.733 (0.529); −1703.121 (0.175); −472.756 (0.141); −535.400 (0.094); −378.640 (0.036) | 0.000000 |
+
+四个 53P Zeeman doorway 的紧凑对照如下。各数值都直接取完整本征谱在
+$R=3\ \mu$m 处的 $W_{\rm weak}$；它是 10 GHz 可视化基内落入诊断弱移窗的 doorway
+overlap 总和，不是门错误率，也不是基组收敛证明。
+
+| $m_j$ | B/G | $\theta=0^\circ$ | $\theta=45^\circ$ | $\theta=90^\circ$ |
+|---:|---:|---:|---:|---:|
+| $-3/2$ | 20 | 1.000000 | 0.959852 | 0.136756 |
+| $-3/2$ | 40 | 1.000000 | 0.963697 | 0.830566 |
+| $-3/2$ | 60 | 1.000000 | 0.972193 | 0.862629 |
+| $-1/2$ | 20 | 0.272727 | 0.915849 | 0.899985 |
+| $-1/2$ | 40 | 0.272727 | 0.909110 | 0.873786 |
+| $-1/2$ | 60 | 0.272727 | 0.931604 | 0.917907 |
+| $+1/2$ | 20 | 0.889907 | 0.848974 | 0.860419 |
+| $+1/2$ | 40 | 0.895354 | 0.920549 | 0.918044 |
+| $+1/2$ | 60 | 0.900465 | 0.909708 | 0.844033 |
+| $+3/2$ | 20 | 1.000000 | 0.900799 | 0.522692 |
+| $+3/2$ | 40 | 1.000000 | 0.885857 | 0.689038 |
+| $+3/2$ | 60 | 1.000000 | 0.884511 | 0.016634 |
+
+对应本征态不是单个裸 pair state。下表列出 $B=20$ G、$\theta=45^\circ$、
+$R=3\ \mu$m 时当前门目标 $53P_{3/2},m_j=-3/2$ 与 70S benchmark 的前五条分支，
+以及每个本征矢中权重最大的两个裸成分；A+B 顺序保留，
+完整前四成分见每条 branch 的 `anchor_top_components`。
+
+| 态 | rank | $\Delta_k/h$ / MHz | $p_k$ | 最大两个裸成分（权重） |
+|---|---:|---:|---:|---|
+| 53P | 1 | −5.346 | 0.472307 | $|53P_{-3/2};53P_{-3/2}\rangle$ (0.472); $|53P_{-1/2};53P_{-1/2}\rangle$ (0.093) |
+| 53P | 2 | −66.734 | 0.275828 | $|53P_{-3/2};53P_{-3/2}\rangle$ (0.276); $|53P_{-3/2};53P_{-1/2}\rangle$ (0.209) |
+| 53P | 3 | +25.115 | 0.206656 | $|53P_{-3/2};53P_{-3/2}\rangle$ (0.207); $|53P_{-3/2};53P_{-1/2}\rangle$ (0.159) |
+| 53P | 4 | +537.356 | 0.027769 | $|53S_{-1/2};54S_{-1/2}\rangle$ (0.398); $|54S_{-1/2};53S_{-1/2}\rangle$ (0.398) |
+| 53P | 5 | +97.179 | 0.010014 | $|53P_{+1/2};53P_{+1/2}\rangle$ (0.154); $|53P_{-3/2};53P_{+1/2}\rangle$ (0.149) |
+| 70S | 1 | +851.378 | 0.533249 | $|70S_{-1/2};70S_{-1/2}\rangle$ (0.533); $|69S_{-1/2};71S_{-1/2}\rangle$ (0.036) |
+| 70S | 2 | −1730.923 | 0.152704 | $|70S_{-1/2};70S_{-1/2}\rangle$ (0.153); $|71S_{-1/2};69S_{-1/2}\rangle$ (0.065) |
+| 70S | 3 | −516.426 | 0.113159 | $|69S_{-1/2};71S_{-1/2}\rangle$ (0.140); $|71S_{-1/2};69S_{-1/2}\rangle$ (0.140) |
+| 70S | 4 | −477.199 | 0.102028 | $|70S_{-1/2};70S_{-1/2}\rangle$ (0.102); $|69S_{-1/2};71S_{-1/2}\rangle$ (0.087) |
+| 70S | 5 | −426.960 | 0.021289 | $|70S_{-1/2};70S_{+1/2}\rangle$ (0.070); $|70S_{+1/2};70S_{-1/2}\rangle$ (0.070) |
+
+**方案 1：固定 $\phi=0$ 的七个方向切片。** 中性灰点保留
+$p_k\ge10^{-5}$ 的完整局部亮谱背景；彩色线是在 $R=3\ \mu$m 选出的至多五条连续
+分支，颜色只表示锚点 rank。灰点与彩色分支点使用同一个面积映射表示
+$p_k=|\langle rr|\Psi_k\rangle|^2$，右下角 size legend 给出 $p_k=0.1,0.5,1.0$
+的对应点面积；图中不再另设 overlap 颜色条。灰带是
+$|\Delta_k/h|<83.07$ MHz，竖虚线为锚点，纵轴采用对称对数尺度。四个 53P Zeeman
+doorway 共用同一纵轴范围，70S 三个磁场图另用一个共同范围，便于同族直接比较。
+
+#### $53P_{3/2},m_j=-3/2$（当前 $\sigma^-$ 门目标）
+
+![53P mj=-3/2 pair-potential curves，B=20 G](pair_potential_53P3_2_B20G.png)
+
+![53P mj=-3/2 pair-potential curves，B=40 G](pair_potential_53P3_2_B40G.png)
+
+![53P mj=-3/2 pair-potential curves，B=60 G](pair_potential_53P3_2_B60G.png)
+
+#### $53P_{3/2},m_j=-1/2$
+
+![53P mj=-1/2 pair-potential curves，B=20 G](pair_potential_53P3_2_mj_m1_2_B20G.png)
+
+![53P mj=-1/2 pair-potential curves，B=40 G](pair_potential_53P3_2_mj_m1_2_B40G.png)
+
+![53P mj=-1/2 pair-potential curves，B=60 G](pair_potential_53P3_2_mj_m1_2_B60G.png)
+
+#### $53P_{3/2},m_j=+1/2$
+
+![53P mj=+1/2 pair-potential curves，B=20 G](pair_potential_53P3_2_mj_p1_2_B20G.png)
+
+![53P mj=+1/2 pair-potential curves，B=40 G](pair_potential_53P3_2_mj_p1_2_B40G.png)
+
+![53P mj=+1/2 pair-potential curves，B=60 G](pair_potential_53P3_2_mj_p1_2_B60G.png)
+
+#### $53P_{3/2},m_j=+3/2$
+
+![53P mj=+3/2 pair-potential curves，B=20 G](pair_potential_53P3_2_mj_p3_2_B20G.png)
+
+![53P mj=+3/2 pair-potential curves，B=40 G](pair_potential_53P3_2_mj_p3_2_B40G.png)
+
+![53P mj=+3/2 pair-potential curves，B=60 G](pair_potential_53P3_2_mj_p3_2_B60G.png)
+
+#### $70S_{1/2},m_j=-1/2$ benchmark
+
+![70S benchmark pair-potential curves，B=20 G](pair_potential_70S1_2_B20G.png)
+
+![70S benchmark pair-potential curves，B=40 G](pair_potential_70S1_2_B40G.png)
+
+![70S benchmark pair-potential curves，B=60 G](pair_potential_70S1_2_B60G.png)
+
+**直接比较：** 在该 10 GHz 截断内，70S 在这些代表点的
+$W_{\rm weak}\le2.12\times10^{-5}$，更接近强移 benchmark。53P 不存在一个对所有
+磁场和方向都单调更优的 Zeeman 选择：例如 $m_j=+3/2$ 在 60 G、
+$\theta=90^\circ$ 时为 0.016634，但同一磁场的 $\theta=0^\circ$ 仍为 1；
+$m_j=+1/2$ 在表中九个代表点则均为 0.844--0.921。这说明 53P 的可达弱移谱权重
+强烈依赖方向、磁场和 doorway，但不构成 70S 或任一 53P 基组的收敛证明。
 
 ### 仍然保留的近似与对门结果的含义
 
-- pair basis 尚未对 `n_range`、$l_{\max}$ 和 30 GHz 能窗做收敛扫描；只计算了
-  $R=3\ \mu$m，没有扫描 avoided crossings 随 $R$ 的演化。
+- 30 GHz 定量审计仍只计算 $R=3\ \mu$m，且尚未对 `n_range`、$l_{\max}$ 与能窗
+  做收敛扫描。新增曲线虽扫描 $R=2.5\text{--}8.0\ \mu$m，却采用更小的
+  $n\pm3$/10 GHz 可视化基组；它用于展示分支、avoided crossings 与角度趋势，
+  **不替代**上面的 30 GHz 单点数值。比如 20 G、$\theta=90^\circ$ 的主线在两者中
+  分别为 −84.873 与 −88.379 MHz。
 - 只保留 dipole-dipole coupling。ARC 使用弱场线性 paramagnetic Zeeman；忽略
   diamagnetic、hyperfine，以及磁场算符自身在不同 $j$ manifolds 间的非对角混合。
 - 求的是目标裸能附近的稀疏局域谱，不是全部 2276 个本征态；不过弱窗已完整包围，
   且四个裸通道捕获权重都超过 0.996。
+- 新增 10 GHz 曲线在每个网格点对 5/36/164（53P，依 $m_j$ 与方向而异）或
+  111/544（70S）维截断矩阵做完整对角化，因而该截断内 $rr$ 捕获权重为 1；
+  105 个案例的最大本征方程残差为
+  $5.23\times10^{-11}$ MHz，最小相邻分支匹配重叠为 0.438
+  （分别见 `curves.max_eigensystem_residual_mhz` 与
+  `curves.branches[*].min_adjacent_match_overlap`）。这只验证数值对角化和
+  branch tracking，不验证物理截断收敛。
 - 门动力学仍是原四能级、对角 scalar-interaction 模型；本次只审计 pair spectrum，
   尚未把显式通道接入时间演化或重新优化脉冲。
 

@@ -6,14 +6,14 @@ produced it. Start there; this table is only the map.
 
 **Figures are not tracked in git** (`.gitignore` excludes `*.png`/`*.pdf`), so image
 links render only on a checkout that has the data. Each README gives the command that
-regenerates them. Two exceptions are deliberately tracked because they are *measured
-input data*, not output: `297_laser_noise/ECDL_phasenoise.png` and `seed_lasernoise.png`.
+regenerates derived figures. Measured input images are also local-only; their owning
+report records their provenance and identifies inputs that cannot be regenerated.
 
 | Directory | What it answers | Produced by | State |
 |---|---|---|---|
 | [`01r_adiabatic_optimization`](01r_adiabatic_optimization/) | How short can a smooth two-atom `01r` computational-return pulse get and still pass `L_max ≤ 1e-4`, `C_φ ≥ 0.5`? | `scripts/adiabatic_01r_optimization.py` | complete — 48 stages, 46 accepted, rerun-verified bit-exact |
 | [`297_laser_noise`](297_laser_noise/) | What do the two candidate lasers' measured frequency-noise spectra cost the 297 nm CZ, how much laser power does it take, and does intensity noise (RIN) matter? | `scripts/laser_noise_psd.py`, `scripts/max_leakage_297_sweep.py`, `scripts/phase_noise_summary.py`, `scripts/intensity_noise_band_analysis.py` | complete — filter grid 2026-08-01; RIN ruled out (ε ≤ 3.3e-6), 2026-08-06 |
-| [`297_to_calibration`](297_to_calibration/) | Best time-optimal phase-family CZ for the 297 nm single-photon model, plus an explicit pair-spectrum validity audit | `scripts/calibrate_to_297.py`, `scripts/check_297_pair_channels.py` | calibration artifacts complete; 2276D full-pair audit invalidates the scalar-interaction interpretation at 20/160 G, 2026-08-09 |
+| [`297_to_calibration`](297_to_calibration/) | Best time-optimal phase-family CZ for the 297 nm single-photon model, plus all four 53P Zeeman pair spectra and 70S benchmark curves versus $B$, $R$, and direction | `scripts/calibrate_to_297.py`, `scripts/check_297_pair_channels.py` | calibration artifacts complete; 2276D audit invalidates the scalar model, and 105-case pair-potential scan is complete, 2026-08-10 |
 | [`ac_stark_addressing`](ac_stark_addressing/) | Which wavelength/power addresses one atom with least pinning leak, crosstalk and scatter? | `scripts/notebooks/02_ac_stark_addressing.ipynb` | complete |
 | [`anneal_sweep`](anneal_sweep/) | Does the TFIM anneal protocol reach the target order, and is the PEPS bond dimension converged? | `scripts/anneal_sweep.py`, `scripts/calibrate_anneal_3x3.py` | complete — D=10 converged, D=6 has a documented artifact |
 | [`cz_gate`](cz_gate/) | Best achievable CZ infidelity for the time-optimal and adiabatic-return families | `scripts/notebooks/01_cz_gate.ipynb` | complete — `our` AR 9.46e-6; TO mp 1.40e-5, pm 7.67e-5 |
