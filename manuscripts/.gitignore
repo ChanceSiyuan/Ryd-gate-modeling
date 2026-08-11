@@ -1,0 +1,36 @@
+# LaTeX build products
+*.aux
+*.log
+*.bbl
+*.bcf
+*.blg
+*-blx.bib
+*.out
+*.run.xml
+*.thm
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.xdv
+*.nav
+*.snm
+
+# Keep compiled documents and tool-local metadata local.
+/main.pdf
+/reports/main.pdf
+/pre/slide.pdf
+/skills-lock.json
+
+# Editor and OS files
+*.bak
+*~
+.DS_Store
+.vscode/
+
+# Build directories
+build/
+_build/
+.bld/

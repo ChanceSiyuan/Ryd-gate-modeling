@@ -10,6 +10,7 @@ the 16-state 53P+53P manifold is retained only as a labeled comparison.
 The ``--pair-potentials`` mode scans 53P and a 70S benchmark over field,
 direction, and distance with exact diagonalization of each truncated basis;
 ``--plot-only`` replays its figures from pair_potential_curves.json.
+``--manuscript-comparison`` renders the selected 20 G, three-angle comparison.
 
 Deterministic, no RNG; writes under results/297_to_calibration/.
 
@@ -43,6 +44,12 @@ from ryd_gate.physics import zeeman_shift_rad_s  # noqa: E402
 OUT = ROOT / "results" / "297_to_calibration" / "pair_channels.json"
 PAIR_POTENTIAL_OUT = (
     ROOT / "results" / "297_to_calibration" / "pair_potential_curves.json"
+)
+MANUSCRIPT_COMPARISON_OUT = (
+    ROOT
+    / "manuscripts"
+    / "figures"
+    / "pair_spectrum_53P_70S_B20G.pdf"
 )
 
 N, L, J = 53, 1, 1.5
@@ -931,7 +938,14 @@ def _overlap_marker_area(overlap):
     return 2.0 + 58.0 * np.asarray(overlap, dtype=float)
 
 
-def _plot_curve_panel(ax, case: dict, y_limit: float, *, show_spectrum: bool):
+def _plot_curve_panel(
+    ax,
+    case: dict,
+    y_limit: float,
+    *,
+    show_spectrum: bool,
+    branch_linewidth: float = 1.45,
+):
     from matplotlib import colormaps
 
     curves = case["curves"]
@@ -965,7 +979,13 @@ def _plot_curve_panel(ax, case: dict, y_limit: float, *, show_spectrum: bool):
         shifts = np.asarray(branch["shift_mhz"])
         overlaps = np.asarray(branch["rr_overlap"])
         colour = colours(index)
-        ax.plot(distances, shifts, color=colour, lw=1.45, zorder=3)
+        ax.plot(
+            distances,
+            shifts,
+            color=colour,
+            lw=branch_linewidth,
+            zorder=3,
+        )
         sample = np.arange(0, distances.size, 4)
         ax.scatter(
             distances[sample],
@@ -1116,6 +1136,85 @@ def render_pair_potential_figures(result: dict, output_dir: Path) -> list[Path]:
     return paths
 
 
+def render_manuscript_pair_spectrum_comparison(
+    result: dict, output_path: Path
+) -> Path:
+    """Render the selected 20 G, two-state, three-angle comparison."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    _validate_pair_potential_config(result)
+    if result.get("status") != "complete":
+        raise ValueError("pair-potential data are incomplete")
+
+    b_gauss = 20.0
+    state_keys = ("53P3_2", "70S1_2")
+    theta_values = (0.0, 45.0, 90.0)
+    for state_key in state_keys:
+        for theta_deg in theta_values:
+            case = result["manifolds"][state_key]["fields"][str(b_gauss)][
+                "angles"
+            ].get(str(theta_deg))
+            if not _pair_potential_case_is_complete(
+                case, b_gauss, theta_deg
+            ):
+                raise ValueError(
+                    f"incomplete manuscript panel: {state_key}, "
+                    f"B={b_gauss:g} G, theta={theta_deg:g} deg"
+                )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    y_limits = _pair_potential_y_limits(result)
+    row_labels = (
+        r"$53P_{3/2},\,m_J=-3/2$",
+        r"$70S_{1/2},\,m_J=-1/2$",
+    )
+    with plt.rc_context(
+        {
+            "font.size": 8.0,
+            "axes.titlesize": 9.0,
+            "axes.labelsize": 8.5,
+            "xtick.labelsize": 7.5,
+            "ytick.labelsize": 7.5,
+        }
+    ):
+        fig, axes = plt.subplots(
+            2,
+            3,
+            figsize=(7.2, 4.7),
+            sharex=True,
+            sharey="row",
+            constrained_layout=True,
+        )
+        for row, (state_key, row_label) in enumerate(
+            zip(state_keys, row_labels)
+        ):
+            field = result["manifolds"][state_key]["fields"][str(b_gauss)]
+            for column, theta_deg in enumerate(theta_values):
+                ax = axes[row, column]
+                case = field["angles"][str(theta_deg)]
+                _plot_curve_panel(
+                    ax,
+                    case,
+                    y_limits[state_key],
+                    show_spectrum=True,
+                    branch_linewidth=2.0,
+                )
+                if row == 0:
+                    ax.set_title(rf"$\theta={theta_deg:g}^\circ$")
+                if row == 1:
+                    ax.set_xlabel(r"$R$ ($\mu$m)")
+            axes[row, 0].set_ylabel(
+                row_label + "\n" + r"$\Delta_k/h$ (MHz)"
+            )
+        fig.align_ylabels(axes[:, 0])
+        fig.savefig(output_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+    return output_path
+
+
 def calculate_effective_c6_comparison(atom) -> dict:
     """Return the former B=0 C6 plus PP-manifold Zeeman approximation."""
     from arc import PairStateInteractions
@@ -1261,6 +1360,11 @@ def parse_args(argv=None):
         action="store_true",
         help="render pair-potential figures from the existing JSON",
     )
+    mode.add_argument(
+        "--manuscript-comparison",
+        action="store_true",
+        help="render the selected 20 G comparison into manuscripts/figures",
+    )
     parser.add_argument(
         "--resume",
         action="store_true",
@@ -1293,12 +1397,23 @@ def _render_existing_pair_potentials() -> None:
         print(f"wrote {path}")
 
 
+def _render_manuscript_comparison() -> None:
+    result = json.loads(PAIR_POTENTIAL_OUT.read_text())
+    path = render_manuscript_pair_spectrum_comparison(
+        result, MANUSCRIPT_COMPARISON_OUT
+    )
+    print(f"wrote {path}")
+
+
 def main(argv=None) -> None:
     args = parse_args(argv)
     if args.resume and not args.pair_potentials:
         raise SystemExit("--resume requires --pair-potentials")
     if args.plot_only:
         _render_existing_pair_potentials()
+        return
+    if args.manuscript_comparison:
+        _render_manuscript_comparison()
         return
     if args.pair_potentials:
         _run_pair_potentials(resume=args.resume)

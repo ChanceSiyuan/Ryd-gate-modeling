@@ -17,4 +17,5 @@
 
 External full-text TeX is ignored under `.knowledge/.raw/`; it is a local
 reading aid, not a maintained manuscript. Repository-owned derivations remain
-tracked under `theory/` and are cited by stable path from code and tests.
+tracked with their project manuscript under `manuscripts/` and are cited by
+stable path from code and tests.

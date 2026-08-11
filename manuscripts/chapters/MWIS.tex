@@ -1,0 +1,44 @@
+\chapter{Weighted maximum Independent set}
+
+This chapter devoted to discuss the reduction to UDG-WMIS problem and its approximation algorithms 
+
+\section{Definition and Classical Algorithms}
+\begin{lemma}\label{lem:WMIS}
+    Given a weighted graph $G=(V,E)$ with vertex weights $\delta_v>0$, the smallest value of the Hamiltonian
+    $$
+    H_{\rm MWIS}
+    =-\sum_{v\in V}w_v n_v+\sum_{(u,v)\in E}U_{uv}n_un_v,
+    \qquad n_v\in\{0,1\},
+    $$
+    gives the maximum-weight independent set through the relation
+    $S=\{v\in V:n_v=1\}$,
+    provided that the edge penalties satisfy $U_{uv}>\max_{v\in V}w_v$
+    for every $(u,v)\in E$.
+    \end{lemma}
+    
+    \begin{proof}
+        Minimum solution $n_v$ giving a set $S(n)=\{v\in V:n_v=1\}$ being an independent set, otherwise changing to $n'_v=0$ for $v\in S(n)$ with neighbor change the energy as
+        $\Delta_E = w_v-\sum_{\substack{u\in S(n)\\(u,v)\in E}}U_{uv}<0$,
+        which strictly lowers the energy and contradict with the minimum condition. It is also easy to see that a MWIS gives the smallest value of $H_{\rm MWIS}$.
+    \end{proof}
+
+
+\paragraph{The Simulated Annealing.}
+Use $\mathbf{z} \in \{0,1\}^{|V|}$ to specify the nodes in the IS $(z_v = 1)$. 
+Since being an IS, the Hamiltonian writes $H(z) = - \sum_{v} w_v n_v$. 
+The Simulated Annealing use the Metropolis updates
+\begin{align}
+P(z,z')=p(z,z')
+\min\left\{1, e^{-\beta[H_{\rm cost}(z')-H_{\rm cost}(z)]}\right\},
+\end{align}
+
+\section{Rydberg atom encoding}
+The Rydberg Hamiltonian 
+\begin{align}
+  H_{\rm yd}= \sum_{v} \sigma_x^v - \sum_{v} \Delta_v n_v + \sum_{v<u} U_{v,u} n_v n_u, 
+\end{align}
+naturally encodes the MWIS problem.
+Typically, we set up the range $\delta(t) \in [0, \max_{ij} V_{ij}]$.
+Sweep from $\delta(t_0) + h_j \geq 0$, which takes the $\ket{0}^{\otimes n}$ as the ground state, to a fixed negative value $\delta(t_f) + h_j := -w_i <0, $, which encodes the solution of certain MWIS problem (See Lemma~\ref{lem:WMIS}).
+As indicates by many experiments, we expect the adiabatic change of $\Omega(t)$ and $\delta(t)$ could solve the MWIS problem on a unit disk graph (WDG). Unfortunately, the UDG-MWIS admits classically efficient algorithms.
+

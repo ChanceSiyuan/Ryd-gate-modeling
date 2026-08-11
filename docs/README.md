@@ -34,14 +34,17 @@ the README reports are tracked.
 6. Do not add another top-level docs category without updating this map and
    `tests/test_documentation_structure.py` in the same change.
 
-## Theory and literature
+## Manuscripts and literature
 
 External papers and downloaded TeX are reference inputs, not project docs.
 Store their citable metadata in `.knowledge/references.bib`, their index and
 project notes in `.knowledge/INDEX.md` and `.knowledge/NOTES.md`, and ignored
-source material under `.knowledge/.raw/`. Repository-owned derivations should
-be linked from the code and indexed in `theory/README.md`; project manuscripts
-belong under a dedicated `manuscripts/` tree rather than at repository root.
+source material under `.knowledge/.raw/`. Project-owned LaTeX manuscripts and
+durable theoretical derivations live directly under `manuscripts/`: use
+`manuscripts/chapters/` for manuscript text and `manuscripts/notes/` for
+derivations that are not publication-ready. Code and tests should link to the
+canonical manuscript or note path. Do not add another manuscript nesting layer
+or create a parallel top-level `theory/` tree.
 
 ## Agent workflow
 

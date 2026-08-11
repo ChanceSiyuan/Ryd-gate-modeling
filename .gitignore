@@ -19,7 +19,8 @@ env/
 
 # IDE
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
 *.swp
 *.swo
 
@@ -52,6 +53,10 @@ env/
 *.log
 data/
 examples/results/
+
+# Curated manuscript figures are publication inputs, not numerical payloads.
+!manuscripts/figures/**/*.png
+!manuscripts/figures/**/*.pdf
 
 # Numerical result payloads are local-only. Track reports, never their data.
 results/**

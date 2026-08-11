@@ -1,0 +1,216 @@
+\section{Majorana unpaired mode}
+The main result in this subsection is that,  in the free-vortex section, the Hamiltonian in Eq.~\eqref{eq:free_ferm} has well-paired fermions, thus introducing $n$ numbers of non-degenerate fermion modes. However, in the sparse $2s-$vortex section, there exist $2s$ numbers of unpaired Majorana mode, thus giving $ 2^s$-dimensional degenerate fermion modes.
+\subsection{Unpaired Majorana mode in 1D}
+To begin with, we introduce the concept of Majorana unpaired modes in a one-dimensional interacting fermion model~\cite{Kitaev_2001} with Hamiltonian
+\begin{align}
+    \mathcal{H} &=- \sum_{n= 1}^{N}(\Delta \psi_n^\dagger \psi_{n+1}^\dagger + t\psi_{n}^\dagger \psi_{n+1}+\text{h.c.})+\mu\psi_n^\dagger \psi_n\\
+    &=- \sum_{n= 1}^{N} \frac{\Delta + t}{2}(\psi_n^\dagger \psi_{n+1}^\dagger +\psi_{n}^\dagger \psi_{n+1}) + \frac{\Delta - t}{2}(\psi_n^\dagger \psi_{n+1}^\dagger -\psi_{n}^\dagger \psi_{n+1})+\text{h.c.}+\mu\psi_n^\dagger \psi_n\\
+    &=-\sum_{n = 1}^{N}\frac{\Delta + t}{2} \left(\psi_n^\dagger (\psi_{n+1}^\dagger + \psi_{n+1})+(\psi_{n+1} +  \psi_{n+1}^\dagger)\psi_{n}\right) \notag \\
+    &\quad\quad\quad\quad -\sum_{n = 1}^{N}\frac{\Delta - t}{2} \left(\psi_n^\dagger (\psi_{n+1}^\dagger - \psi_{n+1})+(\psi_{n+1} -  \psi_{n+1}^\dagger)\psi_{n}\right)-\mu \sum_{n =1}^N\psi_n^\dagger \psi_n\\
+    &=\sum_{n = 1}^{N}-\frac{\Delta+t}{2} \left(\psi_n^\dagger- \psi_{n}\right) (\psi_{n+1}^\dagger +  \psi_{n+1}) -\frac{\Delta-t}{2} \left(\psi_n^\dagger+ \psi_{n}\right) (\psi_{n+1}^\dagger -  \psi_{n+1})-\mu \psi_n^\dagger \psi_n.
+\end{align}
+Such a model is realistic. The $t\psi_n^\dagger \psi_n + \text{h.c}$  terms are the hopping of electrons introduced by the Coulomb interaction, the $\mu \psi_n^\dagger \psi_n$  are self-energy of electrons that controlled by the chemical potentials, and the $\Delta\psi_n^\dagger \psi_n^\dagger + \text{h.c.}$ terms are the  electron-electron interaction induced by phonons under Mean field approximation. 
+Two boundary conditions can be applied to this 1D-fermion chain, namely the periodic condition  $\psi_{N+1} = \psi_{1}$ and the open boundary condition, by taking $\psi_{N+1} = 0$.
+Taking the open boundary condition  $\psi_{N+1} = 0$ and defining the Majorana operator $c_{2n-1} =   \psi_{n}^\dagger +\psi_{n}$ and $c_{2n} =  i(\psi_{n}^\dagger -  \psi_{n})$, the Hamiltonian writes
+\begin{align}
+\mathcal{H} &= \sum_{n = 1}^{N-1}-\frac{\Delta + t}{2} (-ic_{2n})c_{2n+1}+\sum_{n = 1}^{N-1}-\frac{\Delta - t}{2} c_{2n-1}(-ic_{2n+2}) - \frac{\mu}{4} \sum_{n = 1}^N(c_{2n-1} -i c_{2n} )(c_{2n-1} +i c_{2n} )\\ 
+&= \sum_{n = 1}^{N-1}i\frac{\Delta + t}{2} c_{2n}c_{2n+1}    + \sum_{n = 1}^{N-1}i\frac{\Delta - t}{2} c_{2n-1}c_{2n+2} - \frac{\mu}{2}\sum_{n =1}^N(1 + i c_{2n-1}c_{2n}).
+\end{align}
+We care about the special case where $t = \Delta$. In this case, ignoring the identity part, 
+\begin{align}\label{eq:chain_ham}
+    \mathcal{H} = \sum_{n = 1}^{N-1}i\Delta c_{2n}c_{2n+1}-\sum_{n =1}^N i \frac{\mu}{2} c_{2n-1}c_{2n}.
+\end{align}
+The left part and right part of Eq.~\eqref{eq:chain_ham} are different only by a shift $c_j \to c_{j+1}$. However, this slight difference gives rise to the unpaired Majorana modes.
+For the left parts, we can pair operators $c_{2n}$ and  $c_{2n+1}$ to construct a new fermion $f_n := (1/2)\cdot (c_{2n} + ic_{2n+1})$. 
+Use the fact that $2f_n^\dagger f_n - 1 = ic_{2n}c_{2n+1} $, it is easy to check that $\mathcal{H}_{L} = \sum_{i =1}^{N-1}\Delta(2 f_n^\dagger f_n -1), \{f_j,f_k^\dagger\} = \delta_{jk}$.
+We call $(c_2,c_3),\cdots,(c_{2N-2}, c_{2N-1})$ as the \textbf{Majorana paired mode} of $\mathcal{H}_L$.  However, not all Majorana operators are paired in $\mathcal{H}_L$. We notice that the operators $c_1$ and $c_{2N}$ are not involved in $\mathcal{H}_L$. They can be formally included through rewriting
+\begin{align}
+    \mathcal{H}_L = \sum_{n =1}^{N-1}\Delta(2 f_n^\dagger f_n -1) + 0\cdot f_N^\dagger f_N, \text{where~}\begin{cases}f_N = (1/2)(c_{2N} + ic_1)\\f_n = (1/2) (c_{2n} + ic_{2n+1})\end{cases}.
+\end{align}
+ This means $\mathcal{H}_L$ has degenerate ground states $\{\ket{},f_N^\dagger \ket{}\}$. 
+ Thus, this character is also called the\textbf{ Majorana zero modes}. 
+On the other hand, the right parts of Eq.~\eqref{eq:chain_ham} can be written in the same manner by setting $g_n = (1/2) (c_{2n-1} + ic_{2n})$ and use the fact that $2g_n^\dagger g_n - 1 = ic_{2n-1}c_{2n} $. 
+ \begin{align}
+    \mathcal{H}_R = \sum_{n =1}^{N}\Delta(2 g_n^\dagger g_n -1) , \text{where~}g_n = (1/2) (c_{2n-1} + ic_{2n}).
+\end{align}
+In this case, all Majorana operators  are paired as $(c_1,c_2),\cdots,(c_{2N-1},c_{2N})$ and involved in $\mathcal{H}_R$ and no Majorana zero mode exists.
+Such a difference can be characterized more clearly by writing the Hamiltonian in terms of an antisymmetric matrix $A_{jk}^{(R,L)}$. Here we take $N =4$ and  $ \Delta = 1/2, \mu = -1$ as an example.
+\begin{align}
+    \mathcal{H}_{L/R} &= \frac{i}{4}\sum_{j,k = 1}^{2N}A^{L/R}_{jk}c_jc_k,  \text{where}\\
+    A^{L}(\mathbf u) =\left(
+\begin{array}{ccc:ccccc}
+    0&0&0&0&0&0&0&-\mathbf{u} \\
+    0&0&1&0&0&0&0&0\\
+    0&-1&0&0&0&0&0&0 \\
+    \hdashline
+    0&0&0&0&1&0&0&0 \\
+    0&0&0&-1&0&0&0&0 \\
+    0&0&0&0&0&0&1&0 \\
+    0&0&0&0&0&-1&0&0 \\
+    \mathbf{u}&0&0&0&0&0&0&0 \\
+\end{array}
+\right)&, A^{R} =\left(\begin{array}{cccc:cccc}
+        0&1&0&0&0&0&0&0\\
+        -1&0&0&0&0&0&0&0 \\
+        0&0&0&1&0&0&0&0 \\
+        0&0&-1&0&0&0&0&0 \\
+         \hdashline
+        0&0&0&0&0&1&0&0 \\
+        0&0&0&0&-1&0&0&0 \\
+        0&0&0&0&0&0&0&1\\
+        0&0&0&0&0&0&-1&0\\
+    \end{array}\right)\label{eq:exam_mat}.
+ \end{align}
+Here $A^L = A^L(\mathbf u = 0)$ , due to the open boundary condition. However, the open boundary condition does not satisfy the translational symmetric and will cause difficulty. We defined the translational symmetrization of $\mathcal{H}$ by transferring to the periodic boundary condition. In the 1D case, this simply changes to $A^{SL} = A^L(\mathbf u = 1), A^{SR} = A^R$. The existence of unpaired Majorana modes can also be reflected in  $A^{SR}$ and  $A^{SL}$. 
+
+ This method first divides the system into two parts by a $d-1$ dimensional super-surface that cuts the $d$ dimensional lattice, as defined in Definition~\ref{def:cut_bip}.
+ \begin{definition}[cut bipartition]
+ \label{def:cut_bip}
+      Denote $\mathbf{n}$ as the normal vector of a $d-1$ dimensional surface that cuts the $d$ dimensional lattice. 
+      The \textbf{cut projector} is defined as
+\begin{align}
+    \Pi^{\mathbf{n}}\ket{\mathbf{x}} = \begin{cases}\ket{\mathbf{x}}&\text{if~} \mathbf n \cdot \mathbf x \geq0 \\ 0  &\text{if else} \end{cases}
+\end{align}
+Under the bipartition $\mathbf{n}$, we define the \textbf{bipartition diagonal} of $A$ , the \textbf{bipartition flip} of $A$, and the \textbf{local correction near $\mathbf{n}$ }of the matrix $A$ as
+\begin{align}
+    \mathcal{D}_{\mathbf{n}}(A) &= \Pi^{\mathbf{n} }A \Pi^{\mathbf{n} }+ (\mathbb I - \Pi^{\mathbf{n} })A(\mathbb{I} - \Pi^{\mathbf{n} }) ,\\
+    \mathcal{F}_{\mathbf{n}}(A) &=  (\mathbb I - 2\Pi^{\mathbf{n} })A(\mathbb{I} - 2\Pi^{\mathbf{n} }) ,\\
+     [\mathcal{L}_{\mathbf{n}}(A)]_{\mathbf j\mathbf k} &= A_{\mathbf j\mathbf k},\forall (\mathbf j,\mathbf k) \text{~s.t.~} \mathbf j\cdot \mathbf{n},\mathbf{k} \cdot \mathbf{n} \notin[-\delta , \delta],
+\end{align}
+ \end{definition}
+In the 1-dimensional case, we have $\mathbf{n} = \eta \in [0,N]$ and $\Pi^{\eta }\ket{i} = \begin{cases}\ket{i}&\text{if~} i \in [\eta,N])\\ 0  &\text{if~} i\in [1,\eta-1]\end{cases}$ as the projection operator onto parts $[\eta,N]$. Then prove the lemma below.
+\begin{lemma}
+\label{lemma:weak_obs}
+     There \textbf{exists} a $\eta \in [1,N]$ such that $\mathcal{D}_{\eta}(A^{SR})^2= -\mathbb{I}$ , but there \textbf{does not exist} a $\eta \in [1,N]$ such that $\mathcal{D}_{\eta}(A^{SL})^2 = -\mathbb{I}$.
+\end{lemma}
+\begin{proof}
+    As shown in Eq.~\eqref{eq:exam_mat}, the diagonal cut projections turn the off-diagonal parts of the dashed line block into zero. For $A^R$ it is unchanged, thus  $A^{SR}(\eta = 4)^2 = \mathbb{I} $. For $A^{SL}(\eta)$, we noted that the arbitrary choice of $\eta \in [1,N]$ will all lead to $\text{det}(A^{SL}(\eta)) = 0$,  so $A^{SL}(\eta)^2 \neq -\mathbb{I}$.   
+\end{proof}
+
+ \subsection{Majorana unpaired mode in a general Hamiltonian}
+Now we hope to generalize the result above.   We consider an arbitrary free Majorana system, where $\mathcal{H} =  \frac{i}{4}\sum_{j,k = 1}^{2N}A_{jk}c_jc_k$ and $A$ is an antisymmetric matrix. 
+\begin{lemma}
+\label{lemma:diag}
+For any even-dimensional real skew-symmetric matrix $A$ (i.e., $A^T = -A$), there exists a real orthogonal matrix $Q$ (i.e., $Q^T Q = I$) such that $A$ can be decomposed into the following block-diagonal form where all $\epsilon_i$ are non-negative real numbers:
+\begin{align}
+    A = Q\Lambda(\varepsilon_i) Q^T = Q
+\begin{pmatrix}
+\begin{matrix} 0 & \epsilon_1 \\ -\epsilon_1 & 0 \end{matrix} & &  \\
+& \ddots & \\
+ & & \begin{matrix} 0 & \epsilon_k \\ -\epsilon_k & 0 \end{matrix} \\
+\end{pmatrix}
+Q^T.
+\end{align}
+
+\end{lemma}
+Based on $\Lambda$ which is similar to Eq.~\eqref{eq:exam_mat} and $Q = (\mathbf{q}_1,\cdots,\mathbf{q}_{2N}) \in SO(2N)$ in the lemma~\ref{lemma:diag},  we define the transformed Majorana operators based on a normalized real vector $\mathbf{q}$ as $F(\mathbf{q}) = \sum_{j}q_jc_j$.  Then we can write $    \mathcal{H} = ({i}/{4})\cdot\sum_{j,k =1}^{2N} \Lambda_{jk}(\varepsilon_{r}) F(\mathbf{q}_j)F(\mathbf{q}_k)$.
+The exact value of the energy do not affact the existence of Majorana zero modes. Thus, we defined the \textbf{pairing matrix} as
+\begin{align}
+    B =Q \begin{pmatrix}
+\begin{matrix} 0 & 1 \\ -1 & 0 \end{matrix} & &  \\
+& \ddots & \\
+ & & \begin{matrix} 0 & 1 \\ -1 & 0 \end{matrix} \\
+\end{pmatrix}Q^T,
+\end{align}
+which now satisfied the equality $B^2 = - \mathbb{I}$.
+Note that through the matrix $B$ always has the form $A^{R}$ in Eq.~\eqref{eq:exam_mat}, this does not mean that the system has no Majorana zero modes. Note that a non-local translation $\{N \to 1, 1\to2,\cdots\}$ can transform $A^L(\mathbf{u} = 1)$ into $A^R$. Such a non-local translation transformation is implicitly included in the matrix $Q$.
+This section now try to solve this implicity and give a unified criterion for the existence of Majorana zero modes. Namely, we solve the problem below.
+\begin{problem}
+    Given an arbitrary free-Majorana system, where $\mathcal{H} =  \frac{i}{4}\sum_{j,k = 1}^{2N}A_{jk}c_jc_k$ and $A$ is an antisymmetric matrix with  $Q = (\mathbf{q}_1,\cdots,\mathbf{q}_{2N}) \in SO(2N)$. Find vectors $\mathbf q_A,\mathbf q_B$ that support on the label sets $A, B \subset \{1,\cdots,2N\}$ separately, such that $\min_{a\in A,b\in B}|a - b| = \mathcal{O}(N)$ and  $[F(\mathbf q_A)F(\mathbf q_B),\mathcal{H}] = 0$. We call $F(\mathbf x_A)$ and $F(\mathbf x_B)$ the topologically protected \textbf{Majorana zero modes}.
+\end{problem}
+Then we prove that the \textbf{topological obstruction} is a necessary condition for the existence of Majorana zero modes, as stated by Theorem~\ref{theo: topo_ob}.
+\begin{theorem}[topological obstruction]\label{theo: topo_ob}
+   Rewrites the $\mathcal{H}$ under the periodic condition as $\mathcal{H}_S$ with $A_{S},B_S$.   If it is impossible to find a cut-bipartite cut $\mathbf{n}$ such that it can generate a bipartite diagonalized matrix $B'=\mathcal{D}_{\mathbf{n}}\circ \mathcal{L}_{\mathbf n}(B_S)$ with $B'^2 = -\mathbb{I}$,  then the Majorana zero modes of $\mathcal{H}$ \textbf{exist}.
+\end{theorem}
+\begin{proof}
+    
+\end{proof}
+ Just like the task to distinguish $A^{SL}$ and $A^{SR}$ in Eq.~\eqref{eq:exam_mat}, theorem~\ref{theo: topo_ob} is a generalization of Lemma~\ref{lemma:weak_obs} to a general free Majorana Hamiltonian. We can propose another criterion based on $ \mathcal{F}_{\mathbf{n}}(A) $. This criterion uses the Pfaffian of a matrix, which has the properties below:
+\begin{lemma}[Pfaffian and its properties]
+    Given an even-dimensional matrix $A$, the Fredholm Pfaffian of $A,B$ is defined by $K = AB^{-1}$ as
+    \begin{align}
+        \text{Pf}(A,B) = e^{(1/2) \cdot \text{Tr} \ln (1 + K)} :=1 + (1/2)\text{Tr}K + \left(-\frac{1}{4} \text{Tr}K^2 + \frac{1}{8}(\text{Tr}K)^2\right) + \cdots
+    \end{align}
+    It has the properties (i). $\text{Pf}(WAW^T, VBV^T) = \text{Pf}(A,B)\text{det}(V^{-1}W)$
+    
+\end{lemma}
+We then link the existence of non-degenerate bipartition to the value of Pfaffian, as stated in Theorem~\ref{theo:link_P_to_B}.
+\begin{theorem}[Link Pfaffian to bipartition]\label{theo:link_P_to_B}
+    Given a matrix $B$ such that  $B^2 = -\mathbb{I}$, then $ \mathcal{M}_{\mathbf n}(B) := \text{Pf}(\mathcal{F}_{\mathbf n}(B),B) = \pm 1$. Furthermore, $[\mathcal{D}_{\mathbf{n}}\circ \mathcal{L}_{\mathbf n}(B)]^2 = - \mathbb{I} \Rightarrow \mathcal{M}_{\mathbf{n}}(B) = +1$. 
+\end{theorem}
+\begin{proof}
+    Given two cuts $\mathbf{n}$ and $\mathbf{m}$, consider the value of  $\mathcal{M}_{\mathbf n}(B) \cdot \mathcal{M}_{\mathbf m}(B)$. We have the equality:
+    \begin{align}
+        \mathcal{M}_{\mathbf n}(B) \cdot \mathcal{M}_{\mathbf m}(B)^{-1}&=\text{Pf}(\mathcal{F}_{\mathbf n}(B),B) \cdot \text{Pf}(B,\mathcal{F}_{\mathbf m}(B))\\
+        &=\text{Pf}(\mathcal{F}_{\mathbf n}(B),\mathcal{F}_{\mathbf m}(B))\\
+        &=\text{Pf}(V_{\mathbf n}BV_{\mathbf n},V_{\mathbf m}B V_{\mathbf m}),\text{where~} V_{\mathbf{r}} = \mathbb I - 2\Pi^{\mathbf{r} }\\
+        &= \text{Pf}(B,B ) \cdot \text{det}(V_{\mathbf m}^{-1}V_{\mathbf n}) =\text{det}(V_{\mathbf m}^{-1}V_{\mathbf n}) = \pm 1.
+    \end{align}
+    Thus, we conclude that $\mathcal{M}_{\mathbf{n}}(B) \mathcal{M}_{\mathbf{n}}(B') = \mathcal{M}_{\mathbf{m}}(B) \mathcal{M}_{\mathbf{m}}(B')$. 
+    
+Then we try to prove that $\mathcal{M}_{\mathbf{n}}(B)= \mathcal{M}_{\mathbf{n}}(B')$ if $B$ and $B'$ are similar at the cut edge of $\mathbf{n}$ (that is, $B_{\mathbf j \mathbf k} = B'_{\mathbf j\mathbf k}, \forall~ -\delta\leq \mathbf j\cdot \mathbf{n},\mathbf{k} \cdot \mathbf{n} \leq \delta$). 
+    Because $B$ is a $\delta$ quasi-diagonal matrix, which means that $B_{\mathbf{j}, \mathbf{k}} = 0, \forall |\mathbf{j} - \mathbf{k}|>\delta $. Then  $\mathcal{F}_{\mathbf{n}}(B) - B$ is nonzero within the region $\{(\mathbf{j}, \mathbf{k}),(\mathbf{k}, \mathbf{j})|\mathbf{j}\cdot \mathbf{n} \leq 0, \mathbf{k} \cdot \mathbf{n}\geq 0,|\mathbf{j} - \mathbf{k}|\leq \delta\}$. 
+    Because $ \left\{\begin{aligned}&|(\mathbf{j} - \mathbf{k}) \cdot \mathbf{n}| \leq |\mathbf{j} - \mathbf{k}| \leq \delta   \\
+        &\mathbf{j}\cdot \mathbf{n} \leq 0,\mathbf{k} \cdot \mathbf{n}\geq 0 
+        \end{aligned}\right. \Rightarrow -\delta\leq \mathbf j\cdot \mathbf{n},\mathbf{k} \cdot \mathbf{n} \leq \delta$, we conclude that $\mathcal{F}_{\mathbf{n}}(B) - B$ is nonzero within $\{(\mathbf{j}, \mathbf{k})|-\delta\leq \mathbf j\cdot \mathbf{n},\mathbf{k} \cdot \mathbf{n} \leq \delta\}$.
+        Using the fact $B_{\mathbf j \mathbf k} = B'_{\mathbf j \mathbf k} \Rightarrow [\mathcal{F}_{\mathbf n}(B) - B]_{\mathbf j \mathbf k} =[\mathcal{F}_{\mathbf n}(B') - B']_{\mathbf j \mathbf k}$, we conclude that given $B$ and $B'$ similar at the cut edge of $\mathbf{n}$, we have $(\mathcal{F}_{\mathbf{n}}(B) - B)(-B) = (\mathcal{F}_{\mathbf{n}}(B') - B')(-B') $. Combining with the restriction that $B^2= B'^2 = - \mathbb{I}$, we conclude $\mathcal{F}_{\mathbf{n}}(B) B^{-1} = \mathcal{F}_{\mathbf{n}}(B')(B')^{-1}$. By the definition of $\mathcal{M}_{\mathbf{n}}(B) :=  \text{Pf}(\mathcal{F}_{\mathbf n}(B),B) $ with $K =\mathcal{F}_{\mathbf{n}}(B) B^{-1}  $, we can safely state that $\mathcal{M}_{\mathbf{n}}(B)= \mathcal{M}_{\mathbf{n}}(B')$.
+    
+    If we can find a cut $\mathbf{n}$ and local correction near $\mathbf{n}$ such that $[\mathcal{D}_{\mathbf{n}}\circ \mathcal{L}_{\mathbf n}(B)]^2 = - \mathbb{I}$, then taking $B' = \mathcal{D}_{\mathbf{n}}\circ \mathcal{L}_{\mathbf n}(B)$, which is an invertible bipartition diagonal matrix. Then we can take a  normalized vector $\mathbf{m}$ that far enough with $\mathbf{n}$, such that $B$ and $B'$ are similar at the cut edge of $\mathbf{m}$. Thus,  $\mathcal{M}_{\mathbf{m}}(B)= \mathcal{M}_{\mathbf{m}}(B')$ and $\mathcal{M}_{\mathbf{n}}(B) \mathcal{M}_{\mathbf{n}}(B') = \mathcal{M}_{\mathbf{m}}(B) \mathcal{M}_{\mathbf{m}}(B') = +1$.
+    However,
+    \begin{align}
+        \mathcal{M}_{\mathbf{n}}(B') &=\mathcal{M}_{\mathbf{n}}(\mathcal{D}_{\mathbf{n}}\circ \mathcal{L}_{\mathbf{n}}(B)) \\
+        &= \mathcal{M}_{\mathbf{n}}(\mathcal{D}_{\mathbf{n}}(B)) \\&= \text{Pf}(\mathcal{F}_{\mathbf n}(\mathcal{D}_{\mathbf{n}}(B)),\mathcal{D}_{\mathbf{n}}(B)) \\
+        &= \text{Pf}(\mathcal{D}_{\mathbf{n}}(B),\mathcal{D}_{\mathbf{n}}(B)) = +1.
+    \end{align}
+    In the second equality, we use the fact that $\mathcal{D}_{\mathbf{n}}(B)$ and $\mathcal{D}_{\mathbf{n}}\circ \mathcal{L}_{\mathbf{n}}(B)$ are similar at the cut edge of $\mathbf{n}$. Thus, we conclude that $\mathcal{M}_{\mathbf{n}}(B) = +1$.
+\end{proof}
+Then we get a sufficient condition for the existence of Majorana zero modes, as stated by theorem~\ref{theo:suff_cond_zeromode}.
+\begin{theorem}\label{theo:suff_cond_zeromode}
+    If for an arbitrary cut $\mathbf{n}$, $\mathcal{M}_{\mathbf{n}}(B_S) = -1$, then the Majorana zero modes\textbf{ exist} within $\mathcal{H}$.
+\end{theorem}
+\begin{proof}
+    According to the theorem~\ref{theo:link_P_to_B}, 
+    \begin{align}
+        \forall \mathbf{n},\mathcal{M}_{\mathbf{n}}(B_S) = -1 \Rightarrow \forall \mathbf{n},[\mathcal{D}_{\mathbf{n}}\circ \mathcal{L}_{\mathbf n}(B_S)]^2 \neq  - \mathbb{I}.
+    \end{align}    According to theorem~\ref{theo: topo_ob}, we state that
+    \begin{align}
+        \forall \mathbf{n},[\mathcal{D}_{\mathbf{n}}\circ \mathcal{L}_{\mathbf n}(B_S)]^2 \neq  - \mathbb{I} \Rightarrow \text{Majorana zero modes exist}
+    \end{align}
+\end{proof}
+\subsection{Calculation of Majorana number}
+In this subsection we show how to compute the value of $\mathcal{M}_{\mathbf n}(B)$ exactly, given an arbitrary matrix $B$ that (i)  satisfied the periodic condition, (ii) $B^2 = -\mathbb{I}$.  
+The description of cuts $\mathbf{n}$ is complex.
+Fortunately, as shown in the proof of Theorem~\ref{theo:link_P_to_B},
+we can eliminate the dependence of $\mathbf{n}$ by defining the \textbf{relative Majorana number} $\mathcal{M}(B,B') =\mathcal{M}_{\mathbf{n}}(B) \mathcal{M}_{\mathbf{n}}(B') $.
+Then we can take $\mathbf{n} =\mathbf{e}_0= (1,0,\cdots)$ to evaluate the relative Majorana number.
+\begin{lemma}
+    Given two matrices $B,B'$ such that $B^2 =B'^2= -\mathbb{I}$ , then the relative Majorana number $\mathcal{M}(B,B') :=\mathcal{M}_{\mathbf{n}}(B) \mathcal{M}_{\mathbf{n}}(B') $ does not depend on the choice of cut $\mathbf{n}$. Furthermore,  $\mathcal{M}(B,B') = \text{det}(e^{-\pi X}e^{\pi X'})$, where $X = (1/2)\cdot (\Pi^{\mathbf{e}_0} B + B \Pi^{\mathbf{e}_0})$
+\end{lemma}
+We focus on cases in two-dimensional space, where $\mathbf{e}_x = (1,0),\mathbf e_y = (0,1)$. 
+We choose $B' = (1 - 2\Pi^{\mathbf{e}_y})B(1 - 2\Pi^{\mathbf{e}_y})$ and represent the result in terms of the projector $P = (1/2)(1 - iB)$. 
+\begin{theorem}\label{theorem:chern}
+    \begin{align}
+        \mathcal{M}(B,B')= (-1)^{\nu(P)}, \text{where~} \nu(P) = 2\pi i \text{Tr}\left([P \Pi^{\mathbf e_x} P,P \Pi^{\mathbf e_y} P]\right)
+    \end{align}
+\end{theorem}
+Given a translational invariant matrix $P_{\mathbf s\lambda,\mathbf t\mu}$,
+where vectors $\mathbf s,\mathbf t$ denote the position of the unit cell and $\lambda,\mu$ label the points within the unit cell.
+We then defined the Fourier transformation of this translationally invariant matrix as $\tilde P_{\lambda,\mu}(\mathbf{q}):= \sum_{\mathbf t} e^{i \mathbf q \cdot \mathbf t}P_{\mathbf0\lambda, \mathbf t\mu}$.
+\begin{lemma}
+\label{lemma:trace_to_int}
+    Given a translational invariant matrix $P_{\mathbf s\lambda,\mathbf t\mu}$ and its Fourier transformation. Defined the position matrix as $X_{\mathbf s\lambda,\mathbf t\mu} = s_x \delta_{\mathbf{s},\mathbf{t}} \delta_{\lambda, \mu}$. Then the two identities below are satisfied:
+    \begin{align}
+        [X,P] &= i \frac{d\tilde{P}}{dq_x},  \quad \text{Tr}(P) = \int_{q = -\pi}^{\pi}\frac{d^n\mathbf q}{(2\pi)^n} \text{Tr}(\tilde P(\mathbf q))\\
+    \end{align}
+\end{lemma}
+Based on the lemma~\ref{lemma:trace_to_int}, we state that
+\begin{align}
+    \text{Tr}(P^\dagger [X,P]) = \int_{-\pi}^{\pi}dq_x \text{Tr}\left(\tilde P^\dagger \frac{d \tilde P}{dq_x}\right).\label{eq:trace_to_inte}
+\end{align}
+According to Eq.~\ref{eq:trace_to_inte}, we can compute the exact value of $\nu(P)$ given that $P$ has the periodic condition and its Fourier transformation is computable.
+\begin{lemma}\label{lemma:Chern_numb_cal}
+    Given the Fourier transformation of a translationally invariant projective matrix $P$, its Chern number $\nu(P)$, defined in~\ref{theorem:chern} can be calculated by
+    \begin{align}
+        \nu(P) = \frac{1}{2\pi i} \int dq_xdq_y \text{Tr}\left(\tilde P(\mathbf{q})\left(\frac{\partial\tilde P(\mathbf{q})}{\partial q_x}\frac{\partial\tilde P(\mathbf{q})}{\partial q_y}-\frac{\partial\tilde P(\mathbf{q})}{\partial q_x}\frac{\partial\tilde P(\mathbf{q})}{\partial q_y}\right)\right).
+    \end{align}
+\end{lemma}

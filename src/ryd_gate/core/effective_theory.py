@@ -7,7 +7,8 @@ the effective ``{0, 1, r}`` model obtained by eliminating the complementary
 manifold.  It exists so the relationship is a *readable map*, not a
 ``compensate_stark`` switch buried inside a protocol.
 
-The physics is derived in ``theory/derivations/rydberg-simulation.tex``
+The physics is derived in
+``manuscripts/chapters/Rydberg_sim.tex``
 (Theorems 1–2 + Lemma 1, restated
 2026-07 in the dressed-resolvent form) and validated numerically in
 ``scripts/notebooks/find_phase.ipynb`` §4.  The method is the *one-step
@@ -107,7 +108,8 @@ def schrieffer_wolff(
     ``bare_energies`` are the unperturbed level energies entering the
     denominators; they default to ``Re(diag(h_local))`` (so a Hamiltonian built
     with any ``detuning_sign`` / laser override is handled automatically).  This
-    is the construction of ``theory/derivations/rydberg-simulation.tex``
+    is the construction of
+    ``manuscripts/chapters/Rydberg_sim.tex``
     Theorem 1 and find_phase §4.2.
     """
     h = np.asarray(h_local)
@@ -137,7 +139,8 @@ def resolvent_elimination(h, keep_idx: Sequence[int]) -> np.ndarray:
 
     with ``|v_a> = H[Q, a]``, ``E_a = Re H[a,a]``, and ``R_a = (H_Q - E_a)^{-1}``
     (``a == b`` gives the diagonal ``-<v_a|R_a|v_a>``).  This is the reduction of
-    ``theory/derivations/rydberg-simulation.tex`` Theorems 1 (single atom) and
+    ``manuscripts/chapters/Rydberg_sim.tex`` Theorems 1
+    (single atom) and
     2 (interacting pair): unlike
     :func:`schrieffer_wolff`, the internal couplings of the eliminated block
     (``e_F <-> r'``, and for a pair the blockade shifts of ``|r'r>``-type virtual
@@ -319,7 +322,7 @@ def reverse_amplitude_split(
     raise ValueError(f"hold must be '1013', '420', or 'balanced'; got {hold!r}.")
 
 
-# rb87_7 -> {0,1,r} kept indices (rydberg-simulation.tex Thm 1: P3; Q3 = complement,
+# rb87_7 -> {0,1,r} kept indices (Rydberg_sim.tex Thm 1: P3; Q3 = complement,
 # i.e. {e1,e2,e3,r_garb} with the e<->r' couplings kept inside the Q block).
 _KEEP_P3 = [_QUBIT_0, _QUBIT_1, _RYD]
 
@@ -370,7 +373,7 @@ def _tex_frame_h7_fn(protocol, system7):
     (static energies + Σ coeff·E[ket,bra] + h.c.), then gauge-rotates the
     ``{e1,e2,e3}`` rows by the instantaneous 420 phase and the ``{r, r_garb}``
     rows by the 420+1013 phase so all optical couplings are real, and moves the
-    corresponding chirps onto the diagonal (rydberg-simulation.tex convention):
+    corresponding chirps onto the diagonal (Rydberg_sim.tex convention):
 
         E_e     += -dot_phi_420,
         E_r/r'  += -(dot_phi_420 + dot_phi_1013)  =  -Δ_add(t).
@@ -462,7 +465,7 @@ def lower_cz_to_effective_01r(protocol, system7):
 
     At each ``t`` it rebuilds the single-atom ``H7(t)`` in the tex rotating frame
     (:func:`_tex_frame_h7_fn`: real couplings, chirps on the diagonal) and applies
-    the full 4th-order reduction of rydberg-simulation.tex Theorem 1:
+    the full 4th-order reduction of Rydberg_sim.tex Theorem 1:
 
         H_eff = resolvent_elimination(H7) + vod4_s_terms(H7).
 
@@ -521,7 +524,7 @@ def lower_cz_to_effective_01r(protocol, system7):
 
 
 class EffectivePairModel:
-    """Two-atom direct effective Hamiltonian (rydberg-simulation.tex Theorem 2).
+    """Two-atom direct effective Hamiltonian (Rydberg_sim.tex Theorem 2).
 
     ``h_eff(t)`` returns the dense 9x9 two-qutrit Hamiltonian in the product
     basis ``labels`` (atom 1 is the slow index).  The Rydberg pair interaction

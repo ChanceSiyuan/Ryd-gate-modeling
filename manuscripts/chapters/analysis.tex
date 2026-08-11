@@ -1,0 +1,362 @@
+\section{Analysis of honeycomb lattice model\label{app:ana}}
+
+In this section we focus on how to solve the gauged Hamiltonian of Eq.~\eqref{eq:free_ferm}. 
+\subsection{Derivation of Effective Hamiltonian}
+In this section, we prove the statement below:
+\begin{theorem}\label{theo:perturbed_honeycomb}
+    Under a weak magnetic field of the form $\mathbf{h} = (h_x,h_y,h_z) $, we denote that for the magnetic-free honeycomb model, the vortex-free section has energy spectrum $E_i^{(0)}$ and the two-vortex section has energy spectrum $E_j^{(2)}$. Assumes that  $E_i^{(0)} - E_j^{(2)} \approx \Delta \geq |E^{(0)}_j - E^{(0)}_k|,|E^{(2)}_j - E^{(2)}_k|$ , then the \textit{effective Hamiltonian} writes:  
+    \begin{align}H_{hc}=-J_x'\sum_{(j,k)\mathrm{~is~}x-\mathrm{links}}\sigma_j^x\sigma_k^x-J_y'\sum_{(j,k)\mathrm{~is~}y-\mathrm{links}}\sigma_j^y\sigma_k^y-J_z'\sum_{(j,k)\mathrm{~is~}z-\mathrm{links}}\sigma_j^z\sigma_k^z - K\sum_{j,k,l}\sigma_j^x \sigma_k^y \sigma_l^z,\end{align}
+    where $K = {h_xh_yh_z}/{\Delta^2}$ and $J_{\alpha}' = J_{\alpha} + h_{\alpha}^2/\Delta$.
+\end{theorem}
+\begin{proof}
+We now specialize the Schrieffer--Wolff effective Hamiltonian reviewed in Chapter~\ref{chap:effective-hamiltonian}, especially Lemma~\ref{lem:perturbation_expand}, to the perturbed Kitaev honeycomb model. The free Hamiltonian and perturbation are
+\begin{align}
+    H_0 &=-J_x\sum_{(j,k)\mathrm{~is~}x-\mathrm{links}}\sigma_j^x\sigma_k^x-J_y\sum_{(j,k)\mathrm{~is~}y-\mathrm{links}}\sigma_j^y\sigma_k^y-J_z\sum_{(j,k)\mathrm{~is~}z-\mathrm{links}}\sigma_j^z\sigma_k^z,\\
+    V &= \frac1{2}\left(h_x\sigma^x_j+  h_y\sigma^y_j+h_z\sigma^z_j\right).
+\end{align}
+We first consider the low-energy space as a vortex-free space, denoted as $\mathcal{P}_0:= \{\ket{\psi}|W_p \ket{\psi} = \ket{\psi}\}$, where $W_p = \sigma_1^x \sigma_2^y \sigma_3^z \sigma_4^x\sigma_5^y \sigma_6^z$ and $p:1 \to 2 \to3 \to4 \to5 \to 6\to 1$ forms a haxegon. 
+The first term $H_{\mathrm{eff}}^{(0)} = H_0 P_0$ is the spectrum of $H_0$ , which can be exactly diagonalized by first solving a free fermion model  $H(A) = \frac{i}{4} \sum_{j,k} A_{jk} c_j c_k$ and a gauge perojection.
+The second term is $ H_{\mathrm{eff}}^{(1)} =  P_0 V P_0$.  To show the result $ H_{\mathrm{eff}}^{(1)} = 0$, we prove that  $\sigma_{j}^{\alpha}\ket{j} \notin \mathcal{P}_0, \forall \ket{j} \in \mathcal{P}_0$ and $\langle l | k\rangle =0 , \forall \ket{l}\notin \mathcal{P}_0, \ket{k} \in \mathcal{P}_0$.
+\begin{figure}
+    \centering
+    \includegraphics[width=0.7\linewidth]{figures/vortex_perturbation.png}
+    \caption{(a). Vortex excitation by Pauli operations. (b)(c) Movement of Vortex under second-order perturbations (b) and Third-order perturbations (c).
+ }
+    \label{fig:perturbation_vortex}
+\end{figure}
+The second-order term $ H_{\mathrm{eff}}^{(2)}$ involves products of two spin operators, e.g., $\sigma_i^\alpha \sigma_j^\beta$and is explicitly written as
+\begin{align}
+    \frac{1}{2}P_0 \hat{S}_1(V_{od}) P_0 &=\sum_{\ket{j} \in \mathcal{P}_0 }\ket{j}\!\bra{j}\frac{\mathcal{L}(V_{\mathrm{od}})V_{\mathrm{od}} - V_{\mathrm{od}}\mathcal{L}(V_{\mathrm{od}})}{2}\sum_{\ket{k} \in \mathcal{P}_0 }\ket{k}\!\bra{k}\\
+    &=\frac{1}{2}\sum_{\ket{k} \in \mathcal{P}_0 }\sum_{\ket{l} \notin \mathcal{P}_0}\sum_{\ket{j} \in \mathcal{P}_0 }\left[\ket{j}\!\bra{j}{\mathcal{L}(V_{\mathrm{od}})\ket{l}\!\bra{l}V_{\mathrm{od}}}\ket{k}\!\bra{k} - \ket{j}\!\bra{j}V_{\mathrm{od}}{\ket{l}\!\bra{l}\mathcal{L}(V_{\mathrm{od}})}\ket{k}\!\bra{k}\right]\\
+     &=\frac{1}{2}\sum_{\ket{k} \in \mathcal{P}_0 }\sum_{\ket{l} \notin \mathcal{P}_0}\sum_{\ket{j} \in \mathcal{P}_0 }\left[\ket{j}\frac{\bra{j}{V\ket{l}}\bra{l}V\ket{k}}{E_j - E_l}\bra{k} - \ket{j}\frac{\bra{j}V{\ket{l}\!\bra{l}V}\ket{k}}{E_l- E_k}\bra{k}\right]\\
+      &=\frac{1}{2}\sum_{\ket{k} \in \mathcal{P}_0 }\sum_{\ket{l} \notin \mathcal{P}_0}\sum_{\ket{j} \in \mathcal{P}_0 }\left[\frac{\bra{j}{V\ket{l}}\bra{l}V\ket{k}}{E_j - E_l}\ket{j}\!\bra{k} + \frac{\bra{k}V{\ket{l}\!\bra{l}V}\ket{j}}{E_j- E_l}\ket{k}\!\bra{j}\right]
+      % &={V\frac1{E_j - H}V},
+\end{align}
+
+Using the fact that $V = \sum_{j, \alpha} h_{\alpha}\sigma_j^{\alpha}$ , $\sigma_{j}^{\alpha}\ket{j} \notin \mathcal{P}_0, \forall \ket{j} \in \mathcal{P}_0$ as illustrated in Figure~\ref{fig:perturbation_vortex}(a), the projection $\sum_{\ket{l} \notin \mathcal{P}_0}\ket{l}\!\bra{l}$ onto the complement of the space $\mathcal{P}_0$ can be replaced by ${1}/{(E_j - H)}$. 
+The state is also required to transform back into the vortex-free state because $\langle l | k\rangle =0 , \forall \ket{l}\notin \mathcal{P}_0, \ket{k} \in \mathcal{P}_0$. The only way to do this is illustrated in Figure~\ref{fig:perturbation_vortex}(b). If we further assume that the energy gap between the vortex-free section and the two-vortex section is  $E_j - E_k \approx \Delta $  and not related to $j,k$, this proves
+\begin{align}
+    H_{\mathrm{eff}}^{(2)} = \frac{1}{\Delta}\sum_{(j,k) \text{~adjacent}} h_x^2\sigma_j^x \sigma_k^x+h_y^2\sigma_j^y \sigma_k^y+h_z^2\sigma_j^z \sigma_k^z
+\end{align}
+
+The third-order perturbation has the form
+\begin{align}
+    H_{\mathrm{eff}}^{(3)} = (1/2)\cdot P_0 \left[V_{\mathrm{od}} \mathcal{L}(V_{\mathrm{d}}\mathcal{L}(V_{\mathrm{od}})) - V_{\mathrm{od}} \mathcal{L}(\mathcal{L}(V_{\mathrm{od}})V_{\mathrm{d}})-\mathcal{L}(V_{\mathrm{d}} \mathcal{L}(V_{\mathrm{od}}))V_{\mathrm{od}} + \mathcal{L}(\mathcal{L}(V_{\mathrm{od}})V_{\mathrm{d}})V_{\mathrm{od}}\right]P_0
+\end{align}
+
+Again only a specific sequence of operations can return the system to the flux-free sector. 
+They are illustrated in Figure~\ref{fig:perturbation_vortex} and described as
+\begin{enumerate}
+    \item $V$ acts on spin $k$ with $\sigma_k^\gamma$, creating a flux pair.
+    \item $V$ acts on spin $j$ with $\sigma_j^\beta$, which moves one of the fluxes in one step.
+    \item $V$ acts on spin $i$ with $\sigma_i^\alpha$, which annihilates the modified flux pair, returning the system to the $\mathcal{P}_0$ subspace.
+\end{enumerate}
+If we further assume that the energy gap between the vortex-free section and the two-vortex section is  $E_j - E_k \approx \Delta $  and not related to $j,k$, this "closed loop" process results in an effective three-body interaction. Use the fact that $P_0V_{\mathrm{d}}P_0=0$, we noted that $P_0V_{\mathrm{od}} \mathcal{L}(\mathcal{L}(V_{\mathrm{od}})V_{\mathrm{d}})P_0=0$ and $P_0\mathcal{L}(V_{\mathrm{d}} \mathcal{L}(V_{\mathrm{od}}))V_{\mathrm{od}} P_0= 0$., the dominant term has the form:
+\begin{equation}
+    H_{\mathrm{eff}}^{(3)} \approx \frac{h_x h_y h_z}{\Delta^2} \sum_{\langle i,j,k \rangle} \sigma_i^x \sigma_j^y \sigma_k^z + \text{permutations}
+\end{equation}
+where $\langle i,j,k \rangle$ denotes a triplet of adjacent sites. This completes the proof of theorem~\ref{theo:perturbed_honeycomb}.
+\end{proof}
+Now we discuss the symmetry of $H_{\text{hc}}$. We show that its conserved quantities are "vortex" $W_p$, as illustrated in the lemma below:
+\begin{lemma}\label{lemma:conserve_W}
+    $[H_{\mathrm{hc}}, W_p] = 0$, where $W_p := \sigma_1^x \sigma_2^y \sigma_3^z \sigma_4^x\sigma_5^y \sigma_6^z$ is defined on an arbitrary hexagon $p:123456$, as illustrated in Figure~\ref{fig:perturbation_vortex}(a). 
+\end{lemma}
+\begin{proof}
+    As illustrated by Figure~\ref{fig:perturbation_vortex}(a), the free parts are constituted by $\sigma_1^z\sigma_2^z,\sigma_2^x\sigma_3^x, \cdots$, and they both commute with $W_p$. The three body terms are composed of $\sigma_1^z\sigma_2^y\sigma_3^x,\cdots$ and also all commute with $W_p$.
+\end{proof}
+\subsection{Equivalence to free Majorana fermion}
+This section first proves the equivalence of the spectrum of $H_{\mathrm{hc}}$ and certain fermion Hamitonian.
+\begin{theorem}\label{theo:equ_fermion}
+      Consider two fermion $\{f_j^{(1)}, f_j^{(2)}\}$  and their four-dimensional Fock space and operators 
+    \begin{align}
+    \mathcal{F}:=\bigotimes_{j = 1}^N\{\ket{},f_j^{(1),\dagger}\ket{}, f_j^{(2),\dagger}\ket{}, f_j^{(2),\dagger} f_j^{(1),\dagger}\ket{}\},\\
+         \begin{cases}b^x = f^{(1)}+f^{\dagger,(1)}, b^y = ( f^{(1)}-f^{\dagger,(1)})/i,\\b^z =f^{(2)}+f^{\dagger,(2)},c = ( f^{(2)}-f^{\dagger,(2)})/i,\\ D_j :=b_j^x b_j^y b_j^zc_j  .\end{cases}
+    \end{align}
+  
+    Restrained on the subspace $\mathcal{M}:= \{\ket{v} ~|~\forall j, D_j\ket{v} =  \ket{v}\}$ and under the transformation $\sigma_j^{\alpha} \to \tilde{\sigma}_j^{\alpha}=i b_j^{\alpha}c_j$, the eigenvalue and eigenspaces of this transformed Majorana Fermion Hamiltonian are identical to those of the third-order magnetic perturbed honeycomb model.     
+\end{theorem}
+\begin{proof}
+We can express the constraint operator as:
+\begin{align*}
+b_j^x b_j^y b_j^z c_j &= -(f_j^{(1)}+f_j^{\dagger(1)})(f_j^{(1)}-f_j^{\dagger(1)})(f_j^{(2)}+f_j^{\dagger(2)})(f_j^{(2)}-f_j^{\dagger(2)}) \\
+&= [1 - 2\hat{n}_j^{(1)}][1 - 2\hat{n}_j^{(2)}],
+\end{align*}
+where $\hat{n}_j^{(k)}:=f_j^{\dagger(k)}f_j^{(k)} , \forall k = 1,2$ are the fermion number opertors. 
+Thus, the subspace $\mathcal{M}$ is spanned by the states with an even total number of fermions, i.e., it is the vector space spanned by $\{\ket{0}, f_j^{(2)\dagger} f_j^{(1)\dagger}\ket{0}\}$. This is a two-dimensional space.
+We can further verify that $\tilde{\sigma}_j^{\alpha} = i b_j^{\alpha}c_j$ satisfies all the group multiplication relations of the Pauli group within subspace $\mathcal{M}:= \{\ket{v} ~|~\forall j, D_j\ket{v} =  \ket{v}\}$.  That is,
+\begin{align}
+    \tilde \sigma^{x} \tilde \sigma^y \tilde \sigma^z &= i^3 b^{x}cb^{y}c b^{z}c\\
+    &=i b_j^x b_j^y b_j^zc_j = i\mathbb{I} \text{~within~} \mathcal{M},
+\end{align}
+and therefore constitutes a representation of the Pauli group on the subspace $\mathcal{M}$.
+It is straightforward to verify that this is an irreducible representation. Since all two-dimensional irreducible representations of the Pauli group are unitarily equivalent, $\tilde{H}$ and $H_{hc}$, being algebraic combinations of these representation matrices, are also unitarily equivalent. Therefore, they have the same eigenvalues and eigenspace structure.
+\end{proof}
+
+
+\begin{theorem}\label{theo:cal_ferm}
+   Use $\alpha_{jk} \in \{x,y,z\}$ to denote the edge type that links the adjacent points $j,k$. Define the notations $\hat u_{jk}:= i b_j^{\alpha_{jk}}b_k^{\alpha_{jk}}$ and 
+   \begin{align}
+       J_{{jk}} = \begin{cases}J_x &\text{if (j,k) is x-links,}\\J_y &\text{if (j,k) is y-links,}\\J_z &\text{if (j,k) is z-links,}\\0 &\text{if else.}\end{cases}, K_{jk} = \begin{cases}\text{sgn}(jk) \cdot h_x h_yh_z/\Delta^2 &\text{if (j,k) is Second-Nearest Neighbor,}\\0 &\text{if else.}\end{cases}
+   \end{align}
+   Here $\text{sgn}(jk) = +1$ is decided by whether $\alpha_{jl}\to \alpha_{kl} \to \beta_{l}$ has the same parity of $x \to y \to z$, as illustrated in Figure~\ref{fig:K_ill}.
+   Restrained on the subspace $\mathcal{M}:= \{\ket{v} ~|~\forall j, D_j\ket{v} =  \ket{v}\}$  and under the transformation $\sigma_j^{\alpha} \to \tilde{\sigma}_j^{\alpha}=i b_j^{\alpha}c_j$, the third-order magnetic perturbed honeycomb Hamiltonian and its conserved operators $W_p$ are transformed into the Majorana Fermion Hamiltonian and operators according to
+    \begin{align}
+        \tilde H&= ({i}/{4})\cdot \sum_{j,k} (2J_{{jk}}\hat u_{jk} + 2K_{jk}\hat  u_{jl}\hat u_{kl}) c_j c_k,\label{eq:trans_Ham} \\
+        \tilde W_p &= -\hat{u}_{12}\hat{u}_{23}\hat{u}_{34}\hat{u}_{45}\hat{u}_{56}\hat{u}_{61},\label{eq:conser_q}
+    \end{align}  
+    where $l$ is the unique mid-point of the second-nearest neighbor pair $(j,k)$
+\end{theorem}
+\begin{proof}
+    We use $\alpha_{jk} \in \{x,y,z\}$ to denote the edge type that links the adjacent points $j,k$ and $\beta_l$ to denote the edge type that is inserted at a point $l$. As illustrated in Figure
+    Then the magnetic free honeycomb model writes
+    \begin{align}H_{\mathrm{free}}&= -\sum_{(j,k) \mathrm{~adjacent}} J_{{jk}} (ib_j^{\alpha_{jk}}c_j)(ib_k^{\alpha_{jk}}c_k)=-\sum_{(j,k) \mathrm{~adjacent}} J_{{jk}} b_j^{\alpha_{jk}}b_k^{\alpha_{jk}}c_jc_k\\&=\frac{i}{4}\sum_{j,k} (2J_{{jk}}) (ib_j^{\alpha_{jk}}b_k^{\alpha_{jk}})c_jc_k = ({i}/{4})\cdot \sum_{j,k} (2J_{{jk}}\hat u_{jk}) c_j c_k.\end{align}
+    In the second equality, we use the fact that the summation $j,k$ over all spin positions will go over each adjacent pair twice $(j_0,k_0), (k_0,j_0)$. 
+    For the third-order correction term, consider adjacent triples ${\langle j,k,l \rangle}$ that pair $(j,l)$ and  $(k,l)$  adjacent and $\langle j,k\rangle$ are Second-Nearest Neighbor (SNN). In the hexagon lattice, the point $l$ is pinned down by $\langle j, k\rangle \in \text{SNN}$. In this case, the third-order interaction has the form: $\sigma^{\alpha_{jl}}_j \sigma^{\beta_l}_l\sigma^{\alpha_{kl}}_k $. We label $\text{sgn}(jk) \in \{+1,-1\}$ such that $b_l^{\alpha_{jl}}b_l^{\alpha_{kl}}b_l^{\beta_l}c_l = \text{sgn}(jk)D_l$. The direction where $\text{sgn}(jk) = +1$ is decided by whether $\alpha_{jl}\to \alpha_{kl} \to \beta_{l}$ has the same parity of $x \to y \to z$, as illustrated in Figure~\ref{fig:K_ill}
+    \begin{figure}
+        \centering
+        \includegraphics[width=1\linewidth]{figures/K_illu.png}
+        \caption{The positive direction of the Second-Nearest Neighbor pair.  A hexagon $p$ that contains point $j = 3$,  $\tilde W_p$ will contain two operators $\hat u_{32}, \hat u_{34}$ that are both anticommutative with $D_3$. }
+        \label{fig:K_ill}
+    \end{figure}
+    We write
+\begin{align}
+        -K \sigma^{\alpha_{jl}}_j \sigma^{\beta_l}_l\sigma^{\alpha_{kl}}_k &\to -K\cdot  i b_j^{\alpha_{jl}}c_j\cdot i b_k^{\alpha_{kl}}c_k\cdot i b_l^{\beta_l}c_l\\
+        &=K(ib_j^{\alpha_{jl}})\cdot(ib_k^{\alpha_{kl}})\cdot(ib_l^{\beta_l})c_jc_kc_l\\
+        &=iKb_l^{\alpha_{jl}}(-ib_l^{\alpha_{jl}}b_j^{\alpha_{jl}})\cdot b_l^{\alpha_{kl}}(-ib_l^{\alpha_{kl}}b_k^{\alpha_{kl}}) \cdot b_l^{\beta_l}c_l c_jc_k\\
+        &=iK \cdot b_l^{\alpha_{jl}}b_l^{\alpha_{kl}}b_l^{\beta_l}c_l\cdot (ib_j^{\alpha_{jl}}b_l^{\alpha_{jl}}) \cdot (ib_k^{\alpha_{kl}} b_l^{\alpha_{kl}}) \cdot c_jc_k\\
+        &=i\text{sgn}(jk) \cdot KD_l \hat u_{jl}\hat u_{kl} c_jc_k.
+    \end{align}
+    Using the fact that in the subspace $\mathcal{M}$, the condition $D_l = 1$ is always satisfied, we conclude that:
+    \begin{align}
+        \sum_{\langle j,k,l \rangle}-K \sigma^{\alpha_{jl}}_j \sigma^{\alpha_{kl}}_k\sigma^{\beta_l}_l &=  \sum_{\langle j,k\rangle \text{~is SNN}}iK\cdot \text{sgn}(jk) \cdot \hat u_{jl}\hat u_{kl} c_jc_k\\
+        &=(i/4) \cdot \sum_{j,k} 2K_{jk}\hat  u_{jl}\hat u_{kl} c_jc_k .
+    \end{align}
+    Here in the second equality, we again use the fact that the summation $j,k$ over all spin positions will go over each second-nearest neighbor pair twice $(j_0,k_0), (k_0,j_0)$. The notation $K_{jk}$ is defined by
+    \begin{align}
+        K_{jk} = \begin{cases}\text{sgn}(jk)\cdot h_x h_yh_z/\Delta^2 &\text{if (j,k) is SNN}\\0 &\text{if else}\end{cases}
+    \end{align}
+    Thus, we show the first equation~Eq.\eqref{eq:trans_Ham}. 
+    In the space $\mathcal{M}$, it is shown that $\tilde \sigma^{x} \tilde \sigma^y \tilde \sigma^z = i \mathbb{I}$.  Use the fact that 
+    \begin{align}
+        \hat u_{12}c_1c_2 =ib_1^z b_2^zc_1c_2 =i (ib_1^zc_1)(ib_2^zc_2) = i\tilde \sigma_1^z \tilde \sigma_2^z ,
+    \end{align} 
+    The second identity Eq.~\ref{eq:conser_q} can be shown directly by calculating:
+    \begin{align}
+        \tilde W_p := \tilde\sigma_1^x\tilde \sigma_2^y \tilde\sigma_3^z \tilde\sigma_4^x\tilde\sigma_5^y \tilde\sigma_6^z &=-(i)^6(\tilde\sigma_1^z\tilde\sigma_2^z)(\tilde\sigma_2^x\tilde\sigma_3^x)(\tilde\sigma_3^y\tilde\sigma_4^y)(\tilde\sigma_4^z\tilde\sigma_5^z)(\tilde\sigma_5^x\tilde\sigma_6^x)(\tilde\sigma_6^y\tilde\sigma_1^y)\\
+         &= -\hat u_{12}c_1c_2 \hat u_{23}c_2c_3 \hat u_{34}c_3c_4 \hat u_{45}c_4c_5 \hat u_{56}c_5c_6 \hat u_{61}c_6c_1\\
+         &=-\hat{u}_{12}\hat{u}_{23}\hat{u}_{34}\hat{u}_{45}\hat{u}_{56}\hat{u}_{61}.
+    \end{align}
+\end{proof}
+Now we search for states that satisfy both the eigenvalue equation $\tilde H \ket{\psi} = E \ket{\psi}$ and “Gauss's law” $D_j \ket{\psi} = \ket{\psi}$. This is still difficult because $\tilde H$ involves non-linear interaction between $\hat u_{ij}$ and $c_j$. 
+Fortunately, it is observed that $[\tilde H, \hat u_{ij}] = 0$. Thus, we can first search for states $\ket{\phi}$ that satisfy the eigenvalue equation $\tilde H \ket{\phi} = E \ket{\phi}$ and a certain “gauge law” $\hat u_{jk} \ket{\psi} = u_{jk}\ket{\psi}$, where $u_{jk}$ is a valid $\mathbb{Z}_2$ field. Then the real state $\ket{\psi}$ can be found by simply projecting back into the physical subspace $\mathcal{M}= \{\ket{v} ~|~\forall j, D_j\ket{v} =  \ket{v}\}$. This procedure is validated by the lemma below:
+\begin{lemma}\label{Lemma:gauge}
+Define the gauge subspace as
+\[
+\mathcal{G}(u_{jk}) := \{\ket{v} \mid i b_j^{\alpha_{jk}}b_k^{\alpha_{jk}} \ket{v} = u_{jk}\ket{v}\},
+\]
+where $u_{jk}$ is a valid $\mathbb{Z}_2$ gauge field, i.e., an array of $\{+1, -1\}$ satisfying (i) skew-symmetry under the exchange of $j,k$, and (ii) it is non-zero only when $j,k$ are adjacent.
+Define the physical subspace as $\mathcal{M} := \{\ket{v} \mid \forall j, b_j^x b_j^y b_j^z c_j \ket{v} = \ket{v}\}$.
+Let $P_{\mathcal{G}}$ and $P_{\mathcal{M}}$ be the projectors onto these subspaces, respectively.
+Then for any non-zero eigenvector $\ket{v}$ of $P_{\mathcal{G}} \tilde{H} P_{\mathcal{G}}$ with eigenvalue $\lambda_v$, we have $P_{\mathcal{M}} \ket{v} \neq 0$ and
+\[
+P_{\mathcal{M}} \tilde{H} P_{\mathcal{M}} (P_{\mathcal{M}}\ket{v}) = \lambda_v P_{\mathcal{M}}\ket{v}
+\]
+\end{lemma}
+
+\begin{proof}
+Since $[\hat{u}_{jk}, \tilde{H}] = 0$, they have common eigenvectors.
+Then for any non-zero eigenvector $\ket{v}$ of $P_{\mathcal{G}} \tilde{H} P_{\mathcal{G}}$ with eigenvalue $\lambda_v$, it must be a non-zero common eigenvector of operator set $ \{\tilde{H}, \hat u_{jk}\}$ with $H \ket{v} = \lambda_v \ket{v}, \hat u_{jk} = u_{jk} \ket{v}$.
+For operator $D_j = b_j^x b_j^y b_j^z c_j$,  notice that $[D_j, \tilde{H}] = 0$. 
+Thus, for any eigenvector $\ket{v}$ of $\tilde{H}$, the state $D_j \ket{v}$ is also an eigenvector of $\tilde{H}$ with the same eigenvalue $\lambda_v$.
+Notice that the operator $\hat{u}_{jk} = i b_j^{\alpha_{jk}}b_k^{\alpha_{jk}}$ is anticommutative with $D_j$. This is because
+\[
+D_j (i b_j^x b_k^x) = i(b_j^x b_j^y b_j^z c_j)(b_j^x b_k^x) = i b_j^x (b_j^x b_k^x) b_j^y b_j^z c_j = -i (b_j^x b_k^x) D_j.
+\]
+Thus $D_j \ket{v}$ is a the eigenvector of the link operators $\hat u_{jk}$ with $\hat u_{jk} D_{j_0}\ket{v} = u_{jk}'\ket{v}$ and  $u'_{j_0k} = -u_{j_0k}$  $\forall (k, j_0)$ adjacent.
+In conclusion, $D_j\ket{v}$ is a non-zero common eigenvector of  $ \{\tilde{H}, \hat u_{jk}\}$ with $H D_j\ket{v} = \lambda_v D_j\ket{v}, \hat u_{jk}D_j\ket{v} = u_{jk}' D_j\ket{v}$.
+Thus, the states $D_j \ket{v}$ and $\ket{v}$ belong to different eigenspaces of the operator set $ \{\tilde{H}, \hat u_{jk}\}$ and are therefore linearly independent.
+The same argument can be applied to $D_{j_1}\cdots D_{j_k} \ket{v}$ and show that they are linearly independent of each other.
+Thus, we can construct the non-zero vector
+\[
+\prod_j \left(\frac{\mathbb{I} + D_j}{2}\right) \ket{v} = P_{\mathcal{M}}\ket{v}.
+\]
+Thus, this state is still an eigenvector of $\tilde{H}$ with the same eigenvalue, and it satisfies the property
+\[
+P_{\mathcal{M}} \tilde{H} P_{\mathcal{M}} (P_{\mathcal{M}}\ket{v}) = \lambda_v P_{\mathcal{M}}\ket{v}
+\]
+\end{proof}
+Based on lemma~\ref{Lemma:gauge}, we are free to choose an arbitrary gauge subspace $\mathcal{G}(u_{jk}) $ and replace the operator $\hat u_{ij}$ with a number $u_{ij} \in \{+1,-1\}$. This gives the Hamiltonian $\tilde H$ in the gauge subspace $\mathcal{G}(u_{jk}) $ as
+\begin{align}\label{eq:free_ferm}
+    \tilde H(\{u_{jk}\}) =  ({i}/{4})\cdot \sum_{j,k} A_{jk} c_j c_k, \quad A_{jk} = 2J_{{jk}}u_{jk} + 2K_{jk}u_{jl} u_{kl},
+\end{align}
+where $A_{jk}$ is an anti-symmetric matrix, given that the $\mathbb{Z}_2$ gauge field $u_{jk}$ and constant $K_{jk}$ are both anti-symmetric.
+This reduced the problem into a free Majorana fermion Hamiltonian and can be rigorously diagonalized, as shown in the next section.
+Given one gauge subspace $\mathcal{G}(u_{jk}) $ , the eigenspaces of the solvable operators $\tilde H(\{u_{jk}\})$ do not cover all eigenspaces of $H_{\mathrm{hc}}$.  
+If two gauge subspaces specified by $\{u_{jk}\}$ and $\{v_{jk}\}$ can be related by a certain sequence of $D_j$ operations, they will induce the same eigenspaces of $H_{\mathrm{hc}}$.
+The operation $D_j$ preserved the vortex in the $\mathbb{Z}_2$ gauge field, as defined in lemma~\ref{lemma:vortex_reflect_W_p}, and the distribution of the vortex reflected the quantity of $W_p$ , which is the conserved operators of $H_{\mathrm{hc}}$ as proved in Lemma~\ref{lemma:conserve_W}. 
+\begin{lemma}\label{lemma:vortex_reflect_W_p}
+    Consider a $\mathbb{Z}_2$ gauge field $\{u_{jk}\}$ and define its vortex field as $\{w_p\}_p$ where $w_p = u_{12}u_{23}u_{34}u_{45}u_{56}u_{61}$ is defined on an arbitrary hexagon $p:123456$. 
+    Then for the eigenvectors $\ket{v}$ of $\tilde H(\{u_{jk}\})$ in Eq.~\eqref{eq:free_ferm} such that satisfy $\tilde H \ket{v} = \lambda_v \ket{v}$. Those $\ket{v}$ are one-to-one corresponding with those vectors such that $H_{\mathrm{hc}} \ket{\phi} = \lambda_{p} \ket{\phi}$and $W_p\ket{\phi} = -w_p \ket{\phi}$ . 
+\end{lemma}
+\begin{proof}
+    According to theorem~\ref{theo:cal_ferm}, $\tilde W_p=-\hat{u}_{12}\hat{u}_{23}\hat{u}_{34}\hat{u}_{45}\hat{u}_{56}\hat{u}_{61}$.
+    We note that $[\tilde W_p, D_j] = 0$ because for a hexagon $p$ that contains point $j$,  $\tilde W_p$ will contain two operators $\hat u_{jk}, \hat u_{jk'}$ that are both anticommutative with $D_j$, as illustrated in Figure~\ref{fig:K_ill}.
+    Thus,  $ P_{\mathcal{M}}\ket{v}=\prod_j \left((\mathbb{I} + D_j)/{2}\right) \ket{v} $ still satisfied  $\tilde H P_{\mathcal{M}}\ket{v} = \lambda_v P_{\mathcal{M}}\ket{v}$ and $\tilde W_p  P_{\mathcal{M}}\ket{v} = w_{p}P_{\mathcal{M}}\ket{v}$ .
+    As shown in theorem~\ref{theo:equ_fermion} and theorem~\ref{theo:cal_ferm}, the state $P_{\mathcal{M}}\ket{v}$ within the subspace $\mathcal{M}$ now one-to-one corresponds to the eigenvector of $H_{\mathrm{hc}}$. 
+    Because $\tilde W_p  P_{\mathcal{M}}\ket{v} = -w_{p}P_{\mathcal{M}}\ket{v}$, it also satisfied  $W_p\ket{\phi} = -w_p \ket{\phi}$ .
+    \end{proof}
+
+
+\subsection{The vortex-free section and its Chern number}
+The first result calculates the vortex-free region. In this case, we choose the \textbf{standard gauge field} 
+\begin{align}
+    u^{\mathrm{std}}_{jk} =\begin{cases}
+         +1,  \forall j\in w,k\in b \text{~adjacent}, \\
+          -1,  \forall j\in b,k\in w \text{~adjacent}.
+    \end{cases}
+\end{align}
+Such a choice leads $w_p = u_{12}u_{23}u_{34}u_{45}u_{56}u_{61} = -1$ for an arbitrary hexagon $p:123456$, as illustrated in Figure~\ref{fig:perturbation_vortex}. 
+Thus, according to lemma~\ref{lemma:vortex_reflect_W_p}, the solution of Eq.~\eqref{eq:free_ferm} corresponds to the vortex free section (i.e., $\forall p, W_p = +1$).
+We then proceed to solve the free-Majorana model $\tilde H(\{u^{\mathrm{std}}_{jk}\})$ defined in Eq.~\eqref{eq:free_ferm} analytically.
+According to Lemma~\ref{lemma:Chern_numb_cal}, one critical function is the Fourier transformation of the matrix $A^{\mathrm{std}}$. We calculates it exactly and present it as lemma~\ref{lemma:Fourier_of_A} below.
+\begin{lemma}\label{lemma:Fourier_of_A}
+In the standard gauge, the translational invariant matrix $ A_{jk}^{\mathrm{std}}$ in the Hamiltonian  $\tilde H(\{u^{\mathrm{std}}_{jk}\}) = ({i}/{4})\cdot \sum_{j,k} A_{jk}^{\mathrm{std}} c_j c_k$  has the Fourier transformation:
+\begin{align}
+    i\tilde A(\mathbf{q}) =\frac{1}{2}\begin{pmatrix}\Delta(\mathbf{q})&if(\mathbf{q}) \\ -if^*(\mathbf{q})&-\Delta(\mathbf{q})\end{pmatrix},
+\end{align}
+where $f(\mathbf q) = 2(J_x e^{i \mathbf q \cdot \mathbf{n_1}} + J_y e^{i \mathbf q \cdot \mathbf{n_2}} + J_z)$ and $\Delta(\mathbf{q}) = 4K \left[\sin(\mathbf q \cdot\mathbf{n_1}) - \sin(\mathbf q \cdot\mathbf{n_2}) - \sin(\mathbf q \cdot (\mathbf{n_1} - \mathbf{n_2}))\right] $ .
+\end{lemma}
+\begin{proof}
+As shown in Figure~\ref{fig:K_ill}, the honeycomb lattice can be regarded as a nesting of a triangular lattice $b$ (black dots) and a lattice $w$ (white dots). For each sublattice, we choose the two origins circled in the diagram and use the basis vectors $(\mathbf{n}_1, \mathbf{n}_2)$ as chosen in the figure to represent any point on it.
+Let $A_{\mathbf s\lambda, \mathbf t\mu}$ be the matrix elements, where $\lambda, \mu \in\{b,w\}$ represent the sublattice, and $\mathbf s,\mathbf t \in \mathbb{Z}\mathbf{n}_1 +\mathbb{Z}\mathbf{n}_2$ represent the positions $s_1 \mathbf{n}_1 + s_2 \mathbf{n}_2$ and $t_1 \mathbf{n}_1 + t_2 \mathbf{n}_2$ in the lattice.
+
+Define the following transformations:
+$$
+\tilde A_{\lambda,\mu}(\mathbf{q}):= \sum_{\mathbf t} e^{i \mathbf q \cdot \mathbf t}A_{\mathbf0\lambda, \mathbf t\mu}, \quad a_{\mathbf q, \lambda}:= \frac{1}{\sqrt{2N}}\cdot \sum_{\mathbf s} e^{-i\mathbf{q}\cdot \mathbf{s}} c_{\mathbf{s}\lambda}
+$$
+Using $\{c_i, c_j\} = 2 \delta_{ij}$, it is easy to verify that $a_{\mathbf q, \lambda}$ constitute the creation and annihilation operators in the momentum space for fermions:
+$$
+\{a_{\mathbf q, \lambda},a_{\mathbf q', \lambda'}^\dagger\} = \frac{1}{2N}\cdot \sum_{\mathbf s,\mathbf s'} e^{-i\mathbf{q}\cdot \mathbf{s}+ i\mathbf{q}'\cdot \mathbf{s}'} \{c_{\mathbf{s}\lambda},c_{\mathbf{s}'\lambda'}^\dagger\}= \delta_{\lambda, \lambda'}\delta_{\mathbf{q}, \mathbf{q}'}
+$$
+Then we have the following identity:
+\begin{align*}
+\frac{1}{2}\sum_{\mathbf{q},\lambda,\mu}i\tilde A_{\lambda,\mu}(\mathbf{q}) a^\dagger_{\mathbf q, \lambda}a_{\mathbf q, \mu}
+&= \frac{1}{2}\sum_{\mathbf{q},\lambda,\mu}i\sum_{\mathbf t} e^{i \mathbf q \cdot \mathbf t}A_{\mathbf0\lambda, \mathbf t\mu} \cdot \frac{1}{\sqrt{2N}} \sum_{\mathbf s} e^{i\mathbf{q}\cdot \mathbf{s}} c_{\mathbf{s}\lambda}^\dagger \cdot \frac{1}{\sqrt{2N}} \sum_{\mathbf s'} e^{-i\mathbf{q}\cdot \mathbf{s}'} c_{\mathbf{s}'\mu} \\
+&= \frac{i}{4N}\sum_{\mathbf{q},\lambda,\mu}\sum_{\mathbf t} \sum_{\mathbf s} \sum_{\mathbf s'} e^{i \mathbf q \cdot \mathbf t+i\mathbf{q}\cdot \mathbf{s}-i\mathbf{q}\cdot \mathbf{s}'}A_{\mathbf0\lambda, \mathbf t\mu} c_{\mathbf{s}\lambda}^\dagger c_{\mathbf{s}'\mu} \\
+&= \frac{i}{4}\sum_{\lambda,\mu}\sum_{\mathbf t} \sum_{\mathbf s} \sum_{\mathbf s'} \delta(\mathbf t+\mathbf{s}-\mathbf{s}')A_{\mathbf0\lambda, \mathbf t\mu} c_{\mathbf{s}\lambda}^\dagger c_{\mathbf{s}'\mu} \\
+&= \frac{i}{4}\sum_{\lambda,\mu,\mathbf t,\mathbf s}A_{\mathbf0\lambda, \mathbf t\mu} c_{\mathbf{s}\lambda}^\dagger c_{\mathbf t+\mathbf{s},\mu} \\
+&= \frac{i}{4} \sum_{\mathbf s\lambda, \mathbf t'\mu} A_{\mathbf s\lambda, \mathbf t'\mu} c_{\mathbf s\lambda}^\dagger c_{\mathbf t'\mu} = H(A)
+\end{align*}
+This proves that in the basis $\{a^{\dagger}_{\mathbf{q}, b}|0\rangle, a^{\dagger}_{\mathbf{q}, w}|0\rangle\}$, the Quadratic Fermion Hamiltonian can be block-diagonalized into a series of $2 \times 2$ matrices:
+$$
+\tilde H(\mathbf{q}) =\frac{i}{2}\begin{pmatrix}\tilde A_{b,b}(\mathbf{q})&\tilde A_{b,w}(\mathbf{q}) \\ \tilde A_{w,b}(\mathbf{q})&\tilde A_{w,w}(\mathbf{q})\end{pmatrix}
+$$
+Now, we substitute the expression for $A_{\mathbf s\lambda, \mathbf t\mu}$ in the vortex-free, standard gauge to calculate $\tilde A_{\lambda,\mu}(\mathbf{q}):= \sum_{\mathbf t} e^{i \mathbf q \cdot \mathbf t}A_{\mathbf0\lambda, \mathbf t\mu}$.
+Since the nearest-neighbor bonds are between the black and white sublattices, $b$ and $w$, and do not connect sites within the same sublattice, $A_{\mathbf s\lambda, \mathbf t\mu}$ is non-zero only when $\lambda \neq \mu$.
+Take $\lambda = b, \mu = w$. For $\mathbf{s} = \mathbf{0}, \lambda = b$, we consider the origin of the black sublattice.
+Considering its nearest-neighbor sites, these are all white dots and satisfy $A_{jk} = 2J_{jk}u_{jk}$. It is only adjacent to the three surrounding white dots, corresponding to $\mathbf{t} = \mathbf{0}, -\mathbf{n}_1, -\mathbf{n}_2$ for $\mu = w$.
+The corresponding coupling coefficients are:
+$$
+\begin{cases}
+A_{\mathbf 0b, \mathbf 0w}=2J_{\mathbf 0b, \mathbf 0w}u_{\mathbf 0b, \mathbf 0w}=-2J_z, \\
+A_{\mathbf 0b, -\mathbf{n}_1 w}=2J_{\mathbf 0b, -\mathbf{n}_1 w}u_{\mathbf 0b, -\mathbf{n}_1 w}=-2J_x, \\
+A_{\mathbf 0b, -\mathbf{n}_2w}=2J_{\mathbf 0b, -\mathbf{n}_2w}u_{\mathbf 0b, -\mathbf{n}_2w}=-2J_y.
+\end{cases}
+$$
+Considering the next-nearest-neighbor sites to the black dot at $\mathbf{s} = \mathbf{0}, \lambda = b$, these are all black dots and satisfy $A_{jk} = 2K_{jk}u_{jl} u_{kl}$. It is connected to the six surrounding black dots, corresponding to $\mathbf{t} \in\{ \mathbf{n}_1,\mathbf{n}_2, -\mathbf{n}_1, -\mathbf{n}_2,\mathbf{n}_1 - \mathbf{n}_2,\mathbf{n}_2 - \mathbf{n}_1\}$ for $\mu = b$.
+The corresponding coupling coefficients for the $bb$ component are:
+$$
+\begin{cases}
+A_{\mathbf 0b, \mathbf{n}_1 b}=2K_{\mathbf 0b, \mathbf{n}_1 b}u_{\mathbf 0b, 0 w}u_{\mathbf 0w, \mathbf{n}_1 b}=-2K\cdot (-1) = 2K, \\
+A_{\mathbf 0b, \mathbf{n}_2b}=2K_{\mathbf 0b, \mathbf{n}_2w}u_{\mathbf 0b, 0 w}u_{\mathbf 0w, \mathbf{n}_2 b}=-2K, \\
+A_{\mathbf 0b, -\mathbf{n}_1 b}=2K_{\mathbf 0b, -\mathbf{n}_1 b}u_{\mathbf 0b, -\mathbf{n}_1 w}u_{-\mathbf{n}_1 w, -\mathbf{n}_1 b}= -2K, \\
+A_{\mathbf 0b, -\mathbf{n}_2b}=-2K_{\mathbf 0b, -\mathbf{n}_2b}=2K, \\
+A_{\mathbf 0b, (\mathbf{n}_1 - \mathbf{n}_2) b}=2K_{\mathbf 0b, (\mathbf{n}_1 - \mathbf{n}_2) b}= -2K, \\
+A_{\mathbf 0b, (\mathbf{n}_2 - \mathbf{n}_1)b}=-2K_{\mathbf 0b, (\mathbf{n}_2 - \mathbf{n}_1)b}=2K.
+\end{cases}
+$$
+Considering the next-nearest-neighbor sites to the white dot at $\mathbf{s} = \mathbf{0}, \lambda = w$, similarly, the non-zero elements are:
+$$
+\begin{cases}
+A_{\mathbf 0w, \mathbf{n}_1 w}=-2K_{\mathbf 0w, \mathbf{n}_1 w}= -2K, \\
+A_{\mathbf 0w, \mathbf{n}_2w}=-2K_{\mathbf 0b, \mathbf{n}_2w}=2K, \\
+A_{\mathbf 0w, -\mathbf{n}_1 w}=2K_{\mathbf 0b, -\mathbf{n}_1 b}= 2K, \\
+A_{\mathbf 0w, -\mathbf{n}_2w}=-2K_{\mathbf 0b, -\mathbf{n}_2b}=-2K, \\
+A_{\mathbf 0w, (\mathbf{n}_1 - \mathbf{n}_2)w}=2K_{\mathbf 0b, (\mathbf{n}_1 - \mathbf{n}_2) b}= 2K, \\
+A_{\mathbf 0w, (\mathbf{n}_2 - \mathbf{n}_1)w}=-2K_{\mathbf 0b, (\mathbf{n}_2 - \mathbf{n}_1)b}=-2K.
+\end{cases}
+$$
+The non-zero elements can be obtained as:
+\begin{align*}
+\tilde A_{b,w}(\mathbf{q}) &= -2J_z - 2J_{x} e^{-i \mathbf q \cdot \mathbf{n_1}} - 2J_{y} e^{-i \mathbf q \cdot \mathbf{n_2}}:=-f^*(\mathbf{q}) \\
+\tilde A_{b,b}(\mathbf{q}) &= 2Ke^{i \mathbf q \cdot \mathbf{n_1}} - 2K e^{i \mathbf q \cdot \mathbf{n_2}} - 2K e^{-i \mathbf q \cdot \mathbf{n_1}} + 2K e^{-i \mathbf q \cdot \mathbf{n_2}} -2K e^{i \mathbf q \cdot (\mathbf{n_1} - \mathbf{n_2})}+2K e^{i \mathbf q \cdot (\mathbf{n_2} - \mathbf{n_1})} \\
+&= 4iK \left( \frac{e^{i \mathbf q \cdot \mathbf{n_1}} - e^{-i \mathbf q \cdot \mathbf{n_1}}}{2i} - \frac{e^{i \mathbf q \cdot \mathbf{n_2}} - e^{-i \mathbf q \cdot \mathbf{n_2}}}{2i} - \frac{e^{i \mathbf q \cdot (\mathbf{n_1}-\mathbf{n_2})} - e^{-i \mathbf q \cdot (\mathbf{n_1}-\mathbf{n_2})}}{2i} \right) \\
+&= 4iK \left[\sin(\mathbf q \cdot\mathbf{n_1}) - \sin(\mathbf q \cdot\mathbf{n_2}) - \sin(\mathbf q \cdot (\mathbf{n_1} - \mathbf{n_2}))\right] \\
+&:= i\Delta(\mathbf{q}) \\
+\tilde A_{w,w}(\mathbf{q}) &= -2Ke^{i \mathbf q \cdot \mathbf{n_1}} + 2K e^{i \mathbf q \cdot \mathbf{n_2}} + 2K e^{-i \mathbf q \cdot \mathbf{n_1}} - 2K e^{-i \mathbf q \cdot \mathbf{n_2}} + 2K e^{i \mathbf q \cdot (\mathbf{n_1} - \mathbf{n_2})} - 2K e^{i \mathbf q \cdot (\mathbf{n_2} - \mathbf{n_1})} \\
+&= -i\Delta(\mathbf{q})
+\end{align*}
+Using $A_{\mathbf0\lambda, \mathbf t\mu} = -A_{\mathbf 0\mu,-\mathbf t\lambda}$, we can obtain that $\tilde A_{\lambda,\mu}(\mathbf{q}) = -\tilde A_{\mu,\lambda}^*(-\mathbf{q})$. For a real structure, this simplifies, and we find that $\tilde A$ is an anti-Hermitian matrix, i.e., $\tilde A_{\lambda,\mu} = -\tilde A_{\mu,\lambda}^*$. It follows that $\tilde A_{w,b}(\mathbf{q})=f(\mathbf{q})$.
+Then
+$$
+i\tilde A(\mathbf{q}) =\frac{1}{2}\begin{pmatrix}\Delta(\mathbf{q})&if(\mathbf{q}) \\ -if^*(\mathbf{q})&-\Delta(\mathbf{q})\end{pmatrix}
+$$
+is the matrix representation, block-diagonalized by $\mathbf{q}$, in the basis $\{b,w\}$.
+\end{proof}
+
+Now we can calculate the relative Majorana number according to theorem~\ref{theorem:chern} and lemma~\ref{lemma:Chern_numb_cal}. 
+\begin{lemma}\label{lemma:cal_honeycomb_Chern}
+    For the projective matrix $P^{\mathrm{std}}:=(1/2)\cdot \left(\mathbb{I}-\text{sgn}\left[i\cdot A^{\mathrm{std}}(\mathbf{q})\right]\right)$, we have $\nu(P^{\mathrm{std}}) = 1$.
+\end{lemma}
+
+\begin{proof}
+The proof proceeds in two parts. First, we reduce the general formula for the Chern number to an integral over a vector field $\mathbf{m}(\mathbf{q})$. Second, we evaluate this integral by analyzing its geometric meaning as a winding number, using the properties of the system.
+
+\textbf{Part 1: Algebraic Reduction of the Chern Number Formula}
+
+According to lemma~\ref{lemma:Chern_numb_cal}, the first Chern number $\nu$ is defined by the integral of the trace of the curvature two-form of the vector bundle specified by the projector $P(\mathbf{q})$:
+\begin{equation}
+\nu(P) = \frac{1}{2\pi i} \int_{\mathbb{T}^2} \text{Tr}\left(P dP \wedge dP\right) = \frac{1}{2\pi i} \int_{\mathbb{T}^2} \text{Tr}\left( P \left[ \frac{\partial P}{\partial q_x}, \frac{\partial P}{\partial q_y} \right] \right) dq_x dq_y
+\label{eq:chern_def}
+\end{equation}
+For a $2 \times 2$ projector, it can be written in terms of a unit vector $\mathbf{m}(\mathbf{q}) \in \mathbb{R}^3$ and the vector of Pauli matrices $\boldsymbol{\sigma} = (\sigma_x, \sigma_y, \sigma_z)$ as:
+$$P(\mathbf{q}) = \frac{1}{2}(\mathbb{I} + \mathbf{m}(\mathbf{q}) \cdot \boldsymbol{\sigma})$$
+The partial derivatives of the projector are:
+$$\frac{\partial P}{\partial q_i} = \frac{1}{2}\left(\frac{\partial \mathbf{m}}{\partial q_i} \cdot \boldsymbol{\sigma}\right), \quad i \in \{x, y\}$$
+Next, we compute the commutator using the Pauli matrix algebra, $[\sigma_j, \sigma_k] = 2i \sum_l \epsilon_{jkl} \sigma_l$:
+\begin{align*}
+\left[ \frac{\partial P}{\partial q_x}, \frac{\partial P}{\partial q_y} \right] &= \left[ \frac{1}{2} \left(\frac{\partial \mathbf{m}}{\partial q_x} \cdot \boldsymbol{\sigma}\right), \frac{1}{2} \left(\frac{\partial \mathbf{m}}{\partial q_y} \cdot \boldsymbol{\sigma}\right) \right] \\
+&= \frac{1}{4} \sum_{j,k} \frac{\partial m_j}{\partial q_x} \frac{\partial m_k}{\partial q_y} [\sigma_j, \sigma_k] = \frac{1}{4} \sum_{j,k,l} \frac{\partial m_j}{\partial q_x} \frac{\partial m_k}{\partial q_y} (2i \epsilon_{jkl} \sigma_l) \\
+&= \frac{i}{2} \left( \left( \frac{\partial \mathbf{m}}{\partial q_x} \times \frac{\partial \mathbf{m}}{\partial q_y} \right) \cdot \boldsymbol{\sigma} \right)
+\end{align*}
+We then compute the trace of the product inside the integral. Let $\mathbf{V} = \frac{\partial \mathbf{m}}{\partial q_x} \times \frac{\partial \mathbf{m}}{\partial q_y}$.
+\begin{align*}
+\text{Tr}\left( P \left[ \frac{\partial P}{\partial q_x}, \frac{\partial P}{\partial q_y} \right] \right) &= \text{Tr}\left( \frac{1}{2}(\mathbb{I} + \mathbf{m} \cdot \boldsymbol{\sigma}) \cdot \frac{i}{2} (\mathbf{V} \cdot \boldsymbol{\sigma}) \right) \\
+&= \frac{i}{4} \text{Tr}\left( (\mathbf{V} \cdot \boldsymbol{\sigma}) + (\mathbf{m} \cdot \boldsymbol{\sigma})(\mathbf{V} \cdot \boldsymbol{\sigma}) \right)
+\end{align*}
+Using the identities $\text{Tr}(\sigma_j)=0$ and $\text{Tr}(\sigma_j \sigma_k)=2\delta_{jk}$, the first term in the trace vanishes. The second term gives:
+$$ \text{Tr}\left( (\mathbf{m} \cdot \boldsymbol{\sigma})(\mathbf{V} \cdot \boldsymbol{\sigma}) \right) = \sum_{j,k} m_j V_k \text{Tr}(\sigma_j \sigma_k) = 2 \sum_j m_j V_j = 2 (\mathbf{m} \cdot \mathbf{V}) $$
+Thus, the trace of the full expression is $\frac{i}{4} \left( 2 (\mathbf{m} \cdot \mathbf{V}) \right) = \frac{i}{2} \left( \mathbf{m} \cdot \left( \frac{\partial \mathbf{m}}{\partial q_x} \times \frac{\partial \mathbf{m}}{\partial q_y} \right) \right)$.
+Substituting this back into Eq.~\eqref{eq:chern_def}, we arrive at the simplified formula for the Chern number:
+\begin{equation}
+\nu(P) = \frac{1}{2\pi i} \int_{\mathbb{T}^2} \frac{i}{2} \left( \mathbf{m} \cdot \left(\frac{\partial \mathbf{m}}{\partial q_x} \times \frac{\partial \mathbf{m}}{\partial q_y}\right) \right) dq_x dq_y = \frac{1}{4\pi} \int_{\mathbb{T}^2} \mathbf{m} \cdot \left(\frac{\partial \mathbf{m}}{\partial q_x} \times \frac{\partial \mathbf{m}}{\partial q_y}\right) dq_x dq_y
+\label{eq:winding_formula}
+\end{equation}
+
+\textbf{Part 2: Geometric Interpretation and Evaluation of the Integral}
+
+The integral in Eq. \eqref{eq:winding_formula} has a well-known geometric interpretation. The vector $\mathbf{m}(\mathbf{q})$ defines a map from the momentum space, which is a 2D torus $\mathbb{T}^2$, to the unit sphere $S^2$, since $|\mathbf{m}|=1$. The integrand $\mathbf{m} \cdot (\partial_x \mathbf{m} \times \partial_y \mathbf{m})$ is the solid angle element subtended on the sphere. The integral, divided by the total solid angle of a sphere ($4\pi$), computes the winding number (or degree) of this map, which must be an integer.
+
+The theorem considers the projector $P^{\text{std}}$ for the $B_{\nu=+1}$ phase, which corresponds to the case where the parameter $\Delta > 0$. Lemma~\ref{lemma:Fourier_of_A} provides a qualitative description of the map $\mathbf{m}(\mathbf{q})$ for this specific case:
+\begin{itemize}
+\item The map takes the neighborhood of the point $\mathbf{q}_*$ in momentum space to the lower hemisphere of $S^2$.
+ \item It maps the neighborhood of the point $-\mathbf{q}_*$ to the upper hemisphere of $S^2$.
+\item The rest of the momentum space torus is mapped onto the equator of the sphere.
+\item Crucially, in both cases, the orientation is preserved.
+\end{itemize}
+This description implies that the map from the torus $\mathbb{T}^2$ smoothly covers the entire sphere $S^2$ exactly once, preserving orientation. Therefore, the degree of the map is +1.
+
+Evaluating the integral, we find:
+$$ \nu(P^{\text{std}}) = \frac{1}{4\pi} \int_{\mathbb{T}^2} (\text{Solid Angle Element}) = \text{Degree of map } \mathbf{m}(\mathbf{q}) = 1 $$
+This completes the proof.
+\end{proof}

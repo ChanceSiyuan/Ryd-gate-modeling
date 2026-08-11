@@ -1,0 +1,96 @@
+% 调整页边距 不要动！
+\usepackage{fullpage}
+\usepackage[top=0.7cm, bottom=4.5cm, left=1.5cm, right=1.5cm]{geometry}
+% 调整页边距 不要动！
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage{csquotes}
+\usepackage[style=alphabetic,backend=biber]{biblatex}
+\usepackage{arydshln}
+\addbibresource{../.knowledge/references.bib}
+% 数学和物理包 不要动！
+\usepackage{amsmath,amsthm,amsfonts,amssymb,amscd}
+\usepackage{physics}
+% \usepackage{cite}
+\usepackage{booktabs}
+% 数学和物理包 不要动！
+\usepackage{longtable}
+\usepackage{geometry}
+% 其他必须的包 不要动！
+\usepackage{enumerate}
+\usepackage{fancyhdr}
+\usepackage{mathrsfs}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{graphicx}
+\graphicspath{{figures/}}
+% 其他必须的包 不要动！
+% 当前环境使用 pdfLaTeX 时，ctex 的中文字体集会因为缺少可用字体而中断编译。
+% 本文不依赖中文正文，因此改为保留兼容命令并关闭中文字体加载。
+\newcommand{\heiti}{\bfseries}
+\usepackage{pythonhighlight} %Python代码环境包，使用时将Python代码粘贴到\begin{python}...\end{python}
+\usepackage{indentfirst}
+% 调整节标题 不要动
+% \usepackage{titlesec}
+% \renewcommand{\thesection}{\arabic{section}}
+% \titleformat{\section}
+% {\normalfont\bfseries}{\large Question~\thesection}{1em}{}
+% 调整节标题 不要动
+
+% 调整段间距 可以自行修改
+\setlength{\parindent}{0em}
+\setlength{\parskip}{0.25em}
+% 调整段间距
+
+
+% 调整页眉 可以自行修改
+\newcommand\course{\textbf{Reports}}   % 页眉右侧内容
+\newcommand\problemnumber{2}    % 第几题
+\newcommand\probletitle{\textit{\heiti Fault-tolerant quantum computation using Rydberg atoms}}  %题目标题
+\newcommand\timeID{\textbf{\today}}          
+% 调整页眉
+
+% 设置页眉格式 不要动！
+\pagestyle{fancy}
+\headheight 25pt
+% \lhead{\includegraphics[scale = 0.1]{Figures/jlulogo.png}}  % 添加页眉logo
+% \rhead{\course \\ \timeID}
+\rhead{\course}
+\lfoot{}
+\cfoot{}
+\rfoot{\small\thepage}
+\headsep 1.5em
+% 设置页眉格式 不要动！
+
+% 设置段落缩进和行距
+\linespread{1.1}
+
+% 设置段落缩进和行距
+
+% 设置图片注释字体大小
+\usepackage[font=scriptsize]{caption}
+% \usepackage[english, chinese]{babel}
+
+\usepackage{hyperref}
+
+
+% \newcommand{\bra}[1]{\langle #1\rvert}
+% \newcommand{\ket}[1]{\lvert #1\rangle}
+\newcommand{\proj}[1]{\lvert #1\rangle\!\langle #1\rvert}
+% \newcommand{\braket}[2]{\langle #1\vert #2\rangle}
+\newcommand{\SYC}[1]{\color{blue}(#1)\color{black}}
+
+% General Commands
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{property}[theorem]{Property}
+\newtheorem{definition}{Definition}[section]
+\newtheorem{lemma}{Lemma}
+\newtheorem{remark}[theorem]{Remark}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{observation}[theorem]{Observation}
+\newtheorem{example}[theorem]{Example}
+\newtheorem{exercise}{Exercise}
+\newtheorem{problem}{Problem}

@@ -41,6 +41,15 @@ def _tracked_worktree_paths() -> list[PurePosixPath]:
     return [path for path in paths if (REPO / path).exists()]
 
 
+def _is_curated_manuscript_figure(path: PurePosixPath) -> bool:
+    return (
+        len(path.parts) >= 3
+        and path.parts[0] == "manuscripts"
+        and path.parts[1] == "figures"
+        and path.suffix.lower() in {".pdf", ".png"}
+    )
+
+
 def test_only_reports_are_tracked_under_results():
     offenders = [
         str(path)
@@ -53,6 +62,8 @@ def test_only_reports_are_tracked_under_results():
 def test_machine_local_data_and_agent_state_are_not_tracked():
     offenders = []
     for path in _tracked_worktree_paths():
+        if _is_curated_manuscript_figure(path):
+            continue
         if "data" in path.parts or path.suffix.lower() in LOCAL_ONLY_SUFFIXES:
             offenders.append(str(path))
             continue

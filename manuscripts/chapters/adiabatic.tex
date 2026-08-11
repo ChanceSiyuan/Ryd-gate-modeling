@@ -1,0 +1,144 @@
+\chapter{The Transveral Field Ising Model}
+
+
+In this chapter, we build a general framework to analysis different time-dependent process on the transversal field Ising model (TFIM).
+Given a graph $G = (V,E)$ with vertexes number $|V| = n$ indicated by label $i,j$, and the edge connected vertex $i,j$ as $e = \langle i, j \rangle$.
+The time-dependent Hamiltonian writes
+\begin{align}
+    H_{\mathrm{ryd}}(\Omega, \phi) = \Omega(t)\left[ \sum_{j} e^{i \phi(t)} \ket{1}\bra{r}_j + \mathrm{h.c.}\right] + \left[\sum_{\langle i,j\rangle} V_{ij} n_i n_j + \sum_j \Delta_j n_j\right]
+\end{align}
+for $V_{ij}>0$.
+Under the time-dependent transformation $V(\phi(t))=e^{i\sum_j \phi \ket{r}\!\bra{r}_j}$, we note that this generalized definition equivalent to the shifted TFIM for $\delta(t) := -\dot{\phi}(t)$:
+\begin{align}
+    H(\Omega, \delta) = \Omega(t)\sum_{j} X_j +   \sum_j (\delta(t)+ \Delta_j) n_j + \sum_{\langle i,j\rangle} V_{ij} n_i n_j.
+\end{align}
+Writing in the Pauli-Z operators $Z = \ket{1}\!\bra{1} -  \ket{r}\!\bra{r}$, this model reduced to a TFIM with the form 
+\begin{align}
+    H_{\rm TFIM} &= \Omega(t) \sum_{j} X_j  + \sum_j h_j(t) Z_j + \sum_{\langle i, j \rangle} J_{ij}Z_i Z_j + C \mathbb{I}, \\
+    \text{with~} &C = \frac{n \delta + \sum_{j} \Delta_j(t) + \sum_{e} J_e/2}{2} , \quad h_j(t):=-\frac{\delta +  \Delta_j(t) + \sum_{e \ni j} J_{e}/2}{2} ,\quad J_{ij} := \frac{V_{ij}}{4}.
+\end{align}
+
+
+
+\section{The 1D-TFIM}
+\paragraph{The map to Majoranas}
+It is well-known that the 1D inhomogeneous XY Hamiltonian
+can be reduced to free fermion model~\cite{takahashi1999thermodynamics}.
+Setting fermion oeprator $\{c_i,c^\dagger_j\} = \delta_{ij}, \{c_i,c_j\} = 0$ and Jordan-Wigner transformation 
+    \begin{align}
+        \{\ket{0}_f,\ket{1}_f\} \to \{\ket{+},\ket{-}\},\quad 
+        X_j=1-2c^\dagger_j c_j, 
+        \quad Z_j =\left[\prod_{\ell<j}(1-2c^\dagger_\ell c_\ell)\right](c_j^\dagger+c_j),
+    \end{align}
+Apply this to the 1D-TFIM Hamiltonian without $h(t)$ field, i.e., the $H(t) = \Omega(t)\sum_jX_j + \sum_jJ_{j} Z_jZ_{j+1}$, we have
+\begin{align}
+    Z_j Z_{j+1}  &=\left[\prod_{\ell<i}(1-2c^\dagger_\ell c_\ell)\right](c_j^\dagger+c_j)\left[\prod_{\ell<j+1}(1-2c^\dagger_\ell c_\ell)\right](c_j^\dagger+c_j) =(c_j^\dagger-c_j)(c_{j+1}^\dagger+c_{j+1}),
+\end{align}
+ This induces the free Majoranas $\gamma_{2j-1}=c_j^\dagger+c_j$ and $\gamma_{2j}=i(c_j^\dagger-c_j)$ through the quadratic Majorana Hamiltonian
+ \begin{align}
+    H(t)=-i\Omega(t)\sum_j\gamma_{2j-1}\gamma_{2j}-i\sum_jJ_j\gamma_{2j}\gamma_{2j+1} := \frac{i}{4}\boldsymbol{\gamma}^{T}A(t)\boldsymbol{\gamma}+C(t)\mathbb I,
+ \end{align}
+with the $2L \times 2L$ antisymmetric real matrix, $A(t)^T + A(t) = 0$, that satisfied $A_{2j-1,2j}(t)=-2\Omega(t)$ and $A_{2j,2j+1}=-2J_j$. In the Heisenberg picture, the Majorana operators evolve according to the $2L \times 2L$ linear equation
+\begin{align}
+\frac{d}{dt}\boldsymbol{\gamma}(t)=i[H(t),\boldsymbol{\gamma}(t)]=A(t)\boldsymbol{\gamma}(t), \quad \boldsymbol{\gamma}(t) =\mathcal T\exp\!\left[\int_0^tA(s)\,ds\right]\boldsymbol{\gamma}(0).
+\end{align}
+
+If we further supposed $J_{j}\equiv J,\Omega(t) \equiv gJ$, we conclude that
+\begin{align}
+    H_N
+    =J\sum_j(c_j^\dagger-c_j)(c_{j+1}^\dagger+c_{j+1})+gJ\Gamma\sum_j(1-2c_j^\dagger c_j)
+    =\sum_{0<k<\pi}    
+    \begin{pmatrix}c^\dagger_{-k}&c_{k}\end{pmatrix}\mathsf h(k)\begin{pmatrix}
+    c_k\\
+    c^\dagger_{-k}
+    \end{pmatrix}+E_{\rm const},
+\end{align}
+for spectrum $\mathsf h(k)=2J\left[(g-\cos k)\tau_z+\sin k\,\tau_y\right]$.
+
+\section{Exact solvable region}
+In this section, we review multiple cases where the TFIM are exact solvable.
+
+\paragraph{Single qubit analysis.} It is valuable to calculate the single-qubit case. Specifically, $H(t)=b(t)Z+\Omega(t) X$. The time-dependent Hamiltonian then drives the state $|\psi(t)\rangle = c_1(t)|1\rangle+c_r(t)|r\rangle$ through the complex-valued Riccati equation for $z(t):= c_r(t)/c_1(t)$:
+\begin{align}
+    i\dot z(t) = \Omega(t) - 2b(t)z(t) - \Omega(t)z(t)^2.
+\end{align}
+
+\paragraph{2D-TFIM without $h(t), \Omega(t)$ field.}
+
+We consider $G = (E,V)$ being a planar graph 
+
+\section{Periodic condition}
+
+Consider the Ising Hamiltonian $H_K(t) = \sum_{(i,j) \in E_K} Z_i Z_j + \sum_{j \in V_K} h_j(t) Z_j$, given that $K = (E_K,V_K)$ is a small graph with constant vertexes and edges. 
+For graph $K$ with constant scale, the TFIM constructed by $H_K(t)$, written as $H(t) = \Omega(t)\sum_j X_j + H_K(t)$, gives exactly solvable eigenvalue structure $E_n(t), \ket{\psi_n(t)}$ at time $t$.
+Now consider a 2d-Hamiltonian $H(t)$ that taking $H_K(t)$ as the building cell. We hope to related the energy band of $H(t)$ with $H_K(t)$.
+
+
+\section{Geometric phase computation}
+Given arbitary inputs on the compuational basis $\ket{\mathbf{s}}, \mathbf{s} \in \{0,1\}^n$,
+an closed path adiabatic change of parameter $\Omega(t)$ and $\phi(t)$ will accumulate a phase $e^{i\varphi(\mathbf{s})}$, and effectively induce a phase gate in form of
+\begin{align}
+    U(\mathbf{\theta}) := \exp \left[i\sum_{\mathbf{s}\in\{0,1\}^n}\theta(\mathbf{s}) q_{\mathbf{s}}\right],\quad
+    q_{\mathbf{s}} := \prod_{i: s_i = 1} \ket{1}\!\bra{1}_i
+\end{align}
+where the term $\mathbf{s}=\mathbf{0}$ only gives a global phase. We use $\theta(\mathbf{s})$ for $\mathbf{s} \in \{0,1\}^n$ indicates the induced $|\mathbf{s}|$-qubit phase gate on the support qubit set of $\mathbf{s}$. 
+The $\theta(\mathbf{s})$ related to the Pauli-$Z$ representation 
+\begin{align}
+    U(\mathbf{\theta}) := \exp \left[i\left(\sum_{\mathbf{s}\in\{0,1\}^n} \tilde{\theta}(\mathbf{s}) Z_{\mathbf{s}}  \right)\right], \quad
+    \tilde{\theta}(\mathbf{s})
+    = \frac{(-1)^{|\mathbf{s}|}}{2^{|\mathbf{s}|}}
+    \sum_{\substack{\mathbf{t}\in\{0,1\}^n\\ \operatorname{supp}(\mathbf{s})\subseteq \operatorname{supp}(\mathbf{t})}}
+    \frac{\theta(\mathbf{t})}{2^{|\mathbf{t}|-|\mathbf{s}|}},
+    \quad Z_{\mathbf{s}}:=\prod_{i:s_i=1}Z_i .
+\end{align}
+
+Before calculating this phase gate, we first prove certain properties of $\theta(\mathbf{s})$.
+
+\begin{lemma}[Transformation of phase gate]
+    \label{lem:trans_phase}
+    For two bit strings, write $\mathbf{t}\preceq \mathbf{s}$ if $\operatorname{supp}(\mathbf{t})\subseteq \operatorname{supp}(\mathbf{s})$.
+    The parameter $\theta(\mathbf{s})$ related to $\varphi(\mathbf{s})$ through the relation
+    \begin{align}
+        \varphi(\mathbf{s}) = \sum_{\mathbf{t}\preceq \mathbf{s}}\theta(\mathbf{t}),\quad
+        \theta(\mathbf{s}) = \sum_{\mathbf{t}\preceq \mathbf{s}}(-1)^{|\mathbf{s}|-|\mathbf{t}|}\varphi(\mathbf{t}).
+    \end{align}
+\end{lemma}
+\begin{proof}
+    Since $q_{\mathbf{t}}\ket{\mathbf{s}} = \ket{\mathbf{s}}$ if $\mathbf{t}\preceq\mathbf{s}$ and is zero otherwise, applying $U(\mathbf{\theta})$ on $\ket{\mathbf{s}}$ gives the first equation.
+    The second equation is the inverse relation. Indeed, summing it over $\mathbf{s}\preceq \mathbf{a}$ gives
+    \begin{align}
+        \sum_{\mathbf{s}\preceq \mathbf{a}}\theta(\mathbf{s})
+        &= \sum_{\mathbf{t}\preceq \mathbf{a}}\varphi(\mathbf{t})
+        \sum_{\mathbf{t}\preceq \mathbf{s}\preceq \mathbf{a}}(-1)^{|\mathbf{s}|-|\mathbf{t}|}
+        = \varphi(\mathbf{a}),
+    \end{align}
+    because the inner sum is $(1-1)^{|\mathbf{a}|-|\mathbf{t}|}$ and only survives when $\mathbf{t}=\mathbf{a}$.
+\end{proof}
+
+\begin{lemma}[Connected-cluster property]
+    Build a graph $G = (V,E)$ with $V = [n]$ and $E = \{(i,j): V_{ij} \neq 0\}$. Then $\theta(\mathbf{s}) = 0$ for any $\mathbf{s}$ such that $G[\operatorname{supp}(\mathbf{s})]$ is not connected. 
+\end{lemma}
+\begin{proof}
+    Suppose $\operatorname{supp}(\mathbf{s})=A\cup B$ where $A,B$ are nonempty and there is no edge between them.
+    For every $\mathbf{t}\preceq\mathbf{s}$, write $\mathbf{t}=\mathbf{t}_A+\mathbf{t}_B$, where $\operatorname{supp}(\mathbf{t}_A)\subseteq A$ and $\operatorname{supp}(\mathbf{t}_B)\subseteq B$.
+    The branch Hamiltonian then decomposes into two non-interacting parts, so the adiabatic phase is additive,
+    \begin{align}
+        \varphi(\mathbf{t}_A+\mathbf{t}_B)
+        = \varphi(\mathbf{t}_A) + \varphi(\mathbf{t}_B),
+    \end{align}
+    up to the irrelevant global phase. Using Lemma~\ref{lem:trans_phase},
+    \begin{align}
+        \theta(\mathbf{s})
+        &= \sum_{\mathbf{t}_A\preceq \mathbf{s}_A}\sum_{\mathbf{t}_B\preceq \mathbf{s}_B}
+        (-1)^{|\mathbf{s}_A|-|\mathbf{t}_A|+|\mathbf{s}_B|-|\mathbf{t}_B|}
+        \left[\varphi(\mathbf{t}_A)+\varphi(\mathbf{t}_B)\right],
+    \end{align}
+    where $\mathbf{s}_A,\mathbf{s}_B$ are the restrictions of $\mathbf{s}$ to $A,B$.
+    Both pieces vanish because
+    \begin{align}
+        \sum_{\mathbf{t}_A\preceq \mathbf{s}_A}(-1)^{|\mathbf{s}_A|-|\mathbf{t}_A|}=0,\quad
+        \sum_{\mathbf{t}_B\preceq \mathbf{s}_B}(-1)^{|\mathbf{s}_B|-|\mathbf{t}_B|}=0
+    \end{align}
+    for nonzero $\mathbf{s}_A,\mathbf{s}_B$.
+    Thus $\theta(\mathbf{s})=0$. If $G[\operatorname{supp}(\mathbf{s})]$ has more than two connected components, take $A$ to be one component and $B=\operatorname{supp}(\mathbf{s})\setminus A$.
+\end{proof}

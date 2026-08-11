@@ -1,0 +1,152 @@
+\documentclass[12pt,letterpaper]{article}
+\input{preamble_zh.tex}
+
+% 文章标题
+\title{Anyon computation in spin lattice}
+
+
+
+
+\begin{document}
+
+\author{陈思源}
+% 显示标题
+\maketitle
+\begin{abstract}
+    本文详细回顾如何利用自旋耦合模型实现Anyon，以及利用绝热演化和Pauli算符的测量实现任意子的编织，融合，测量等操作。这种方法实现的是Ising Anyon，它的编织操作仅仅支持Clifford门和Matchgate的交集，无法进行通用量子计算。不过，可以通过Bell态和魔术$T$态的注入和提纯将其拓展为通用量子计算模型。
+\end{abstract}
+
+\section{The Kiteav honeycomb model}
+\subsection{定义及其Floquet实现}
+\begin{definition}
+    自由蜂窝模型是如下二维自旋哈密顿量
+    \begin{align}H_{hc}&=-\sum_{(j,k) \mathrm{~adjacent}} J_{\alpha_{jk}} K_{jk}\notag\\&=-J_x\sum_{(j,k)\mathrm{~is~}x-\mathrm{links}}\sigma_j^x\sigma_k^x-J_y\sum_{(j,k)\mathrm{~is~}y-\mathrm{links}}\sigma_j^y\sigma_k^y-J_z\sum_{(j,k)\mathrm{~is~}z-\mathrm{links}}\sigma_j^z\sigma_k^z,\end{align}
+    其中求和遍历顶点的无序对$(j,k)$，$K_{jk} = \sigma_{j}^{\alpha_{jk}}\sigma_{k}^{\alpha_{jk}}$，耦合常数为$J_{\alpha_{jk}} = \begin{cases}J_x &\text{if (j,k) is x-links}\\J_y &\text{if (j,k) is y-links}\\J_z &\text{if (j,k) is z-links}\\0 &\text{if else}\end{cases}$.
+\end{definition}
+可以证明这个哈密顿量的基态存在简并，这意味着基态编码的逻辑信息在绝热改变参数时会发生$\ket{0}_L, \ket{1}_L$ 之间的转变。为了消除这种兼并性，需要引入三体相互作用项。最初引入三体耦合项的方案是加入均一微弱的外磁场$\mathbf{H}$，即如下定理，其证明见附录~\ref{app:ana}, theorem~\ref{theo:perturbed_honeycomb}.
+\begin{theorem}
+    在微小外磁场$\mathbf{H} =(h_x, h_y,h_z)$的作用下，保留其影响的最低阶，$J_x= J_y = J_z$的honeycomb模型的哈密顿量满足：   \begin{align}H_{hc}=-J_x'\sum_{(j,k)\mathrm{~is~}x-\mathrm{links}}\sigma_j^x\sigma_k^x-J_y'\sum_{(j,k)\mathrm{~is~}y-\mathrm{links}}\sigma_j^y\sigma_k^y-J_z'\sum_{(j,k)\mathrm{~is~}z-\mathrm{links}}\sigma_j^z\sigma_k^z - K\sum_{j,k,l}\sigma_j^x \sigma_k^y \sigma_l^z,\end{align}
+    其中 $K = {h_xh_yh_z}/{\Delta^2}$ 且 $J_{\alpha}' = J_{\alpha} + h_{\alpha}^2/\Delta$.
+\end{theorem}
+后续Lukin \textit{et.al.}~\cite{PhysRevX.13.031008}指出简单的实施如下含参线路也可以近似得到三体相互作用：
+\begin{align}
+    U_{D}(\{\theta\}) = \prod_{i = 1}^D\left[e^{i \theta_{i}^xXX}e^{i \theta_{i}^yYY}e^{i \theta_{i}^zZZ}\right]
+\end{align}
+其中参数的选取可以通过理论计算并最小化$Q_H=\|U_D(\{\theta\}) - e^{-iH_{\mathrm{hc}}\tau}\|_F^2$得到，由于整个线路只包含matchgate，因此可以高效计算。每执行$D$ 轮上述线路实现了演化$e^{-i H_F[\tau]\tau}$，其中$H_F[\tau]$能很好地近似$H_{\mathrm{hc}}$。注意$\tau$选的太大层数$D$ 也得增大，这会让经典优化出现难度，但是选的太小会让$e^{-i H_F[\tau]t}$和$e^{-i H_{\mathrm{hc}}t}$在$t$ 很大的时候出现较大偏差。
+\subsection{基态的制备}
+首先取特殊参数$J_z = J,J_x = J_y = 0$，此时哈密顿量为$H =-\sum_{j,k} J\sigma^z_j\sigma_k^z$，其基态恰为$\sigma_j^z\sigma_k^z = +1$的稳定子态。$J_x=J_y=0$时哈密顿量会发生简并，为了完全定下非零时的基态，还要固定守恒量 $W_p := \sigma_1^x \sigma_2^y \sigma_3^z \sigma_4^x\sigma_5^y \sigma_6^z$ 为$+1$，见Lemma~\ref{lemma:conserve_W}。在参考文献~\cite{evered2025probingtopologicalmatterfermion}中，Lukin \textit{et.al.}指出这可以通过投影到XZZX的码空间实现，具体步骤为如下过程：
+\begin{figure}[htbp!]
+    \centering
+    \includegraphics[width=1\linewidth]{figures/initialize.png}
+\end{figure}
+
+为了进一步达到$J_x = J_y = J_z$ 的状态，可以绝热演化缓慢调整$J_x,J_y$ ，但是文献~\cite{PhysRevX.13.031008}指出这种演化需要过长时间，累积的系统误差/噪声过多。注意到$Q_H=\langle \psi_B |U_D(\{\theta\})\ket{\psi_Z}$是可以计算的，其中$\psi_Z,\psi_B$分别是$J_x= J_y = 0$的基态和$J_x=J_y=J_z$的基态 (均满足$W_p = +1$)，所以他们采用变分线路来实现这一点~\cite{evered2025probingtopologicalmatterfermion}。
+% --- 拓扑量子计算 ---
+\section{Ising任意子}
+Kitaev模型B相中的涡旋是Ising任意子，可以用来执行容错量子计算。具体来说，它具有下面描述的性质：
+如下图所示，在保证处在满足$J_x = J_y = J_z, W_p = +1$的基态$\ket{0}_{v =0}$和第一激发态$\ket{1}_{v = 0}$时，如图选取一列$J_x$，按照$J_x(t) = J_x(1 - t/T) + (-J_x)(t/T)$在后续的Floquet过程中缓慢地改变为相反数。
+\begin{figure}[htbp!]
+    \centering
+    \includegraphics[width=1\linewidth]{figures/initialization.png}
+\end{figure}
+
+这会将系统带向具有两个涡旋$W_q = -1,W_{q'} = -1$的守恒量区间。
+对应地有基态$\ket{0}_{v =2}$和第一激发态$\ket{1}_{v = 2}$。
+上述过程称为两个$\sigma$粒子的\textbf{产生}。上述过程的逆过程称为两个$\sigma$粒子的\textbf{融合}。
+可以证明当两个六边形$q,q'$间隔地足够远时，$\ket{0}_{v =2}，\ket{1}_{v =2}$是简并的。
+此外满足$A\ket{0}_{v =2} = \ket{1}_{v = 2}$的算符必须是某个链接两个六边形$q,q'$的Pauli算符链。
+即$A$是高度非局域的。
+这意味着：
+\begin{enumerate}
+    \item \textbf{信息的非局域编码}: 任何局域的扰动算符 $O_{local}$ 都无法区分$\ket{0}_{v =2}，\ket{1}_{v =2}$，因为其矩阵元 $\langle 0 | O_{local} | 1 \rangle_{v = 2} = 0$。简并的它们不会出现相位噪声。则$\ket{0}_{v =2}，\ket{1}_{v =2}$同时免疫了相位噪声和翻转噪声，可用于编码一个逻辑比特。\cite{Pachos2012}。
+    \item \textbf{体能隙的保护}: 在真空中意外产生一对$\sigma$粒子都需要克服一个有限的能量隙。在低温下，这类热力学错误过程被指数级抑制\cite{Pachos2012}。
+\end{enumerate}
+
+\subsection{编码、计算与测量}
+为了能做通用量子计算，还需要一套完整的编码，量子门和测量方案。这里参考面向拓扑量子霍尔效应的设计~\cite{PhysRevA.73.042313}。
+\paragraph{编码--}
+一个逻辑量子比特被编码在四个$\sigma$任意子（涡旋）的集体状态中，即$|0\rangle_L=\ket{0,0}_{v =4}$和$|1\rangle_L = \ket{1,1}_{v =4}$。可以证明它们满足：
+\begin{align}
+    (-i \gamma_1\gamma_2)(-i \gamma_3\gamma_4)\ket{m,n}_{v =4}=(-1)^{m }\cdot (-1)^{n}=+1
+\end{align}
+可见$ (-i \gamma_1\gamma_2)$ 的行为恰如逻辑Pauli Z门$\sigma_{z}$， 进一步可以证明$ (-i \gamma_2\gamma_3)，(-i \gamma_1\gamma_3)$ 的行为恰如逻辑$\sigma_{x},\sigma_y$。
+
+\paragraph{计算--}量子门主要通过编织（braiding）任意子来实现，编织的操作需要通过绝热地改变哈密顿量参数来实现。如下图所示：
+\begin{figure}[htbp!]
+    \centering
+    \includegraphics[width=0.8\linewidth]{figures/Exchange_rules.png}
+\end{figure}
+
+图中只有黄色箭头是实验上要实施的，它通过绝热改变参数交换了两个涡旋的位置，可以证明这等价于实施了酉变换
+\begin{align}
+    R = e^{i(\pi/4)(i\gamma_{4}\gamma_{2})} =e^{i(\pi/4)(i\gamma_{1}\gamma_{3})} =e^{-i(\pi/4)\sigma_y}
+\end{align}
+类似地交换$(1,2);(3,4)$还可以实施$\sigma_z,\sigma_x$的$\pi/4$ 旋转门。这实现了所有单比特Clifford门。
+当存在两个逻辑比特时，有$8$个涡旋$(1234),(5678)$，此时通过交换$(15)$可以实现量子门$e^{i(\pi/4)\sigma_z^{(1)} \otimes\sigma_z^{(2)}}$。类似的所有形如$e^{i(\pi/4)\sigma_{\alpha}^{(i)} \otimes\sigma_{\alpha}^{(j)}}$的两比特量子门都能被实现。
+
+然而，仅靠上述编织无法实现通用计算，可以证明它\textbf{只能实现Clifford门和matchgate门的交集}。为了扩展到通用门集，它必须补充至少一个非拓扑门 (CNOT)和非Clifford的门 (T)。这些门可以通过注入Bell态和魔术态实现，具体方案参见~\cite{PhysRevA.73.042313}。
+
+\paragraph{测量--}
+理论上，测量总是可以等价于对某一个比特做测量。
+因此只要选择特定的四份融合，融合后检测是否处在基态即可。
+但是校验是否在基态没有高效的实验方案。
+在参考文献~\cite{PhysRevX.13.031008}中，作者指出可以在融合后在某一点施加$h\sigma_z$的磁场相互作用，演化一段时间后观察相邻两块是否出现涡旋，以判断此时系统处于基态还是某个费米子激发态。
+
+\section{参考文献}
+\printbibliography
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Appendices
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% \appendix
+% \onecolumngrid
+% https://tex.stackexchange.com/questions/488302/referencing-an-appendix-while-using-prl-style
+\selectlanguage{english}
+\makeatletter
+\newcommand{\appendixtitle}[1]{\gdef\@title{#1}}
+\newcommand{\appendixauthor}[1]{\gdef\@author{#1}}
+\newcommand{\appendixaffiliation}[1]{\gdef\@affiliation{#1}}
+\newcommand{\appendixdate}[1]{\gdef\@date{#1}}
+\makeatother
+% Define the custom title block
+\makeatletter%
+\newcommand{\appendixmaketitle}{%
+\begin{center}%
+\vspace{0.4in}%
+{\Large \@title \par}%
+% {\normalsize
+%   \lineskip .5em%
+%   \begin{tabular}[t]{c}%
+%     \@author
+%   \end{tabular}\par}%
+% \vspace{5pt}
+% {\itshape \@affiliation \par}%
+\end{center}%
+\par%
+}%
+\makeatother%
+
+\setcounter{secnumdepth}{2}
+\appendix
+\newpage
+
+\appendixtitle{\bf 
+Supplemental Material for\\``Anyon computation in spin lattice''}
+\appendixauthor{Siyuan Chen} 
+\appendixaffiliation{
+Department of Physics, University of Science and Technology of China}
+\appendixmaketitle
+\vspace{0.2in}
+This section gives rigorous statements and proof for Kitaev's model mentioned in the MT. 
+% \input{sections/unpaired}
+% \input{sections/analysis}
+% \input{sections/Braiding}
+% Rydberg_sim.tex is written for the book class (\chapter); remap its
+% sectioning one level down so it fits this article's appendix.
+\let\chapter\section
+\let\section\subsection
+\input{chapters/Rydberg_sim.tex}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\end{document}

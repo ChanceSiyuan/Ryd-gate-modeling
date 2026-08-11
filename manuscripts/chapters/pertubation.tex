@@ -1,0 +1,606 @@
+% title: "Effective Hamiltonian"
+% date: '2026-03-03'
+% categories:
+%   - Readings
+% lang: en
+% bibliography: refs.bib
+
+\chapter{Preliminaries}
+\label{chap:effective-hamiltonian}
+
+This chapter is to review the effective Hamiltonian framework and try to explain why certain Hamiltonians models are important in matterial physics.
+
+\section{Time-independent SW-transformation}
+\label{sec:effective-hamiltonian}
+
+Given a free Hamiltonian $H_0$ and an interacting Hamiltonian $H = H_0 + \varepsilon V$, where $\varepsilon \in \mathbb{R}$.
+
+\begin{definition}[Definition of spectral gap]
+\label{def:gap}
+Consider the eigenspectrum of $H_0$ within a connected interval $\mathcal{I}_0 = [a,b] \subset \mathbb{R}$. Let the corresponding eigensubspace be denoted by $\mathcal{P}_0$, and its projection operator by $P_0$.
+We say that there is a spectral gap $\Delta \in \mathbb{R}$ above $\mathcal{I}_0$ if and only if for all $\lambda, \mu \in \text{spec}(H_0)$ such that $\lambda \in \mathcal{I}_0$ and $\mu \notin \mathcal{I}_0$, we have $|\lambda - \mu| \geq \Delta$.
+\end{definition}
+
+If the interaction of $V$ on $H_0$ is small enough, this section of eigenspectrum of $H_0$ will be close to that of $H$.
+To be rigorous, consider the eigenspectrum of $H$ within the connected interval $\mathcal{I} := [a-\Delta/2, b+\Delta/2]$.
+Let eigensubspace of $H$ that supports on $\mathcal{I}$ be denoted by $\mathcal{P}$, and its projection operator by $P$.
+Denote the operator norm $\|A\| := \sup_{\|\psi\|=1} \|A\ket{\psi}\|$ (maximum singular value of $A$).
+For small enough $\varepsilon$, the subspace $\mathcal{P}$ will contain all those perturbed eigenvectors that are derived from $\mathcal{P}_0$.
+
+In proving this, we use the famous result on Sylvester equation.
+This equation is widely used in the solution of pertubation approximation, thus we rigrously review it in the following theorem.
+
+\begin{theorem}[Sylvester equation]
+\label{thm:sylvester}
+Given two matrices $A, B$ and a matrix $X$, the Sylvester equation $AX - XB = Y$ has unique solution $X$ if and only if the eigenvalues of $A$ and $B$ are disjoint. Furthermore,
+$X$ can be caluclated through:
+\begin{align}
+X = \frac{1}{2\pi i} \oint_\Gamma (zI-A)^{-1} Y (zI-B)^{-1} \,dz
+\end{align}
+where $\Gamma$ is a closed contour in the complex plane that encloses the eigenvalues of $A$ but do not contain the eigenvalues of $B$.
+\end{theorem}
+
+\begin{proof}
+Use evctorizaiton $\mathrm{vec}(A) = A_{ji} \ket{i}\bra{j}$ and identity $\mathrm{vec}(AXB) = (B^T \otimes A)\mathrm{vec}(X)$, then the Sylvester equation can be written as:
+\begin{align}
+(\mathbb{I}_n \otimes A - B^T \otimes \mathbb{I}_m)\mathrm{vec}(X) = \mathrm{vec}(Y),
+\end{align}
+Thsi linear equation has unique solution $\mathrm{vec}(X)$ if and only if $M = \mathbb{I}_n \otimes A - B^T \otimes \mathbb{I}_m$ is invertible. By diagonalization of $A$ and $B$ on the left space and right space respectively, we conclude this is satisfied iff $\text{spec}(A) \cap \text{spec}(B) = \emptyset$.
+\color{red}[Todo: Conplete the proof of the integral formula and series formula]\color{black}
+\end{proof}
+
+\begin{lemma}[Inverse of the commutator superoperator]
+    \label{lem:inv_commut}
+    Given two spectrum subspaces $P,Q$ of $H_0$ on which contains disjoint spectra, the superoperator $\hat{H}_0(\cdot) = [H_0, \cdot]$ is invertible on the space of block-off diagonal operators $X$ such that $PXP = QXQ = 0$. The inverse is given by
+\begin{align}
+    \hat{H}_0^{-1}(X) =  \sum_{i,j} \frac{\bra{i} \mathcal{O}(\cdot) \ket{j}}{E_i - E_j} \ket{i}\!\bra{j}.
+\end{align}
+\end{lemma}
+
+\begin{proof}
+Suppose $R = \hat{H}_0^{-1}(X)$
+It is equivalent to solve the linear euqation
+\begin{align}
+    \hat{H}_0\left[PRQ + Q R P\right] = (PH_0)RQ - PR(QH_0) + (QH_0)RP - QR(PH_0) =PXQ + QXP.
+\end{align}
+This seperate into two Sylvester equations given $H_P = P H_0 P$ and $H_Q = Q H_0 Q$:
+$$
+(H_P) (P R Q) - (P R Q) (H_Q) = PXQ, \quad (H_Q)(QR P) - (QR P)(H_P) = QXP,
+$$
+which can be solved by Theorem~\ref{thm:sylvester}.
+Since the spectra of $H_P$ and $H_Q$ are disjoint, the solution is unique and given by the integral formula:
+\begin{align}
+&PRQ = \sum_{\substack{i\in P, j\in Q}} X_{ij}
+\left[\frac{1}{2\pi i}\oint_{\Gamma_P}\frac{dz}{(z-E_i)(z-E_j)}\right] |i\rangle\langle j|
+=\sum_{\substack{i\in P, j\in Q}} \frac{X_{ij} |i\rangle\langle j|}{(E_i-E_j)},\\
+&QRP = \sum_{\substack{i\in Q, j\in P}} X_{ij}
+\left[\frac{1}{2\pi i}\oint_{\Gamma_P}\frac{dz}{(z-E_i)(z-E_j)}\right] |i\rangle\langle j|
+=\sum_{\substack{i\in Q, j\in P}} \frac{X_{ij} |i\rangle\langle j|}{(E_i-E_j)},
+\end{align}
+which sum to our expected result.
+\end{proof}
+
+
+
+\begin{lemma}[\cite{bravyi2011schrieffer}, Lemma 3.1]\label{lem:subspace-proximity}
+$|\varepsilon|\cdot \|V\| < \Delta/2 \Rightarrow \|P_0 - P\| <1$.
+\end{lemma}
+
+\begin{proof}
+Define $T = P - P_0$ and $Q_0 = \mathbb{I} - P_0$, $Q = \mathbb{I} - P$. Since $T$ is Hermitian and $T^2$ is block-diagonal with respect to $P_0, Q_0$, one has
+\begin{align}
+P_0 T^2 P_0 &= P_0 (P + P_0 - 2 P P_0) P_0 = P_0 - P_0 P P_0 = P_0 Q P_0,\\
+Q_0 T^2 Q_0 &= Q_0 (P + P_0 - 2 P P_0) Q_0 = Q_0 P Q_0,
+\end{align}
+so that $\|T\| = \sqrt{\|T^2\|} = \max(\|P_0 Q\|, \|Q_0 P\|)$, here we use the fact that $\|T^2\| = \|T\|^2$ and all vector with eigenvalue $0$ for $P_0$($Q_0$) shall be eigenvector with eigenvalue $0$ for $P_0QP_0$($Q_0PQ_0$).
+
+Without loss of generality assume $\|T\| = \|P_0 Q\|$. Define $A = P_0 H_0 P_0$, $B = QHQ$, $X = P_0 Q$, and $Y = -\varepsilon P_0 V Q$. Use the fact that $[Q,H] = 0$ and $[P_0, H_0] = 0$, then $X$ satisfies the \textit{Sylvester equation}:
+\begin{align}
+AX \!-\! XB = (P_0 H_0 P_0) (P_0 Q) \!-\! (P_0 Q) (Q H Q) = P_0 H_0 Q \!-\! P_0 H Q = \!-\varepsilon P_0 V Q := Y,
+\end{align}
+\begin{figure}
+    \centering
+    \IfFileExists{figures/specplot.pdf}{%
+        \includegraphics[width=0.7\linewidth]{specplot.pdf}%
+    }{%
+        \fbox{\texttt{specplot.pdf}}%
+    }
+    \label{fig:specplot}
+\end{figure}
+The spectra of $A$ and $B$ (viewed as operators on their respective subspaces) are separated by a gap of width $\Delta/2$ when $|\varepsilon| < \Delta/2\|V\|$. By a standard result on Sylvester equations, this spectral separation yields:
+$$
+\|T\| = \|X\| \leq \frac{2}{\Delta}\|Y\| \leq \frac{2}{\Delta}\|\varepsilon V\| < 1.
+$$
+\end{proof}
+
+
+
+% \begin{lemma}[Direct rotation and its generator]
+% \label{lem:direct-rotation}
+% \label{lemma:P=P_02}
+% Given two projectors $P, P_0$, if $\|{P} - {P}_0\| <1$, then:
+% \begin{enumerate}[(i).]
+%     \item $\text{dim~}\mathcal{P}_0 =\text{dim~}\mathcal{P}$ and $\mathcal{P}_0 \not\subset \mathcal{P}^\perp,\mathcal{P}\not\subset\mathcal{P}_0^\perp$.
+%     \item There exists $U = \sqrt{(2P_0-\mathbb{I})(2P-\mathbb{I})}$ such that $UPU^\dagger = P_0$.
+%     \item The unitary matrix can be uniquely written as $e^{S}$ .
+% \end{enumerate}
+% Here $S$ is the generator of the direct rotation, which satisfies the conditions $S^\dagger = -S$,$PSP = P_0SP_0 = (I - P )S(I - P ) = (I - P_0)S(I - P_0) = 0$, and $\|S\| < \pi/2$.
+% \end{lemma}
+
+% \begin{proof}[Proof sketch]
+% \textit{(Following \cite{bravyi2011schrieffer}, Lemma 2.2, Corollary 2.2, and Lemma 2.3)}
+
+% \textbf{(i) Equal dimensions.} Any pair of projectors $P, P_0$ can be simultaneously block-diagonalized into $2 \times 2$ and $1 \times 1$ blocks, with each $2 \times 2$ block containing rank-one projectors [see \cite{bhatia1997matrix}, Chapter 7.1]. In each $1 \times 1$ block, $\|P - P_0\| < 1$ forces $P = P_0 \in \{0, 1\}$. In each $2 \times 2$ block, both $P$ and $P_0$ are rank-one projectors (so non-orthogonality is guaranteed), contributing equally to $\dim \mathcal{P}$ and $\dim \mathcal{P}_0$.
+
+% \textbf{(ii) Existence of $U$.} Define reflection operators $R_P = 2P - \mathbb{I}$, $R_{P_0} = 2P_0 - \mathbb{I}$, and $U = \sqrt{R_{P_0} R_P}$ with the principal branch of the square root. The condition $\|P - P_0\| < 1$ ensures no eigenvalue of $R_{P_0} R_P$ lies on the negative real axis, so $U$ is uniquely defined. Within each $2 \times 2$ block, the rotation reduces to $U = e^{i\theta \sigma_y}$ (with $0 \le \theta < \pi/2$) which maps the rank-one projector $P$ to $P_0$, giving $U P U^\dagger = P_0$.
+
+% \textbf{(iii) Uniqueness of $S$.} Write $U = e^S$ with $S$ block-off-diagonal w.r.t. $P_0$. In the $P_0 / P_0^\perp$ block decomposition, $U_{1,1} = \cos(\sqrt{S_{1,2} S_{1,2}^\dagger})$ and $U_{2,2} = \cos(\sqrt{S_{1,2}^\dagger S_{1,2}})$. Since $\|S\| < \pi/2$, both are positive-definite. If another $\tilde{U} = e^{\tilde{S}}$ also satisfies the conditions, then $L = \tilde{U}U^\dagger$ commutes with $P_0$ (hence block-diagonal). The relation $\tilde{U}_{1,1} = L_1 U_{1,1}$ with both sides positive-definite forces $L_1 = \mathbb{I}$ (a unitary times a positive-definite operator is positive only if the unitary is the identity). Similarly $L_2 = \mathbb{I}$, so $\tilde{U} = U$. Injectivity of $\exp$ on $\|S\| < \pi/2$ then gives $\tilde{S} = S$.
+% \end{proof}
+
+The effective Hamiltonian is then defined as
+\begin{align}
+    H_{\mathrm{eff}} := P_0 e^{S}(H_0 + \varepsilon V) e^{-S} P_0
+\end{align}
+Intuitively, the value of effective Hamiltonian ensures that given $\ket{\psi} \in \mathcal{P}$, solving its evolution in time according to $H$
+is precisely equivalnent to tracing $\ket{\phi} =U\ket{\psi} \in \mathcal{P}_0$ evolution according to  $H_{\mathrm{eff}}$.
+In the same reference~\cite{bravyi2011schrieffer}, it is also shown how to approximate $H_{\mathrm{eff}}$ in terms of Taylor series of $\varepsilon$, which is concluded in Lemma~\ref{lem:perturbation_expand}.
+
+\begin{lemma}[\cite{bravyi2011schrieffer}, Section 3.2]
+\label{lem:perturbation_expand}
+Given the Hamiltonian $H = H_0 + \varepsilon V$ and the low-energy subspace of interest with projector $P_0$. Use $V_{\mathrm{od}}$ and $V_{\mathrm{d}}$ to represent the off-diagonal and diagonal terms, and $\hat{A}(\cdot) = [A, \cdot]$ is the commutator linear transformation, $\mathcal{L} = \hat{H}^{-1}_0$. Then the effective Hamiltonian is given by
+\begin{align}
+H_{\mathrm{eff}}
+&=H_0P_0+\varepsilon P_0VP_0
+-\frac{\varepsilon^2}{2}P_0\hat V_{\mathrm{od}}\mathcal L(V_{\mathrm{od}})P_0
++\frac{\varepsilon^3}{2}P_0\hat V_{\mathrm{od}}\mathcal L\hat V_d\mathcal L(V_{\mathrm{od}})P_0\\
+& \quad+  \varepsilon^4 \left[-\frac12P_0\hat V_{\mathrm{od}}\mathcal L\hat V_d\mathcal L\hat V_d\mathcal L(V_{\mathrm{od}})P_0 -\frac16P_0\hat V_{\mathrm{od}}\mathcal L\hat S_1^2(V_{\mathrm{od}})P_0 -\frac1{24}P_0\hat S_1^3(V_{\mathrm{od}})P_0\right]+O(\varepsilon^5),
+\end{align}
+where $S_1=\mathcal L(V_{\mathrm{od}})$.
+\end{lemma}
+
+\begin{proof}
+Write $U = e^S$ with $S$ block-off-diagonal w.r.t. $P_0$. The transformed Hamiltonian $e^{\hat{S}}(H_0 + \varepsilon V)$ (where $\hat{S}(\cdot) = [S, \cdot]$) decomposes into block-diagonal (BD) and block-off-diagonal (BOD) parts:
+\begin{align}
+e^{\hat{S}}(H_0 + \varepsilon V)
+= \underbrace{\cosh \hat{S} \cdot (H_0 + \varepsilon V_d) + \sinh\hat{S} \cdot (\varepsilon V_{\mathrm{od}})}_{\text{BD}}
++ \underbrace{\sinh \hat{S} \cdot (H_0 + \varepsilon V_d) + \cosh \hat{S} \cdot (\varepsilon V_{\mathrm{od}})}_{\text{BOD}}.
+\end{align}
+Setting the BOD part to zero and dividing by $\cosh \hat{S}$ yields:
+\begin{align}
+\tanh \hat{S} \cdot (H_0 + \varepsilon V_d) + \varepsilon V_{\mathrm{od}} = 0.
+\end{align}
+
+First rewrite the BOD equation without applying $\mathcal L$.
+Use the expansion
+\begin{align}
+x\coth x=\sum_{m\geq0}c_{2m}x^{2m},
+\qquad
+c_0=1,\quad c_2=\frac13,\quad c_4=-\frac1{45},\ldots .
+\end{align}
+Multiplying by $\hat S\coth \hat S$ gives
+\begin{align}
+    \hat H_0(S)+\varepsilon \hat V_d(S)
+    =\varepsilon\,\hat{S}(\coth\hat{S})(V_{\mathrm{od}})
+    =\varepsilon\sum_{m\geq0}c_{2m}\hat S^{2m}(V_{\mathrm{od}}). \label{eq:tid_od_eq}
+\end{align}
+Since $S$ is BOD, both $\hat{V}_{d}(S)$ and $\hat{S}(\coth\hat{S})(V_{\mathrm{od}})$ are BOD.
+Setup the superoperator $\mathcal{L}:= \hat H_0^{-1}$ satisfies $ \mathcal L([H_0, X])=\mathcal L\hat H_0(X)=X$ for BOD operators $X$.
+Applying this inverse gives
+\begin{align}
+    S
+    =\varepsilon\mathcal L(V_{\mathrm{od}})
+    -\varepsilon\mathcal L\hat V_d(S)
+    +\varepsilon\sum_{m\geq1}c_{2m}
+    \mathcal L\hat S^{2m}(V_{\mathrm{od}}).
+\end{align}
+Expanding $S = \sum_{n \geq 1} S_n \varepsilon^n$ and solving order by order gives $S_1=\mathcal L(V_{\mathrm{od}})$ and 
+\begin{align}
+S_n&=-\mathcal L\hat V_d(S_{n-1})
++\sum_{m\geq1}c_{2m}\mathcal L
+\sum_{\substack{k_1+\cdots+k_{2m}=n-1\\ k_j\geq1}}
+\hat S_{k_1}\cdots \hat S_{k_{2m}}(V_{\mathrm{od}}),
+\qquad n\geq2.
+\end{align}
+The inner sum is zero if there are no positive indices satisfying the constraint.
+In particular, up to the order needed for $H_{\mathrm{eff},4}$,
+\begin{align}
+S_2&=-\mathcal L\hat V_d(S_1), \quad
+S_3=-\mathcal L\hat V_d(S_2) +\frac13\mathcal L\hat S_1^2(V_{\mathrm{od}}), \quad 
+S_4=-\mathcal L\hat V_d(S_3) +\frac13\mathcal L\left(\hat S_1\hat S_2+\hat S_2\hat S_1\right)(V_{\mathrm{od}}).
+\end{align}
+
+The BD transformed Hamiltonian can be simplified by using the BOD equation $\tanh\hat S\cdot(H_0+\varepsilon V_d)+\varepsilon V_{\mathrm{od}}=0$:
+\begin{align}
+H_{\mathrm{eff}} &= \mathcal{D}\left(e^{\hat{S}}(H_0 + \varepsilon V)\right)
+= \cosh\hat S\cdot(H_0+\varepsilon V_d)+\sinh\hat S\cdot(\varepsilon V_{\mathrm{od}})\\
+&= H_0+\varepsilon V_d
++(\cosh\hat S-1)(H_0+\varepsilon V_d)
++\sinh\hat S\cdot(\varepsilon V_{\mathrm{od}})\\
+&= H_0+\varepsilon V_d
+-\frac{\cosh\hat S-1}{\tanh\hat S}(\varepsilon V_{\mathrm{od}})
++\sinh\hat S\cdot(\varepsilon V_{\mathrm{od}})\\
+&= H_0+\varepsilon V_d+
+\left[\sinh\hat S-\frac{\cosh\hat S-1}{\tanh\hat S}\right](\varepsilon V_{\mathrm{od}})
+= H_0+\varepsilon V_d+\tanh(\hat S/2)(\varepsilon V_{\mathrm{od}}), \label{eq:tid_d_eq}
+\end{align}
+where the last step uses $\sinh(x) - [\cosh(x) - 1]/{\tanh(x)} = \tanh(x/2)$.
+Since $H_0$ and $V_d$ are BD, $P_0 V_d P_0 = P_0 V P_0 = H_{\mathrm{eff},1}$.
+Now use
+\begin{align}
+\tanh(x/2)=\sum_{m\geq1}b_{2m-1}x^{2m-1},
+\qquad
+b_1=\frac12,\quad b_3=-\frac1{24},\quad b_5=\frac1{240},\ldots .
+\end{align}
+For $n\geq2$, the coefficient of $\varepsilon^n$ is
+\begin{align}
+H_{\mathrm{eff},n}
+=P_0\sum_{m\geq1}b_{2m-1}
+\sum_{\substack{k_1+\cdots+k_{2m-1}=n-1\\ k_j\geq1}}
+\hat S_{k_1}\cdots\hat S_{k_{2m-1}}(V_{\mathrm{od}})P_0 .
+\end{align}
+Thus
+\begin{align}
+&H_{\mathrm{eff},2}
+=\frac12P_0\hat S_1(V_{\mathrm{od}})P_0
+=-\frac12P_0\hat V_{\mathrm{od}}\mathcal L(V_{\mathrm{od}})P_0, \quad H_{\mathrm{eff},3}=\frac12P_0\hat S_2(V_{\mathrm{od}})P_0
+=\frac12P_0\hat V_{\mathrm{od}}\mathcal L\hat V_d\mathcal L(V_{\mathrm{od}})P_0,\\
+&H_{\mathrm{eff},4}\!\!
+=\!\!P_0\left[\frac12\hat S_3-\frac1{24}\hat S_1^3\right](V_{\mathrm{od}})P_0 =-\frac12P_0\hat V_{\mathrm{od}}\mathcal L\hat V_d\mathcal L\hat V_d\mathcal L(V_{\mathrm{od}})P_0
+-\frac16P_0\hat V_{\mathrm{od}}\mathcal L\hat S_1^2(V_{\mathrm{od}})P_0
+-\frac1{24}P_0\hat S_1^3(V_{\mathrm{od}})P_0.
+\end{align}
+Combining all orders gives the stated formula.
+\end{proof}
+
+\subsection{Relations with Van Vleck}
+
+Another widely used approximation is the Van Vleck expansion, we write it explicitely:
+
+\section{Time-dependent SW transformation}
+
+Given a time-dependent anti-Hermitian operator $S(t)$ and a tiem-dependet Hamiltonian $H(t)$, the $\ket{\chi(t)} = e^{S(t)} \ket{\psi(t)}$ following the evolution rule $i\partial_t \ket{\chi(t)} = H'(t)\ket{\chi(t)}$ with 
+\begin{align}
+    H'(t) = -ie^{S(t)}\partial_t e^{-S(t)} + e^{S(t)}H(t)e^{-S(t)}. 
+\end{align} 
+This gives us a way to transform the time-dependent Hamiltonian into a time-independent one, which is useful in adiabatic evolution and quantum simulation.
+To show this, we expands $H'(t)$ given small enough $S(t)$.
+\begin{lemma}[Exponential derivative]\label{lem:exp_deri}
+    Given a time-dependent anti-Hermitian operator $S(t)$, then
+\begin{align}
+  e^S\partial_t e^{-S}
+    =-\int_0^1 dr\, e^{rS}\dot S e^{-rS}
+    =-\sum_{n=0}^{\infty}\frac{1}{(n+1)!}\hat{S}^n(\dot S)
+\end{align}
+\end{lemma}
+\begin{proof}
+Let $F(\lambda,t)=e^{\lambda S(t)}\partial_t e^{-\lambda S(t)}$.
+Since $F(0,t)=0$, it is enough to integrate $\partial_\lambda F$ from $0$ to $1$.
+Differentiating gives
+\begin{align}
+    \partial_\lambda F(\lambda,t)
+    &=S e^{\lambda S}\partial_t e^{-\lambda S}
+    +e^{\lambda S}\partial_t(-S e^{-\lambda S}) =-e^{\lambda S}\dot S e^{-\lambda S}.
+\end{align}
+Therefore,
+$e^S\partial_t e^{-S}=F(1,t)=-\int_0^1 d\lambda\, e^{\lambda S}\dot S e^{-\lambda S}$.
+Finally, using $e^{\lambda S}Xe^{-\lambda S}=e^{\lambda\hat S}(X)$,
+\begin{align}
+    -\int_0^1 d\lambda\, e^{\lambda S}\dot S e^{-\lambda S}
+    =-\int_0^1 d\lambda\, e^{\lambda\hat S}(\dot S)
+    =-\sum_{n=0}^{\infty}\frac{1}{(n+1)!}\hat S^n(\dot S).
+\end{align}
+\end{proof}
+
+% \begin{lemma}[Time-dependent SW-expansion]\label{lem:td-sw-expand}
+% The Hamiltonian $H'=e^{S(t)} He^{-S(t)} - ie^{S(t)}\partial_t e^{-S(t)}$ has the expansion
+% \begin{align}
+% H' =H + \frac{e^{\hat{S}}-1}{\hat{S}}G =
+% H+G+\frac{1}{2!}[S,G]
+% +\frac{1}{3!}[S,[S,G]]
+% +\cdots, 
+% \qquad  
+% G=[S,H]+i\dot S.
+% \end{align}
+% \end{lemma}
+% \begin{proof}
+% Denote $\hat{S}(X)=[S,X]$. Applying the BCH formula and
+% Lemma~\ref{lem:exp_deri} to $S(t)$ gives
+% \begin{align}
+%     &e^S H e^{-S}=e^{\hat{S}}H = H+\sum_{n=0}^{\infty}\frac{1}{(n+1)!}\hat{S}^n([S,H])\\
+%     &-ie^S\partial_t e^{-S}
+%     =i\int_0^1 dr\, e^{rS}\dot S e^{-rS}
+%     =i\sum_{n=0}^{\infty}\frac{1}{(n+1)!}\hat{S}^n(\dot S).
+% \end{align}
+% Combining the two series yields
+% \begin{align}
+%     H'=H+\sum_{n=0}^{\infty}\frac{1}{(n+1)!}
+%     \hat{S}^n([S,H]+i\dot S)
+%     =H+\frac{e^{\hat{S}}-1}{\hat{S}}G,
+% \end{align}
+% where $G=[S,H]+i\dot S$. Expanding the last expression gives the stated series.
+% \end{proof}
+
+Use Lemma~\ref{lem:exp_deri} to derive the time-dependent perturbation expansion, which is similar to Lemma~\ref{lem:perturbation_expand}.
+
+\begin{lemma}[Time-dependent perturbation expansion]
+\label{lem:td-perturbation-expand}
+Given the Hamiltonian $H(t)=H_{0}(t)+\varepsilon V(t)$, where $H_0$ is time-independent and block-diagonal with respect to the fixed low-energy projector $P_0$. Then Lemma~\ref{lem:perturbation_expand} holds with the replacement of the superoperator
+ $\mathcal L \to \mathcal L_t := (\hat H_0(t)-i\partial_t)^{-1}$.
+\end{lemma}
+
+\begin{proof}
+For the time-derivative term, Lemma~\ref{lem:exp_deri} gives
+\begin{align}
+-ie^S\partial_t e^{-S}
+&= \underbrace{i\sum_{k\geq0}\frac{\hat S^{2k+1}}{(2k+2)!}\dot S
+}_{\text{BD}}+\underbrace{i\sum_{k\geq0}\frac{\hat S^{2k}}{(2k+1)!}\dot S}_{\text{BOD}} = \underbrace{i\frac{\cosh\hat S-1}{\hat S}\dot S}_{\text{BD}}+\underbrace{i\frac{\sinh\hat S}{\hat S}\dot S}_{\text{BOD}}
+\end{align}
+Combining the BD and BOD pieces in Lemma~\ref{lem:perturbation_expand} gives
+\begin{align}
+H'_{od}
+&=\sinh\hat S \cdot \left(H_0+\varepsilon V_d\right)+\cosh\hat S \cdot \varepsilon V_{od}
++i\frac{\sinh\hat S}{\hat S}\dot S,\\
+H'_d
+&=\cosh\hat S \cdot \left(H_0+\varepsilon V_d\right)+\sinh\hat S \cdot\varepsilon V_{od}
++i\frac{\cosh\hat S-1}{\hat S}\dot S.
+\end{align}
+Setting $H'_{od}=0$ and dividing by $\sinh\hat S/ \hat{S}$ gives
+\begin{align}\label{eq:td_od_eq}
+    H'_{od} = 0 \quad \Rightarrow \quad
+        (\hat H_0-i\partial_t)S+\varepsilon\hat V_d(S)
+    =\varepsilon\,\hat S(\coth \hat{S})(V_{od}).
+\end{align}
+Use the fact that $H'_{od} = 0$, and the identity $H'_d = H'_d - (\cosh \hat{S} - 1)/ \sinh \hat{S}$,
+and the same identity $\tanh(x/2) = \sinh(x) - [\cosh(x) - 1]/{\tanh(x)}$ structure as the time-independent case, we get
+\begin{align}\label{eq:td_d_eq}
+H'_d
+=H_0+\varepsilon V_d+\tanh(\hat S/2)(\varepsilon V_{od}).
+\end{align}
+Compare Eq.\eqref{eq:td_od_eq} and Eq.\eqref{eq:td_d_eq} with Eq.\eqref{eq:tid_od_eq} and Eq.\eqref{eq:tid_d_eq} gives the stated formula.
+\end{proof}
+
+Lemma~\ref{lem:td-perturbation-expand} shows that the time-dependent SW expansion has the same algebraic form as the time-independent expansion, except that the inverse commutator $\mathcal L=\hat H_0^{-1}$ is replaced by
+$\mathcal L_t=(\hat H_0-i\partial_t)^{-1}$.
+Thus the time-dependent problem is reduced to inverting $\hat H_0-i\partial_t$ on the space of BOD operators.
+The different physical regimes below correspond to different choices of this inverse, or equivalently different gauges for the SW generator $S(t)$.
+
+\begin{lemma}[Inverse of $\hat H_0-i\partial_t$]
+\label{lem:inv_td_commut}
+Given two spectrum subspaces $P,Q$ of a time-independent $H_0$ on which contains disjoint spectra, the superoperator $\hat H_0-i\partial_t$ is invertible on the space of time-dependent block-off diagonal operators $X(t)$ such that $PXP=QXQ=0$.
+For each matrix element $\ket i\bra j$ with one index in $P$ and the other in $Q$,
+the inverse $\mathcal L_t=(\hat H_0-i\partial_t)^{-1}$ satisfies
+\begin{align}
+    [\mathcal L_t(X)]_{ij}(t)
+    =e^{-i(E_i-E_j)(t-t_\ast)}[\mathcal L_t(X)]_{ij}(t_\ast)
+    +i\int_{t_\ast}^{t}ds\,
+    e^{-i(E_i-E_j)(t-s)}X_{ij}(s).
+\end{align}
+\end{lemma}
+\begin{proof}
+It is enough to work on one matrix element.
+Set $\mathcal L_t(X_{ij}\ket i\bra j)=Y_{ij}\ket i\bra j$.
+Since
+\begin{align}
+    [H_0,Y_{ij}(t)\ket i\bra j]
+    =(E_i-E_j)Y_{ij}(t)\ket i\bra j,
+\end{align}
+$Y_{ij}$ must solve
+$\left(E_i-E_j-i\partial_t\right)Y_{ij}(t)=X_{ij}(t)$.
+The homogeneous equation has solution $e^{-i(E_i-E_j)(t-t_\ast)}Y_{ij}(t_\ast)$.
+Multiplying the inhomogeneous equation by $e^{i(E_i-E_j)t}$ gives
+\begin{align}
+    \partial_t\left(e^{i(E_i-E_j)t}Y_{ij}(t)\right)
+    =i e^{i(E_i-E_j)t}X_{ij}(t),
+\end{align}
+and integrating from $t_\ast$ to $t$ gives the stated kernel.
+\end{proof}
+
+The freedom in Lemma~\ref{lem:inv_td_commut} is the freedom in choosing the homogeneous part of the SW generator.
+This freedom is fixed only after one chooses a concrete inverse map $\mathcal L_t$.
+This inverse enters the perturbative expansion from the perturbation solution of Eq.~\eqref{eq:td_od_eq}, which gives
+the $n$-th order equation under the expansion $S=\sum_{n \geq 1}\varepsilon^n S_n$ and the PDE $(\hat H_0-i\partial_t)S_n(t)=R_n(t)$,
+where $R_n(t)$ is known once the lower-order generators have been fixed.
+Thus a boundary condition on $S_n$ is induced by the corresponding output condition on $\mathcal L_t^{(g)}(X)$.
+
+\paragraph{{Initial-value gauge.}}
+In the initial-value gauge, the SW frame is chosen to coincide with the original frame at the reference time, $e^{S(t_\ast)}=I$.
+Using Eq.~\eqref{eq:td_d_eq} and $S(t_\ast)=0$, one gets
+$P_0H'_d(t_\ast)P_0=H_0P_0+\varepsilon P_0V_d(t_\ast)P_0$.
+This means that we take the gauge $[\mathcal L_t^{\mathrm{init}}(X)]_{ij}(t_\ast)=0$ for every BOD input $X$.
+Then Lemma~\ref{lem:inv_td_commut} reduces to
+\begin{align}
+    [\mathcal L^{\mathrm{init}}_t(X)]_{ij}(t)
+    =i\int_{t_\ast}^{t}ds\,
+    e^{-i(E_i-E_j)(t-s)}X_{ij}(s) = i\int_0^{\delta t}d\tau\,
+    e^{-i\Delta_{ij}\tau}X_{ij}(t-\tau).
+\end{align}
+Here $\Delta_{ij}=E_i-E_j$, $\delta t=t-t_\ast$, $X^{(m)}=\partial_t^m X$, and $\tau=t-s$.
+Integration by parts gives the exact finite-order formula
+\begin{align}
+    [\mathcal L^{\mathrm{init}}_t(X)]_{ij}(t)
+    &=
+    \sum_{m=0}^{N-1}
+    \frac{i^m}{\Delta_{ij}^{m+1}}
+    \left[
+    X_{ij}^{(m)}(t)
+    -e^{-i\Delta_{ij}\delta t}X_{ij}^{(m)}(t_\ast)
+    \right]
+    +\left(\frac{i}{\Delta_{ij}}\right)^N
+    [\mathcal L^{\mathrm{init}}_t(X^{(N)})]_{ij}(t).
+\end{align}
+When the remainder is asymptotically small, this gives the formal derivative expansion
+\begin{align}
+    [\mathcal L^{\mathrm{init}}_t(X)]_{ij}(t)
+    \sim
+    \sum_{m=0}^{\infty}
+    \frac{i^m}{\Delta_{ij}^{m+1}}
+    \left[
+    X_{ij}^{(m)}(t)
+    -e^{-i\Delta_{ij}\delta t}X_{ij}^{(m)}(t_\ast)
+    \right].
+\end{align}
+If the pulse and its relevant derivatives vanish at $t_\ast$, the transient boundary terms disappear and the local initial-value expansion becomes
+\begin{align}
+    [\mathcal L^{\mathrm{init}}_t(X)]_{ij}(t)
+    \sim
+    \sum_{m=0}^{\infty}
+    \frac{i^m X_{ij}^{(m)}(t)}{\Delta_{ij}^{m+1}}
+    =
+    \frac{X_{ij}(t)}{\Delta_{ij}}
+    +\frac{i\dot X_{ij}(t)}{\Delta_{ij}^2}
+    -\frac{\ddot X_{ij}(t)}{\Delta_{ij}^3}
+    +\cdots .
+\end{align}
+This is an asymptotic expansion controlled by time derivatives of $X_{ij}$ relative to powers of $|\Delta_{ij}|$.
+
+\paragraph{{Periodic gauge and Floquet engineering.}}
+In the case $V_{od}$ and $V_d$ are periodic with period $T$, 
+we use the periodic SW gauge satisfying $S(t+T)=S(t)$ at every order.
+Using Lemma~\ref{lem:inv_td_commut} from $t-T$ to $t$ gives
+\begin{align}
+    [\mathcal L_t(X)]_{ij}(t)
+    =e^{-i(E_i-E_j)T}[\mathcal L_t(X)]_{ij}(t-T)
+    +i\int_{t-T}^{t}ds\,
+    e^{-i(E_i-E_j)(t-s)}X_{ij}(s).
+\end{align}
+Provided off-diagonal elements satisfy $e^{-i(E_i-E_j)T}\neq1$.
+Imposing periodicity $[\mathcal L_t(X)]_{ij}(t) = [\mathcal L_t(X)]_{ij}(t - T)$ on the output fixes the initial value and gives
+\begin{align}
+    [\mathcal L_t^{\mathrm{per}}(X)]_{ij}(t)
+    =\frac{i}{1-e^{-i(E_i-E_j)T}}
+    \int_{t-T}^{t}ds\,
+    e^{-i(E_i-E_j)(t-s)}X_{ij}(s),
+\end{align}
+given the decomposition $X_{ij}(t)=\sum_k X_{ij,k}e^{i\omega_k t}$,
+and $E_i-E_j+\omega_k\neq0$ for all Fourier modes that appear, then the same periodic gauge gives
+\begin{align}
+    [\mathcal L_t^{\mathrm{per}}(X)]_{ij}(t)
+    =\sum_k\frac{X_{ij,k}}{E_i-E_j+\omega_k}e^{i\omega_k t}.
+\end{align}
+If this denominator vanishes, that mode is resonant and should not be eliminated by the SW transformation.
+
+
+\section{Many-body SW transformation}
+
+Consider the case $H_0 = \sum_{v = 1}^n H_v$ is local Hamiltonian supporting on $n$ sites,
+defining the local subspace $\mathcal{P} := \otimes \mathcal{P}_{v}$, where $\mathcal{P}_v$ is the low-energy subspace separated by a gap $\Delta$ of $H_v$ pair-wisely.
+A bounded pertubation $V = \sum_{(u,v) \in \mathcal{E}} V_{u,v}$ with  $\|V_{u,v}\| \leq J$ is imposed on the system, where $\mathcal{E}$ is a set of edges connecting the sites.
+Restricted to the $\mathcal{P}$, the effective Hamiltonian $H_{\mathrm{eff}}$ on this subspace also involves 
+
+
+
+\section{Feshbach--Schur reduction}
+
+The Feshbach--Schur complement gives an exact, energy-dependent reduction of
+an eigenvalue problem to a chosen subspace.  Its perturbative connection to
+the energy-independent Schrieffer--Wolff Hamiltonian is stated below.
+
+\begin{theorem}[Feshbach--Schur complement]\label{thm:Feshbach}
+Let $H$ be Hermitian on a finite-dimensional Hilbert space, let $P$ and
+$Q=I-P$ be complementary orthogonal projectors, and let $x\in\mathbb R$ be
+such that $Q(H-x)Q$ is invertible on $\operatorname{Ran}Q$.  Define the Hermitian Feshbach operator on $\operatorname{Ran}P$ by
+\begin{align}
+F_P(x)
+:=
+P(H-x)P
+-PHQ\,[Q(H-x)Q]^{-1}QHP .
+\label{eq:Feshbach}
+\end{align}
+Then $x$ is an eigenvalue of $H$ if and only if there exists a nonzero
+$\ket p\in\operatorname{Ran}P$ such that $F_P(x)\ket p=0$.  In that case the
+corresponding eigenvector, up to normalization, is
+$\ket\psi=\ket p-[Q(H-x)Q]^{-1}QHP\ket p$.
+\end{theorem}
+
+\begin{proof}
+Write $\ket\psi=\ket p+\ket q$, where $\ket p=P\ket\psi$ and
+$\ket q=Q\ket\psi$.  The $P$ and $Q$ components of
+$(H-x)\ket\psi=0$ are $P(H-x)P\ket p+PHQ\ket q =0$ and 
+$QHP\ket p+Q(H-x)Q\ket q=0$.
+Invertibility of the $Q$ block gives
+$\ket q=-[Q(H-x)Q]^{-1}QHP\ket p$.
+Substitution into the first block equation gives $F_P(x)\ket p=0$.
+Conversely, a vector in the kernel of $F_P(x)$, together with the reconstructed
+$Q$ component above, solves both block equations.  Moreover, $\ket p$ cannot
+vanish for a nonzero eigenvector, since invertibility of $Q(H-x)Q$ would then
+force $\ket q=0$.
+\end{proof}
+
+
+
+
+\section{Adiabatic theorem}
+In this section, we consider parameter-dependent Hamiltonian $H(s)$. Specifically, we consider the self-adjoint operator $H(s)$ with the Taylor expansion:
+\begin{align}
+    H_{ij}(s) = \sum_{k=0}^{\infty} a_{ij}^{(k)}(s - s_0)^k.
+\end{align}
+For example, $H(s) = A + s B$ satisfied this condition.
+
+Take a parameterized Hamiltonian $H(s)$ with gapped low-energy subspace $P(s), Q(s)$ at point $s$.
+If $s = s(t)$ is time-dependent,
+the quantum state initially at subspace $P(s(0))$ will leak to $Q(s(t))$ subspace.
+Such a leakage do not caused by the non-diagonal perturbation, but the dynamic itself.
+Specifically, consider the time-dependent unitary transformation $W(s)\ket{\psi_n(0)} = \ket{\psi_n(s)}$, where $\ket{\psi_n(s)}$ is the $n$-th eigenvector of Hamiltonian $H(s)$.
+Then $\ket{\chi(t)} := W^\dagger(s(t))\ket{\psi(t)}$ evolves according to
+\begin{align}
+    &i\partial_t \ket{\chi(t)} =  H'(t) \ket{\chi(t)},\quad  H'(t) =\left. H(0) -\dot{s} A(t),\quad \text{where~}  A(t) =  iW^\dagger(s)\partial_s W(s)\right|_{s = s(t)}.\label{eq:rwcord_ham}
+\end{align}
+
+
+
+The SW transformation, which used to eliminate the off-diagonal terms, simply generalize through:
+\begin{align}\label{eq:td_swtrans}
+    \boxed{
+ \text{Find~} S(t), \text{~s.t.~}Q\,e^{S(t)} (H + V -i\partial_t) e^{-S(t)}P=0 
+    }
+ \rightarrow  
+ \boxed{
+ \text{Find~} S, \text{~s.t.~} Q(0)\,e^{S} \left[H(0) -\dot{s} A(t)\right] e^{-S}P(0)= 0
+ }
+ \end{align}
+
+\begin{theorem}[Adiabatic projection]
+Suppose that:
+(i). The spectrum of $H(s)$ restricted to $P(s)$ consists of $m(s)$ eigenvalues separated by a gap $\Delta(s) = \varepsilon_1(s) - \varepsilon_0(s) > 0$ from the rest of the spectrum of $H(s)$, 
+(ii). The $H(s)$ is twice continuously differentiable with respect to $s$, denoted by $H^{(1)}(s)$ and $H^{(2)}(s)$ as bounded operators,
+(iii). The $P_t(s)$ is the dynamical projector at time $t$ with respect to $H(s(t))$.
+Then for any $s \in [0,1]$,
+\begin{align}
+\|P_{t}(s) - P(s)\| &\leq\frac{ m(0)\|H^{(1)}(0)\| }{t_f\Delta^2(0)} + \frac{ m(s)\|H^{(1)}(s)\| }{t_f\Delta^2(s)} + \frac{1}{t_f} \int_0^s \left[\frac{m(x)\|H^{(2)}(x)\|}{\Delta(x)^2} +  \frac{7m\sqrt{m}\|H^{(1)}(x)\|^2}{\Delta(x)^{3}} \right]dx.
+\end{align}
+
+\end{theorem}
+\begin{proof}
+    
+\end{proof}
+
+\begin{theorem}[Geometric phase]
+Take the Hamiltonian $H(s)$ with $s = s(t)$ is time-dependent and instantaneous eigenbasis $(E_n(s),\ket{\psi_n(s)})$.
+Then begin from $t = 0$ with the initial state $\ket{\psi(0)} = \ket{\psi_n(s(0))}$, the evolution approximately follows $\ket{\psi(t)} = e^{i\gamma_n(t)} e^{id_n(t)} \ket{\psi_n(s(t))}$ with:
+\begin{align}
+d_n(t) = -\int_0^t E_n(s(t'))\,dt',\quad  \gamma_n(t) = - i\int_{s(0)}^{s(t)}ds \bra{\psi_n(s)} \left(\frac{d}{ds}\right) \ket{\psi_n(s)} 
+\end{align}
+\end{theorem}
+\begin{proof}
+    
+\end{proof}
+
+
+The dynamic phase $d_n(t)$ can be calculated by solving the instantaneous energy $E_n(s(t))$ and integrating the energy over time.
+A critical property of $\gamma_n(t)$ is that it is independent time and fully geometric. 
+
+In general, consider a parameter space $X$ with $s=(s_1,\dots,s_n)\in X$,
+and normalized eigenbasis $\ket{\psi_n(s)}$ at each point $s$.
+We define Berry connection in the space as:
+\begin{align}
+\hat{A}_n(s) :=
+\sum_\mu {A}_{n,\mu}(s)  \,ds^\mu, \quad {A}_{n,\mu}(s) = \langle \psi_n(s)|(-i\partial_\mu) |\psi_n(s)\rangle 
+\end{align}
+Here $\hat{A}_n(s)$ is a map $T_{s} X \to \mathbb{R}$, i.e., a 1-form on $X$.
+If we further suppose $s(0) = s(T)$, which gives a closed path $C = \{s(t)\}_{t\in [0,T]}$ with tengent $\dot{s}(t)$ in $X$,
+ then the geometric phase is given by the integral of the Berry connection along the path:
+\begin{align}
+\gamma_n(t)  &= \int_0^T \sum_\mu \frac{ds_\mu}{dt} {A}_{n,\mu}(s(t)) \,dt = \int_0^T \hat{A}_n \left[\sum_\mu \frac{ds_\mu}{dt} \frac{\partial}{\partial s^\mu}\right]\,dt  \\
+&= \oint_C \hat{A}_n =\int_M d\hat{A}_n = \int_M \frac{1}{2} \left(\frac{\partial {A}_{n,\mu}}{\partial s^\nu} - \frac{\partial {A}_{n,\nu}}{\partial s^\mu}\right) ds^{\mu} \wedge ds^{\nu}.
+\end{align}
+Here $F_{\mu,\nu}:= {\partial_{\mu} {A}_{n,\nu}} - {\partial_{\nu} {A}_{n,\mu}}$ is the curvature tensor on the ground state fiber bundle.

@@ -1,14 +1,10 @@
-% Canonical repository-owned derivation; see theory/README.md.
 \chapter{Numerical simulations}
 
 
-\section{The full Hamiltonian}
-We first summarize the energy levels that involved in the process:
-\begin{itemize}
-    \item $\{\ket{0},\ket{1},\ket{e_F},\ket{r},\ket{r'}\}$ for two-photon process.
-    \item $\{\ket{0},\ket{1},\ket{r_m}\}$ for single-photon process.
-\end{itemize}
-
+\section{The atomic energy levels and Rydberg interaction}
+We first summarize the energy levels that involved 
+$\{\ket{0},\ket{1},\ket{e_F},\ket{r},\ket{r'}\}$ for two-photon process
+and $\{\ket{0},\ket{1},\ket{r_m}\}$ for single-photon process.
 Specifically, they correspond to the following atom states in $^{87}\mathrm{Rb}$ atoms with $I = 3/2$:
 \begin{align}
 &\ket 0=\ket{5S_{1/2},F=1,m_F=0},\qquad\ket1=\ket{5S_{1/2},F=2,m_F=0},\\
@@ -17,25 +13,195 @@ Specifically, they correspond to the following atom states in $^{87}\mathrm{Rb}$
 &  \ket{r_m}=\ket{53P_{3/2},m_J}, m_J = -3/2,-1/2,1/2,3/2.
 \end{align}
 
-
-\subsection{The single-photon Hamiltonian}
-
-Decomposed the hyperfine state into
+The hyperfine state can be decomposed into the following basis:
 \begin{align}
-\ket1
-&=\frac{1}{\sqrt2}
-\left(
-\ket{m_J=\tfrac12,m_I=-\tfrac12}
-+\ket{m_J=-\tfrac12,m_I=\tfrac12}
-\right),\\
-\ket0
-&=\frac{1}{\sqrt2}
-\left(
--\ket{m_J=\tfrac12,m_I=-\tfrac12}
-+\ket{m_J=-\tfrac12,m_I=\tfrac12}
-\right),
+    \ket1
+    &=\frac{
+    \ket{m_J=\tfrac12,m_I=-\tfrac12}
+    +\ket{m_J=-\tfrac12,m_I=\tfrac12}
+    }{\sqrt2}
+    ,\,\,\, \ket0
+    =\frac{-\ket{m_J=\tfrac12,m_I=-\tfrac12}
+    +\ket{m_J=-\tfrac12,m_I=\tfrac12}}{\sqrt2}.
 \end{align}
-we conclude that $\sigma^-, \pi, \sigma^+$ laser will coupling along the path
+The dipole interaction writes $V_{\rm dd}(\hat{R})=\frac{1}{4\pi\epsilon_0 R^{3}}[\mathbf{d}_A\cdot \mathbf{d}_B - 3(\mathbf{d}_A\cdot \hat{R})(\mathbf{d}_B\cdot \hat{R})]$.
+Each vector $\mathrm{d}_A,\mathrm{d}_B$ are $j = 1$ representation of $SO(3)$ group, whose tensor product can be decomposed into the irreducible representations of $SO(3)$ group through the basis:
+\begin{align}
+    &[\mathbf{d}_{A}\otimes \mathbf{d}_B]_{+2}^{(2)}=\mathbf{d}_{A,+1}\mathbf{d}_{B,+1},\quad [\mathbf{d}_{A}\otimes \mathbf{d}_B]_{-2}^{(2)}=\mathbf{d}_{A,-1}\mathbf{d}_{B,-1},\\
+    &[\mathbf{d}_{A}\otimes \mathbf{d}_B]_{+1}^{(2)}=\frac{1}{\sqrt{2}}(\mathbf{d}_{A,+1}\mathbf{d}_{B,0}+\mathbf{d}_{A,0}\mathbf{d}_{B,+1}),\quad [\mathbf{d}_{A}\otimes \mathbf{d}_B]_{-1}^{(2)}=\frac{1}{\sqrt{2}}(\mathbf{d}_{A,-1}\mathbf{d}_{B,0}+\mathbf{d}_{A,0}\mathbf{d}_{B,-1}),\\
+    &[\mathbf{d}_{A}\otimes \mathbf{d}_B]_{0}^{(2)}=\frac{1}{\sqrt{6}}(\mathbf{d}_{A,+1}\mathbf{d}_{B,-1}+\mathbf{d}_{A,-1}\mathbf{d}_{B,+1}+2\mathbf{d}_{A,0}\mathbf{d}_{B,0}),
+\end{align}
+for $d_0=d_z, d_{+1} = -(d_x + i d_y)/\sqrt{2}$, and $d_{-1} = (d_x - i d_y)/\sqrt{2}$.
+These basis satisfied the identity
+\begin{align}
+&\langle n_s l_s j_s m_s ; n_tl_t j_t m_t|[\mathbf{d}_A\otimes\mathbf{d}_B]_q^{(2)}|n ljm_A;n ljm_B\rangle=\sum_{p_A p_B}\langle n_s l_s j_s m_s|\mathbf{d}_{p_A}|n l j m_A\rangle\langle n_t l_t j_t m_t|\mathbf{d}_{p_B}|n l j m_B\rangle,\\
+& 
+\langle n'l'j'm'|rp|nljm \rangle=(-1)^{j+l'-1/2}C_{jm1p}^{j'm'}\sqrt{2j+1}\left\{\begin{matrix}
+l & {1}/{2}   & j \\
+j' & 1    & l' \\
+\end{matrix}
+\right\} \langle n'l' \| r \| nl\rangle.
+\end{align}
+In the case $\hat{R} = \hat{z}$, we noted that $V_{\mathrm{dd}}(\hat{z})$ can be represented as
+\begin{align}
+   V_{\mathrm{dd}}(\hat{z}) = -\frac{\sqrt{6}}{4 \pi \epsilon_0 R^3} [d_A \otimes d_B]_{0}^{(2)},
+\end{align}
+thus only induces the transition for $\Delta m = 0$ for state under the axis $\hat{z} = \hat{R}$. To generalized arbitrary direction, we rotated it to the arbitrary direction $\hat{R}$ by the Wigner D-matrix:
+\begin{align}
+    V_{\mathrm{dd}}(R,\theta, \phi)=- \frac{\sqrt{6}}{4\pi\epsilon_0 R^3} \sum_{q=-2}^{2} (-1)^q C_{-q}^{(2)}(\theta, \phi) [d_A^{(1)} \otimes d_B^{(1)}]_{q}^{(2)},
+\end{align}
+with the function
+\begin{align}
+C_{-q}^{(2)}(\theta, \phi)=\left\{\begin{aligned}
+&\sqrt{\frac{3}{8}} \sin^2 \theta e^{ \mp 2i\phi}, q=\pm 2, \\
+&\sqrt{\frac{3}{2}} \sin \theta \cos \theta e^{\mp i\phi}, q=\pm 1, \\
+&\frac{1}{2} (3 \cos^2 \theta - 1), q = 0
+\end{aligned}
+\right.
+\end{align}
+
+Combining the above two results, we are able to calculate the $\langle \nu'|V_{\mathrm{dd}}(\hat{R})|\nu\rangle$ for arbitrary direction Zeeman resolved basis $\ket{\nu} = \ket{nljm}$ on direction $\hat{R}$.
+Based on this, we get the Rydberg interaction matrix
+\begin{align}
+    H_{\mathrm pair}(R,\theta,\phi;B)=\sum_{\nu}\epsilon_{\nu}(B)|\nu\rangle\langle\nu|+V_{\mathrm{dd}}(R,\theta,\phi),
+\end{align}
+The driving laser $D = {\Omega}/{2}\ket{r}\bra{1} + \mathrm{h.c.}$ coupling $\ket{1r}$ to the eigenvectors $\{\ket{\Psi_k}, E_k\}$ of $H_{\mathrm pair}(R,\theta,\phi;B)$ through 
+\begin{align}
+    \bra{\Psi_k}D\ket{1r} = \frac{\Omega}{2}\langle \Psi_k|rr \rangle, \quad \Delta_k = E_k - E_{1r} - \hbar\omega_L.
+\end{align}
+Thus, it is plausible to numerically diagonalize the $V_{\mathrm{dd}}$ to get the eigenvalues $E_k$ and eigenvectors overlaps$\langle rr|{\Psi_k}\rangle$ to get the effective Hamiltonian $H_{\rm eff}$. In the following, we list these results for the case $53P_{3/2}$ and $70S_{1/2}$ states for $^{87}\mathrm{Rb}$ atoms.
+
+\paragraph{Rydberg interaction spectra of the $53P_{3/2}$ and $70S_{1/2}$ states.}
+Figure~\ref{fig:pair-spectrum-53p-70s-20g} compares the optically bright pair
+spectra at $B=20\,\mathrm{G}$ for three representative orientations.  The
+$53P_{3/2}$ doorway is ``unclean'' in a specific sense: its bright weight is
+either left almost unshifted or divided among several orientation-dependent
+pair eigenstates close to resonance.  This follows from the angular structure
+of the $P$ manifold and its mixing with nearby pair channels, and rules out a
+direction-independent scalar $C_6/R^6$ shift.
+
+To make the comparison explicit, define
+$c_k=\langle\Psi_k|rr\rangle$, $p_k=|c_k|^2$, and the interaction shift
+$u_k=(E_k-E_{rr}^{(0)})/\hbar$.  At the representative mixed geometry
+$R=3\,\mu\mathrm{m}$ and $\theta=45^\circ$, the five largest-overlap
+eigenchannels are listed below.  Each entry gives
+$u_k/(2\pi)$ in MHz followed by $p_k$ in brackets, and the channels are
+ordered by decreasing $p_k$ rather than by energy:
+\begin{align}
+\begin{array}{c|ccccc}
+ & |\Psi_1\rangle & |\Psi_2\rangle & |\Psi_3\rangle
+ & |\Psi_4\rangle & |\Psi_5\rangle \\
+\hline
+53P_{3/2}
+ & -5.35\,[0.472] & -66.7\,[0.276] & +25.1\,[0.207]
+ & +537\,[0.028] & +97.2\,[0.010] \\
+70S_{1/2}
+ & +851\,[0.533] & -1731\,[0.153] & -516\,[0.113]
+ & -477\,[0.102] & -427\,[0.021]
+\end{array}
+\label{eq:bright-pair-channels-20g}
+\end{align}
+Writing $P_m\equiv|53P_{3/2},m_J=m\rangle$, $|\Psi_1\rangle$ mixes
+$|P_{-3/2}P_{-3/2}\rangle$ with $|P_{-1/2}P_{-1/2}\rangle$ and exchanged
+$|P_{-3/2}P_{+1/2}\rangle$ components.  The states $|\Psi_2\rangle$ and
+$|\Psi_3\rangle$ mix the target doorway mainly with exchanged
+$|P_{-3/2}P_{-1/2}\rangle$ components; $|\Psi_4\rangle$ is predominantly the
+symmetric $|53S;54S\rangle$ F\"orster channel, and $|\Psi_5\rangle$ is another
+Zeeman-mixed $53P+53P$ state involving $m_J=+1/2$.  Thus the target component
+is not merely accompanied by remote dark
+spectators: most of it lies in three channels whose shifts are comparable to
+the gate-driving scale.  In the axial geometry the same doorway instead forms
+one nearly unshifted bright branch.  Consequently the eigenchannels must be
+recomputed for each $(R,B,\theta)$ rather than reused with a rescaled
+interaction strength.
+
+Within a five-channel target-doorway truncation, the corresponding two-atom
+Hamiltonian is
+\begin{align}
+H^{(5)}(t)
+={}&H_{\leq 1}(t)
++\hbar\sum_{k=1}^{5}[u_k-2\Delta_L(t)]
+|\Psi_k\rangle\langle\Psi_k| \nonumber\\
+&+\frac{\hbar}{2}\sum_{k=1}^{5}
+\left[
+c_k|\Psi_k\rangle
+(\Omega_A(t)\langle 1r|+\Omega_B(t)\langle r1|)+\mathrm{h.c.}
+\right],
+\label{eq:five-channel-pair-hamiltonian}
+\end{align}
+where $H_{\leq1}$ contains the ground and singly excited manifolds and the
+target single-Rydberg state has rotating-frame energy $-\hbar\Delta_L(t)$.
+Equivalently,
+for equal in-phase drives $\Omega_A=\Omega_B=\Omega$, the symmetric state
+$|W_r\rangle=(|1r\rangle+|r1\rangle)/\sqrt{2}$ couples to channel $k$ with
+amplitude $\hbar\Omega(t)c_k/\sqrt{2}$.  The coupling is therefore set by the
+amplitude $c_k$, not by treating $p_k$ as a Rabi frequency.  The five displayed
+$53P_{3/2}$ channels capture more than $99\%$ of the target-doorway weight in
+the present truncated basis at this geometry, but a high-accuracy calculation
+must still verify convergence with additional channels and a larger pair
+basis.  For the full $\sigma^-$ model containing a garbage Rydberg state,
+$c_k$ must be replaced by the overlap matrix
+$c_{k,\alpha\beta}=\langle\Psi_k|r_\alpha r_\beta\rangle$; the five channels
+ranked only by $|rr\rangle$ overlap define the target--target block, not the
+entire gate Hamiltonian.
+
+The detuning from the singly excited target manifold to pair channel $k$ is
+$d_k(t)=u_k-\Delta_L(t)$.  The pair sector becomes $70S$-like in the
+deep-blockade limit
+\begin{align}
+|d_k(t)|\gg |\Omega(t)c_k|/\sqrt{2}
+\qquad\text{for every optically bright channel.}
+\label{eq:multichannel-blockade-condition}
+\end{align}
+The pair states can then be adiabatically eliminated.  Their leading effects
+on $|W_r\rangle$ are summarized by two different inverse moments,
+\begin{align}
+\frac{\delta E_{W}}{\hbar}
+&\simeq-\frac{|\Omega|^2}{2}\sum_k\frac{p_k}{d_k},
+&
+P_{\mathrm{pair}}
+&\propto\frac{|\Omega|^2}{2}\sum_k\frac{p_k}{d_k^2}.
+\label{eq:multichannel-blockade-moments}
+\end{align}
+For the $70S_{1/2}$ benchmark, the bright weight is also multichannel, but all
+significant channels remain far from resonance in the geometries shown; this
+is why it admits the deep-blockade reduction while the present $53P_{3/2}$
+doorway does not.  A still stronger reduction to one literal scalar
+$V|rr\rangle\langle rr|$ requires either one dominant eigenchannel or a narrow,
+same-sign cluster of bright detunings, so that the two inverse moments can be
+reproduced by the same $V$.  Otherwise the phase shift and blockade leakage require
+separate effective parameters even for $70S$.  This reduction concerns the
+pair sector only: the single-photon and two-photon single-atom Hamiltonians
+remain different.
+
+\begin{figure}[tb]
+    \centering
+    % Source: results/297_to_calibration/README.md; generated by scripts/check_297_pair_channels.py
+    \includegraphics[width=\textwidth]{figures/pair_spectrum_53P_70S_B20G.pdf}
+    \caption{Optically bright pair spectra for the $53P_{3/2},m_J=-3/2$
+    doorway (top) and the $70S_{1/2},m_J=-1/2$ benchmark (bottom) at
+    $B=20\,\mathrm{G}$.  Columns show three orientations of the internuclear
+    axis relative to the quantization axis.  Colored curves track the five
+    largest-overlap branches selected at $R=3\,\mu\mathrm{m}$, marker area is proportional to
+    $p_k=|\langle rr|\Psi_k\rangle|^2$, the dashed line marks the gate spacing,
+    and the shaded band denotes the weak-shift window.  The $53P_{3/2}$
+    doorway retains orientation-dependent bright weight near resonance,
+    whereas the $70S_{1/2}$ bright spectrum remains strongly shifted.}
+    \label{fig:pair-spectrum-53p-70s-20g}
+\end{figure}
+
+\paragraph{The polarization of Rydberg lasers.}
+Different polarization of Rydberg lasers couple the different Zeeman resolved basis.
+Given the polarization $(\epsilon_+, \epsilon_-)$ on the wave vector $\hat{k}$ of the Rydberg laser, the polarization vector on direction $\hat{B}$ is calculated as
+\begin{align}
+ \epsilon_{\pm}^{(B)} = \frac{1 \pm \cos\theta}{2} \epsilon_+ + \frac{1 \mp \cos\theta}{2} \epsilon_-, \qquad \epsilon_0^{(B)} = -\frac{\sin\theta}{2} \epsilon_+ + \frac{\sin\theta}{2} \epsilon_-,
+\end{align}
+
+
+\subsection{The Single-photon Hamiltonian}
+
+The $\sigma^-$, $\pi$, and $\sigma^+$ laser polarizations couple the clock
+states to the Zeeman-resolved Rydberg states along the paths
 \begin{align}
 &\sigma^-:
 \left\{
@@ -55,7 +221,7 @@ we conclude that $\sigma^-, \pi, \sigma^+$ laser will coupling along the path
 \left\{
 \begin{aligned}
 &\ket{5S_{1/2},m_J=-1/2, m_I=1/2} \to \ket{53P_{3/2},m_J=-1/2, m_I=1/2},\\
-&\ket{5S_{1/2},m_J=1/2, m_I=-1/2} \to \ket{53P_{3/2},m_J=1/2, m_I=-1/2}
+&\ket{5S_{1/2},m_J=1/2, m_I=-1/2} \to \ket{53P_{3/2},m_J=1/2, m_I=-1/2}.
 \end{aligned}
 \right.
 \end{align}
@@ -249,9 +415,9 @@ Eq.~\eqref{eq:dressed_second_order_Heff}.
 
 \begin{proof}
 Fix $t$, introduce a bookkeeping factor $\varepsilon$ multiplying
-$V_{\rm od}$, and apply Proposition~\ref{prop:Feshbach_second_order} with
+$V_{\rm od}$, and apply the symmetric second-order Feshbach reduction with
 $P=P_3$, $Q=Q_4$, $H_P=PH_0P$, and $H_Q=QH_0Q$.  In the notation of
-Eq.~\eqref{eq:general_Feshbach_resolvents},
+the theorem above, define
 \begin{align}
 \ket{\nu_a}
 =QV_{\rm od}\ket a
@@ -265,7 +431,7 @@ $G_c=[(H_Q-E_cQ)^{-1}]_{ee}$ for $c\in\mathcal A$,
 \bra{\nu_a}R_c\ket{\nu_b}
 =\mathbf v_a^\dagger G_c\mathbf v_b.
 \end{align}
-Substitution into Eq.~\eqref{eq:general_Feshbach_second_order} gives
+Substitution into the symmetric second-order expression gives
 Eq.~\eqref{eq:dressed_second_order_Heff} after setting $\varepsilon=1$.
 Since the complete
 $\ket{e_F}\leftrightarrow\ket{r'}$ coupling belongs to $H_Q$, it is retained
@@ -296,17 +462,7 @@ quantity provides an additional mixing diagnostic.
 \end{lemma}
 \begin{proof}
     The 420-nm coupling is evaluated in the uncoupled $\ket{m_J,m_I}$ basis, where the electric dipole operator preserves $m_I$ and changes $m_J$ by $q=-1$. With $I=3/2$ and CG phases,
-    \begin{align}
-    \ket1
-    &=\frac{
-    \ket{m_J=\tfrac12,m_I=-\tfrac12}
-    +\ket{m_J=-\tfrac12,m_I=\tfrac12}
-    }{\sqrt2}
-    ,\, \ket0
-    =\frac{-\ket{m_J=\tfrac12,m_I=-\tfrac12}
-    +\ket{m_J=-\tfrac12,m_I=\tfrac12}}{\sqrt2}.
-    \end{align}
-    Only two components of each $\ket{e_{F'}}=\ket{6P_{3/2},F',m_F=-1}$ are reached from $m_F=0$ by $\sigma_-$:
+    only two components of each $\ket{e_{F'}}=\ket{6P_{3/2},F',m_F=-1}$ are reached from $m_F=0$ by $\sigma_-$:
     \begin{align}
     \begin{array}{c|cc}
     F'&
@@ -449,7 +605,7 @@ intervals ${u}_{\alpha, k} := u_{\alpha}(t_k)$ for $k=0,\ldots,N-1$.
 Given these $k$ intervals, the parameters $u_{\alpha,k}$ are optimized by the problem
 \begin{figure}[htbp!]
     \centering
-    \includegraphics[width = 0.8\textwidth]{pic/GRAPE.png}
+    \includegraphics[width = 0.8\textwidth]{figures/GRAPE.png}
 \end{figure}
 \begin{align}
     &\min_{\mathbf{u}_k, U_k}J(\mathbf{u}_k,U_k)=\Phi(U_{N}, U_{\mathrm{targ}}) \qquad \text{s.t.~}U_k=\exp\left(-iH(\mathbf u_k) \Delta t_k\right)U_{k - 1}, \quad U_0 = \mathbb{I}.
@@ -469,7 +625,7 @@ through $J=\Phi\!\left(\left\{\ket{\psi_N^{(s)}}\right\}_{s\in\mathcal S}\right)
 A small change $u_{\alpha, k} \to u_{\alpha, k}+\delta u_{\alpha, k}$ gives the chains rule of $\psi_{k+1}^{(s)}$ through
 \begin{align}
  \ket{\delta\psi_{k+1}^{(s)}}
-= \delta \left[V_k \ket{\psi_{k+1}^{(s)}}\right]
+= \delta \left[V_k \ket{\psi_{k}^{(s)}}\right]
 = V_k\ket{\delta\psi_k^{(s)}}
 + \sum_\alpha \frac{\partial V_k}{\partial u_{\alpha,k}} \ket{\psi_k^{(s)}}\, \delta u_{\alpha k}.
 \end{align}

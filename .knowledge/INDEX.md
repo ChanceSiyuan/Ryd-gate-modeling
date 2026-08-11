@@ -1,4 +1,4 @@
-# Project knowledge index
+# External literature index
 
 ## Rydberg optimal control
 
@@ -17,8 +17,8 @@
   <https://arxiv.org/abs/2607.16116>. Local TeX source, when present:
   `.raw/arxiv/2607.16116/source.tex`.
 
-## Repository-owned theory
+## Bibliography coverage
 
-- [`theory/derivations/rydberg-simulation.tex`](../theory/derivations/rydberg-simulation.tex)
-  — multilevel Hamiltonians, effective-theory derivations, and pulse
-  optimization used by `src/ryd_gate/core/effective_theory.py`.
+`.knowledge/references.bib` also contains citation metadata imported from the
+TFIM manuscript. Entries without a section above are bibliography-only: they
+do not imply that a local full text or project reading note exists.

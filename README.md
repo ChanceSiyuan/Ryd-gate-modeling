@@ -65,7 +65,8 @@ The unit and level-label conventions are defined once in
 Public signatures can be inspected with an IDE or `help(...)`; constructors
 remain the authority for validation and error messages. Runnable examples are
 in [examples](examples/README.md); complete research workflows are indexed in
-[`scripts/README.md`](scripts/README.md).
+[`scripts/README.md`](scripts/README.md). Project-owned theory and paper drafts
+are organized under [`manuscripts/`](manuscripts/README.md).
 
 ## Development
 

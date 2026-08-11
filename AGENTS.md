@@ -134,3 +134,21 @@ directly on the checkout.
 The knowledge base is `.knowledge/`. Commit `references.bib`, `INDEX.md`, and
 `NOTES.md`; keep rendered paper full texts and `.raw/` PDFs ignored. Point
 manuscript bibliographies at `.knowledge/references.bib`.
+
+### Manuscripts and theory
+
+Keep project-owned LaTeX and durable theoretical derivations directly under
+`manuscripts/`; this repository has one manuscript project, so do not add a
+manuscript slug subdirectory or a parallel top-level `theory/` directory. Use
+`manuscripts/chapters/` for material intended for the draft and
+`manuscripts/notes/` for durable derivations that guide `src/` or `scripts/`
+but are not yet publication-ready. Code and physics tests should link to the
+canonical source path. Temporary AI calculations and scratch reasoning belong
+in ignored `.agents/work/` until they are worth promoting.
+
+The complete record of a numerical run remains its `results/<run>/README.md`.
+A manuscript should contain only the selected interpretation and
+publication-ready assets. Copy a selected figure into the manuscript's
+`figures/` directory, track that curated copy, and record the originating
+results README and generating script; never make tracked LaTeX depend only on
+an ignored results payload.

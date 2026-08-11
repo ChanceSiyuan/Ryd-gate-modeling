@@ -23,6 +23,11 @@ Classify the artifact before choosing a path:
   conversation logs in ignored `.agents/work/<task>/` or the GitHub issue.
 - Put literature metadata and notes in `.knowledge/`; keep downloaded full text
   and external TeX under ignored `.knowledge/.raw/`.
+- Put project manuscripts and durable repository-owned derivations directly
+  under `manuscripts/`. Use `manuscripts/chapters/` for manuscript material
+  and `manuscripts/notes/` for durable derivations that are not
+  publication-ready. This repository has one manuscript project: do not add a
+  slug directory below `manuscripts/` or recreate a top-level `theory/` tree.
 - Use `results-report` for every `results/<run>/README.md` change.
 
 Do not create `docs/work/`. Git history already preserves retired plans; active
@@ -44,6 +49,12 @@ work belongs in ignored `.agents/work/` or the relevant GitHub issue.
 Never create a tool-named tracked directory such as `docs/superpowers/` or
 `docs/claude/`. Never put raw paper sources, agent execution logs, or generated
 review artifacts in `docs/`. Do not invent citation or result provenance.
+
+Keep a result's complete evidence in `results/<run>/README.md`. When a
+manuscript uses a result figure, copy only the curated publication asset into
+the manuscript's `figures/` directory and record its results README and
+generating script as provenance. A tracked manuscript must not depend only on
+an ignored results payload.
 
 ## Validate the result
 
