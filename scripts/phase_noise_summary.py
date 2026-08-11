@@ -72,8 +72,8 @@ def main() -> None:
         rows.append((laser, best, base[best], tot[best], eps[best],
                      len(ok), n_bad))
 
-    print(f"| 激光器 | 试点最优门点 $(n,T,\\Omega/2\\pi,D_{{\\rm sw}})$ | "
-          f"$F_0$ | $F_{{\\rm noise}}$ | $\\Delta F$ |")
+    print("| 激光器 | 试点最优门点 $(n,T,\\Omega/2\\pi,D_{\\rm sw})$ | "
+          "$F_0$ | $F_{\\rm noise}$ | $\\Delta F$ |")
     print("|---|---|---:|---:|---:|")
     for laser, k, b, t, _e, _n, _nb in rows:
         pt = (f"$({ryd_n[k.n_idx]},{t_gate_us[k.t_idx]:.1f}\\,\\mu\\mathrm{{s}},"

@@ -157,6 +157,222 @@ def test_build_output_separates_authoritative_and_comparison_models(monkeypatch)
     assert output["effective_c6_comparison"]["authoritative"] is False
 
 
+def test_pair_potential_config_covers_all_53p_zeeman_doorways():
+    """Catch omitting a Zeeman doorway from the field/angle production scan."""
+    expected = {
+        "53P3_2": {"n": 53, "l": 1, "j": 1.5, "mj": -1.5},
+        "53P3_2_mj_m1_2": {"n": 53, "l": 1, "j": 1.5, "mj": -0.5},
+        "53P3_2_mj_p1_2": {"n": 53, "l": 1, "j": 1.5, "mj": 0.5},
+        "53P3_2_mj_p3_2": {"n": 53, "l": 1, "j": 1.5, "mj": 1.5},
+        "70S1_2": {"n": 70, "l": 0, "j": 0.5, "mj": -0.5},
+    }
+
+    assert pair._pair_potential_params()["manifold_definitions"] == expected
+    assert len(expected) * 3 * 7 == 105
+
+
+def _two_point_curve_case():
+    overlaps = [0.1, 1.0]
+    return {
+        "curves": {
+            "distance_um": [2.5, 8.0],
+            "spectrum_shift_mhz": [[-5.0], [6.0]],
+            "spectrum_rr_overlap": [[overlaps[0]], [overlaps[1]]],
+            "branches": [
+                {"shift_mhz": [-5.0, 6.0], "rr_overlap": overlaps}
+            ],
+            "branch_count": 1,
+        }
+    }
+
+
+def test_curve_panel_uses_gray_points_with_one_overlap_area_scale():
+    """Catch a color-only spectrum or inconsistent sizes across plot layers."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    pair._plot_curve_panel(
+        ax, _two_point_curve_case(), 100.0, show_spectrum=True
+    )
+    fig.canvas.draw()
+
+    np.testing.assert_allclose(
+        pair._overlap_marker_area([0.0, 0.1, 0.5, 1.0]),
+        [2.0, 7.8, 31.0, 60.0],
+    )
+    np.testing.assert_allclose(ax.collections[0].get_sizes(), [7.8, 60.0])
+    np.testing.assert_allclose(ax.collections[1].get_sizes(), [7.8])
+    background_rgb = ax.collections[0].get_facecolors()[:, :3]
+    np.testing.assert_allclose(
+        background_rgb, np.full_like(background_rgb, 0.55)
+    )
+    plt.close(fig)
+
+
+def _limit_state(max_shift_mhz):
+    case = _two_point_curve_case()
+    case["curves"]["spectrum_shift_mhz"] = [[max_shift_mhz], [0.0]]
+    case["curves"]["branches"] = []
+    return {"fields": {"20.0": {"angles": {"0.0": case}}}}
+
+
+def test_pair_potential_y_limits_are_shared_across_53p_zeeman_levels():
+    """Catch per-mj autoscaling that makes Zeeman figures incomparable."""
+    zeeman_keys = (
+        "53P3_2",
+        "53P3_2_mj_m1_2",
+        "53P3_2_mj_p1_2",
+        "53P3_2_mj_p3_2",
+    )
+    result = {
+        "manifolds": {
+            zeeman_keys[0]: _limit_state(10.0),
+            zeeman_keys[1]: _limit_state(20.0),
+            zeeman_keys[2]: _limit_state(30.0),
+            zeeman_keys[3]: _limit_state(40.0),
+            "70S1_2": _limit_state(100.0),
+        }
+    }
+
+    limits = pair._pair_potential_y_limits(result)
+
+    np.testing.assert_allclose([limits[key] for key in zeeman_keys], 41.6)
+    assert limits["70S1_2"] == pytest.approx(104.0)
+
+
+def _legend_figure_result():
+    angles = {
+        str(theta): _two_point_curve_case()
+        for theta in pair.POTENTIAL_THETA_DEG
+    }
+    return {
+        "manifolds": {
+            "53P3_2": {
+                "label": r"$53P_{3/2},\,m_j=-3/2$",
+                "fields": {"20.0": {"angles": angles}},
+            }
+        }
+    }
+
+
+def test_state_figure_replaces_colorbar_with_overlap_size_legend(
+    tmp_path, monkeypatch
+):
+    """Catch reintroducing an orphan colorbar or omitting the size key."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.legend import Legend
+
+    monkeypatch.setattr(plt, "close", lambda figure: None)
+    path = pair._render_state_field_potential(
+        _legend_figure_result(), tmp_path, "53P3_2", 20.0, 100.0
+    )
+    fig = plt.gcf()
+    legend_text = {
+        text.get_text()
+        for legend in fig.findobj(match=Legend)
+        for text in legend.get_texts()
+    }
+
+    assert path.exists()
+    assert len(fig.axes) == 8
+    assert {r"$p_k=0.1$", r"$p_k=0.5$", r"$p_k=1.0$"} <= legend_text
+    plt.close(fig)
+
+
+def _complete_synthetic_pair_potential_study():
+    distances = pair.potential_distance_grid().tolist()
+    point_count = len(distances)
+
+    def case(b_gauss, theta_deg):
+        return {
+            "b_gauss": b_gauss,
+            "theta_deg": theta_deg,
+            "phi_rad": pair.POTENTIAL_PHI_RAD,
+            "curves": {
+                "distance_um": distances,
+                "eigenpairs": [1] * point_count,
+                "captured_rr_overlap": [1.0] * point_count,
+                "unresolved_rr_overlap": [0.0] * point_count,
+                "max_eigensystem_residual_mhz": [0.0] * point_count,
+                "weak_shift_weight": [1.0] * point_count,
+                "spectrum_shift_mhz": [[0.0] for _ in distances],
+                "spectrum_rr_overlap": [[1.0] for _ in distances],
+                "requested_branch_count": pair.POTENTIAL_BRANCH_COUNT,
+                "branch_count": 1,
+                "branches": [
+                    {
+                        "anchor_rr_overlap": 1.0,
+                        "min_adjacent_match_overlap": 1.0,
+                        "shift_mhz": [0.0] * point_count,
+                        "rr_overlap": [1.0] * point_count,
+                        "adjacent_match_overlap": [1.0] * point_count,
+                    }
+                ],
+            },
+        }
+
+    expected_states = {
+        "53P3_2": (53, 1, 1.5, -1.5),
+        "53P3_2_mj_m1_2": (53, 1, 1.5, -0.5),
+        "53P3_2_mj_p1_2": (53, 1, 1.5, 0.5),
+        "53P3_2_mj_p3_2": (53, 1, 1.5, 1.5),
+        "70S1_2": (70, 0, 0.5, -0.5),
+    }
+    result = pair._new_pair_potential_study()
+    result["status"] = "complete"
+    for state_key, (n, l, j, mj) in expected_states.items():
+        result["manifolds"][state_key] = {
+            "n": n,
+            "l": l,
+            "j": j,
+            "mj": mj,
+            "label": state_key,
+            "fields": {
+                str(b_gauss): {
+                    "angles": {
+                        str(theta_deg): case(b_gauss, theta_deg)
+                        for theta_deg in pair.POTENTIAL_THETA_DEG
+                    }
+                }
+                for b_gauss in pair.POTENTIAL_FIELDS_G
+            },
+        }
+    return result, tuple(expected_states)
+
+
+def test_renderer_outputs_only_fifteen_scheme_one_figures(
+    tmp_path, monkeypatch
+):
+    """Catch regenerating the removed field-summary figures."""
+    result, expected_states = _complete_synthetic_pair_potential_study()
+
+    def state_path(result, output_dir, state_key, b_gauss, y_limit):
+        return output_dir / f"pair_potential_{state_key}_B{b_gauss:g}G.png"
+
+    monkeypatch.setattr(pair, "_render_state_field_potential", state_path)
+    monkeypatch.setattr(
+        pair,
+        "_render_field_summary",
+        lambda result, output_dir, b_gauss, y_limits: output_dir
+        / f"pair_potential_summary_B{b_gauss:g}G.png",
+        raising=False,
+    )
+    paths = pair.render_pair_potential_figures(result, tmp_path)
+    expected_names = {
+        f"pair_potential_{state_key}_B{b_gauss:g}G.png"
+        for state_key in expected_states
+        for b_gauss in (20.0, 40.0, 60.0)
+    }
+
+    assert {path.name for path in paths} == expected_names
+
+
 @pytest.mark.slow
 def test_arc_bz_changes_intermediate_pair_state_references():
     """Characterize the ARC Bz behavior the authoritative path depends on."""
