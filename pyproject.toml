@@ -33,10 +33,9 @@ dev = [
 ]
 # IPOPT-backed direct trajectory optimization (qoc.direct.optimize).
 # cyipopt has no PyPI wheels (sdist only): it links against a system IPOPT
-# found via pkg-config at first build. This prerequisite applies to BOTH the
-# qoc-direct extra AND the dev extra. CI installs a coherent cyipopt/IPOPT pair
-# from conda-forge before installing the dev extra. On the DGX: conda-forge
-# ipopt=3.14.11 at ~/opt/ipopt; first build needs
+# found via pkg-config at first build. This prerequisite applies to both the
+# qoc-direct extra and the dev extra. On the DGX: conda-forge ipopt=3.14.11 at
+# ~/opt/ipopt; first build needs
 # PKG_CONFIG_PATH=$HOME/opt/ipopt/lib/pkgconfig and
 # LDFLAGS="-Wl,-rpath,$HOME/opt/ipopt/lib".
 qoc-direct = [
@@ -60,7 +59,7 @@ tn-graph = [
 # Pinned to 2.5.1 because newer wheels (>=2.8 / cu130) drop Volta (sm_70) and fail on the
 # DGX V100s with "no kernel image available". uv pulls 2.5.1+cu121 from the PyTorch index
 # (see [tool.uv.sources]); plain-pip users get PyPI 2.5.1 (cu124), which also still ships sm_70.
-# Opt-in only (kept out of `dependencies`/`dev` so CI and non-CUDA installs don't pull it):
+# Opt-in only (kept out of `dependencies`/`dev` so non-CUDA installs don't pull it):
 #   uv sync --extra dev --extra tn --extra tn-2d --extra torch
 torch = [
     "torch==2.5.1",
