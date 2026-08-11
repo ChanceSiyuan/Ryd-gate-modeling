@@ -11,13 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install IPOPT build dependencies
+      - name: Create scientific Python environment
         run: |
-          sudo apt-get update
-          sudo apt-get install -y coinor-libipopt-dev libblas-dev liblapack-dev pkg-config
+          conda create --yes --prefix "$RUNNER_TEMP/ryd-ci" \
+            --override-channels --channel conda-forge \
+            python=3.11 pip cyipopt=1.7.0
+          echo "$RUNNER_TEMP/ryd-ci/bin" >> "$GITHUB_PATH"
       - name: Install dependencies
         run: pip install -e ".[dev]" pytest-cov
       - name: Lint with ruff
