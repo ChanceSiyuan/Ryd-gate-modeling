@@ -29,16 +29,18 @@ dev = [
     "nbconvert",
     "nbclient",
     "ipykernel",
-    "cyipopt>=1.4",
+    "cyipopt==1.4.1",
 ]
 # IPOPT-backed direct trajectory optimization (qoc.direct.optimize).
 # cyipopt has no PyPI wheels (sdist only): it links against a system IPOPT
 # found via pkg-config at first build. This prerequisite applies to BOTH the
-# qoc-direct extra AND the dev extra — dev pins cyipopt so the remote suite
-# always exercises the solver (no skip markers), so a working `uv sync --extra
-# dev ...` also needs a system IPOPT. On the DGX: conda-forge ipopt=3.14.11 at
-# ~/opt/ipopt; first build needs PKG_CONFIG_PATH=$HOME/opt/ipopt/lib/pkgconfig
-# and LDFLAGS="-Wl,-rpath,$HOME/opt/ipopt/lib".
+# qoc-direct extra AND the dev extra. The dev extra pins cyipopt 1.4.1 because
+# GitHub's Ubuntu runner packages IPOPT 3.11.9; this combination lets CI run
+# the solver tests instead of skipping them. Custom installations can select a
+# newer cyipopt through qoc-direct when paired with a newer system IPOPT. On
+# the DGX: conda-forge ipopt=3.14.11 at ~/opt/ipopt; first build needs
+# PKG_CONFIG_PATH=$HOME/opt/ipopt/lib/pkgconfig and
+# LDFLAGS="-Wl,-rpath,$HOME/opt/ipopt/lib".
 qoc-direct = [
     "cyipopt>=1.4",
 ]
