@@ -17,25 +17,9 @@ jobs:
       - name: Install IPOPT build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y coinor-libipopt-dev pkg-config
+          sudo apt-get install -y coinor-libipopt-dev libblas-dev liblapack-dev pkg-config
       - name: Install dependencies
-        shell: bash
-        run: |
-          install_log="$(mktemp)"
-          set +e
-          pip install -e ".[dev]" pytest-cov 2>&1 | tee "$install_log"
-          install_status=${PIPESTATUS[0]}
-          set -e
-          if (( install_status != 0 )); then
-            grep -Ei 'error:|failed|failure|not found|no such file|could not' "$install_log" \
-              | tail -n 12 \
-              | while IFS= read -r line; do
-                  line=${line//'%'/'%25'}
-                  line=${line//$'\r'/'%0D'}
-                  echo "::error title=Dependency installation failed::$line"
-                done
-          fi
-          exit "$install_status"
+        run: pip install -e ".[dev]" pytest-cov
       - name: Lint with ruff
         run: ruff check src tests examples
       - name: Run tests with coverage
