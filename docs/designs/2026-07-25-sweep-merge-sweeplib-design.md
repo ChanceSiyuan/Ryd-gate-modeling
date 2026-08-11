@@ -1,3 +1,8 @@
+---
+status: accepted
+document-role: design-record
+---
+
 # Single-pass sweep + sweeplib refactor — design
 
 Date: 2026-07-25

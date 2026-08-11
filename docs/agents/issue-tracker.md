@@ -1,6 +1,9 @@
 # Issue tracker: GitHub
 
-Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
+Issues and PRDs for this repo live as GitHub issues. The commands below use
+`gh` as the reference client. When `gh` is unavailable, use an authenticated
+GitHub API or connector with equivalent semantics; if no authenticated client
+is available, report that limitation instead of claiming an operation ran.
 
 ## Conventions
 

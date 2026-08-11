@@ -1,3 +1,8 @@
+---
+status: accepted
+document-role: design-record
+---
+
 # Spacing-family leakage sweep & store reorganization — design
 
 Date: 2026-07-24

@@ -1,3 +1,8 @@
+---
+status: accepted
+document-role: design-record
+---
+
 # Direct Quantum Optimal Control (qoc.direct) + ZXZ Synthesis Reproduction — Design
 
 Date: 2026-07-28. Status: approved (solver route A: cyipopt/IPOPT).
@@ -8,7 +13,7 @@ only (engine, cyipopt extra, ADR-0026, engine tests); the ZXZ study
 ## Goal
 
 Implement the "direct quantum optimal control" method of arXiv:2508.19075 (the
-`new.tex` manuscript in this repo, Sec. "Direct Quantum Optimal Control" +
+`hu2025universal` in `.knowledge/references.bib`, Sec. "Direct Quantum Optimal Control" +
 trajectory-optimization appendix) as a second engine in the `qoc` package,
 beside `qoc.grape`, and reproduce the paper's ZXZ-synthesis benchmark: smooth
 global Ω(t)/Δ(t) pulses on a 3-atom Rydberg chain that synthesize

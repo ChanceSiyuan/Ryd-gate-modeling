@@ -2,7 +2,7 @@
 
 These lift the validation in scripts/notebooks/find_phase.ipynb §4 into tests:
 the closed-form Lemma-1 coefficients vs the numeric reduction, the resolvent
-method of Rydberg_sim.tex Theorems 1–2 (single-atom and interacting-pair
+method of theory/derivations/rydberg-simulation.tex Theorems 1–2 (single-atom and interacting-pair
 one-step elimination), the blockade suppression of the r' light shift that the
 pair theorem captures, and the full-7-level vs effective phase comparison in
 the perturbative domain (slow-marked).

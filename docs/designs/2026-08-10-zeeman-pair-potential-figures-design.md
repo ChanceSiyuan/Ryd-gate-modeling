@@ -1,3 +1,8 @@
+---
+status: accepted
+document-role: design-record
+---
+
 # Zeeman-Resolved 53P Pair-Potential Figures
 
 ## Goal

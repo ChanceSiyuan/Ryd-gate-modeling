@@ -1,3 +1,8 @@
+---
+status: accepted
+document-role: design-record
+---
+
 # `rr` Pair-Potential Curves at 20, 40, and 60 G
 
 ## Goal

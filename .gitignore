@@ -24,18 +24,40 @@ env/
 *.swo
 
 # Machine-local agent state
-.claude/settings.local.json
-.claude/worktrees/
+.agents/work/
+.claude/
+.codex/
+.superpowers/
+
+# sci-brain knowledge base: keep the citable index, drop paper full texts
+.knowledge/.raw/
+.knowledge/*.md
+!.knowledge/INDEX.md
+!.knowledge/NOTES.md
 
 # Output files
 *.png
 *.npy
+*.npz
+*.h5
+*.hdf5
+*.parquet
+*.pkl
+*.pickle
+*.csv
+*.db
+*.sqlite
+*.sqlite3
 *.pdf
+*.log
+data/
 examples/results/
-results/**/*.log
-results/**/store.lock
-results/max_leakage_ode/*/reports/status.json
-results/max_leakage_297/*/reports/status.json
+
+# Numerical result payloads are local-only. Track reports, never their data.
+results/**
+!results/**/
+!results/README.md
+!results/**/README.md
 
 # OS
 .DS_Store
@@ -49,9 +71,5 @@ coverage.xml
 # Pytest
 .pytest_cache/
 
-# Lock files
+# Local resolver state; CI and documented installs use uv pip, not uv sync.
 uv.lock
-
-# Large generated sweep exports (regenerable from authoritative chunks)
-results/max_leakage_ode/*/exports/
-results/max_leakage_297/*/exports/

@@ -1,3 +1,8 @@
+---
+status: accepted
+document-role: design-record
+---
+
 # Laser phase noise from a measured PSD — design
 
 Date: 2026-07-30

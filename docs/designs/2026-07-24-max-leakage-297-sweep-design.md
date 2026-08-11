@@ -1,3 +1,8 @@
+---
+status: accepted
+document-role: design-record
+---
+
 # 297 nm single-photon leakage sweep — design
 
 Date: 2026-07-24

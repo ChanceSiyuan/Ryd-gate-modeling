@@ -104,9 +104,9 @@ _Avoid_: Adaptive spline growth, proof of a quantum speed limit
 A pulse search that differentiates a time-discretized, finite-interaction Hamiltonian analytically with respect to amplitude and chirp and then maps those derivatives through the spline coordinates. It supplies efficient optimization gradients but does not replace independent continuous-time validation.
 _Avoid_: Finite-difference GRAPE, hard-blockade optimization
 
-**Notebook-contained pulse search**:
-A research workflow whose pulse parameterization, gate objective, stage selection, continuation, and validation orchestration are kept together in the analysis notebook, while slice propagation, the discrete adjoint gradient, and numerical optimization are consumed from `qoc` over the exported bilinear control model. The notebook remains the only glue between the packages; the simulation package still gains no optimizer, and study code is not split into a companion script before reuse demonstrates that such extraction is worthwhile.
-_Avoid_: Optimizer inside the simulation package, premature companion module
+**Study-owned pulse search**:
+A research workflow whose gate objective, stage selection, continuation, and validation orchestration remain in a study script, while replay notebooks only load artifacts and plot them. Slice propagation, the discrete-adjoint gradient, and numerical optimization are consumed from `qoc` over the exported bilinear control model. A small scripts-local pulse-basis module may be shared after a second study needs it; the simulation package still gains no optimizer or study orchestration.
+_Avoid_: Optimizer inside the simulation package, duplicated study orchestration
 
 **GRAPE propagation time grid**:
 The numerical time partition used to approximate one candidate's time-ordered evolution and analytic gradient during spline-GRAPE search. The optimizer still searches continuous spline coordinates; it does not independently optimize or enumerate a control value at every grid point.

@@ -1,3 +1,8 @@
+---
+status: accepted
+document-role: design-record
+---
+
 # Full Pair-Channel Diagonalization Design
 
 ## Goal

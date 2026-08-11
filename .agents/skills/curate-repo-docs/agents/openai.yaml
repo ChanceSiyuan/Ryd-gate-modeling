@@ -1,0 +1,4 @@
+interface:
+  display_name: "Curate Repository Docs"
+  short_description: "Keep repository documentation durable and organized"
+  default_prompt: "Use $curate-repo-docs to place and validate this repository documentation change."

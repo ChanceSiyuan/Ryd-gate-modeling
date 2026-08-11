@@ -55,6 +55,7 @@ The unit and level-label conventions are defined once in
 
 ## Documentation
 
+- [Documentation map](docs/README.md): guide, design, ADR, context, and agent-policy placement.
 - [Model](docs/model.md): geometry, level structures, interactions,
   Hamiltonians, and protocols.
 - [Simulation](docs/simulation.md): initial states, observables, backends,
@@ -64,8 +65,8 @@ The unit and level-label conventions are defined once in
 
 Public signatures can be inspected with an IDE or `help(...)`; constructors
 remain the authority for validation and error messages. Runnable examples are
-in [examples](examples/README.md); complete research workflows are in `scripts/`
-and `scripts/notebooks/`.
+in [examples](examples/README.md); complete research workflows are indexed in
+[`scripts/README.md`](scripts/README.md).
 
 ## Development
 

@@ -2,12 +2,17 @@
 
 How the engineering skills should consume this repo's domain documentation when exploring the codebase.
 
+Use `docs/README.md` for the repository-wide documentation taxonomy; this file
+only governs domain contexts and ADRs.
+
 ## Before exploring, read these
 
 - **`CONTEXT-MAP.md`** at the repo root — it points at one context doc per `src` block, all collected under `docs/contexts/`. Read each one relevant to the topic, and respect its status annotation (a **pinned down** context's vocabulary is settled; an **under active design** context is still open to grilling and revision).
 - **`docs/adr/`** — all ADRs (system-wide and context-scoped) live in this single flat folder. Read those that touch the area you're about to work in.
 
-If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
+If any of these files do not exist, proceed without manufacturing them. Create
+one only when terms or decisions have actually been resolved, following the
+`curate-repo-docs` skill.
 
 ## File structure
 
