@@ -15,6 +15,8 @@ import json
 import re
 from pathlib import Path
 
+from scripts.check_notebooks import EXECUTE, NON_GATED
+
 REPO = Path(__file__).resolve().parents[1]
 NOTEBOOKS = tuple(sorted((REPO / "scripts" / "notebooks").glob("*.ipynb")))
 MACHINE_HOME = re.compile(
@@ -80,3 +82,21 @@ def test_notebooks_do_not_reference_machine_or_retired_paths():
             assert pattern.search(source) is None, (
                 f"{path}: references retired path {retired_path}"
             )
+
+
+def test_notebook_execution_inventory_is_complete():
+    listed = set(EXECUTE) | set(NON_GATED)
+    assert listed == {path.name for path in NOTEBOOKS}
+
+
+def test_error_budget_point_evaluator_has_one_owner():
+    notebook = json.loads(
+        (REPO / "scripts" / "notebooks" / "error_buget.ipynb").read_text())
+    notebook_source = "\n".join(_cell_source(cell) for cell in notebook["cells"])
+    generator_source = (REPO / "scripts" / "gen_error_budget_g20.py").read_text()
+    model_source = (REPO / "scripts" / "error_budget_model.py").read_text()
+    assert "def eval_cz_point(" not in notebook_source
+    assert "def eval_cz_point(" not in generator_source
+    assert model_source.count("def eval_cz_point(") == 1
+    assert "from scripts.error_budget_model import eval_cz_point" in notebook_source
+    assert "from error_budget_model import eval_cz_point" in generator_source

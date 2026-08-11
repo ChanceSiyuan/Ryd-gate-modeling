@@ -1,7 +1,7 @@
 """End-to-end CZ validation of the qoc discrete-adjoint GRAPE seam.
 
-Physical model, spline basis, and seam wiring follow
-scripts/notebooks/06_01r_adiabatic_optimization.ipynb (two-atom `01r`,
+Physical model and seam wiring follow the adiabatic study; the shared spline
+basis lives in `scripts/one_r_control.py` (two-atom `01r`,
 signed ARC 70S blockade at 4 um, 17-coordinate bounded spline through
 `ryd_gate.bilinear_control_model`, ADR-0024/0025). This script differs from
 the notebook in one deliberate way: the objective targets CZ specifically.
@@ -55,15 +55,15 @@ import argparse
 import json
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from scipy.interpolate import BSpline
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
+if str(ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT / "scripts"))
 
 import qoc  # noqa: E402
 from qoc import grape  # noqa: E402
@@ -76,19 +76,21 @@ from ryd_gate import (  # noqa: E402
 )
 from ryd_gate.physics import arc_pair_c6_rad_s_um6  # noqa: E402
 from ryd_gate.protocols import DigitalAnalogProtocol, SweepProtocol, phase_from_chirp  # noqa: E402
+from one_r_control import (  # noqa: E402
+    A_MAX,
+    BASIS,
+    CHI_MAX,
+    EDGE_CHIRP_MIN,
+    LOGICAL_LABELS,
+    MHz,
+    RYD_LEVEL,
+    SEED_SPECS,
+    SPACING_UM,
+)
 
-TWOPI = 2.0 * np.pi
-MHz = TWOPI * 1e6
-
-# Physical model and bounds, identical to notebook 06.
-SPACING_UM = 4.0
-RYD_LEVEL = 70
-A_MAX = 17.0 * MHz
-CHI_MAX = 20.0 * MHz
-EDGE_CHIRP_MIN = 5.0 * MHz
+# Physical model, identical to notebook 06.
 DURATION_S = 2.0e-6
 REGISTER = Register.chain(2, spacing_um=SPACING_UM)
-LOGICAL_LABELS = (["0", "0"], ["0", "1"], ["1", "0"], ["1", "1"])
 
 # Composite-objective weights (module docstring derives W_PHASE = 0.6).
 W_PHASE = 0.6
@@ -107,110 +109,10 @@ SLEW_CHI_MAX = CHI_MAX / 50e-9
 EXACT_OPTIONS = {"hamiltonian_format": "dense", "rtol": 1e-10, "atol": 1e-12}
 PHASE_SAMPLES = 4001
 
-SEED_SPECS = (
-    {"branch": "phase_near_pi", "amplitude_MHz": 13.0, "edge_chirp_MHz": 15.0},
-    {"branch": "negative_phase", "amplitude_MHz": 14.0, "edge_chirp_MHz": 12.0},
-    {"branch": "positive_phase", "amplitude_MHz": 10.0, "edge_chirp_MHz": 13.0},
-)
-
 RESULT_PATH = ROOT / "results" / "cz_grape_e2e" / "validation.json"
 
 
 # --- Bounded 17-coordinate pulse basis, unchanged from notebook 06 -----------
-
-
-def power_envelope(s):
-    """15% quintic rise, flat top, and symmetric fall."""
-    s = np.asarray(s, dtype=float)
-    out = np.ones_like(s)
-    rise = 0.15
-
-    left = s < rise
-    x = np.clip(s[left] / rise, 0.0, 1.0)
-    out[left] = 10 * x**3 - 15 * x**4 + 6 * x**5
-
-    right = s > 1.0 - rise
-    x = np.clip((1.0 - s[right]) / rise, 0.0, 1.0)
-    out[right] = 10 * x**3 - 15 * x**4 + 6 * x**5
-    return out.item() if out.ndim == 0 else out
-
-
-@dataclass(frozen=True)
-class ControlBasis:
-    """Cubic B-spline coordinates for bounded amplitude and chirp."""
-
-    n_coeffs: int = 8
-    degree: int = 3
-
-    def __post_init__(self):
-        n_inner = self.n_coeffs - self.degree - 1
-        inner = np.linspace(0.0, 1.0, n_inner + 2)[1:-1]
-        knots = np.r_[np.zeros(self.degree + 1), inner, np.ones(self.degree + 1)]
-        object.__setattr__(self, "knots", knots)
-        object.__setattr__(
-            self, "_spline",
-            BSpline(knots, np.eye(self.n_coeffs), self.degree, extrapolate=False),
-        )
-
-    @property
-    def n_parameters(self):
-        return 2 * self.n_coeffs + 1
-
-    def matrix(self, s):
-        return np.asarray(self._spline(np.asarray(s, dtype=float)))
-
-    def seed(self, amplitude_MHz, edge_chirp_MHz):
-        p = np.full(self.n_coeffs, amplitude_MHz / (A_MAX / MHz))
-        d = np.zeros(self.n_coeffs)
-        eta = edge_chirp_MHz / (CHI_MAX / MHz)
-        return np.r_[p, d, eta]
-
-    def bounds(self):
-        return (
-            [(0.0, 1.0)] * self.n_coeffs
-            + [(-3.0, 3.0)] * self.n_coeffs
-            + [(EDGE_CHIRP_MIN / CHI_MAX, 1.0)]
-        )
-
-    def controls(self, parameters, s, *, jacobian=False):
-        parameters = np.asarray(parameters, dtype=float)
-        scalar = np.ndim(s) == 0
-        s = np.atleast_1d(np.asarray(s, dtype=float))
-        B = self.matrix(s)
-        envelope = np.asarray(power_envelope(s))
-
-        p = parameters[: self.n_coeffs]
-        d = parameters[self.n_coeffs : 2 * self.n_coeffs]
-        eta = parameters[-1]
-
-        amplitude = A_MAX * envelope * (B @ p)
-        x = -eta * np.cos(TWOPI * s)
-        v = np.tanh(envelope * (B @ d))
-        denominator = 1.0 + x * v
-        chirp = CHI_MAX * (x + v) / denominator
-
-        if not jacobian:
-            if scalar:
-                return float(amplitude[0]), float(chirp[0])
-            return amplitude, chirp
-
-        d_amplitude = np.zeros((s.size, self.n_parameters))
-        d_chirp = np.zeros((s.size, self.n_parameters))
-        d_amplitude[:, : self.n_coeffs] = A_MAX * envelope[:, None] * B
-        chirp_factor = (1.0 - x * x) * (1.0 - v * v) / (denominator * denominator)
-        d_chirp[:, self.n_coeffs : 2 * self.n_coeffs] = (
-            CHI_MAX * chirp_factor[:, None] * envelope[:, None] * B
-        )
-        d_chirp[:, -1] = (
-            -CHI_MAX * np.cos(TWOPI * s) * (1.0 - v * v) / (denominator * denominator)
-        )
-
-        if scalar:
-            return float(amplitude[0]), float(chirp[0]), d_amplitude[0], d_chirp[0]
-        return amplitude, chirp, d_amplitude, d_chirp
-
-
-BASIS = ControlBasis(n_coeffs=8)
 
 
 # --- Search model (ADR-0024 export) ------------------------------------------

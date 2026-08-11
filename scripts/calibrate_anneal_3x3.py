@@ -1,5 +1,7 @@
 #!/usr/bin/env python
-"""3x3 exact-vs-PEPS calibration for the notebook-03 anneal (arxiv_v1.0 protocol).
+"""3x3 exact-vs-PEPS calibration for the notebook-03 anneal.
+
+The protocol follows ``sun2026quantumclassical`` in `.knowledge/references.bib`.
 
 Same physics construction as ``scripts/anneal_sweep.py`` (NN-cutoff TFIM with
 boundary pins) on 3x3, canonical schedule hz_i=24*w0, hx_peak=1*w0, t_hold=12/w0.
@@ -34,14 +36,18 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import numpy as np
 
-from ryd_gate import Register, RydbergSystem, level_structure, simulate
-from ryd_gate.physics import arc_pair_c6_rad_s_um6
-from ryd_gate.protocols import SweepProtocol
+from anneal_model import (  # noqa: E402
+    build_anneal_system,
+    peps_options,
+    rydberg_c6,
+    staggered_magnetization,
+)
+from ryd_gate import simulate
 
-RYD_LEVEL, A_UM = 70, 6.0
 LX, LY = 3, 3
 HZ_I_W0, HX_PEAK_W0, T_HOLD_W0 = 24.0, 1.0, 12.0
 N_EVAL = 9
@@ -53,67 +59,13 @@ PEPS_RUNS = [dict(D=8, dt_w0=0.1), dict(D=8, dt_w0=0.05), dict(D=8, dt_w0=0.025)
              dict(D=6, dt_w0=0.05), dict(D=4, dt_w0=0.05), dict(D=3, dt_w0=0.05),
              dict(D=2, dt_w0=0.05)]
 
-C6 = arc_pair_c6_rad_s_um6(n1=RYD_LEVEL, l1=0, j1=0.5, mj1=-0.5, mj2=-0.5,
-                           theta=0.0, phi=0.0, degenerate=False)
+C6 = rydberg_c6()
 
 
 def build_system():
-    geom = Register.rectangle(LX, LY, spacing_um=A_UM)
-    cutoff_um = 1.1 * A_UM
-
-    coords = geom.coords
-    n = geom.N
-    V = np.zeros((n, n))
-    for i in range(n):
-        for j in range(i + 1, n):
-            r = float(np.hypot(*(coords[j] - coords[i])))
-            if r <= cutoff_um * (1 + 1e-9):
-                V[i, j] = V[j, i] = C6 / r ** 6
-    shift = 0.25 * V.sum(axis=1)
-    shift_ref = float(shift.mean())
-    pins = 2.0 * (shift - shift_ref)
-
-    V_nn = C6 / A_UM ** 6
-    w0 = V_nn / 24.0
-    hx_peak = HX_PEAK_W0 * w0
-    hz_i, hz_f = HZ_I_W0 * w0, 0.0
-    t_rise, t_hold, t_fall = 2.0 / w0, T_HOLD_W0 / w0, 2.0 / w0
-    t_gate = t_rise + t_hold + t_fall
-
-    def hx(t):
-        if t < t_rise:
-            return hx_peak * (t / t_rise)
-        if t < t_rise + t_hold:
-            return hx_peak
-        return hx_peak * max(0.0, 1.0 - (t - t_rise - t_hold) / t_fall)
-
-    def hz(t):
-        if t < t_rise:
-            return hz_i
-        if t < t_rise + t_hold:
-            return hz_i + (hz_f - hz_i) * (t - t_rise) / t_hold
-        return hz_f
-
-    proto = SweepProtocol(
-        t_gate_s=t_gate,
-        omega_half_rad_s=lambda t: hx(t),
-        detuning_rad_s=lambda t: 2.0 * (shift_ref - hz(t)),
-        local_detuning_rad_s=lambda t, i, pins=pins: float(pins[i]),
-    )
-    system = RydbergSystem(
-        level_structure=level_structure("1r", ryd_level=RYD_LEVEL),
-        register=geom,
-        protocol=proto,
-        interaction_cutoff_um=cutoff_um,
-    )
-    subl = np.array([(-1.0) ** (ix + iy)
-                     for ix, iy in np.round(coords / A_UM).astype(int)])
-    return system, n, t_gate, w0, subl
-
-
-def stag_mag(n_r_t, subl):
-    return (subl[:, None] * (2.0 * n_r_t - 1.0)).mean(axis=0)
-
+    return build_anneal_system(
+        LX, LY, C6, hz_i_w0=HZ_I_W0, hx_peak_w0=HX_PEAK_W0,
+        t_hold_w0=T_HOLD_W0)
 
 def run_one(spec):
     t_start = time.perf_counter()
@@ -129,18 +81,10 @@ def run_one(spec):
     else:
         result = simulate(
             system, None, backend="peps", t_eval=t_eval, observables=obs,
-            backend_options={
-                "time_step_s": spec["dt_w0"] / w0,
-                "bond_dimension": spec["D"],
-                "svd_tolerance": 1e-8,
-                "ntu_max_iterations": 20,
-                "ntu_iteration_tolerance": 1e-10,
-                "measurement_method": spec["measurement"],
-                "environment_bond_dimension": 32,
-                "environment_tolerance": 1e-8,
-                "environment_max_iterations": 50,
-                "device": "cpu",
-            },
+            backend_options=peps_options(
+                dt_w0=spec["dt_w0"], w0=w0,
+                bond_dimension=spec["D"],
+                measurement_method=spec["measurement"]),
         )
         ev = result.peps_evidence.to_dict()
         extra = {"max_ntu": ev["max_ntu_truncation_error"],
@@ -148,7 +92,7 @@ def run_one(spec):
 
     n_r_t = np.array([result.expectation(f"n_r_{i}") for i in range(n)])
     return spec, {"times": result.times, "n_r_t": n_r_t,
-                  "m_s_t": stag_mag(n_r_t, subl),
+                  "m_s_t": staggered_magnetization(n_r_t, subl),
                   "wall_s": time.perf_counter() - t_start, **extra}
 
 

@@ -2,13 +2,11 @@
 """Batch generator for the CZ error-budget maps at a chosen grid resolution (default 20x20)
 with the alias-free exact_ode solver, in parallel.
 
-Decoupled from ``scripts/notebooks/error_buget.ipynb`` on purpose: this never touches the
-notebook. It writes
+It shares the physical point evaluator with ``scripts/notebooks/error_buget.ipynb``
+and writes
 ``results/error_budget/cz_gate_maps/error_budget_fig{B,C,A_De<NN>}_ode_g<N>.npz``
 caches, which the
-notebook then loads by setting ``ODE_GRID_N = <N>``. The per-point worker mirrors the physics
-of the notebook's ``eval_cz_point`` (on the new ryd_gate API) so the g20 data stays consistent
-with the g8 data.
+notebook then loads by setting ``ODE_GRID_N = <N>``.
 
 Resume-friendly: a figure/slice whose cache already exists is skipped. Each point has a
 wall-clock timeout so a pathological ODE leaves a blank pixel instead of stalling the sweep.
@@ -28,6 +26,12 @@ from concurrent.futures import ProcessPoolExecutor
 import multiprocessing as _mp
 
 import numpy as np
+
+# Keep the shared evaluator importable both as a script and through importlib.
+_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+from error_budget_model import eval_cz_point
 
 MHz = 2 * np.pi * 1e6
 
@@ -51,82 +55,6 @@ def results_dir():
     d = os.path.join(root, "results", "error_budget", "cz_gate_maps")
     os.makedirs(d, exist_ok=True)
     return d
-
-
-# ---- worker: mirrors error_buget.ipynb eval_cz_point physics, on the new API ----
-def eval_cz_point(cfg):
-    """One CZ error-budget grid point: picklable scalars in, metrics dict out."""
-    import numpy as np
-    import ryd_gate as rg
-    from ryd_gate.lattice import Register
-    from ryd_gate.protocols import CZProtocol, phase_from_chirp
-    from ryd_gate.physics import rb87_7_mp_rabi_frequencies
-    wrap = lambda a: float(np.angle(np.exp(1j * a)))
-    def env_fn(t, T, ramp=0.15):
-        s = float(np.clip(t / T, 0.0, 1.0))
-        q = lambda u: (lambda v: 10*v**3 - 15*v**4 + 6*v**5)(np.clip(u, 0, 1))
-        if s < ramp: return float(q(s / ramp))
-        if s > 1 - ramp: return float(q((1 - s) / ramp))
-        return 1.0
-    T = cfg["t_gate"]; Delta_e = 2*np.pi*cfg["Delta_e_Hz"]; D_sweep = 2*np.pi*cfg["D_sweep_Hz"]
-    beam_area = cfg["beam_factor"] * cfg["spacing_um"]; ol = cfg["optics_loss"]
-    Omega_420, Omega_1013 = rb87_7_mp_rabi_frequencies(max(cfg["p420_w"], 0.0)*(1-ol),
-        max(cfg["p1013_w"], 0.0)*(1-ol), beam_area, ryd_level=cfg["ryd_level"])
-    env = lambda t: env_fn(t, T)
-    base_chirp = lambda t: -D_sweep*np.cos(2.0*np.pi*t/T)
-    D1_nom = -(4.0/3.0)*Omega_420**2/(4.0*Delta_e); Dr_nom = -(Omega_1013**2)/(4.0*Delta_e)
-    def chirp(t):
-        a = np.sqrt(env(t)); return base_chirp(t) + Dr_nom*a*a - D1_nom*a*a
-    phi = phase_from_chirp(chirp, t_gate_s=T, n_samples=4*cfg["n_steps"]+1)
-    clip = lambda t: float(np.clip(t, 0.0, T))
-    # Generic CZ pulse: explicit T + physical-time waveforms. Delta_e is the
-    # (old detuning_sign=+1) intermediate detuning, now carried by the protocol
-    # onto the e1/e2/e3 diagonals rather than baked into the preset.
-    proto = CZProtocol(
-        t_gate_s=T, intermediate_detuning_rad_s=Delta_e,
-        omega_420_max_rad_s=Omega_420, omega_1013_max_rad_s=Omega_1013,
-        envelope_420=lambda t: np.sqrt(env(clip(t))), phase_420_rad=lambda t: phi(clip(t)),
-        envelope_1013=lambda t: np.sqrt(env(clip(t))), phase_1013_rad=lambda t: 0.0)
-    sys7 = rg.RydbergSystem(
-        level_structure=rg.level_structure("rb87_7_mp", ryd_level=cfg["ryd_level"], magnetic_field_G=20.0),
-        register=Register.chain(2, spacing_um=cfg["spacing_um"]), protocol=proto)
-    t_eval = np.linspace(0.0, T, cfg["n_eval"])
-    N = sys7.N; obs = sys7.observables
-    observables = {
-        "n_e": sum(obs.n("e1", i) + obs.n("e2", i) + obs.n("e3", i) for i in range(N)),
-        "n_r": sum(obs.n("r", i) for i in range(N)),
-        "n_rg": sum(obs.n("r_garb", i) for i in range(N)),
-    }
-    strs = ["00", "01", "10", "11"]
-    results = rg.simulate(sys7, [list(s) for s in strs],
-                          t_eval=t_eval, observables=observables, backend=cfg["backend"],
-                          backend_options={"rtol": cfg.get("rtol", 1e-8), "atol": cfg.get("atol", 1e-12)})
-    dr = sys7.level_structure.decay_rates_per_s
-    Gamma_e = float(dr["e1"]["total"]); Gamma_r = float(dr["r"]["total"]); Gamma_rg = float(dr["r_garb"]["total"])
-    phase = {}; ret = {}; leak = {}; p_mid = []; p_ryd = []; p_rg = []
-    for j, s in enumerate(strs):
-        res_j = results[j]; ov = res_j.amplitude(list(s))
-        phase[s] = float(np.angle(ov)); ret[s] = float(abs(ov)**2)
-        leak[s] = float(1.0 - sum(abs(res_j.amplitude(list(strs[k])))**2 for k in range(4)))
-        t = np.asarray(res_j.times, float)
-        ne  = res_j.expectation("n_e")
-        nr  = res_j.expectation("n_r")
-        nrg = res_j.expectation("n_rg")
-        p_mid.append(np.trapezoid(Gamma_e*ne, t)); p_ryd.append(np.trapezoid(Gamma_r*nr, t))
-        p_rg.append(np.trapezoid(Gamma_rg*nrg, t))
-    p_mid = np.asarray(p_mid); p_ryd = np.asarray(p_ryd); p_rg = np.asarray(p_rg)
-    p_tot = p_mid + p_ryd + p_rg
-    zz = wrap(phase["11"] - phase["01"] - phase["10"] + phase["00"]); phase_err = abs(wrap(zz - np.pi))
-    Omega_eff = Omega_420*Omega_1013/(2*abs(Delta_e)); K_eff = 0.5*Omega_eff
-    max_leak = max(leak.values())
-    score = 100.0*phase_err**2 + 10.0*max_leak + 1.0e3*float(p_tot.max())
-    return dict(Delta_e_Hz=cfg["Delta_e_Hz"], D_sweep_Hz=cfg["D_sweep_Hz"],
-                p420_w=cfg["p420_w"], p1013_w=cfg["p1013_w"], spacing_um=cfg["spacing_um"], T=T,
-                Omega_420=Omega_420, Omega_1013=Omega_1013, Omega_eff_phys=Omega_eff, K_eff=K_eff,
-                zz_phase=zz, phase_err=phase_err, max_leakage=max_leak,
-                min_return_prob=min(ret.values()), p_mid_max=float(p_mid.max()),
-                p_ryd_max=float(p_ryd.max()), p_r_garb_max=float(p_rg.max()),
-                p_loss_total_max=float(p_tot.max()), score=score)
 
 
 def eval_cz_point_safe(cfg):

@@ -21,6 +21,7 @@ TIMEOUT_S = 1800
 EXECUTE = [
     "02_ac_stark_addressing.ipynb",
     "03_lattice_dynamics_annealing.ipynb",
+    "07_cz_grape_e2e_validation.ipynb",
 ]
 
 NON_GATED = {

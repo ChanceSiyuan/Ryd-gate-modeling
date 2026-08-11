@@ -15,7 +15,8 @@ Grid points may override the tier with ``dt_w0`` (default 0.1) and ``D``
 (default 6); non-default values are appended to the point tag, so existing
 default-tier ``.npz`` files keep their names. ``--report`` prints an acceptance
 table over the finished points: BP observables, shot-derived <m_s^2> and the
-long-range connected correlator (truncation-sensitive per arxiv_v1.0's global
+long-range connected correlator (truncation-sensitive per
+``sun2026quantumclassical``'s global
 Pauli-string diagnostic), and the cumulative NTU truncation error against the
 bar calibrated by ``scripts/calibrate_anneal_3x3.py``.
 """
@@ -34,14 +35,19 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import numpy as np
 
-from ryd_gate import Register, RydbergSystem, level_structure, simulate
-from ryd_gate.physics import arc_pair_c6_rad_s_um6
-from ryd_gate.protocols import SweepProtocol
+from anneal_model import (  # noqa: E402
+    A_UM,
+    build_anneal_system,
+    peps_options,
+    rydberg_c6,
+    staggered_magnetization,
+)
+from ryd_gate import Register, simulate
 
-RYD_LEVEL, A_UM = 70, 6.0
 LX, LY = 10, 10
 SHOTS, SEED = 200, 7
 OUT_DIR = REPO_ROOT / "results" / "anneal_sweep"
@@ -60,7 +66,7 @@ PARAM_GRID = [
 ]
 # Keeper rechecks on the notebook-03 canonical schedule: dt-convergence at the
 # scan tier plus the D=6/8/10 trend (fixed-chi runs can look smooth while far
-# from converged -- arxiv_v1.0's central caveat).
+# from converged -- ``sun2026quantumclassical``'s central caveat).
 PARAM_GRID += [
     dict(hz_i_w0=24.0, hx_peak_w0=1.0, t_hold_w0=12.0),
     dict(hz_i_w0=24.0, hx_peak_w0=1.0, t_hold_w0=12.0, dt_w0=0.05),
@@ -84,8 +90,7 @@ NTU_CUM_BAR = 4.5
 LONG_RANGE_A = 6.0
 
 # Computed once at import; forked workers inherit it (warm ARC cache anyway).
-C6 = arc_pair_c6_rad_s_um6(n1=RYD_LEVEL, l1=0, j1=0.5, mj1=-0.5, mj2=-0.5,
-                           theta=0.0, phi=0.0, degenerate=False)
+C6 = rydberg_c6()
 
 
 def point_tag(p):
@@ -100,76 +105,19 @@ def point_tag(p):
 def run_point(p):
     t_start = time.perf_counter()
     dt_w0, D = p.get("dt_w0", DT_W0_DEFAULT), p.get("D", D_DEFAULT)
-    geom = Register.rectangle(LX, LY, spacing_um=A_UM)
-    cutoff_um = 1.1 * A_UM
-
-    coords = geom.coords
-    n = geom.N
-    V = np.zeros((n, n))
-    for i in range(n):
-        for j in range(i + 1, n):
-            r = float(np.hypot(*(coords[j] - coords[i])))
-            if r <= cutoff_um * (1 + 1e-9):
-                V[i, j] = V[j, i] = C6 / r ** 6
-    shift = 0.25 * V.sum(axis=1)
-    shift_ref = float(shift.mean())
-    pins = 2.0 * (shift - shift_ref)
-
-    V_nn = C6 / A_UM ** 6
-    w0 = V_nn / 24.0
-    hx_peak = p["hx_peak_w0"] * w0
-    hz_i, hz_f = p["hz_i_w0"] * w0, 0.0
-    t_rise, t_hold, t_fall = 2.0 / w0, p["t_hold_w0"] / w0, 2.0 / w0
-    t_gate = t_rise + t_hold + t_fall
-
-    def hx(t):
-        if t < t_rise:
-            return hx_peak * (t / t_rise)
-        if t < t_rise + t_hold:
-            return hx_peak
-        return hx_peak * max(0.0, 1.0 - (t - t_rise - t_hold) / t_fall)
-
-    def hz(t):
-        if t < t_rise:
-            return hz_i
-        if t < t_rise + t_hold:
-            return hz_i + (hz_f - hz_i) * (t - t_rise) / t_hold
-        return hz_f
-
-    proto = SweepProtocol(
-        t_gate_s=t_gate,
-        omega_half_rad_s=lambda t: hx(t),
-        detuning_rad_s=lambda t: 2.0 * (shift_ref - hz(t)),
-        local_detuning_rad_s=lambda t, i, pins=pins: float(pins[i]),
-    )
-    system = RydbergSystem(
-        level_structure=level_structure("1r", ryd_level=RYD_LEVEL),
-        register=geom,
-        protocol=proto,
-        interaction_cutoff_um=cutoff_um,
-    )
-
+    system, n, t_gate, w0, subl = build_anneal_system(
+        LX, LY, C6, hz_i_w0=p["hz_i_w0"],
+        hx_peak_w0=p["hx_peak_w0"], t_hold_w0=p["t_hold_w0"])
     obs = {f"n_r_{i}": system.observables.n("r", i) for i in range(n)}
     result = simulate(
         system, None, backend="peps",
         t_eval=np.linspace(0.0, t_gate, 9), observables=obs,
-        backend_options={
-            "time_step_s": dt_w0 / w0,
-            "bond_dimension": D,
-            "svd_tolerance": 1e-8,
-            "ntu_max_iterations": 20,
-            "ntu_iteration_tolerance": 1e-10,
-            "measurement_method": "belief_propagation",
-            "environment_bond_dimension": 32,
-            "environment_tolerance": 1e-8,
-            "environment_max_iterations": 50,
-            "device": "cpu",
-        },
+        backend_options=peps_options(
+            dt_w0=dt_w0, w0=w0, bond_dimension=D,
+            measurement_method="belief_propagation"),
     )
     n_r_t = np.array([result.expectation(f"n_r_{i}") for i in range(n)])
-    xy = np.round(coords / A_UM).astype(int)
-    subl = np.array([(-1.0) ** (ix + iy) for ix, iy in xy])
-    m_s_t = (subl[:, None] * (2.0 * n_r_t - 1.0)).mean(axis=0)
+    m_s_t = staggered_magnetization(n_r_t, subl)
 
     counts = result.sample(shots=SHOTS, seed=SEED)
     shot_occ = np.array([[lbl == "r" for lbl in cfg] for cfg in counts], dtype=np.uint8)
