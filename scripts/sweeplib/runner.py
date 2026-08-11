@@ -1,4 +1,4 @@
-"""Batching, the fork-pool worker entry, the cost model and the budget runner.
+"""Batching, the fork-pool worker entry, the cost model and the runner.
 
 The worker context (``set_worker_context`` / ``_WORKER_CTX``) is populated in the
 parent before the fork pool is created, so workers inherit the immutable model
@@ -124,7 +124,7 @@ def _worker_run_batch(spec: dict) -> dict:
         signal.signal(signal.SIGALRM, prev)
 
 
-# ── Cost model, batches, and the budget-aware runner ─────────────────────────
+# ── Cost model, batches, and the runner ─────────────────────────
 
 
 @dataclass
@@ -132,14 +132,16 @@ class Batch:
     keys: list
     tier: str = "production"
     save_traj: bool = False
-    scatter: bool = False       # scattering-supplement solve -> scatter/ series
-    filter_pass: bool = False   # filter-function solve -> filter/ series
+    mode: str = "coherent"      # coherent chunk, scatter supplement, or filter
     retry_count: int = 0        # failure-split escalations (this batch's points)
     pool_retries: int = 0       # innocent requeues after pool crashes (separate budget)
     priority_scores: list | None = None
     batch_id: str = ""
 
     def __post_init__(self):
+        if self.mode not in {"coherent", "scatter", "filter"}:
+            raise ValueError(
+                "batch mode must be 'coherent', 'scatter', or 'filter'")
         if not self.batch_id:
             self.batch_id = uuid.uuid4().hex[:12]
         panels = {k.panel for k in self.keys}
@@ -234,13 +236,8 @@ class Runner:
         self.scatter_done: set = set()    # keys already in the scatter series (write-time dedup)
         self.stop_requested = False
         self.start_time = time.time()
-        self.dispatch_deadline = (
-            self.start_time
-            + (getattr(args, "budget_hours", 24.0)
-               - getattr(args, "reserve_hours", 2.0)) * 3600.0)
         self.point_timeout_s = float(args.point_timeout)
         self.failures: list[dict] = []
-        self.deferred: int = 0
         self.completed_points = 0
         self.aborted = False
         self._signal_time = 0.0
@@ -344,16 +341,16 @@ class Runner:
             panel_idx=batch.panel_idx, t_idx=batch.t_idx,
             tier=batch.tier, rtol=rtol, atol=atol,
             save_traj=batch.save_traj,
-            scatter=batch.scatter,
-            filter=batch.filter_pass,
+            scatter=batch.mode == "scatter",
+            filter=batch.mode == "filter",
             both=(self.write_both_series and batch.tier == "production"
-                  and not batch.scatter),
+                  and batch.mode == "coherent"),
             timeout_s=self.point_timeout_s * len(batch.keys),
         )
 
     def _write_success(self, batch: Batch, out: dict) -> None:
         rtol, atol = self._tier_tols(batch.tier)
-        if batch.filter_pass:
+        if batch.mode == "filter":
             # Supplemental data: its own append-only series; a filter batch carries
             # no BatchResult and never touches the coherent or scatter series.
             self.store.write_filter_chunk(
@@ -366,7 +363,7 @@ class Runner:
             self.completed_points += len(batch.keys)
             return
         result = out["result"]
-        if batch.scatter:
+        if batch.mode == "scatter":
             # Supplemental data: its own append-only series; the coherent-leakage
             # chunks and trajectories are never touched by a scatter batch.
             self.store.write_scatter_chunk(
@@ -420,7 +417,7 @@ class Runner:
 
     def _write_failure(self, batch: Batch, out: dict) -> None:
         rtol, atol = self._tier_tols(batch.tier)
-        if batch.filter_pass:
+        if batch.mode == "filter":
             n = len(batch.keys)
             self.store.write_filter_chunk(
                 self.filter_seq, self.manifest, batch.keys, self.cfg, rtol, atol,
@@ -430,7 +427,7 @@ class Runner:
                 statuses=[out.get("reason", "failed")] * n,
                 message=out.get("message", ""))
             self.filter_seq += 1
-        elif batch.scatter:
+        elif batch.mode == "scatter":
             n = len(batch.keys)
             self.store.write_scatter_chunk(
                 self.scatter_seq, self.manifest, batch.keys, self.cfg,
@@ -464,14 +461,13 @@ class Runner:
             if keys:
                 parts.append(Batch(
                     keys=keys, tier=batch.tier, save_traj=batch.save_traj,
-                    scatter=batch.scatter, filter_pass=batch.filter_pass,
+                    mode=batch.mode,
                     retry_count=batch.retry_count + 1,
                     priority_scores=(batch.priority_scores[sl]
                                      if batch.priority_scores else None)))
         return parts
 
     def run_batches(self, batches: list[Batch], phase: str,
-                    enforce_deadline: bool = True,
                     preserve_order: bool = False) -> None:
         """Run batches (longest-predicted first unless ``preserve_order``); split
         failures recursively; write every chunk from this (parent) process."""
@@ -482,9 +478,7 @@ class Runner:
         else:
             pending = deque(sorted(batches, key=self.cost.predict_batch, reverse=True))
         inflight: dict = {}
-        # Keep the executor's internal queue shallow: the deadline check runs at
-        # submit time, so a deep queue could carry a whole extra wave of batches
-        # past the reserve boundary.
+        # Keep the executor's internal queue shallow so Ctrl-C can drain promptly.
         max_outstanding = self.args.workers + max(2, self.args.workers // 8)
         n_total = sum(len(b.keys) for b in batches)
         n_done = 0
@@ -494,17 +488,6 @@ class Runner:
         while pending or inflight:
             while pending and len(inflight) < max_outstanding and not self.stop_requested:
                 batch = pending.popleft()
-                # A batch occupies one core; its predicted wall time is the P90-
-                # inflated single-core estimate.  Anything that cannot finish
-                # before the dispatch deadline is deferred, keeping the reserve.
-                predicted = self.cost.predict_batch(batch) * self.cost.inflation_p90()
-                if enforce_deadline and time.time() + predicted > self.dispatch_deadline:
-                    if self.deferred == 0:
-                        print(f"[deadline] deferring {len(batch.keys)} points past "
-                              "the dispatch deadline (re-invoke run to resume)",
-                              flush=True)
-                    self.deferred += len(batch.keys)
-                    continue
                 fut = self._submit(batch)
                 inflight[fut] = (batch, self.cost.predict_batch(batch))
             if not inflight:
@@ -523,8 +506,7 @@ class Runner:
                     if batch.pool_retries < 5:
                         requeued = Batch(
                             keys=batch.keys, tier=batch.tier,
-                            save_traj=batch.save_traj, scatter=batch.scatter,
-                            filter_pass=batch.filter_pass,
+                            save_traj=batch.save_traj, mode=batch.mode,
                             retry_count=batch.retry_count,
                             pool_retries=batch.pool_retries + 1,
                             priority_scores=batch.priority_scores)
@@ -563,19 +545,12 @@ class Runner:
             print(f"[{phase}] stopped on request; "
                   f"{sum(len(b.keys) for b in pending)} points left unscheduled",
                   flush=True)
-        if self.deferred > 0:
-            print(f"[{phase}] WARNING: {self.deferred} points deferred past the "
-                  "dispatch deadline; re-invoke run to complete this store",
-                  flush=True)
-
     def write_status(self, phase: str) -> None:
         status = {
             "phase": phase,
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "elapsed_s": time.time() - self.start_time,
-            "dispatch_deadline_in_s": self.dispatch_deadline - time.time(),
             "completed_points_this_run": self.completed_points,
-            "deferred_points": self.deferred,
             "failures": len(self.failures),
             "inflation_p90": self.cost.inflation_p90(),
             "workers": self.args.workers,

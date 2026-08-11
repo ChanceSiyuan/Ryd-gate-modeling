@@ -9,7 +9,6 @@ trajectory sampling — and takes an injected ``rhs_factory`` so the two-drive+S
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import Callable, Sequence
 

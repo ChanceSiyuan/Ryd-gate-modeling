@@ -54,7 +54,8 @@ def test_axes_are_the_locked_297_specification():
 
 def test_20mhz_is_a_node_of_the_dsweep_axis_at_every_level():
     for level in range(4):
-        vals = [float(v) for v in mls297.axis_values_mhz(mls297.DSWEEP_ANCHORS_MHZ, level)]
+        vals = [float(v) for v in mls297.sweeplib.axis_values_mhz(
+            mls297.DSWEEP_ANCHORS_MHZ, level)]
         assert 20.0 in vals
 
 
@@ -237,16 +238,17 @@ def test_export_store_writes_merged_npz_and_csv(tmp_path):
 
 
 def test_effective_batch_size_falls_back_to_one_without_a_passed_gate(tmp_path):
-    """_effective_batch_size gates the requested size on a recorded, enabled
+    """effective_batch_size gates the requested size on a recorded, enabled
     packing acceptance; absent/failed gates fall back to one point per solve."""
     store, _ = _mini_store(tmp_path)
-    assert mls297._effective_batch_size(store, Namespace(batch_size=1)) == 1
-    assert mls297._effective_batch_size(store, Namespace(batch_size=48)) == 1   # no pilot
+    effective_batch_size = mls297.sweeplib.campaign.effective_batch_size
+    assert effective_batch_size(store, Namespace(batch_size=1)) == 1
+    assert effective_batch_size(store, Namespace(batch_size=48)) == 1  # no pilot
     pilot = Path(store.reports_dir) / "pilot.json"
     pilot.write_text(json.dumps({"packing_gate": {"enabled": True}}))
-    assert mls297._effective_batch_size(store, Namespace(batch_size=48)) == 48
+    assert effective_batch_size(store, Namespace(batch_size=48)) == 48
     pilot.write_text(json.dumps({"packing_gate": {"enabled": False}}))
-    assert mls297._effective_batch_size(store, Namespace(batch_size=48)) == 1
+    assert effective_batch_size(store, Namespace(batch_size=48)) == 1
 
 
 def test_ensure_scatter_gate_runs_once_and_skips_when_recorded_ok(tmp_path, monkeypatch):
@@ -628,7 +630,7 @@ def test_power_table_matches_arc_and_scales_as_one_over_rabi_squared():
     # scripts/max_leakage_ode_sweep.py already uses), so nominal power is
     # at-atoms / (1 - loss).  Only the rendered cell applies that factor, and the
     # figures are read off it, so pin it against the independent record in
-    # docs/superpowers/specs/2026-07-24-max-leakage-297-sweep-design.md: 1-3 W
+    # docs/designs/2026-07-24-max-leakage-297-sweep-design.md: 1-3 W
     # nominal at this 0.8-loss / 420 um^2 optics is ~9.6-16.6 MHz on 53P.
     assert rows["omega_mhz_at_1w"][i] * np.sqrt(
         1.0 - mls297.POWER_OPTICS_LOSS) == pytest.approx(9.6, abs=0.1)
@@ -826,7 +828,10 @@ def test_eps_phase_and_total_error_phase_compose_per_logical_input(tmp_path):
     extra = mls297.phase_noise_values(store, manifest, "ECDL", "flat")
     scatter = {r["key"]: sum(r[ch] for ch in mls297.SCATTER_CHANNELS)
                for r in store.load_scatter_records(manifest)}
-    leakage = {k: r.leakage for k, r in mls297.best_records(records).items()}
+    leakage = {
+        key: record.leakage
+        for key, record in mls297.sweeplib.best_records(records).items()
+    }
 
     values, vmin, vmax, label = mls297.sweeplib.plot_metric_values(
         store, manifest, records, "eps_phase",

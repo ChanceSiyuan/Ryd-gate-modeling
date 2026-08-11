@@ -10,7 +10,6 @@ imports: only sweeplib itself is exercised here.
 
 import dataclasses
 import hashlib
-import importlib.util
 import json
 import math
 import os
@@ -32,7 +31,8 @@ _SCRIPTS_DIR = str(ROOT / "scripts")
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 import sweeplib  # noqa: E402
-
+from sweeplib.runner import _worker_run_batch  # noqa: E402
+from sweeplib.store import _NO_STATES, _atomic_savez  # noqa: E402
 
 # ── point-key factory (parameterized over two key configurations) ────────────
 
@@ -541,8 +541,7 @@ class _FakeExecutor:
 
 
 def _runner_args(**over):
-    base = dict(workers=1, batch_size=1, budget_hours=1.0, reserve_hours=0.0,
-                point_timeout=60.0)
+    base = dict(workers=1, batch_size=1, point_timeout=60.0)
     base.update(over)
     return Namespace(**base)
 
@@ -604,7 +603,7 @@ def test_chunk_roundtrip_preserves_states_exactly(bundle, tmp_path):
 def test_atomic_write_rejects_object_arrays_and_leaves_no_file(tmp_path):
     target = str(tmp_path / "chunk_000001.npz")
     with pytest.raises(TypeError):
-        sweeplib._atomic_savez(target, bad=np.array([{"a": 1}], dtype=object))
+        _atomic_savez(target, bad=np.array([{"a": 1}], dtype=object))
     assert not any(tmp_path.iterdir())  # neither the file nor a temp survives
 
 
@@ -773,6 +772,8 @@ def test_group_batches_stays_within_panel_and_orders_axes(bundle):
     assert fracs == sorted(fracs)
     with pytest.raises(ValueError):
         sweeplib.Batch(keys=keys)  # crosses panels
+    with pytest.raises(ValueError, match="batch mode"):
+        sweeplib.Batch(keys=keys[:1], mode="scatter+filter")
 
 
 def test_batch_split_isolates_points_and_counts_retries(bundle):
@@ -804,45 +805,6 @@ def test_cost_model_scales_with_gate_time_and_inflates(bundle):
 
 
 # ── Runner event loop: dispatch, retries, signals (synchronous fake executor) ─
-
-
-def test_budget_scheduler_defers_everything_past_the_deadline(bundle, tmp_path, runner_factory, capsys):
-    """With the dispatch deadline already in the past, run_batches launches no
-    work (the default responder would assert if submit ran), defers every point,
-    and records nothing — never-computed points must not be marked failed.  The
-    deferral is announced loudly: a first-deferral line and an end-of-stage
-    WARNING naming the total (so a driver log can't silently exit 0)."""
-    store, manifest = mini_store(bundle, tmp_path)
-    runner = runner_factory(store, manifest, bundle.cfg,
-                            _runner_args(workers=2, batch_size=4,
-                                         budget_hours=0.0, reserve_hours=1.0))
-    runner.run_batches(sweeplib.group_batches(bundle.panel_keys(0, 0, 0), batch_size=4),
-                       "test-budget")
-    assert runner.deferred == 16
-    assert runner.completed_points == 0
-    assert store.load_records(manifest) == []
-    out = capsys.readouterr().out
-    assert "[deadline] deferring" in out                       # first-deferral heads-up
-    assert "WARNING: 16 points deferred" in out                # end-of-stage total
-
-
-def test_no_deferral_warning_when_nothing_deferred(bundle, tmp_path, runner_factory, capsys):
-    """A stage that defers nothing prints neither the deferral heads-up nor the
-    end-of-stage WARNING (the loud path is gated on deferred > 0)."""
-    store, manifest = mini_store(bundle, tmp_path)
-
-    def responder(spec):
-        return "result", {"ok": True, "result": _fake_result(bundle, len(spec["keys"])),
-                          "runtime_s": 1.0}
-
-    runner = runner_factory(store, manifest, bundle.cfg,
-                            _runner_args(workers=2, batch_size=4), responder=responder)
-    runner.run_batches(sweeplib.group_batches(bundle.panel_keys(0, 0, 0), batch_size=4),
-                       "no-defer")
-    assert runner.deferred == 0
-    out = capsys.readouterr().out
-    assert "WARNING" not in out
-    assert "deferring" not in out
 
 
 def test_store_lock_rejects_concurrent_writers(bundle, tmp_path, runner_factory):
@@ -963,7 +925,8 @@ def test_scatter_write_failure_records_nan_rows(bundle, tmp_path, runner_factory
     store, manifest = mini_store(bundle, tmp_path)
     runner = runner_factory(store, manifest, bundle.cfg, _runner_args())
     runner.gammas = {0: bundle.scatter_rates}
-    batch = sweeplib.Batch(keys=bundle.panel_keys(0, 0, 0)[:2], scatter=True)
+    batch = sweeplib.Batch(
+        keys=bundle.panel_keys(0, 0, 0)[:2], mode="scatter")
     runner._write_failure(batch, {"reason": "timeout", "message": "slow",
                                   "runtime_s": 3.0})
     rows = store.load_scatter_records(manifest)
@@ -1050,7 +1013,7 @@ def test_worker_entry_solves_and_scatters():
     spec = dict(keys=[tuple(getattr(key, f) for f in key_fields)],
                 panel_idx=0, t_idx=0, rtol=1e-9, atol=1e-12,
                 save_traj=False, scatter=True, timeout_s=60)
-    out = sweeplib._worker_run_batch(spec)
+    out = _worker_run_batch(spec)
     assert out["ok"]
     assert isinstance(out["result"], sweeplib.BatchResult)
     assert out["result"].psi_final.shape == (1, 4, 9)
@@ -1094,7 +1057,7 @@ def test_credibility_floor_rule_and_fallback(bundle):
             key=k, tier=tier, rtol=1e-9, atol=1e-12, status="ok",
             max_leakage=leak, leakage=np.full(4, leak), worst_input="11",
             return_prob=np.ones(4), norm_err=np.zeros(4),
-            psi_final=sweeplib._NO_STATES, nfev=1, runtime_s=1.0, batch_id="b",
+            psi_final=_NO_STATES, nfev=1, runtime_s=1.0, batch_id="b",
             batch_size=1, retry_count=0, priority_score=0.0, message="",
             chunk_file="c", used_swap=True)
 
@@ -1148,7 +1111,7 @@ def test_plot_metric_values_scatter_metrics_and_total_error(bundle, tmp_path):
     record = sweeplib.PointRecord(
         key=key2, tier="production", rtol=1e-9, atol=1e-12, status="ok",
         max_leakage=float(leakage.max()), leakage=leakage, worst_input="00",
-        return_prob=np.ones(4), norm_err=np.zeros(4), psi_final=sweeplib._NO_STATES,
+        return_prob=np.ones(4), norm_err=np.zeros(4), psi_final=_NO_STATES,
         nfev=1, runtime_s=1.0, batch_id="m", batch_size=1, retry_count=0,
         priority_score=0.0, message="", chunk_file="c", used_swap=True)
     values, *_ = sweeplib.plot_metric_values(

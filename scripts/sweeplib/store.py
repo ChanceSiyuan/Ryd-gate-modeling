@@ -137,6 +137,72 @@ class Store:
                   self.exports_dir, self.plots_dir):
             os.makedirs(d, exist_ok=True)
 
+    @staticmethod
+    def _next_series_seq(directory: str, prefix: str) -> int:
+        seqs = [0]
+        if os.path.isdir(directory):
+            for name in os.listdir(directory):
+                if name.startswith(prefix) and name.endswith(".npz"):
+                    try:
+                        seqs.append(int(name[len(prefix):-len(".npz")]))
+                    except ValueError:
+                        pass
+        return max(seqs) + 1
+
+    @staticmethod
+    def _iter_series(directory: str, prefix: str, *, exclude=()):
+        if not os.path.isdir(directory):
+            return
+        for name in sorted(os.listdir(directory)):
+            if not (name.startswith(prefix) and name.endswith(".npz")):
+                continue
+            with np.load(os.path.join(directory, name),
+                         allow_pickle=False) as npz:
+                yield name, {field: npz[field] for field in npz.files
+                             if field not in exclude}
+
+    @staticmethod
+    def _validate_provenance(data: dict, manifest: dict | None,
+                             *, series: str, filename: str) -> None:
+        if manifest is None:
+            return
+        for field in ("physics_hash", "model_hash", "pulse_hash"):
+            if str(data[field]) != manifest[field]:
+                raise RuntimeError(
+                    f"{series} {filename} has a different {field}; refusing to "
+                    "merge data from different model/pulse code")
+
+    def _supplement_payload(
+        self,
+        manifest: dict,
+        keys: Sequence,
+        cfg,
+        rtol: float,
+        atol: float,
+        batch_id: str,
+        runtime_s: float,
+        statuses: Sequence[str] | None,
+        message: str,
+    ) -> dict:
+        n = len(keys)
+        statuses = list(statuses) if statuses is not None else ["ok"] * n
+        return {
+            "schema_version": np.int64(self.provenance.schema_version),
+            "scan_uuid": str(manifest["scan_uuid"]),
+            "physics_hash": str(manifest["physics_hash"]),
+            "model_hash": str(manifest["model_hash"]),
+            "pulse_hash": str(manifest["pulse_hash"]),
+            **self.keys_to_arrays(keys),
+            **self.provenance.descriptor(cfg, keys),
+            "rtol": np.full(n, rtol),
+            "atol": np.full(n, atol),
+            "batch_id": np.asarray([batch_id] * n, dtype="U40"),
+            "batch_size": np.full(n, n, dtype=np.int32),
+            "status": np.asarray(statuses, dtype="U16"),
+            "message": np.asarray([message] * n, dtype="U240"),
+            "runtime_s": np.full(n, runtime_s / max(n, 1)),
+        }
+
     # -- key <-> array serialization --------------------------------------
 
     def keys_to_arrays(self, keys: Sequence) -> dict[str, np.ndarray]:
@@ -349,15 +415,7 @@ class Store:
     # -- scattering supplement (separate append-only series) ---------------
 
     def next_scatter_seq(self) -> int:
-        seqs = [0]
-        if os.path.isdir(self.scatter_dir):
-            for name in os.listdir(self.scatter_dir):
-                if name.startswith("scatter_") and name.endswith(".npz"):
-                    try:
-                        seqs.append(int(name[len("scatter_"):-len(".npz")]))
-                    except ValueError:
-                        pass
-        return max(seqs) + 1
+        return self._next_series_seq(self.scatter_dir, "scatter_")
 
     def write_scatter_chunk(
         self,
@@ -381,28 +439,15 @@ class Store:
         panel); the ``gamma_<ch[2:]>`` columns record that panel's decay rates.
         """
         n = len(keys)
-        statuses = list(statuses) if statuses is not None else ["ok"] * n
         channels = self.provenance.scatter_channels
         panel_gammas = gammas[getattr(keys[0], self.key_fields[0])]
-        payload = dict(
-            schema_version=np.int64(self.provenance.schema_version),
-            scan_uuid=str(manifest["scan_uuid"]),
-            physics_hash=str(manifest["physics_hash"]),
-            model_hash=str(manifest["model_hash"]),
-            pulse_hash=str(manifest["pulse_hash"]),
-            **self.keys_to_arrays(keys),
-            **self.provenance.descriptor(cfg, keys),
+        payload = dict(self._supplement_payload(
+            manifest, keys, cfg, rtol, atol, batch_id, runtime_s,
+            statuses, message),
             **{name: np.asarray(scatter[name]).reshape(n, 4) for name in channels},
             max_leakage_check=np.asarray(max_leakage),
             **{f"gamma_{name[2:]}": np.full(n, panel_gammas[name]) for name in channels},
             n_eval=np.full(n, cfg.n_eval_trajectory, dtype=np.int32),
-            rtol=np.full(n, rtol),
-            atol=np.full(n, atol),
-            batch_id=np.asarray([batch_id] * n, dtype="U40"),
-            batch_size=np.full(n, n, dtype=np.int32),
-            status=np.asarray(statuses, dtype="U16"),
-            message=np.asarray([message] * n, dtype="U240"),
-            runtime_s=np.full(n, runtime_s / max(n, 1)),
         )
         path = os.path.join(self.scatter_dir, f"scatter_{seq:06d}.npz")
         _atomic_savez(path, **payload)
@@ -414,20 +459,9 @@ class Store:
             manifest = self.load_manifest()
         channels = self.provenance.scatter_channels
         rows: list[dict] = []
-        if not os.path.isdir(self.scatter_dir):
-            return rows
-        for name in sorted(os.listdir(self.scatter_dir)):
-            if not (name.startswith("scatter_") and name.endswith(".npz")):
-                continue
-            with np.load(os.path.join(self.scatter_dir, name),
-                         allow_pickle=False) as npz:
-                d = {f: npz[f] for f in npz.files}
-            if manifest is not None:
-                for fieldname in ("physics_hash", "model_hash", "pulse_hash"):
-                    if str(d[fieldname]) != manifest[fieldname]:
-                        raise RuntimeError(
-                            f"scatter chunk {name} has a different {fieldname}; "
-                            "refusing to merge data from different model/pulse code")
+        for name, d in self._iter_series(self.scatter_dir, "scatter_"):
+            self._validate_provenance(
+                d, manifest, series="scatter chunk", filename=name)
             for i, key in enumerate(self.arrays_to_keys(d)):
                 rows.append({
                     "key": key,
@@ -442,15 +476,7 @@ class Store:
     # -- filter-function supplement (separate append-only series) ----------
 
     def next_filter_seq(self) -> int:
-        seqs = [0]
-        if os.path.isdir(self.filter_dir):
-            for name in os.listdir(self.filter_dir):
-                if name.startswith("filter_") and name.endswith(".npz"):
-                    try:
-                        seqs.append(int(name[len("filter_"):-len(".npz")]))
-                    except ValueError:
-                        pass
-        return max(seqs) + 1
+        return self._next_series_seq(self.filter_dir, "filter_")
 
     def write_filter_chunk(
         self,
@@ -482,24 +508,12 @@ class Store:
             raise ValueError(
                 f"kernels must have shape ({n}, 4, {f_bins.size}) for {n} keys on "
                 f"this frequency grid; got {kernels.shape}")
-        payload = dict(
-            schema_version=np.int64(self.provenance.schema_version),
-            scan_uuid=str(manifest["scan_uuid"]),
-            physics_hash=str(manifest["physics_hash"]),
-            model_hash=str(manifest["model_hash"]),
-            pulse_hash=str(manifest["pulse_hash"]),
-            **self.keys_to_arrays(keys),
-            **self.provenance.descriptor(cfg, keys),
+        payload = dict(self._supplement_payload(
+            manifest, keys, cfg, rtol, atol, batch_id, runtime_s,
+            statuses, message),
             kernel=kernels,
             f_bins=f_bins,
             n_t=np.full(n, n_t, dtype=np.int32),
-            rtol=np.full(n, rtol),
-            atol=np.full(n, atol),
-            batch_id=np.asarray([batch_id] * n, dtype="U40"),
-            batch_size=np.full(n, n, dtype=np.int32),
-            status=np.asarray(statuses, dtype="U16"),
-            message=np.asarray([message] * n, dtype="U240"),
-            runtime_s=np.full(n, runtime_s / max(n, 1)),
         )
         path = os.path.join(self.filter_dir, f"filter_{seq:06d}.npz")
         _atomic_savez(path, **payload)
@@ -516,21 +530,10 @@ class Store:
         if manifest is None:
             manifest = self.load_manifest()
         rows: list[dict] = []
-        if not os.path.isdir(self.filter_dir):
-            return rows
         f_bins = None
-        for name in sorted(os.listdir(self.filter_dir)):
-            if not (name.startswith("filter_") and name.endswith(".npz")):
-                continue
-            with np.load(os.path.join(self.filter_dir, name),
-                         allow_pickle=False) as npz:
-                d = {f: npz[f] for f in npz.files}
-            if manifest is not None:
-                for fieldname in ("physics_hash", "model_hash", "pulse_hash"):
-                    if str(d[fieldname]) != manifest[fieldname]:
-                        raise RuntimeError(
-                            f"filter chunk {name} has a different {fieldname}; "
-                            "refusing to merge data from different model/pulse code")
+        for name, d in self._iter_series(self.filter_dir, "filter_"):
+            self._validate_provenance(
+                d, manifest, series="filter chunk", filename=name)
             if f_bins is None:
                 f_bins = np.array(d["f_bins"])
             elif not np.array_equal(d["f_bins"], f_bins):
@@ -561,47 +564,35 @@ class Store:
         if manifest is None:
             manifest = self.load_manifest()
         records: list[PointRecord] = []
-        if not os.path.isdir(self.chunks_dir):
-            return records
-        for name in sorted(os.listdir(self.chunks_dir)):
-            if not (name.startswith("chunk_") and name.endswith(".npz")):
-                continue
-            path = os.path.join(self.chunks_dir, name)
-            with np.load(path, allow_pickle=False) as npz:
-                # NpzFile re-decompresses a member on every __getitem__; read once.
-                d = {f: npz[f] for f in npz.files
-                     if include_states or f != "psi_final"}
-                if manifest is not None:
-                    for fieldname in ("physics_hash", "model_hash", "pulse_hash"):
-                        if str(d[fieldname]) != manifest[fieldname]:
-                            raise RuntimeError(
-                                f"chunk {name} has a different {fieldname}; refusing to "
-                                "merge data from different model/pulse code")
-                keys = self.arrays_to_keys(d)
-                for i, key in enumerate(keys):
-                    records.append(PointRecord(
-                        key=key,
-                        tier=str(d["tier"][i]),
-                        rtol=float(d["rtol"][i]),
-                        atol=float(d["atol"][i]),
-                        status=str(d["status"][i]),
-                        max_leakage=float(d["max_leakage"][i]),
-                        leakage=np.array(d["leakage"][i]),
-                        worst_input=str(d["worst_input"][i]),
-                        return_prob=np.array(d["return_prob"][i]),
-                        norm_err=np.array(d["norm_err"][i]),
-                        psi_final=(np.array(d["psi_final"][i]) if include_states
-                                   else _NO_STATES),
-                        nfev=int(d["nfev"][i]),
-                        runtime_s=float(d["runtime_s"][i]),
-                        batch_id=str(d["batch_id"][i]),
-                        batch_size=int(d["batch_size"][i]),
-                        retry_count=int(d["retry_count"][i]),
-                        priority_score=float(d["priority_score"][i]),
-                        message=str(d["message"][i]),
-                        chunk_file=name,
-                        used_swap=bool(d["used_swap"][i]),
-                    ))
+        exclude = () if include_states else ("psi_final",)
+        for name, d in self._iter_series(
+                self.chunks_dir, "chunk_", exclude=exclude):
+            self._validate_provenance(
+                d, manifest, series="chunk", filename=name)
+            for i, key in enumerate(self.arrays_to_keys(d)):
+                records.append(PointRecord(
+                    key=key,
+                    tier=str(d["tier"][i]),
+                    rtol=float(d["rtol"][i]),
+                    atol=float(d["atol"][i]),
+                    status=str(d["status"][i]),
+                    max_leakage=float(d["max_leakage"][i]),
+                    leakage=np.array(d["leakage"][i]),
+                    worst_input=str(d["worst_input"][i]),
+                    return_prob=np.array(d["return_prob"][i]),
+                    norm_err=np.array(d["norm_err"][i]),
+                    psi_final=(np.array(d["psi_final"][i]) if include_states
+                               else _NO_STATES),
+                    nfev=int(d["nfev"][i]),
+                    runtime_s=float(d["runtime_s"][i]),
+                    batch_id=str(d["batch_id"][i]),
+                    batch_size=int(d["batch_size"][i]),
+                    retry_count=int(d["retry_count"][i]),
+                    priority_score=float(d["priority_score"][i]),
+                    message=str(d["message"][i]),
+                    chunk_file=name,
+                    used_swap=bool(d["used_swap"][i]),
+                ))
         return records
 
 

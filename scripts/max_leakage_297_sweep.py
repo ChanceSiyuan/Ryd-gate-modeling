@@ -69,7 +69,7 @@ import sys
 import time
 from dataclasses import asdict, dataclass, replace
 from fractions import Fraction
-from typing import Iterable, Sequence
+from typing import Sequence
 
 import numpy as np
 import scipy
@@ -82,12 +82,10 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 import sweeplib
 from sweeplib import (
-    LEVEL_DENS, LEVEL_SIZES, LEVEL_FROM_SIZE,
-    canon_coord, axis_coords, axis_values_mhz, make_pointkey_type,
+    LEVEL_SIZES, LEVEL_FROM_SIZE, make_pointkey_type,
     envelope, envelope_integral, verify_scipy_error_norm, BatchResult,
-    ProvenanceColumns, PointRecord, best_records, completed_keys,
-    audit_pairs, Runner, CostModel, Batch, group_batches, set_worker_context,
-    cli, PlotSpec, render_panel_grid, credibility_floor as _credibility_floor,
+    ProvenanceColumns, PointRecord, Runner, CostModel, Batch, group_batches,
+    set_worker_context, cli, PlotSpec, render_panel_grid,
 )
 from sweeplib.store import _atomic_savez
 from sweeplib.runner import _worker_run_batch
@@ -720,64 +718,7 @@ def _manifest_extras(cfg: "ScanConfig") -> dict:
 
 
 def export_store(store: Store, records: list[PointRecord] | None = None) -> tuple[str, str]:
-    """Regenerate exports/latest_merged.npz and exports/points.csv from chunks."""
-    manifest = store.load_manifest()
-    if manifest is None:
-        raise RuntimeError(f"no manifest under {store.root}")
-    if records is None:
-        records = store.load_records(manifest)
-    best = best_records(records)
-    keys = sorted(best.keys())
-    rows = [best[k] for k in keys]
-    cfg = ScanConfig(**{k: tuple(v) if isinstance(v, list) else v
-                        for k, v in manifest["physics"].items()
-                        if k != "schema_version"})
-
-    store.ensure_dirs()
-    merged_path = os.path.join(store.exports_dir, "latest_merged.npz")
-    n = len(rows)
-    payload = dict(
-        schema_version=np.int64(SCHEMA_VERSION),
-        scan_uuid=str(manifest["scan_uuid"]),
-        **store.keys_to_arrays(keys),
-        ryd_n=np.asarray([cfg.ryd_n[k.n_idx] for k in keys]),
-        t_gate_us=np.asarray([cfg.t_gate_us[k.t_idx] for k in keys]),
-        omega297_mhz=np.asarray([float(k.omega_mhz()) for k in keys]),
-        dsweep_mhz=np.asarray([float(k.dsweep_mhz()) for k in keys]),
-        max_leakage=np.asarray([r.max_leakage for r in rows]),
-        leakage=np.asarray([r.leakage for r in rows]).reshape(n, 4),
-        worst_input=np.asarray([r.worst_input for r in rows], dtype="U2"),
-        return_prob=np.asarray([r.return_prob for r in rows]).reshape(n, 4),
-        norm_err_max=np.asarray([float(np.max(r.norm_err)) for r in rows]),
-        tier=np.asarray([r.tier for r in rows], dtype="U10"),
-        rtol=np.asarray([r.rtol for r in rows]),
-        atol=np.asarray([r.atol for r in rows]),
-        psi_final=np.asarray([r.psi_final for r in rows]).reshape(n, 4, -1)
-        if n else np.zeros((0, 4, 16), dtype=np.complex128),
-    )
-    _atomic_savez(merged_path, **payload)
-
-    csv_path = os.path.join(store.exports_dir, "points.csv")
-    cols = ["point_id", "ryd_n", "t_gate_us", "omega297_mhz", "dsweep_mhz",
-            "max_leakage", "leak_00", "leak_01", "leak_10", "leak_11", "worst_input",
-            "min_return_prob", "norm_err_max", "tier", "rtol", "atol", "nfev",
-            "runtime_s", "batch_id"]
-    tmp = csv_path + ".tmp"
-    with open(tmp, "w") as fh:
-        fh.write(",".join(cols) + "\n")
-        for k, r in zip(keys, rows):
-            fh.write(",".join(str(v) for v in (
-                k.id(), cfg.ryd_n[k.n_idx], cfg.t_gate_us[k.t_idx],
-                float(k.omega_mhz()), float(k.dsweep_mhz()),
-                repr(r.max_leakage), repr(r.leakage[0]), repr(r.leakage[1]),
-                repr(r.leakage[2]), repr(r.leakage[3]), r.worst_input,
-                repr(float(np.min(r.return_prob))), repr(float(np.max(r.norm_err))),
-                r.tier, r.rtol, r.atol, r.nfev, f"{r.runtime_s:.3f}", r.batch_id,
-            )) + "\n")
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, csv_path)
-    return merged_path, csv_path
+    return sweeplib.campaign.export_store(store, ScanConfig, records)
 
 
 # ── Scattering-budget integrals (supplemental `scatter` data) ────────────────
@@ -961,359 +902,56 @@ PACK_GATE_COORDS = [((0, 1), (0, 1)), ((3, 1), (3, 1)), ((0, 1), (3, 1)),
 
 
 def run_packing_gate(runner: Runner, done: set[PointKey]) -> dict:
-    """Acceptance gate for multi-point batching: packed vs isolated at *both* the
-    production and audit tolerances (spec-mandated).  Isolated runs are saved as
-    authoritative records; the packed probes are compared in memory and never
-    persisted.  Any worker/pool error disables batching instead of crashing."""
-    keys = [make_key(*PACK_GATE_PANEL, om, dw) for om, dw in PACK_GATE_COORDS]
-    iso_out: dict[tuple[PointKey, str], BatchResult] = {}
-
-    try:
-        futures = {}
-        for tier in ("production", "audit"):
-            for k in keys:
-                b = Batch(keys=[k], tier=tier)
-                futures[runner._submit(b)] = b
-        packed_futs = {tier: runner._submit(Batch(keys=keys, tier=tier))
-                       for tier in ("production", "audit")}
-
-        for fut, b in futures.items():
-            out = fut.result()
-            if not out["ok"]:
-                return {"enabled": False, "reason": f"isolated gate run failed: "
-                        f"{out.get('message', out.get('reason'))}"}
-            if not (b.keys[0] in done and b.tier == "production"):
-                runner._write_success(b, out)
-            iso_out[(b.keys[0], b.tier)] = out["result"]
-        packed_out = {tier: fut.result() for tier, fut in packed_futs.items()}
-    except Exception as exc:  # pool breakage must not kill the whole run
-        return {"enabled": False, "reason": f"gate execution error: {exc}"[:240]}
-
-    devs = {}
-    for tier, out in packed_out.items():
-        if not out["ok"]:
-            return {"enabled": False,
-                    "reason": f"packed {tier} gate run failed: {out.get('message')}"}
-        pres: BatchResult = out["result"]
-        devs[tier] = {
-            "max_state_dev": max(
-                float(np.max(np.abs(pres.psi_final[i] - iso_out[(k, tier)].psi_final[0])))
-                for i, k in enumerate(keys)),
-            "max_leakage_dev": max(
-                float(np.max(np.abs(pres.leakage[i] - iso_out[(k, tier)].leakage[0])))
-                for i, k in enumerate(keys)),
-        }
-    enabled = all(d["max_state_dev"] < PACK_GATE_STATE_TOL
-                  and d["max_leakage_dev"] < PACK_GATE_LEAK_TOL
-                  for d in devs.values())
-    return {
-        "enabled": bool(enabled),
-        "panel": PACK_GATE_PANEL,
-        "n_points": len(keys),
-        "tiers": devs,
-        "max_state_dev": max(d["max_state_dev"] for d in devs.values()),
-        "max_leakage_dev": max(d["max_leakage_dev"] for d in devs.values()),
-        "state_tol": PACK_GATE_STATE_TOL,
-        "leak_tol": PACK_GATE_LEAK_TOL,
-    }
+    return sweeplib.campaign.run_packing_gate(
+        runner, done, make_key=make_key, panel=PACK_GATE_PANEL,
+        coords=PACK_GATE_COORDS, state_tol=PACK_GATE_STATE_TOL,
+        leakage_tol=PACK_GATE_LEAK_TOL)
 
 
-def stage_pilot(runner: Runner, panels: set[tuple[int, int]] | None = None) -> dict:
-    """Stage 1: pilot nodes (+ initial audits + packing gate); returns pilot report."""
-    records = runner.store.load_records(runner.manifest, include_states=False)
-    done = completed_keys(records)
-    audit_done = completed_keys(records, "audit")
-    pkeys = _filter_panels(pilot_keys(), panels)
-    missing = [k for k in pkeys if k not in done]
-    if missing:
-        runner.run_batches(
-            [Batch(keys=[k], save_traj=True) for k in missing], "pilot")
-        records = runner.store.load_records(runner.manifest, include_states=False)
-        done = completed_keys(records)
-
-    # Audit a diagonal spread of panel centers ((0,0),(1,1),...,(7,7)) so the
-    # initial credibility-floor pairs sample both axes of the panel family.
-    centers = [k for k in pkeys if (k.om_num, k.om_den) == (3, 2)]
-    audit_keys = [k for k in centers[::10] if k not in audit_done and k in done]
-    if audit_keys:
-        runner.run_batches(
-            [Batch(keys=[k], tier="audit", save_traj=True) for k in audit_keys],
-            "pilot-audit")
-
-    gate = {"enabled": False, "reason": "batching disabled (--batch-size 1)"}
-    pilot_path = os.path.join(runner.store.reports_dir, "pilot.json")
-    prior_gate = None
-    if os.path.exists(pilot_path):
-        try:
-            with open(pilot_path) as fh:
-                prior_gate = json.load(fh).get("packing_gate")
-        except (OSError, json.JSONDecodeError):
-            prior_gate = None
-    if runner.args.batch_size > 1:
-        norm_ok = json.load(open(os.path.join(runner.store.reports_dir,
-                                              "verification.json")))["error_norm_verified"]
-        if not norm_ok:
-            gate = {"enabled": False,
-                    "reason": "SciPy error-norm seam unverified; one point per solve"}
-        elif prior_gate and "max_state_dev" in prior_gate:
-            gate = prior_gate     # measured once per store; deterministic
-        elif panels is not None and PACK_GATE_PANEL not in panels:
-            gate = {"enabled": False,
-                    "reason": f"--panels excludes gate panel {PACK_GATE_PANEL}"}
-        elif not runner.stop_requested:
-            gate = run_packing_gate(runner, done)
-
-    records = runner.store.load_records(runner.manifest, include_states=False)
-    pairs = audit_pairs(records)
-    per_panel = {f"{p[0]},{p[1]}": float(np.median(v))
-                 for p, v in sorted(runner.cost.samples.items())}
-    report = {
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        "n_pilot_points": len(pkeys),
-        "packing_gate": gate,
-        "per_panel_median_point_s": per_panel,
-        "inflation_p90": runner.cost.inflation_p90(),
-        "audit_pairs": len(pairs),
-        "eta_hours_full_levels": {
-            str(LEVEL_SIZES[lv]): runner.cost.eta_seconds(
-                all_keys(lv), runner.args.workers) / 3600.0
-            for lv in range(len(LEVEL_SIZES))
-        },
-    }
-    path = os.path.join(runner.store.reports_dir, "pilot.json")
-    with open(path + ".tmp", "w") as fh:
-        json.dump(report, fh, indent=2)
-    os.replace(path + ".tmp", path)
-    print(f"[pilot] packing gate: {gate}", flush=True)
-    print(f"[pilot] full-level ETA estimates (h): "
-          f"{report['eta_hours_full_levels']}", flush=True)
-    return report
+def stage_pilot(runner: Runner,
+                panels: set[tuple[int, int]] | None = None) -> dict:
+    return sweeplib.campaign.stage_pilot(
+        runner, panels, pilot_keys=pilot_keys, packing_gate=run_packing_gate,
+        packing_gate_panel=PACK_GATE_PANEL, all_keys=all_keys,
+        level_sizes=LEVEL_SIZES)
 
 
 # ── Stage orchestration and CLI commands ─────────────────────────────────────
-#
-# The credibility floor (audit-derived vmin) lives in sweeplib.plotting and is
-# imported above as ``_credibility_floor``.
-
-
-def _run_level(runner: Runner, level: int, done: set[PointKey],
-               batch_size: int, rerun_failures: bool,
-               failed: set[PointKey],
-               panels: set[tuple[int, int]] | None = None) -> None:
-    missing = [k for k in _filter_panels(all_keys(level), panels)
-               if k not in done and (rerun_failures or k not in failed)]
-    if not missing:
-        print(f"[level {LEVEL_SIZES[level]}] complete", flush=True)
-        return
-    batches = group_batches(missing, batch_size)
-    runner.run_batches(batches, f"level-{LEVEL_SIZES[level]}")
-
 
 def _parse_panels(args) -> set[tuple[int, int]] | None:
-    """Optional panel restriction ``--panels "di,ti;di,ti"`` (smoke tests, reruns)."""
-    spec = getattr(args, "panels", None)
-    if not spec:
-        return None
-    panels = set()
-    for part in spec.split(";"):
-        di, ti = (int(v) for v in part.split(","))
-        if not (0 <= di < len(RYD_N) and 0 <= ti < len(T_GATE_US)):
-            raise SystemExit(f"--panels: ({di},{ti}) out of range")
-        panels.add((di, ti))
-    return panels
+    return sweeplib.campaign.parse_panels(args, len(RYD_N), len(T_GATE_US))
 
 
-def _filter_panels(keys: Iterable[PointKey],
-                   panels: set[tuple[int, int]] | None) -> list[PointKey]:
-    return [k for k in keys if panels is None or k.panel in panels]
+def _campaign_gammas(cfg: ScanConfig, checks: dict) -> dict:
+    return checks["decay_rates_rad_s"]
+
+
+def _campaign_hooks() -> sweeplib.campaign.CampaignHooks:
+    return sweeplib.campaign.CampaignHooks(
+        setup_run=setup_run, parse_panels=_parse_panels, all_keys=all_keys,
+        all_panels=all_panels, pilot_keys=pilot_keys, stage_pilot=stage_pilot,
+        ensure_scatter_gate=_ensure_scatter_gate, gammas=_campaign_gammas,
+        export_store=export_store, write_summary_reports=write_summary_reports,
+        level_sizes=LEVEL_SIZES, level_from_size=LEVEL_FROM_SIZE,
+        row_description=lambda cfg: (
+            f"rows n={list(cfg.ryd_n)} x cols {list(cfg.t_gate_us)} us"))
 
 
 def cmd_pilot(args) -> None:
-    store, manifest, cfg, ops, checks = setup_run(args)
-    cost = CostModel(cfg)
-    _feed_cost_model(cost, store.load_records(manifest, include_states=False))
-    runner = Runner(store, manifest, cfg, args, cost)
-    try:
-        stage_pilot(runner, _parse_panels(args))
-    except KeyboardInterrupt:
-        print("[pilot] hard abort", flush=True)
-    finally:
-        runner.write_failure_report()
-        runner.write_status("pilot-aborted" if runner.aborted else "pilot-done")
-        runner.shutdown()
-    if not runner.aborted:
-        export_store(store)
-
-
-def _feed_cost_model(cost: CostModel, records: list[PointRecord]) -> None:
-    for r in records:
-        if r.status == "ok" and r.tier == "production":
-            cost.observe(r.key.panel, r.runtime_s)
-
-
-def _effective_batch_size(store: Store, args) -> int:
-    """Requested batch size, gated by the recorded pilot packing acceptance."""
-    if args.batch_size <= 1:
-        return 1
-    path = os.path.join(store.reports_dir, "pilot.json")
-    if os.path.exists(path):
-        try:
-            with open(path) as fh:
-                gate = json.load(fh).get("packing_gate", {})
-            if gate.get("enabled"):
-                return args.batch_size
-        except (OSError, json.JSONDecodeError):
-            pass
-    print("[run] packing gate not passed/recorded; using one point per solve",
-          flush=True)
-    return 1
+    sweeplib.campaign.pilot_command(args, _campaign_hooks())
 
 
 def cmd_run(args) -> None:
-    store, manifest, cfg, ops, checks = setup_run(args)
-    panels = _parse_panels(args)
-    records = store.load_records(manifest, include_states=False)
-    done = completed_keys(records)
-    failed = {r.key for r in records if r.status != "ok"} - done
-    cost = CostModel(cfg)
-    _feed_cost_model(cost, records)
-
-    max_level = LEVEL_FROM_SIZE[int(args.target_level)]
-
-    if args.dry_run:
-        n_panels = len(panels) if panels is not None else len(all_panels())
-        print(f"panels: {n_panels}  "
-              f"(rows n={list(cfg.ryd_n)} x cols {list(cfg.t_gate_us)} us)")
-        for lv in range(len(LEVEL_SIZES)):
-            keys = _filter_panels(all_keys(lv), panels)
-            miss = [k for k in keys if k not in done]
-            eta_h = cost.eta_seconds(miss, args.workers) / 3600.0
-            eta_txt = (f"{eta_h:8.2f} h" if cost.samples else "unmeasured")
-            print(f"level {LEVEL_SIZES[lv]:>2}x{LEVEL_SIZES[lv]:<2}: "
-                  f"{len(keys) - len(miss):>6}/{len(keys):>6} done, "
-                  f"{len(miss):>6} missing, predicted ETA {eta_txt} "
-                  f"@ {args.workers} workers")
-        pkeys = _filter_panels(pilot_keys(), panels)
-        print(f"pilot: {sum(1 for k in pkeys if k in done)}/{len(pkeys)} done")
-        print(f"failed points on record: {len(failed)}"
-              + (" (will retry: --rerun-failures)" if args.rerun_failures else ""))
-        return
-
-    runner = Runner(store, manifest, cfg, args, cost)
-    # Single-pass: every production level solve writes the coherent chunk AND the
-    # scattering-budget records in one step.  Gammas are keyed by panel row (this
-    # model's Rydberg decay rates are n-dependent), and already-scattered keys are
-    # skipped at write time so a resumed run never duplicates a scatter record.
-    runner.gammas = checks["decay_rates_rad_s"]
-    runner.scatter_done = {r["key"] for r in store.load_scatter_records(manifest)
-                           if r["status"] == "ok"}
-    try:
-        stage_pilot(runner, panels)
-        # The trajectory-equivalence gate is a per-store setup step: it needs a
-        # stored production trajectory (the pilot just produced one), runs once,
-        # and is recorded/skipped thereafter.  Only enable the merged scatter
-        # writes once it passes; otherwise the run still produces coherent data.
-        gate = _ensure_scatter_gate(runner, store)
-        if gate.get("ok"):
-            runner.write_both_series = True
-            print("[run] single-pass scatter enabled (equivalence gate ok)",
-                  flush=True)
-        else:
-            print(f"[run] scatter-equivalence gate not ok "
-                  f"({gate.get('reason')}); writing the coherent series only",
-                  flush=True)
-        batch_size = _effective_batch_size(store, args)
-        print(f"[run] effective batch size: {batch_size}", flush=True)
-
-        for level in range(len(LEVEL_SIZES)):
-            if runner.stop_requested or level > max_level:
-                break
-            records = store.load_records(manifest, include_states=False)
-            done = completed_keys(records)
-            _run_level(runner, level, done, batch_size, args.rerun_failures,
-                       failed, panels)
-    except KeyboardInterrupt:
-        print("[run] hard abort; in-flight batches were discarded (their points "
-              "resume on the next run)", flush=True)
-    finally:
-        runner.write_failure_report()
-        runner.write_status("run-aborted" if runner.aborted else "run-done")
-        runner.shutdown()
-
-    if not runner.aborted:
-        export_store(store)
-        write_summary_reports(store)
-        print("[run] done; exports refreshed", flush=True)
+    sweeplib.campaign.run_command(args, _campaign_hooks())
 
 
 def cmd_audit(args) -> None:
-    store, manifest, cfg, ops, checks = setup_run(args)
-    records = store.load_records(manifest, include_states=False)
-    prod = sorted(completed_keys(records, "production"))
-    audited = completed_keys(records, "audit")
-    targets: list[PointKey] = []
-
-    if args.audit_point:
-        by_id = {k.id(): k for k in prod}
-        if args.audit_point not in by_id:
-            raise SystemExit(f"--audit-point {args.audit_point}: no successful "
-                             "production record with that id")
-        targets.append(by_id[args.audit_point])
-    elif args.candidates:
-        best = best_records(records)
-        ranked = sorted((r.max_leakage, k) for k, r in best.items()
-                        if r.tier == "production")
-        targets = [k for _, k in ranked[:args.candidates] if k not in audited]
-    else:
-        pool = [k for k in prod if k not in audited]
-        rng = np.random.default_rng(args.seed)
-        n = min(args.n_points, len(pool))
-        if n:
-            targets = [pool[i] for i in
-                       sorted(rng.choice(len(pool), size=n, replace=False))]
-
-    if not targets:
-        print("[audit] nothing to audit")
-        return
-    cost = CostModel(cfg)
-    _feed_cost_model(cost, records)
-    runner = Runner(store, manifest, cfg, args, cost)
-    try:
-        runner.run_batches(
-            [Batch(keys=[k], tier="audit", save_traj=True) for k in targets],
-            "audit", enforce_deadline=False)
-    except KeyboardInterrupt:
-        print("[audit] hard abort", flush=True)
-    finally:
-        runner.write_failure_report()
-        runner.shutdown()
-    if not runner.aborted:
-        write_summary_reports(store)
+    sweeplib.campaign.audit_command(args, _campaign_hooks())
 
 
 def _ensure_scatter_gate(runner: Runner, store: Store) -> dict:
-    """Run the trajectory-equivalence gate once per store (shared by run/scatter).
-
-    Executed only when ``reports/scatter_gate.json`` is absent or not ok; the
-    result is recorded there and a passed record is returned as-is on the next
-    contact.  (The live a3.0 store already carries a passed record, so merged code
-    skips the gate on it; a store without one runs it once against its stored
-    pilot trajectory.)
-    """
-    path = os.path.join(store.reports_dir, "scatter_gate.json")
-    if os.path.exists(path):
-        try:
-            with open(path) as fh:
-                prev = json.load(fh)
-            if prev.get("ok"):
-                return prev
-        except (OSError, json.JSONDecodeError):
-            pass
-    gate = _scatter_equivalence_gate(runner, store)
-    with open(path + ".tmp", "w") as fh:
-        json.dump(gate, fh, indent=2)
-    os.replace(path + ".tmp", path)
-    return gate
+    return sweeplib.campaign.ensure_scatter_gate(
+        runner, store, _scatter_equivalence_gate)
 
 
 def _scatter_equivalence_gate(runner: Runner, store: Store) -> dict:
@@ -1377,7 +1015,7 @@ def _scatter_equivalence_gate(runner: Runner, store: Store) -> dict:
         w = np.real(np.diag(sum(build_occ_operator(lv, local_dim) for lv in levels)))
         ref[ch] = ref_rates[ch] * np.trapezoid(pops @ w, times, axis=0)
 
-    out = _worker_run_batch(runner._spec(Batch(keys=[best_key], scatter=True)))
+    out = _worker_run_batch(runner._spec(Batch(keys=[best_key], mode="scatter")))
     if not out.get("ok"):
         return {"ok": False, "reason": f"gate solve failed: {out.get('message')}"}
     dev = max(float(np.max(np.abs(out["scatter"][ch][0] - ref[ch])))
@@ -1388,48 +1026,7 @@ def _scatter_equivalence_gate(runner: Runner, store: Store) -> dict:
 
 def cmd_scatter(args) -> None:
     """Supplemental scattering-budget pass: additive only (scatter/ series)."""
-    store, manifest, cfg, ops, checks = setup_run(args)
-    level = LEVEL_FROM_SIZE[int(args.level)]
-    panels = _parse_panels(args)
-
-    done_scatter = {r["key"] for r in store.load_scatter_records(manifest)
-                    if r["status"] == "ok"}
-    missing = [k for k in _filter_panels(all_keys(level), panels)
-               if k not in done_scatter]
-    print(f"[scatter] level {args.level}: {len(missing)} points to compute "
-          f"({len(done_scatter)} already stored)", flush=True)
-    if not missing:
-        return
-
-    cost = CostModel(cfg)
-    _feed_cost_model(cost, store.load_records(manifest, include_states=False))
-    runner = Runner(store, manifest, cfg, args, cost)
-    runner.gammas = checks["decay_rates_rad_s"]
-    gate_failed = False
-    try:
-        gate = _ensure_scatter_gate(runner, store)
-        print(f"[scatter] trajectory-equivalence gate: {gate}", flush=True)
-        if not gate.get("ok"):
-            gate_failed = True
-            raise SystemExit("[scatter] equivalence gate failed; not running")
-
-        batch_size = _effective_batch_size(store, args)
-        batches = group_batches(missing, batch_size)
-        for b in batches:
-            b.scatter = True
-        runner.run_batches(batches, f"scatter-{args.level}")
-    except KeyboardInterrupt:
-        print("[scatter] hard abort", flush=True)
-    finally:
-        if gate_failed:
-            # a refused run dispatched nothing: keep the previous failure report
-            runner.write_status(f"scatter-{args.level}-gate-failed")
-        else:
-            runner.write_failure_report()
-            runner.write_status(
-                f"scatter-{args.level}-aborted" if runner.aborted
-                else f"scatter-{args.level}-done")
-        runner.shutdown()
+    sweeplib.campaign.scatter_command(args, _campaign_hooks())
 
 
 def cmd_filter(args) -> None:
@@ -1439,20 +1036,25 @@ def cmd_filter(args) -> None:
     panels = _parse_panels(args)
     done = {r["key"] for r in store.load_filter_records(manifest)
             if r["status"] == "ok"}
-    missing = [k for k in _filter_panels(all_keys(level), panels) if k not in done]
+    missing = [
+        key for key in sweeplib.campaign.filter_panels(all_keys(level), panels)
+        if key not in done
+    ]
     print(f"[filter] level {args.level}: {len(missing)} points to compute "
           f"({len(done)} already stored)", flush=True)
     if not missing:
         return
     cost = CostModel(cfg)
-    _feed_cost_model(cost, store.load_records(manifest, include_states=False))
+    sweeplib.campaign.feed_cost_model(
+        cost, store.load_records(manifest, include_states=False))
     runner = Runner(store, manifest, cfg, args, cost)
     runner.filter_bins = kernel_frequency_bins()[0]
     runner.filter_n_t = KERNEL_N_T
     try:
-        batches = group_batches(missing, _effective_batch_size(store, args))
+        batches = group_batches(
+            missing, sweeplib.campaign.effective_batch_size(store, args))
         for b in batches:
-            b.filter_pass = True
+            b.mode = "filter"
         runner.run_batches(batches, f"filter-{args.level}")
     except KeyboardInterrupt:
         print("[filter] hard abort", flush=True)
@@ -1464,82 +1066,19 @@ def cmd_filter(args) -> None:
 
 
 def write_summary_reports(store: Store) -> None:
-    """Regenerate reports/audit_summary.json and reports/candidates.json."""
-    manifest = store.load_manifest()
-    records = store.load_records(manifest, include_states=False)
-    pairs = audit_pairs(records)
-    vmin, floor_info = _credibility_floor(records)
-    diffs = np.abs([p - a for _, p, a in pairs]) if pairs else np.zeros(0)
-    audit_summary = {
-        "n_pairs": len(pairs),
-        "max_abs_leakage_diff": float(diffs.max()) if diffs.size else None,
-        "p95_abs_leakage_diff": float(np.percentile(diffs, 95)) if diffs.size else None,
-        "credibility_floor": floor_info,
-        "worst_pairs": [
-            {"point_id": k.id(), "L_production": p, "L_audit": a,
-             "abs_diff": abs(p - a)}
-            for k, p, a in sorted(pairs, key=lambda t: -abs(t[1] - t[2]))[:10]
-        ],
-    }
-    path = os.path.join(store.reports_dir, "audit_summary.json")
-    with open(path + ".tmp", "w") as fh:
-        json.dump(audit_summary, fh, indent=2)
-    os.replace(path + ".tmp", path)
-
-    best = best_records(records)
-    cand: dict[str, dict] = {}
-    for k, r in best.items():
-        pk = f"{k.n_idx},{k.t_idx}"
-        if pk not in cand or r.max_leakage < cand[pk]["max_leakage"]:
-            cand[pk] = {"point_id": k.id(), "max_leakage": r.max_leakage,
-                        "omega297_mhz": float(k.omega_mhz()),
-                        "dsweep_mhz": float(k.dsweep_mhz()),
-                        "worst_input": r.worst_input, "tier": r.tier}
-    path = os.path.join(store.reports_dir, "candidates.json")
-    with open(path + ".tmp", "w") as fh:
-        json.dump({"note": "per-panel minima over exact ODE nodes only",
-                   "panels": cand}, fh, indent=2, sort_keys=True)
-    os.replace(path + ".tmp", path)
-
+    sweeplib.campaign.write_summary_reports(store, "omega297_mhz")
 
 def cmd_status(args) -> None:
-    store = Store(args.output)
-    manifest = store.load_manifest()
-    if manifest is None:
-        print(f"no manifest under {store.root} (scan not initialized)")
-        return
-    records = store.load_records(manifest, include_states=False)
-    done = completed_keys(records)
-    failed = {r.key for r in records if r.status != "ok"} - done
-    print(f"scan {manifest['scan_uuid'][:12]}  created {manifest['created_at']}")
-    print(f"git {manifest['git']['commit'][:10]}"
-          f"{' (dirty)' if manifest['git']['dirty'] else ''}")
-    for lv, size in enumerate(LEVEL_SIZES):
-        keys = all_keys(lv)
-        n_done = sum(1 for k in keys if k in done)
-        print(f"level {size:>2}x{size:<2}: {n_done:>6}/{len(keys):>6} nodes complete")
-    pkeys = pilot_keys()
-    print(f"pilot: {sum(1 for k in pkeys if k in done)}/{len(pkeys)} done")
-    n_audit = len(completed_keys(records, 'audit'))
-    pairs = audit_pairs(records)
-    print(f"records: {len(records)} rows, {len(done)} unique ok points, "
-          f"{n_audit} audit points, {len(pairs)} audit pairs, {len(failed)} failed")
-    ok_prod = [r for r in records if r.status == "ok" and r.tier == "production"]
-    if ok_prod:
-        rt = np.asarray([r.runtime_s for r in ok_prod])
-        print(f"per-point runtime (production): median {np.median(rt):.1f} s, "
-              f"P90 {np.percentile(rt, 90):.1f} s, total {rt.sum() / 3600:.2f} core-h")
-    status_path = os.path.join(store.reports_dir, "status.json")
-    if os.path.exists(status_path):
-        with open(status_path) as fh:
-            print(f"last run status: {json.load(fh)}")
+    sweeplib.campaign.print_status(
+        Store(args.output), all_keys=all_keys, pilot_keys=pilot_keys,
+        level_sizes=LEVEL_SIZES)
 
 
 def cmd_export(args) -> None:
     store = Store(args.output)
     merged, csv_path = export_store(store)
     write_summary_reports(store)
-    print(f"exports: {merged}\n         {csv_path}")
+    print(f"exports: {merged}\\n         {csv_path}")
 
 
 # ── Plotting ─────────────────────────────────────────────────────────────────

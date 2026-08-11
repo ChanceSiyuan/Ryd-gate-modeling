@@ -30,18 +30,19 @@ _spec.loader.exec_module(mls)
 
 
 def test_axis_values_match_locked_specification():
-    om0 = [float(v) for v in mls.axis_values_mhz(mls.OMEGA_ANCHORS_MHZ, 0)]
+    om0 = [float(v) for v in mls.sweeplib.axis_values_mhz(mls.OMEGA_ANCHORS_MHZ, 0)]
     assert om0 == pytest.approx([200.0, 1400 / 3, 2200 / 3, 1000.0])
-    om1 = [float(v) for v in mls.axis_values_mhz(mls.OMEGA_ANCHORS_MHZ, 1)]
+    om1 = [float(v) for v in mls.sweeplib.axis_values_mhz(mls.OMEGA_ANCHORS_MHZ, 1)]
     assert om1 == pytest.approx(
         [200.0, 1000 / 3, 1400 / 3, 600.0, 2200 / 3, 2600 / 3, 1000.0])
-    dw1 = [float(v) for v in mls.axis_values_mhz(mls.DSWEEP_ANCHORS_MHZ, 1)]
+    dw1 = [float(v) for v in mls.sweeplib.axis_values_mhz(mls.DSWEEP_ANCHORS_MHZ, 1)]
     assert dw1 == pytest.approx([2.0, 6.0, 10.0, 15.0, 20.0, 25.0, 30.0])
 
 
 def test_20mhz_is_a_node_of_the_dsweep_axis_at_every_level():
     for level in range(4):
-        values = [float(v) for v in mls.axis_values_mhz(mls.DSWEEP_ANCHORS_MHZ, level)]
+        values = [float(v) for v in
+                  mls.sweeplib.axis_values_mhz(mls.DSWEEP_ANCHORS_MHZ, level)]
         assert 20.0 in values
 
 
@@ -192,16 +193,17 @@ def test_export_store_writes_merged_npz_and_csv(tmp_path):
 
 
 def test_effective_batch_size_falls_back_to_one_without_a_passed_gate(tmp_path):
-    """_effective_batch_size gates the requested size on a recorded, enabled
+    """effective_batch_size gates the requested size on a recorded, enabled
     packing acceptance; absent/failed gates fall back to one point per solve."""
     store, _ = _mini_store(tmp_path)
-    assert mls._effective_batch_size(store, Namespace(batch_size=1)) == 1
-    assert mls._effective_batch_size(store, Namespace(batch_size=48)) == 1   # no pilot
+    effective_batch_size = mls.sweeplib.campaign.effective_batch_size
+    assert effective_batch_size(store, Namespace(batch_size=1)) == 1
+    assert effective_batch_size(store, Namespace(batch_size=48)) == 1  # no pilot
     pilot = Path(store.reports_dir) / "pilot.json"
     pilot.write_text(json.dumps({"packing_gate": {"enabled": True}}))
-    assert mls._effective_batch_size(store, Namespace(batch_size=48)) == 48
+    assert effective_batch_size(store, Namespace(batch_size=48)) == 48
     pilot.write_text(json.dumps({"packing_gate": {"enabled": False}}))
-    assert mls._effective_batch_size(store, Namespace(batch_size=48)) == 1
+    assert effective_batch_size(store, Namespace(batch_size=48)) == 1
 
 
 # ── scatter-equivalence gate as a per-store setup step ───────────────────────

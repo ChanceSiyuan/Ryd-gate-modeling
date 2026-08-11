@@ -4,13 +4,14 @@
 point-key factory; ``solver`` holds the quintic envelope, the block-max DOP853
 error norm, and the injected-RHS batched integration kernel; ``store`` holds the
 append-only chunk/scatter store + provenance gates; ``runner`` holds the fork-pool
-worker entry, cost model and budget runner; ``plotting`` holds the log-linear
+worker entry, cost model and runner; ``plotting`` holds the log-linear
 interpolation, LOO veil, credibility floor and 8x9 grid renderer; ``cli`` holds
-the shared parser scaffold and derived-output resolution.
+the shared parser scaffold and derived-output resolution; ``campaign`` owns the
+common pilot/run/audit/export/report orchestration.
 """
 from __future__ import annotations
 
-from . import cli, plotting
+from . import campaign, cli, plotting
 
 from .axes import (
     LEVEL_DENS,
@@ -42,8 +43,6 @@ from .store import (
     best_records,
     completed_keys,
     audit_pairs,
-    _atomic_savez,
-    _NO_STATES,
 )
 from .runner import (
     Batch,
@@ -51,8 +50,6 @@ from .runner import (
     Runner,
     group_batches,
     set_worker_context,
-    _worker_run_batch,
-    _worker_process_init,
 )
 from .plotting import (
     PlotSpec,
@@ -71,6 +68,7 @@ from .cli import (
 )
 
 __all__ = [
+    "campaign",
     "LEVEL_DENS",
     "LEVEL_SIZES",
     "LEVEL_FROM_SIZE",
