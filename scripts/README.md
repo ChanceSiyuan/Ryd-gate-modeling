@@ -30,6 +30,9 @@ The complete directory index, including notebook-owned studies, is
 
 - `api_walkthrough.py` is the runnable public-API tour.
 - `check_notebooks.py` executes the CPU-gated notebook set in temporary files.
+- `mwis_dynamic_detuning.py` reproduces the effective-CWE exponential-versus-
+  polynomial gap comparison and writes the curated figure used by
+  `manuscripts/chapters/MWIS.tex`.
 - `bench_quench_check.py` compares tensor-network refactor baselines.
 - `run_peps_10x10.py` is the maintained large PEPS validation case.
 - `sweeplib/` owns the shared axes, solver, append-only store, campaign runner,

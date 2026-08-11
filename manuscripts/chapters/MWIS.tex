@@ -1,44 +1,820 @@
-\chapter{Weighted maximum Independent set}
+\chapter{Dynamic local detuning for Rydberg MWIS encodings}
+\label{chap:mwis-dynamic-detuning}
 
-This chapter devoted to discuss the reduction to UDG-WMIS problem and its approximation algorithms 
+This chapter asks a deliberately narrow question: can programmable local
+detunings on the atoms already present in a crossing-with-edge (CWE) encoding
+replace an encoding-induced exponentially small gap by a polynomial gap?  The
+answer is yes for the elementary instance consisting of two logical vertices
+and one edge, but with two important qualifications.  First, time dependence
+does not enlarge the instantaneous linear space of realizable diagonal
+operators.  In fact, the exact degree-balancing potential proposed in
+Ref.~\cite{bombieri2025quantum} is not realizable on the unmodified CWE by
+detuning its existing atoms, whether those detunings are static or dynamic.
+Second, a different, reachable control is sufficient: a two-atom dynamic
+``corridor catalyst'' removes the geometrical corner state from the relevant
+spectral window and changes the endpoint-sweep gap from exponential to
+$\Theta(L^{-2})$.
 
-\section{Definition and Classical Algorithms}
-\begin{lemma}\label{lem:WMIS}
-    Given a weighted graph $G=(V,E)$ with vertex weights $\delta_v>0$, the smallest value of the Hamiltonian
-    $$
-    H_{\rm MWIS}
-    =-\sum_{v\in V}w_v n_v+\sum_{(u,v)\in E}U_{uv}n_un_v,
-    \qquad n_v\in\{0,1\},
-    $$
-    gives the maximum-weight independent set through the relation
-    $S=\{v\in V:n_v=1\}$,
-    provided that the edge penalties satisfy $U_{uv}>\max_{v\in V}w_v$
-    for every $(u,v)\in E$.
-    \end{lemma}
-    
-    \begin{proof}
-        Minimum solution $n_v$ giving a set $S(n)=\{v\in V:n_v=1\}$ being an independent set, otherwise changing to $n'_v=0$ for $v\in S(n)$ with neighbor change the energy as
-        $\Delta_E = w_v-\sum_{\substack{u\in S(n)\\(u,v)\in E}}U_{uv}<0$,
-        which strictly lowers the energy and contradict with the minimum condition. It is also easy to see that a MWIS gives the smallest value of $H_{\rm MWIS}$.
-    \end{proof}
+The polynomial statement proved below is a theorem for the second-order
+domain-wall Hamiltonian in the blockade limit.  Its transfer to a finite-
+blockade, finite-$\Omega/\Delta$ experiment requires a separate leakage and
+model-error check; those conditions are stated explicitly rather than hidden
+in the effective-model result.  The final sections turn the CWE calculation
+into a general control-space and weighted-Poincar\'e framework.
 
+\section{MWIS cost function and Rydberg realization}
+\label{sec:mwis-cost-rydberg}
 
-\paragraph{The Simulated Annealing.}
-Use $\mathbf{z} \in \{0,1\}^{|V|}$ to specify the nodes in the IS $(z_v = 1)$. 
-Since being an IS, the Hamiltonian writes $H(z) = - \sum_{v} w_v n_v$. 
-The Simulated Annealing use the Metropolis updates
+Let $G=(V,E)$ be a graph with positive vertex weights $w_v$.  For binary
+variables $n_v\in\{0,1\}$, consider
+\begin{equation}
+ H_{\mathrm{MWIS}}(\mathbf n)
+ =-\sum_{v\in V}w_v n_v
+ +\sum_{(u,v)\in E}U_{uv}n_un_v .
+ \label{eq:mwis-cost}
+\end{equation}
+
+\begin{lemma}[Penalty encoding of MWIS]
+\label{lem:mwis-penalty}
+If $U_{uv}>\max\{w_u,w_v\}$ for every edge $(u,v)$, every minimizer of
+Eq.~\eqref{eq:mwis-cost} is an independent set, and its occupied vertices form
+a maximum-weight independent set.
+\end{lemma}
+
+\begin{proof}
+Suppose a minimizing configuration contains an occupied edge $(u,v)$.  Set
+$n_v$ to zero.  The energy change is
+\begin{equation}
+ H_{\mathrm{MWIS}}(n_v=0)-H_{\mathrm{MWIS}}(n_v=1)
+ =w_v-\sum_{a:\,(a,v)\in E}U_{av}n_a<0,
+\end{equation}
+because the sum contains at least $U_{uv}>w_v$.  This contradicts
+minimality.  On the independent-set subspace the penalty term vanishes, so
+minimizing Eq.~\eqref{eq:mwis-cost} is equivalent to maximizing
+$\sum_vw_vn_v$.
+\end{proof}
+
+The driven Rydberg Hamiltonian is taken to be
+\begin{equation}
+ H_{\mathrm{Ryd}}(s)
+ =\Omega(s)\sum_{a}\sigma_a^x
+ -\sum_a[\Delta_a^{(0)}(s)+u_a(s)]n_a
+ +\sum_{a<b}U_{ab}n_an_b,
+ \qquad s\in[0,1].
+ \label{eq:mwis-rydberg}
+\end{equation}
+Here $u_a(s)$ is a programmable local shift of the detuning.  In the ideal
+blockade model, configurations containing two excited atoms within the
+blockade radius are projected out.  The remaining classical configurations
+are independent sets of the physical unit-disk graph.  Vertex wires and
+crossing gadgets extend this native geometry to arbitrary logical
+connectivity~\cite{nguyen2023quantum}; local light shifts provide the relevant
+experimental control primitive~\cite{oliveira2025demonstration}.
+
+For an annealing path, the instantaneous and minimum gaps are
+\begin{equation}
+ \delta E(s)=E_1(s)-E_0(s),\qquad
+ \delta E_m(L)=\min_{s\in[0,1]}\delta E(s).
+ \label{eq:mwis-gap-definition}
+\end{equation}
+Changing only the speed $s(t)$ does not change Eq.~\eqref{eq:mwis-gap-definition};
+changing $u_a(s)$ deforms the Hamiltonian path itself.  Gap-aware scheduling
+and path optimization should therefore be distinguished~\cite{zeng2016schedule,jeong2026enhanced}.
+
+\section{The CWE low-energy manifold}
+\label{sec:mwis-cwe-manifold}
+
+\subsection{Physical gadget and configuration-space geometry}
+
+The CWE joins two even vertex wires $x$ and $y$.  Denote by $m_w$ the last
+ordinary atom before the gadget on wire $w$.  Its central five-atom block is a
+wheel graph: $G_c$ is the hub and
+$(G_x,G_y,m_x+1,m_y+1)$ form the four-cycle.  The incoming atoms $m_x$ and
+$m_y$ attach to $G_x$ and $G_y$, respectively.  This observation gives a
+useful consistency check: the five-atom blockade Hilbert space has physical
+dimension eight, as in the tensor-network construction of
+Ref.~\cite{bombieri2025quantum}.
+
+For the two-wire setup, define
+\begin{equation}
+ L_w=\frac{N_w}{2}+2,
+ \qquad
+ \zeta_w=\frac{m_w}{2}+1 .
+ \label{eq:mwis-length-zeta}
+\end{equation}
+The low-energy basis states are labeled by the locations of the two domain
+walls, $\ket{\mathbf j}_d=\ket{j_x,j_y}_d$.  The CWE constraint removes the
+states in which both domain walls have passed the gadget.  Thus
+\begin{equation}
+ \Gamma_L=
+ \left\{(j_x,j_y):
+ 1\leq j_w\leq L_w,\qquad
+ \neg(j_x>\zeta_x\ \text{and}\ j_y>\zeta_y)
+ \right\}.
+ \label{eq:mwis-L-domain}
+\end{equation}
+It is useful to split this L-shaped configuration graph into
+\begin{subequations}
 \begin{align}
-P(z,z')=p(z,z')
-\min\left\{1, e^{-\beta[H_{\rm cost}(z')-H_{\rm cost}(z)]}\right\},
+ \mathcal I&=\{j_x\leq\zeta_x,\ j_y\leq\zeta_y\},
+ &\text{(inner region)},\\
+ \mathcal X&=\{j_x>\zeta_x,\ j_y\leq\zeta_y\},
+ &\text{(horizontal lead)},\\
+ \mathcal Y&=\{j_x\leq\zeta_x,\ j_y>\zeta_y\},
+ &\text{(vertical lead)}.
 \end{align}
+\label{eq:mwis-three-regions}
+\end{subequations}
+Nearest-neighbor changes of one domain wall give the Manhattan edges of
+$\Gamma_L$.  The CWE adds one diagonal hopping edge,
+\begin{equation}
+ (\zeta_x+1,\zeta_y)\longleftrightarrow
+ (\zeta_x,\zeta_y+1).
+ \label{eq:mwis-gadget-diagonal-edge}
+\end{equation}
+For example, $N_x=N_y=8$ and $m_x=m_y=4$ give
+$L_x=L_y=6$, $\zeta_x=\zeta_y=3$, and
+$6^2-3^2=27$ domain-wall states.  Their exchange graph has 42 Manhattan
+edges plus the edge in Eq.~\eqref{eq:mwis-gadget-diagonal-edge}.  These integer
+invariants are useful for detecting an incorrectly transcribed gadget.
 
-\section{Rydberg atom encoding}
-The Rydberg Hamiltonian 
-\begin{align}
-  H_{\rm yd}= \sum_{v} \sigma_x^v - \sum_{v} \Delta_v n_v + \sum_{v<u} U_{v,u} n_v n_u, 
-\end{align}
-naturally encodes the MWIS problem.
-Typically, we set up the range $\delta(t) \in [0, \max_{ij} V_{ij}]$.
-Sweep from $\delta(t_0) + h_j \geq 0$, which takes the $\ket{0}^{\otimes n}$ as the ground state, to a fixed negative value $\delta(t_f) + h_j := -w_i <0, $, which encodes the solution of certain MWIS problem (See Lemma~\ref{lem:WMIS}).
-As indicates by many experiments, we expect the adiabatic change of $\Omega(t)$ and $\delta(t)$ could solve the MWIS problem on a unit disk graph (WDG). Unfortunately, the UDG-MWIS admits classically efficient algorithms.
+\subsection{Schrieffer--Wolff projection}
 
+Set the common bulk and gadget detuning to $\Delta>0$ and write
+\begin{equation}
+ H_0=-\Delta\sum_a n_a,\qquad
+ V=H_\Omega+H_u,\qquad
+ H_\Omega=\Omega\sum_a\sigma_a^x,\qquad
+ H_u=-\sum_a u_a n_a .
+ \label{eq:mwis-H0-V}
+\end{equation}
+Let $P$ project onto the one-domain-wall-per-wire manifold and
+$Q=\mathbb I-P$.  To second order,
+\begin{equation}
+ H_{\mathrm{eff}}
+ =PH_0P+PVP
+ +PVQ\frac{1}{E_0-QH_0Q}QVP
+ +\mathcal R_{\mathrm{SW}} .
+ \label{eq:mwis-SW}
+\end{equation}
+This is the standard degenerate Schrieffer--Wolff expression
+\cite{bravyi2011schrieffer}.  A single spin flip leaves the manifold; a second
+flip can exchange an excitation with its neighbor and move a domain wall by
+one lattice step.  The resulting hopping is
+\begin{equation}
+ t=\frac{\Omega^2}{\Delta}.
+ \label{eq:mwis-hopping}
+\end{equation}
+The first-order local-detuning contribution is diagonal.  If
+\begin{equation}
+ M_{\mathbf j,a}={}_d\!\bra{\mathbf j}n_a
+ \ket{\mathbf j}_d\in\{0,1\},
+ \label{eq:mwis-occupation-map}
+\end{equation}
+then, up to a scalar energy shift,
+\begin{equation}
+ H_{\mathrm{eff}}(s)
+ =-t(s)A_{\Gamma_L}
+ -\operatorname{diag}\!\left[M\mathbf u(s)
+ +\boldsymbol\epsilon_{\mathrm{end}}(s)\right]
+ +\mathcal R_{\mathrm{SW}}(s).
+ \label{eq:mwis-effective-general}
+\end{equation}
+The matrix $A_{\Gamma_L}$ includes Eq.~\eqref{eq:mwis-gadget-diagonal-edge}.
+For local controls and $|u_a|,\Omega\ll\Delta$, a typical matrix element of
+the omitted term is of order
+\begin{equation}
+ O\!\left(\frac{\Omega^3}{\Delta^2}
+ +\frac{\Omega^2\|\mathbf u\|_\infty}{\Delta^2}
+ +\frac{\|\mathbf u\|_\infty^2}{\Delta}\right),
+ \label{eq:mwis-SW-remainder-scale}
+\end{equation}
+with geometry-dependent combinatorial factors.  Equation
+\eqref{eq:mwis-SW-remainder-scale} is an order estimate, not yet a uniform
+many-body norm bound.
+
+For a single ordinary wire with $N=2(L-1)$ atoms, adjacent domain-wall states
+differ by moving one excitation across a pair:
+\begin{equation}
+ F(j+1)-F(j)=u_{2j-1}-u_{2j},
+ \qquad
+ F(j)=\sum_a u_a n_a(j).
+ \label{eq:mwis-wire-control-difference}
+\end{equation}
+Consequently, individually addressed detunings can synthesize any desired
+one-dimensional potential $F(j)$ up to an additive constant.  This elementary
+identity will be reused below.
+
+\section{Why the endpoint-only protocol has an exponential gap}
+\label{sec:mwis-localization-gap}
+
+At the midpoint of the logical protocol, the endpoint detunings vanish and
+Eq.~\eqref{eq:mwis-effective-general} reduces to $-tA_{\Gamma_L}$.  For fixed
+lead widths $\zeta_x,\zeta_y=O(1)$ and $L\rightarrow\infty$, its continuum
+limit is the Helmholtz problem on an L-shaped waveguide with Dirichlet
+boundaries.  A corner of such a waveguide supports an eigenvalue below the
+lowest transverse threshold~\cite{dauge2012quantum}.  In the discrete problem,
+write
+\begin{equation}
+ E_{\perp,x}=-2t-2t\cos\!\left(\frac{\pi}{\zeta_y+1}\right),
+ \quad
+ E_{\perp,y}=-2t-2t\cos\!\left(\frac{\pi}{\zeta_x+1}\right).
+ \label{eq:mwis-strip-thresholds}
+\end{equation}
+If $E_{\mathrm{loc}}<\min(E_{\perp,x},E_{\perp,y})$, the lead amplitudes
+decay exponentially,
+\begin{equation}
+ |\psi_{\mathrm{loc}}(\mathbf j)|
+ \leq C e^{-\mu d(\mathbf j,\mathcal I)} .
+ \label{eq:mwis-agmon-decay}
+\end{equation}
+This is the graph analogue of waveguide evanescence and can be formalized by
+an Agmon metric~\cite{steinerberger2022agmon}.
+
+Suppose the desired logical state is $\ket{10}_l$, at the far end of
+$\mathcal X$.  An endpoint detuning $w$ creates a second localized branch
+$\ket{\psi_{\mathrm{tar}}(w)}$ near $j_x=L_x$.  At the value $w_*$ where the
+two diabatic energies coincide, their separation is $O(L_x)$ and
+Eq.~\eqref{eq:mwis-agmon-decay} implies
+\begin{equation}
+ \left|\matrixel{\psi_{\mathrm{loc}}}{H_{\mathrm{eff}}}
+ {\psi_{\mathrm{tar}}}\right|
+ \leq C' e^{-\mu' L_x}.
+ \label{eq:mwis-exp-matrix-element}
+\end{equation}
+The two-level reduction at the crossing is
+\begin{equation}
+ H_{2\mathrm{lev}}=
+ \begin{pmatrix}
+ E_{\mathrm{loc}}&V_L\\
+ V_L^*&E_{\mathrm{tar}}
+ \end{pmatrix},
+ \qquad
+ \delta E(w_*)=2|V_L|=O(e^{-\mu' L_x}).
+ \label{eq:mwis-two-level-crossing}
+\end{equation}
+This is encoding-induced hardness: the logical instance is only one weighted
+edge, while the physical configuration-space geometry creates the tunneling
+distance.  It also explains why an $O(1)$ separation between the corner bound
+state and the continuum is compatible with an exponentially small annealing
+gap: these are two different gaps.
+
+An exponentially small instantaneous gap need not always imply an
+exponential optimal runtime.  Some paths can traverse two small crossings
+diabatically and return to the desired branch, as occurs for the unconstrained
+crossing gadget~\cite{bombieri2025quantum}.  For the hard CWE endpoint sweep,
+there is only one relevant branch exchange, so a purely diabatic traversal
+ends on the wrong branch.  Both $\delta E_m$ and real-time success probability
+must therefore be checked; related deliberately diabatic improvements for
+hard Rydberg instances are discussed in Ref.~\cite{schiffer2024circumventing}.
+
+\section{What local detuning can and cannot synthesize}
+\label{sec:mwis-control-space}
+
+\subsection{The occupation-map column space}
+
+The central atom occupied in a CWE domain-wall configuration records which
+region of Eq.~\eqref{eq:mwis-three-regions} contains the effective particle:
+\begin{equation}
+ n_{G_c}=P_{\mathcal I},\qquad
+ n_{G_x}=P_{\mathcal X},\qquad
+ n_{G_y}=P_{\mathcal Y},\qquad
+ n_{G_c}+n_{G_x}+n_{G_y}=\mathbb I_{\Gamma_L}.
+ \label{eq:mwis-gadget-region-projectors}
+\end{equation}
+Here a number operator denotes its restriction to the domain-wall manifold.
+Every ordinary atom on wire $x$ depends only on $j_x$, and similarly for
+$y$.  Moreover, on the allowed L-domain,
+\begin{equation}
+ P_{\mathcal I}
+ =\mathbb I-\mathbf 1_{j_x>\zeta_x}-\mathbf 1_{j_y>\zeta_y}.
+ \label{eq:mwis-inner-separable}
+\end{equation}
+Together with Eq.~\eqref{eq:mwis-wire-control-difference}, this proves the
+following statement.
+
+\begin{lemma}[Instantaneous diagonal controllability]
+\label{lem:mwis-separable-control}
+In the ideal CWE domain-wall manifold, arbitrary local detunings on all
+existing atoms generate, modulo a scalar shift, exactly the separable
+configuration-space potentials
+\begin{equation}
+ (M\mathbf u)(j_x,j_y)=f_x(j_x)+f_y(j_y).
+ \label{eq:mwis-separable-potential}
+\end{equation}
+At any fixed $s$, replacing static detunings by dynamic detunings changes the
+coefficients in Eq.~\eqref{eq:mwis-separable-potential}, but not this linear
+space.
+\end{lemma}
+
+\begin{proof}
+The preceding occupation identities show that every column of $M$ is a
+function of $j_x$ alone, a function of $j_y$ alone, or their sum plus a
+constant.  This proves containment in Eq.~\eqref{eq:mwis-separable-potential}.
+Conversely, Eq.~\eqref{eq:mwis-wire-control-difference} independently fixes
+all adjacent differences of $f_x$ and $f_y$; the gadget transition is supplied
+by Eq.~\eqref{eq:mwis-gadget-region-projectors}.  Additive constants are
+physically irrelevant.
+\end{proof}
+
+\subsection{A no-go result for exact degree balancing}
+
+Let $d(\mathbf j)$ be the degree of a site in $\Gamma_L$, including the CWE
+diagonal edge.  The degree-balancing prescription is
+\begin{equation}
+ \epsilon_{\mathrm{bal}}(\mathbf j)=t[4-d(\mathbf j)].
+ \label{eq:mwis-degree-balance}
+\end{equation}
+With the sign convention of Eq.~\eqref{eq:mwis-effective-general}, it gives
+\begin{equation}
+ -tA_{\Gamma_L}-\operatorname{diag}\epsilon_{\mathrm{bal}}
+ =-4t\mathbb I+t\mathcal L_{\Gamma_L},
+ \label{eq:mwis-laplacian-form}
+\end{equation}
+where $\mathcal L=D-A$ is the combinatorial graph Laplacian.  The ground state
+is uniform and its gap is $t\lambda_2(\mathcal L_{\Gamma_L})$, which is
+$\Theta(tL^{-2})$ for fixed-width connected leads.  Ref.~\cite{bombieri2025quantum}
+adds ancillary atoms so that Eq.~\eqref{eq:mwis-degree-balance} can also be
+imposed on the nonlogical boundary.
+
+The same potential cannot be synthesized by detuning only the original CWE
+atoms.  Any separable function obeys the vanishing mixed-difference identity
+\begin{equation}
+ f(a,c)+f(b,d)-f(a,d)-f(b,c)=0.
+ \label{eq:mwis-mixed-difference}
+\end{equation}
+Assume $\zeta\geq3$ and $L\geq\zeta+3$ in the symmetric geometry.  The four
+allowed sites
+\begin{equation}
+ (1,1),\quad(\zeta,1),\quad(1,\zeta+2),\quad
+ (\zeta,\zeta+2)
+\end{equation}
+have $4-d$ values $2,1,1,1$, respectively.  Their mixed difference is one,
+contradicting Eq.~\eqref{eq:mwis-mixed-difference}.  Therefore
+\begin{equation}
+ \epsilon_{\mathrm{bal}}\notin
+ \operatorname{Col}(M)+\operatorname{span}\{\mathbf 1\}.
+ \label{eq:mwis-rank-obstruction}
+\end{equation}
+
+Equation~\eqref{eq:mwis-rank-obstruction} is a useful negative result.  A
+dynamic waveform cannot repair an instantaneous rank obstruction.  Its real
+advantage is instead to realize a different reachable path, to track the
+hopping scale $t(s)$, and to vanish at the endpoints so that the encoded cost
+function is unchanged.
+
+\section{A reachable dynamic corridor catalyst}
+\label{sec:mwis-corridor-catalyst}
+
+Take the unique target to be $\ket{10}_l$, so the relevant corridor is
+$\mathcal X$.  Let
+\begin{equation}
+ P_{\mathrm{in},x}
+ =\sum_{j_y=1}^{\zeta_y}
+ \proj{\zeta_x+1,j_y}
+ \label{eq:mwis-entrance-projector}
+\end{equation}
+be its entrance cross section.  Direct inspection of the wheel gadget gives
+the two exact occupation identities
+\begin{equation}
+ P_{\mathcal X}=n_{G_x},\qquad
+ P_{\mathrm{in},x}=n_{G_x}-n_{m_x+1}.
+ \label{eq:mwis-corridor-identities}
+\end{equation}
+Thus the configuration-space catalyst
+\begin{equation}
+ V_{\mathrm{cat}}(s)
+ =-\Lambda(s)P_{\mathcal X}+t(s)P_{\mathrm{in},x}
+ \label{eq:mwis-catalyst}
+\end{equation}
+is implemented by only two existing physical atoms:
+\begin{equation}
+ u_{G_x}(s)=\Lambda(s)-t(s),\qquad
+ u_{m_x+1}(s)=t(s),
+ \label{eq:mwis-two-atom-controls}
+\end{equation}
+because $H_u=-\sum_a u_an_a$.  For a target in $\mathcal Y$, exchange
+$x\leftrightarrow y$.
+
+Choose a smooth envelope $g(s)$ supported in the ordered, gap-limiting part of
+the protocol and set
+\begin{equation}
+ \Lambda(s)=\kappa t(s),\qquad
+ u_{G_x}(s)=g(s)(\kappa-1)t(s),\qquad
+ u_{m_x+1}(s)=g(s)t(s),
+ \quad g(0)=g(1)=0.
+ \label{eq:mwis-dynamic-waveform}
+\end{equation}
+The controls are $O(t)=O(\Omega^2/\Delta)$ and hence remain parametrically
+smaller than $\Delta$ in the perturbative regime.  The first term in
+Eq.~\eqref{eq:mwis-catalyst} lowers the entire target lead, rather than a
+single distant endpoint.  The second term is not cosmetic: it compensates the
+extra attraction induced by coupling the entrance to two different parts of
+the CWE junction and enables a simple positive-semidefinite certificate.
+
+\subsection{No-bound-state certificate}
+
+For a transparent theorem, take $\zeta_x=\zeta_y=c=O(1)$ and
+$L_x=L_y=L$.  Let $P_F$ project onto the final cross section $j_x=L$, and
+consider the active-window Hamiltonian
+\begin{equation}
+ H_L(w)=-tA_{\Gamma_L}-wP_F
+ -\kappa tP_{\mathcal X}+tP_{\mathrm{in},x},
+ \qquad 0\leq w\leq w_f .
+ \label{eq:mwis-active-H}
+\end{equation}
+
+\begin{proposition}[Removal of the geometrical bound state]
+\label{prop:mwis-no-bound-state}
+Let
+\begin{equation}
+ c_0=\cos\!\left(\frac{\pi}{c+1}\right),\qquad
+ \kappa>3-2c_0.
+ \label{eq:mwis-kappa-condition}
+\end{equation}
+At $w=0$, $H_L(0)$ has no eigenvalue below the bottom of the shifted target-
+strip band,
+\begin{equation}
+ E_*=-\kappa t-2t(1+c_0).
+ \label{eq:mwis-shifted-threshold}
+\end{equation}
+The statement remains valid for semi-infinite leads, so it is not a
+finite-size observation.
+\end{proposition}
+
+\begin{proof}
+Partition $\Gamma_L=\mathcal X\cup\mathcal R$, with
+$\mathcal R=\mathcal I\cup\mathcal Y$.  The target lead is the Cartesian
+strip $P_{L-c}\mathbin{\square}P_c$.  After subtracting $E_*$, its internal
+quadratic form is
+\begin{equation}
+ t(2I-A_{P_{L-c}})\otimes I
+ +tI\otimes(2c_0I-A_{P_c})
+ +tP_{\mathrm{in},x}.
+ \label{eq:mwis-strip-positive-form}
+\end{equation}
+The second summand is positive semidefinite because the largest eigenvalue of
+$A_{P_c}$ is $2c_0$.  The first summand is the one-dimensional Dirichlet form;
+in addition to squared finite differences, it contains one factor
+$t|\psi|^2$ on every entrance site.  The explicit entrance term supplies a
+second such factor.
+
+Every entrance site has one edge into $\mathcal R$, except
+$(c+1,c)$, which also has the diagonal CWE edge and therefore has two.  For
+each cross edge $(a,b)$ use
+\begin{equation}
+ -t(\overline\psi_a\psi_b+\overline\psi_b\psi_a)
+ +t|\psi_a|^2+t|\psi_b|^2
+ =t|\psi_a-\psi_b|^2\geq0.
+ \label{eq:mwis-edge-square}
+\end{equation}
+The two entrance factors in Eq.~\eqref{eq:mwis-strip-positive-form} pay for
+all cross edges on the $\mathcal X$ side.  Each site in $\mathcal R$ is the
+endpoint of at most one such edge.  Since the maximum degree of its induced
+graph is at most four,
+\begin{equation}
+ -tA_{\mathcal R}-E_*I-tD_{\mathrm{cross}}
+ \succeq t(\kappa-3+2c_0)I\succ0.
+ \label{eq:mwis-R-positive}
+\end{equation}
+The full form $H_L(0)-E_*I$ is therefore a sum of positive semidefinite terms.
+This excludes a corner eigenvalue below $E_*$ for finite or infinite leads.
+\end{proof}
+
+For $c=3$, Eq.~\eqref{eq:mwis-kappa-condition} requires only
+$\kappa>3-\sqrt{2}\simeq1.586$.  The numerical example below uses
+$\kappa=2$.
+
+\subsection{Polynomial gap during the endpoint sweep}
+
+\begin{theorem}[Effective-model gap conversion]
+\label{thm:mwis-polynomial-gap}
+Fix the lead width $c$, choose $\kappa$ strictly above
+Eq.~\eqref{eq:mwis-kappa-condition}, and take $w_f>t$.  Apart from an intended
+logical degeneracy, if present, there are constants $a_c,b_c>0$ independent of
+$L$ such that, for sufficiently large $L$,
+\begin{equation}
+ a_c\frac{t}{L^2}
+ \leq
+ \min_{0\leq w\leq w_f}
+ [E_1(H_L(w))-E_0(H_L(w))]
+ \leq b_c\frac{t}{L^2}.
+ \label{eq:mwis-poly-gap-bound}
+\end{equation}
+In contrast, setting $\kappa=0$ and removing the entrance term gives the
+endpoint-only avoided crossing in Eq.~\eqref{eq:mwis-two-level-crossing}, with
+gap $O(e^{-\mu L})$.
+\end{theorem}
+
+\begin{proof}
+Proposition~\ref{prop:mwis-no-bound-state} places the entire non-target region
+a finite energy above the target strip threshold.  Eliminating that region by
+a Schur complement produces a finite-width, finite-range boundary condition
+at the entrance of $\mathcal X$.  The strict inequality in
+Eq.~\eqref{eq:mwis-kappa-condition} makes the corresponding threshold
+resolvent regular: it cannot generate a subthreshold pole or an exponentially
+localized competing branch.
+
+The remaining longitudinal problem is a finite Jacobi chain of length
+$\ell=L-c$ with an $L$-independent Robin condition at its entrance and an
+endpoint potential $-w$ at its far end.  Its extended levels obey
+\begin{equation}
+ k_n\ell+\delta_{\mathrm{in}}(k_n)
+ +\delta_F(k_n,w)=n\pi,
+ \label{eq:mwis-phase-quantization}
+\end{equation}
+where the two scattering phases and their first derivatives are bounded near
+$k=0$.  Hence $k_1=\Theta(L^{-1})$,
+$k_2-k_1=\Theta(L^{-1})$, and the quadratic dispersion
+$E(k)=E_*+tk^2+O(k^4)$ gives a $\Theta(tL^{-2})$ level spacing.
+
+The only change of spectral character occurs when the far-end potential
+creates its desired boundary state.  For an isolated semi-infinite hopping
+chain, this happens at $w=t$; for $w>t$ the decay ratio and longitudinal energy
+are
+\begin{equation}
+ r=\frac{t}{w},\qquad
+ E_{\mathrm{end}}=-w-\frac{t^2}{w}.
+ \label{eq:mwis-end-bound-state}
+\end{equation}
+At the threshold the finite-size gap is again $\Theta(tL^{-2})$, whereas a
+fixed distance above threshold gives an $O(1)$ binding gap.  The regular
+entrance boundary shifts the threshold and constants but not the power of
+$L$.  Compactness of the closed interval $0\leq w\leq w_f$ then gives the
+uniform lower bound in Eq.~\eqref{eq:mwis-poly-gap-bound}; a trial state made
+from the first two longitudinal strip modes gives the upper bound.  The final
+statement follows from Eqs.~\eqref{eq:mwis-agmon-decay}--\eqref{eq:mwis-two-level-crossing}.
+\end{proof}
+
+The theorem addresses the gap-limiting endpoint sweep.  A complete logical
+protocol can activate Eq.~\eqref{eq:mwis-dynamic-waveform} while the state is
+within the $O(c)$-sized junction region, release it into the selected corridor,
+ramp the target endpoint through Eq.~\eqref{eq:mwis-end-bound-state}, reduce
+$\Omega$ to zero while the final MWIS bias keeps the target unique, and only
+then turn off $g(s)$.  The finite-junction stages have $L$-independent gaps;
+the release and endpoint-binding thresholds have $\Theta(tL^{-2})$ gaps.  At
+$\Omega=0$ the last removal is diagonal and does not alter the final MWIS
+ordering.  Thus the catalyst need not remain in the problem Hamiltonian.
+
+\section{Numerical check of the analytic mechanism}
+\label{sec:mwis-numerics}
+
+Figure~\ref{fig:mwis-dynamic-gap} diagonalizes
+Eq.~\eqref{eq:mwis-active-H} with $t=1$, $c=3$, and a target endpoint sweep
+$0\leq w\leq3t$.  The endpoint-only data fit
+$\delta E_m\propto e^{-0.351L}$ over the displayed sizes.  With
+$\kappa=2$ and the entrance term $tP_{\mathrm{in},x}$, a finite-size fit gives
+$L^{-2.21}$ and approaches the analytic $L^{-2}$ law.  At the baseline
+avoided crossing, the wavefunction has separated junction and endpoint peaks
+with an exponentially small valley.  The controlled wavefunction instead
+occupies the target corridor, so endpoint binding is a one-dimensional
+threshold phenomenon rather than tunneling between distant localized states.
+
+\begin{figure}[ht]
+ \centering
+ \includegraphics[width=0.96\textwidth]{mwis_dynamic_detuning_gap.pdf}
+ \caption{Effective CWE calculation.  (a) Minimum gap during an endpoint
+ sweep for the endpoint-only Hamiltonian and for the dynamic corridor
+ catalyst.  Dashed lines are finite-size fits, not inputs to the proof.
+ (b) Horizontal marginal of the ground state at the minimum gap for $L=40$;
+ the dotted line marks the entrance of the horizontal lead.  The figure is
+ generated by \texttt{scripts/mwis\_dynamic\_detuning.py}.}
+ \label{fig:mwis-dynamic-gap}
+\end{figure}
+
+The numerical calculation uses the exact discrete L-domain and includes the
+CWE diagonal edge.  It is intentionally smaller than a full Rydberg DMRG
+calculation: its role is to test the finite-size approach to the theorem and
+to expose the wavefunction mechanism.  Full-model DMRG remains the appropriate
+validation when $\Omega/\Delta$ is not perturbatively small
+\cite{bombieri2025quantum}.
+
+\section{In what sense dynamic detuning is better}
+\label{sec:mwis-benefits}
+
+The comparison must specify its baseline.
+
+\paragraph{Versus endpoint-only encoding.}
+The improvement is strict within the effective model:
+Eq.~\eqref{eq:mwis-two-level-crossing} gives an exponentially small gap,
+whereas Theorem~\ref{thm:mwis-polynomial-gap} gives $\Theta(tL^{-2})$.
+The control acts on the cause of the gap---a localized configuration-space
+branch---rather than merely slowing the schedule near its crossing.
+
+\paragraph{Versus static degree balancing with ancillary atoms.}
+Both methods recover a polynomial gap.  Exact Laplacian balancing is more
+solution-agnostic and gives a uniform ground state, but it modifies the gadget
+and increases atom/connectivity overhead.  The corridor catalyst uses two
+existing atoms and leaves the final cost Hamiltonian unchanged.  It is not
+universally superior: it uses a selected corridor and requires time-resolved
+local addressability.  Equation~\eqref{eq:mwis-rank-obstruction} also shows
+that it is not a hidden implementation of the ancilla strategy.
+
+\paragraph{Why time dependence matters.}
+A static term $-\Lambda P_{\mathcal X}$ would change the encoded weights at the
+end of the anneal.  The envelope $g(s)$ provides three benefits:
+\begin{enumerate}
+ \item the catalyst is present only in the ordered localization window and is
+ absent from both endpoint Hamiltonians;
+ \item its scale follows $t(s)=\Omega(s)^2/\Delta(s)$, so the dimensionless
+ no-bound-state condition remains fixed as the Rabi drive changes;
+ \item the catalyst can remain active while the endpoint bias selects and
+ binds the target, and can be removed after hopping is switched off.
+\end{enumerate}
+These are path-design benefits, not an increase of the rank of $M$.
+
+\paragraph{Why a diagonal catalyst is not automatically beneficial.}
+Diagonal catalysts can introduce new local minima or favor a state far from
+the solution~\cite{albash2021diagonal}.  The present construction avoids that
+guesswork because its sign, support, and sufficient amplitude follow from a
+spectral partition of the configuration graph.  For a larger problem, an
+analogous certificate or a full-path numerical validation is necessary.
+
+\section{Returning to the full Rydberg Hamiltonian}
+\label{sec:mwis-full-model-transfer}
+
+Let $\Delta_{\mathrm{eff}}$ be the certified effective gap and suppose the
+domain-wall band is separated from leakage states by $\Delta_{\mathrm{leak}}$.
+If an operator-norm estimate gives
+\begin{equation}
+ \|\mathcal R_{\mathrm{SW}}(s)\|\leq\eta(s),
+ \qquad
+ 2\eta(s)<\Delta_{\mathrm{eff}}(s),
+ \label{eq:mwis-transfer-condition}
+\end{equation}
+Weyl's inequalities imply
+\begin{equation}
+ \Delta_{\mathrm{full}}(s)
+ \geq\Delta_{\mathrm{eff}}(s)-2\eta(s).
+ \label{eq:mwis-weyl-transfer}
+\end{equation}
+The same projection also requires
+$\Delta_{\mathrm{leak}}\gg\Delta_{\mathrm{eff}},\|\dot H\|^{1/2}$ on the
+timescale of interest.  A crude use of Eq.~\eqref{eq:mwis-transfer-condition}
+can become demanding because the desired gap scales as $L^{-2}$.  Structured
+errors that preserve a corridor or a weighted-Laplacian form are much less
+harmful than an arbitrary perturbation of the same norm, so full-model spectra
+and dynamics should supplement the worst-case bound.
+
+Finite van der Waals tails add a configuration-dependent diagonal term
+$v_{\mathrm{tail}}(\mathbf j)$.  In the linear approximation, it can be
+included in the same reachability equation,
+\begin{equation}
+ M\mathbf u(s)\simeq
+ \mathbf b(s)-\mathbf v_{\mathrm{tail}}(s),
+ \label{eq:mwis-tail-compensation}
+\end{equation}
+subject to hardware amplitude and slew limits.  Local-detuning compensation
+of such inhomogeneities is compatible with the experimental control used in
+Ref.~\cite{oliveira2025demonstration}, but calibration errors and light-shift
+crosstalk must be measured for a quantitative claim.
+
+Finally, spectral improvement is not by itself an algorithmic benchmark.  A
+full validation should report the many-body instantaneous gap, leakage from
+the domain-wall band, and
+\begin{equation}
+ P_{\mathrm{sol}}(T)=
+ |\braket{\psi_{\mathrm{MWIS}}}{\psi(T)}|^2
+ \label{eq:mwis-success-probability}
+\end{equation}
+as a function of runtime.  This separates genuinely harmful avoided
+crossings from gaps that can be traversed diabatically.
+
+\section{A general framework for dynamic detuning}
+\label{sec:mwis-general-framework}
+
+The CWE calculation suggests a reusable workflow for an arbitrary encoded
+optimization problem.
+
+\subsection{Projection and reachability}
+
+Choose a low-energy configuration basis $\{\ket{\alpha}\}$ and derive
+\begin{equation}
+ H_{\mathrm{eff}}(s,\mathbf u)
+ =K(s)-\operatorname{diag}[\mathbf v_0(s)+M(s)\mathbf u(s)]
+ +\mathcal R(s).
+ \label{eq:mwis-general-effective}
+\end{equation}
+The columns of $M$ are the projected number operators, augmented by the
+appropriate Schrieffer--Wolff response if controls also change hopping.  Since
+a scalar potential is irrelevant, define the centered projector
+$C=I-|\mathcal C|^{-1}\mathbf 1\mathbf 1^T$ and test
+\begin{equation}
+ C\mathbf b(s)\in\operatorname{Col}[CM(s)].
+ \label{eq:mwis-general-reachability}
+\end{equation}
+If exact reachability fails, solve the constrained residual problem
+\begin{equation}
+ \mathbf u_*(s)=
+ \arg\min_{\mathbf u}
+ \|W(s)[M(s)\mathbf u-\mathbf b(s)]\|_2^2
+ \label{eq:mwis-general-ls}
+\end{equation}
+with endpoint, amplitude, bandwidth, and slew-rate constraints included from
+the beginning.  Dynamic control changes which reachable vector is used at
+each $s$; it does not invalidate Eq.~\eqref{eq:mwis-general-reachability}.
+
+\subsection{Designing an extended ground state}
+
+Uniform degree balancing is one member of a larger family.  Select a strictly
+positive target profile $\boldsymbol\phi(s)$.  The condition
+$H_{\mathrm{eff}}\boldsymbol\phi=E\boldsymbol\phi$ requires the diagonal
+vector
+\begin{equation}
+ b_\alpha^{\phi}(s)
+ =\frac{[K(s)\boldsymbol\phi(s)]_\alpha}{\phi_\alpha(s)}-E(s).
+ \label{eq:mwis-positive-profile}
+\end{equation}
+If $\mathbf b^\phi-\mathbf v_0$ is reachable, Perron--Frobenius positivity
+makes $\boldsymbol\phi$ the unique ground state of a connected stoquastic
+configuration graph.  More importantly, the ground-state transform gives the
+exact Dirichlet form
+\begin{equation}
+ \matrixel{\psi}{H_{\mathrm{eff}}-E}{\psi}
+ =\frac12\sum_{\alpha,\beta}
+ t_{\alpha\beta}\phi_\alpha\phi_\beta
+ \left|
+ \frac{\psi_\alpha}{\phi_\alpha}
+ -\frac{\psi_\beta}{\phi_\beta}
+ \right|^2,
+ \label{eq:mwis-ground-state-transform}
+\end{equation}
+where $K_{\alpha\beta}=-t_{\alpha\beta}\leq0$.  The spectral gap is therefore
+a weighted Poincar\'e constant.  If the ratios of $\phi_\alpha$ and the edge
+weights are polynomially bounded and the weighted configuration graph has
+polynomial conductance, Eq.~\eqref{eq:mwis-ground-state-transform} certifies a
+polynomial gap without requiring a uniform wavefunction.
+
+If only an approximate potential is reachable, let
+$\mathbf r=\mathbf b^\phi-\mathbf v_0-M\mathbf u_*$.  A general but
+pessimistic Weyl estimate is
+\begin{equation}
+ \Delta(\mathbf u_*)
+ \geq\Delta_\phi-2\|\mathbf r\|_\infty.
+ \label{eq:mwis-residual-weyl}
+\end{equation}
+For $\Delta_\phi=\Theta(tL^{-z})$, this demands a residual of the same small
+order.  The CWE proof illustrates a better alternative: exploit the support
+and sign of the residual to prove that no eigenvalue lies below a lead
+threshold.  Localization is a geometric property, so a geometry-aware
+quadratic-form certificate can be much sharper than a norm bound.
+
+\subsection{Path optimization after the analytic reduction}
+
+Once a safe low-dimensional control basis is known, one may optimize the path
+rather than all atom waveforms blindly.  For a nondegenerate gap and control
+operator $B_a=\partial H_{\mathrm{eff}}/\partial u_a$, the
+Feynman--Hellmann gradient is
+\begin{equation}
+ \frac{\partial\delta E}{\partial u_a}
+ =\matrixel{1}{B_a}{1}-\matrixel{0}{B_a}{0}.
+ \label{eq:mwis-gap-gradient}
+\end{equation}
+A practical objective is a smooth lower envelope of $\delta E(s)$, supplemented
+by penalties for localization, leakage, and control roughness.  The following
+sequence avoids conflating distinct questions:
+\begin{enumerate}
+ \item derive $K(s)$, $M(s)$, and a bound on $\mathcal R(s)$;
+ \item diagnose localization using probability profiles, inverse
+ participation ratio, or an Agmon/lead-threshold test;
+ \item solve the reachability problem before optimizing a schedule;
+ \item construct an analytic certificate---weighted Laplacian, corridor
+ bracketing, conductance, or a controlled diabatic pair of crossings;
+ \item optimize only the remaining amplitudes and switching times;
+ \item validate the full Rydberg spectrum and real-time success probability.
+\end{enumerate}
+Spatially inhomogeneous driving can remove first-order bottlenecks in other
+annealing models~\cite{susa2018exponential}, but the projection and certificate
+steps are what determine whether that intuition applies to a particular
+Rydberg encoding.
+
+\subsection{Limits of the generalization}
+
+For a network of CWE gadgets, the configuration graph is no longer a single
+L-shaped waveguide, and a locally preferred corridor need not be globally
+consistent.  Selecting a corridor from the known solution would simply hide
+the optimization problem in the control.  A scalable construction should
+instead use local problem data, a solution-agnostic positive profile, or a
+set of controls whose weighted conductance can be bounded for every allowed
+logical sector.  Degenerate MWIS instances should be analyzed using the gap
+above the desired ground-state manifold rather than an artificial splitting
+inside it.
+
+The correct general claim is therefore conditional:
+\begin{center}
+\fbox{\parbox{0.86\textwidth}{
+Dynamic local detuning converts an encoding-induced exponential gap to a
+polynomial gap when the projected controls can realize a path that removes
+every subthreshold localized branch while preserving polynomial
+configuration-space conductance and the endpoint cost Hamiltonian.
+Time dependence supplies endpoint compatibility and path ordering, but it
+does not overcome an instantaneous control-rank obstruction.}}
+\end{center}
+
+For the elementary CWE, Eqs.~\eqref{eq:mwis-two-atom-controls},
+\eqref{eq:mwis-kappa-condition}, and
+Theorem~\ref{thm:mwis-polynomial-gap} verify these conditions explicitly.  The
+same analysis also identifies what remains to be proved before claiming a
+general dynamic-encoding advantage: controllability of the projected
+potential, a localization-free spectral certificate, and controlled transfer
+back to the full Rydberg dynamics.
